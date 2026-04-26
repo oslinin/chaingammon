@@ -1,0 +1,30 @@
+keeperhubplan.md
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+dist/
+.pytest_cache/
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+build/
+
+# Hardhat
+contracts/artifacts/
+contracts/cache/
+contracts/deployments/localhost/
+contracts/typechain-types/
+
+# Misc
+.DS_Store
+*.log

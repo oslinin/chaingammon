@@ -142,8 +142,6 @@ Tasks:
 
 **Goal:** FastAPI service exposing backgammon engine via gnubg's External Player interface.
 
-Background: gnubg has a socket-based external player protocol. Spec: https://www.gnu.org/software/gnubg/manual/html_node/A-technical-description-of-the-External-Player-Interface.html
-
 Tasks:
 
 - Install gnubg (`sudo apt install gnubg`)
