@@ -25,6 +25,7 @@ build/
 contracts/artifacts/
 contracts/cache/
 contracts/deployments/localhost/
+contracts/deployments/hardhat*.json
 contracts/typechain-types/
 
 # Misc

@@ -141,6 +141,7 @@ This project follows TDD. For every phase:
 2. **Run tests** — they must fail (red) before you write the implementation.
 3. **Implement** the minimum code to make tests pass (green).
 4. **Update `log.md`** — append the phase, commit hash, and test results after each phase lands.
+5. **Update `README.md`** — after any development of any phase, ensure the README is updated with the latest commands and instructions to run the code.
 
 Test locations:
 

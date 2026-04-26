@@ -9,7 +9,13 @@ module.exports = {
       optimizer: { enabled: true, runs: 200 },
     },
   },
+  paths: {
+    sources: "./src",
+  },
   networks: {
+    localhost: {
+      chainId: 31337,
+    },
     "0g-testnet": {
       url: process.env.RPC_URL || "https://evmrpc-testnet.0g.ai",
       chainId: 16602,
