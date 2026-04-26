@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(which *)",
+      "Bash(lsb_release *)",
+      "Bash(apt-cache show *)",
+      "Bash(gnubg --version)",
+      "Bash(~/.local/bin/uv run pytest *)"
+    ]
+  }
+}
