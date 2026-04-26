@@ -1,95 +1,119 @@
-"""
-game_state.py
-
-Defines the Pydantic data models used to represent the state of a backgammon match.
-This module is used to keep track of the board position, dice rolls, turns, and match status.
-"""
 from pydantic import BaseModel, Field
 from typing import List, Optional
+import base64
 
 class GameState(BaseModel):
-    """
-    Represents the complete state of a backgammon game at a specific point in time.
-    """
+    game_id: str
+    match_id: str
+    position_id: str
+    board: List[int] = Field(description="Checkers on points 1-24. Positive for player 0, negative for player 1.")
+    bar: List[int] = Field(description="[player0_checkers, player1_checkers] on the bar")
+    off: List[int] = Field(description="[player0_checkers, player1_checkers] borne off")
+    turn: int = Field(description="0 for player 0, 1 for player 1")
+    dice: Optional[List[int]] = None
+    cube: int = 1
+    cube_owner: int = -1
+    match_length: int = 0
+    score: List[int] = [0, 0]
+    game_over: bool = False
+    winner: Optional[int] = None
 
-    # Standard backgammon board from points 1 to 24.
-    # Player 1 (positive integers) moves towards point 1.
-    # Player 2 (negative integers) moves towards point 24.
-    # The default factory provides the standard starting configuration.
-    board: List[int] = Field(
-        default_factory=lambda: [
-            2, 0, 0, 0, 0, -5,    # points 1-6
-            0, -3, 0, 0, 0, 5,    # points 7-12
-            -5, 0, 0, 0, 3, 0,    # points 13-18
-            5, 0, 0, 0, 0, -2     # points 19-24
-        ],
-        description="Array of 24 ints representing checkers on points 1-24. Positive values belong to Player 1, negative to Player 2."
-    )
+def decode_position_id(pos_id: str):
+    b = base64.b64decode(pos_id + "==")
+    bits = ""
+    for byte in b:
+        bits += "".join(str((byte >> i) & 1) for i in range(8))
+    
+    def parse_player(bits_iter):
+        points = []
+        count = 0
+        for _ in range(25):
+            while next(bits_iter) == '1':
+                count += 1
+            points.append(count)
+            count = 0
+        return points
 
-    # Track checkers that have been hit and are waiting to re-enter.
-    bar: List[int] = Field(default_factory=lambda: [0, 0], description="Checkers on the bar: index 0 is player 1, index 1 is player 2.")
+    bits_iter = iter(bits)
+    player0 = parse_player(bits_iter)
+    player1 = parse_player(bits_iter)
+    
+    # Calculate how many checkers are off the board (each player starts with 15)
+    p0_on_board = sum(player0)
+    p1_on_board = sum(player1)
+    
+    board = [0] * 24
+    for i in range(24):
+        # player 0's points are 1..24, which map to index 0..23
+        if player0[i] > 0:
+            board[i] = player0[i]
+        # player 1's points are 1..24, which map to index 23..0 from player 0's perspective
+        elif player1[i] > 0:
+            board[23 - i] = -player1[i]
+            
+    bar = [player0[24], player1[24]]
+    off = [15 - p0_on_board, 15 - p1_on_board]
+    
+    return board, bar, off
 
-    # Track checkers that have been successfully borne off the board.
-    off: List[int] = Field(default_factory=lambda: [0, 0], description="Checkers borne off: index 0 is player 1, index 1 is player 2.")
+def decode_match_id(match_id: str):
+    b = base64.b64decode(match_id + "==")
+    bits = ""
+    for byte in b:
+        bits += "".join(str((byte >> i) & 1) for i in range(8))
+    
+    # match ID layout:
+    # 0-3: cube value (log2)
+    # 4-5: cube owner (0=p0, 1=p1, 3=center) -> 2 bits
+    # 6: player on roll (0=p0, 1=p1)
+    # 7: crawford flag
+    # 8-10: game state (0=playing, 1=over, 2=resigned, 3=dropped)
+    # 11: turn (0=p0, 1=p1)
+    # 12: double offered
+    # 13: resign offered (0=none, 1=single, 2=gammon, 3=backgammon) -> 2 bits
+    # 15-17: dice 1
+    # 18-20: dice 2
+    # 21-35: match length
+    # 36-50: player 0 score
+    # 51-65: player 1 score
+    
+    # Let's extract safely
+    def get_int(start, length):
+        sub = bits[start:start+length]
+        # Little-endian bits! wait, the bits themselves are little-endian per byte,
+        # but the fields are just concatenated in the bitstream.
+        # Actually, in gnubg, the bitstream is assembled by pushing bits.
+        # Let's just read the value by treating the sub-string as little-endian binary
+        val = 0
+        for i, bit in enumerate(sub):
+            if bit == '1':
+                val += (1 << i)
+        return val
 
-    # Which player's turn it currently is.
-    turn: int = Field(default=0, description="0 for player 1 (human), 1 for player 2 (agent).")
-
-    # The dice rolled for the current turn, if any.
-    dice: Optional[List[int]] = Field(default=None, description="The rolled dice for the current turn.")
-
-    # The target score to win the match.
-    match_length: int = Field(default=1, description="Length of the match in points.")
-
-    # Current score of the match.
-    score: List[int] = Field(default_factory=lambda: [0, 0], description="Current score of the match: index 0 is player 1, index 1 is player 2.")
-
-    # Whether the game has concluded.
-    game_over: bool = Field(default=False, description="True if the game has ended, False otherwise.")
-
-    # The index of the winning player (0 for human, 1 for agent).
-    winner: Optional[int] = Field(default=None, description="The winning player index, or None if the game is not over.")
-
-    @classmethod
-    def initial_state(cls, match_length: int = 1):
-        """
-        Creates and returns a new GameState instance with the standard initial backgammon setup.
-
-        Args:
-            match_length (int): The number of points required to win the match.
-
-        Returns:
-            GameState: The newly initialized game state.
-        """
-        # The default_factory already provides the standard starting position.
-        # Player 1 (human) uses positive numbers, starts at 24 and moves to 1.
-        # Player 2 (gnubg) uses negative numbers, starts at 1 and moves to 24.
-
-        # Point 24: 2 checkers for Player 1
-        # Point 13: 5 checkers for Player 1
-        # Point 8: 3 checkers for Player 1
-        # Point 6: 5 checkers for Player 1
-
-        # Point 1: 2 checkers for Player 2
-        # Point 12: 5 checkers for Player 2
-        # Point 17: 3 checkers for Player 2
-        # Point 19: 5 checkers for Player 2
-
-        # To match standard representation:
-        # index 0 is point 1
-        # index 23 is point 24
-        board = [0] * 24
-
-        # Set up Player 2 (gnubg) using negative values
-        board[0] = -2   # point 1
-        board[11] = -5  # point 12
-        board[16] = -3  # point 17
-        board[18] = -5  # point 19
-
-        # Set up Player 1 (human) using positive values
-        board[23] = 2   # point 24
-        board[12] = 5   # point 13
-        board[7] = 3    # point 8
-        board[5] = 5    # point 6
-
-        return cls(board=board, match_length=match_length)
+    log_cube = get_int(0, 4)
+    cube_owner_raw = get_int(4, 2)
+    player_on_roll = get_int(6, 1)
+    game_state = get_int(8, 3)
+    turn = get_int(11, 1)
+    dice1 = get_int(15, 3)
+    dice2 = get_int(18, 3)
+    match_length = get_int(21, 15)
+    p0_score = get_int(36, 15)
+    p1_score = get_int(51, 15)
+    
+    dice = None
+    if dice1 > 0 and dice2 > 0:
+        dice = [dice1, dice2]
+        
+    game_over = game_state > 1
+        
+    return {
+        "cube": 1 << log_cube if log_cube > 0 else 1,
+        "cube_owner": cube_owner_raw if cube_owner_raw < 3 else -1,
+        "turn": turn,
+        "player_on_roll": player_on_roll,
+        "dice": dice,
+        "match_length": match_length,
+        "score": [p0_score, p1_score],
+        "game_over": game_over
+    }

@@ -56,57 +56,97 @@ Frontend (Next.js)  ──HTTPS──▶  Game Server (FastAPI)  ──subproces
 | Smart contracts | Solidity 0.8.24, Hardhat 2, evmVersion cancun |
 | Blockchain | 0G Chain testnet (EVM-compatible, chainId 16602) |
 | Decentralised storage | 0G Storage |
-| Package management | uv (Python), npm (Node) |
+| Package management | uv (Python), pnpm workspace (Node) |
 
 ### Claude Skills Used
 
-This project was built with [Claude Code](https://claude.ai/code) using the following skills:
+This project was built with [Claude Code](https://claude.ai/code).
 
-| Skill | When used |
+| Skill | What it did |
 |---|---|
-| `/init` | Generated `CLAUDE.md` so future Claude sessions understand the repo without re-deriving the architecture |
-| `/fewer-permission-prompts` | Scanned session transcripts and added common commands to the project allowlist, reducing approval prompts during development |
-| `/security-review` | (Phase 2) Security review of `EloMath.sol`, `AgentRegistry.sol`, and `MatchRegistry.sol` before testnet deploy |
-| `/review` | (Phase 3+) PR reviews for the gnubg wrapper, wagmi integration, and contract interaction code |
-| `/simplify` | (Phase 1) Cleaned up gnubg External Player protocol parsing code |
+| `/init` | Generated `CONTEXT.md` so future Claude sessions know the architecture, commands, and conventions without re-deriving them |
+| `/fewer-permission-prompts` | Scanned session transcripts and added common read-only commands to the project allowlist |
 
 ---
 
-## Local Setup
+## Running Locally
 
 ### Prerequisites
 
 - Python 3.12+, [uv](https://github.com/astral-sh/uv)
-- Node 20+, npm
+- Node 20+, [pnpm](https://pnpm.io)
 - `gnubg` — `sudo apt install gnubg`
 
-### Server
+### Mental model
+
+The contracts live on a chain. **They are not a process you run** — you deploy them once and they exist forever at fixed addresses. The two long-running processes are the **game server** (FastAPI + gnubg) and the **frontend** (Next.js).
+
+You can run against either of two chains:
+
+| Mode | Chain | When |
+|---|---|---|
+| **Testnet** | 0G testnet (chainId 16602) | Demo, recording, submission |
+| **Local dev** | Hardhat localhost (chainId 31337) | Fast iteration; state resets each restart |
+
+### One-time setup
 
 ```bash
-cd server
-cp .env.example .env   # fill in contract addresses after Phase 2 deploy
-uv run uvicorn app.main:app --reload
+git clone <repo> && cd chaingammon
+pnpm install              # installs frontend + contracts (workspace)
+cd server && uv sync && cd ..
 
-# To run tests
-uv run pytest
+cp server/.env.example server/.env
+cp contracts/.env.example contracts/.env
+cp frontend/.env.example frontend/.env.local
 ```
 
-### Contracts
+Add `DEPLOYER_PRIVATE_KEY=0x...` to `contracts/.env`. The deployer wallet needs testnet 0G tokens (faucet: https://build.0g.ai). The `.env` files are gitignored.
+
+### Mode A — testnet (real demo)
+
+Two terminals after a one-time deploy.
 
 ```bash
-cd contracts
-cp .env.example .env   # add DEPLOYER_PRIVATE_KEY
-pnpm exec hardhat compile
-pnpm exec hardhat test
-pnpm exec hardhat run script/deploy.js --network 0g-testnet
+# one-time, when contracts change
+pnpm contracts:test                        # 32 hardhat tests
+pnpm contracts:deploy                      # writes contracts/deployments/0g-testnet.json
+# then copy MatchRegistry + AgentRegistry addresses from that JSON into
+# server/.env and frontend/.env.local (NEXT_PUBLIC_*)
+
+# terminal 1: game server
+cd server && uv run uvicorn app.main:app --reload
+
+# terminal 2: frontend
+pnpm frontend:dev
 ```
 
-### Frontend
+### Mode B — local dev (fast iteration)
+
+Three terminals.
 
 ```bash
-cd frontend
-cp .env.example .env.local   # add contract addresses + API URL
-pnpm dev
+# terminal 1: local chain
+cd contracts && pnpm exec hardhat node
+
+# terminal 2: deploy to localhost (re-run after each chain restart)
+cd contracts && pnpm exec hardhat run script/deploy.js --network localhost
+# copy resulting addresses from contracts/deployments/localhost.json
+# into server/.env and frontend/.env.local
+cd ../server && uv run uvicorn app.main:app --reload
+
+# terminal 3: frontend
+pnpm frontend:dev
+```
+
+### Test commands
+
+Run these in a **new, separate terminal** from the project root (not in the terminals running the dev servers).
+
+```bash
+pnpm test                  # all tests: server (pytest) + contracts (hardhat) + frontend (build)
+pnpm contracts:test        # 32 hardhat tests (EloMath, MatchRegistry, AgentRegistry, scaffold)
+pnpm server:test           # pytest scaffold tests
+pnpm frontend:test         # next build (production correctness check)
 ```
 
 ---
@@ -120,7 +160,7 @@ pnpm dev
 | Explorer | https://chainscan-galileo.0g.ai |
 | Faucet | https://build.0g.ai |
 
-Contract addresses will be populated here after Phase 2 deployment.
+After deploy, contract addresses live in `contracts/deployments/0g-testnet.json` and need to be copied into `server/.env` and `frontend/.env.local`.
 
 ---
 
@@ -135,10 +175,11 @@ Contract addresses will be populated here after Phase 2 deployment.
 
 ## Submission Checklist
 
-- [ ] Public GitHub repo
-- [ ] README with pitch, demo link, live URL
+- [x] Public GitHub repo
+- [x] Smart contracts written and tested (32 hardhat tests passing)
+- [ ] Contracts deployed to 0G testnet with explorer links
+- [ ] iNFT seed agent minted on 0G Chain
+- [x] gnubg wrapper service (Phase 1)
+- [ ] Frontend with wallet connect and game flow (Phase 3)
 - [ ] Demo video < 3 min
-- [ ] Deployed contracts with explorer links
-- [ ] Architecture diagram
-- [ ] At least one working seed agent (gnubg)
-- [ ] iNFT minted on 0G Chain
+- [ ] README with pitch, demo link, live URL
