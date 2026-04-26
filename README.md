@@ -93,9 +93,9 @@ uv run uvicorn app.main:app --reload
 ```bash
 cd contracts
 cp .env.example .env   # add DEPLOYER_PRIVATE_KEY
-npx hardhat compile
-npx hardhat test
-npx hardhat run script/deploy.js --network 0g-testnet
+pnpm exec hardhat compile
+pnpm exec hardhat test
+pnpm exec hardhat run script/deploy.js --network 0g-testnet
 ```
 
 ### Frontend
@@ -103,7 +103,7 @@ npx hardhat run script/deploy.js --network 0g-testnet
 ```bash
 cd frontend
 cp .env.example .env.local   # add contract addresses + API URL
-npm run dev
+pnpm dev
 ```
 
 ---

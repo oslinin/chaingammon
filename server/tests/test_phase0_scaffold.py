@@ -100,7 +100,7 @@ def test_frontend_env_example_has_api_url():
 
 def test_hardhat_compiles():
     result = subprocess.run(
-        ["npx", "hardhat", "compile"],
+        ["pnpm", "exec", "hardhat", "compile"],
         cwd=CONTRACTS,
         capture_output=True,
         text=True,

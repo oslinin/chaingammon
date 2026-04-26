@@ -54,29 +54,29 @@ uv add <package>
 
 ```bash
 # Compile contracts (evmVersion: cancun, optimizer on)
-npx hardhat compile
+pnpm exec hardhat compile
 
 # Run tests
-npx hardhat test
+pnpm exec hardhat test
 
 # Run a single test file
-npx hardhat test test/EloMath.test.js
+pnpm exec hardhat test test/EloMath.test.js
 
 # Deploy to 0G testnet (requires DEPLOYER_PRIVATE_KEY + RPC_URL in .env)
-npx hardhat run script/deploy.js --network 0g-testnet
+pnpm exec hardhat run script/deploy.js --network 0g-testnet
 ```
 
 ### frontend/ (Next.js 16, wagmi v3, viem v2)
 
 ```bash
 # Dev server
-npm run dev
+pnpm dev
 
 # Production build
-npm run build
+pnpm build
 
 # Lint
-npm run lint
+pnpm lint
 ```
 
 > **Important:** This Next.js version has breaking changes from prior versions. Read `node_modules/next/dist/docs/` before writing frontend code and heed deprecation notices (see `frontend/AGENTS.md`).

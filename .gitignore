@@ -18,6 +18,7 @@ node_modules/
 .next/
 out/
 build/
+.pnpm-store/
 
 # Hardhat
 contracts/artifacts/
