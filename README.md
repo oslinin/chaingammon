@@ -86,6 +86,9 @@ This project was built with [Claude Code](https://claude.ai/code) using the foll
 cd server
 cp .env.example .env   # fill in contract addresses after Phase 2 deploy
 uv run uvicorn app.main:app --reload
+
+# To run tests
+uv run pytest
 ```
 
 ### Contracts

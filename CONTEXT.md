@@ -6,6 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Chaingammon is a permissionless backgammon ecosystem for ETHGlobal Open Agents (0G track, deadline May 6 2026). The core primitive: a gnubg-powered AI agent minted as an iNFT on 0G Chain, playing humans and earning on-chain ELO. See `plan.md` for the full phased build plan — work through phases in order and ask the owner before deviating from scope.
 
+**Important Rule:** After any development of any phase, the `README.md` should be updated with the commands to run the latest code, including deployments and tests.
+
 ## Architecture
 
 ```
