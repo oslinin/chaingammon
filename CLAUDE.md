@@ -112,6 +112,21 @@ Copy `.env.example` to `.env` in each sub-project before running locally. Never 
 
 gnubg is driven via its socket-based External Player interface. Install with `sudo apt install gnubg`. The spec lives at the GNU Backgammon manual (search "External Player Interface"). `gnubg_client.py` manages the subprocess; do not bypass it to call gnubg directly.
 
+## Test-Driven Development
+
+This project follows TDD. For every phase:
+
+1. **Write tests first** that describe the phase's "done when" criteria before writing any implementation code.
+2. **Run tests** — they must fail (red) before you write the implementation.
+3. **Implement** the minimum code to make tests pass (green).
+4. **Update `log.md`** — append the phase, commit hash, and test results after each phase lands.
+
+Test locations:
+- `server/tests/test_phase{N}_*.py` — pytest, run with `uv run pytest tests/test_phase{N}_*.py -v`
+- `contracts/test/*.test.js` — Hardhat/Mocha, run with `npx hardhat test test/*.test.js`
+
+The Phase 0 scaffold tests (`test_phase0_scaffold.py`, `scaffold.test.js`) serve as the baseline. Each later phase adds its own test file. Never delete or weaken existing tests.
+
 ## Out of Scope (do not implement without asking)
 
 Betting/prediction markets, ELO derivative tokens, agent-vs-agent matches, VRF/commit-reveal dice, anti-cheat for human ratings, mainnet deployment.
