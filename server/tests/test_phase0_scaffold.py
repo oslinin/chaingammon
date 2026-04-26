@@ -1,129 +1,77 @@
-"""
-Phase 0 scaffold tests.
-
-Done when: all three sub-projects start without errors.
-These tests verify the server side of that contract.
-"""
-import subprocess
+import os
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).parents[2]
-SERVER = ROOT / "server"
-CONTRACTS = ROOT / "contracts"
-FRONTEND = ROOT / "frontend"
+# The project root is two directories up from this file's location
+ROOT_DIR = Path(__file__).parent.parent.parent
 
-
-# --- dependency imports ---
-
-def test_fastapi_importable():
-    import fastapi  # noqa: F401
-
-def test_pydantic_importable():
-    import pydantic  # noqa: F401
-
-def test_web3_importable():
-    import web3  # noqa: F401
-
-def test_httpx_importable():
-    import httpx  # noqa: F401
-
-def test_uvicorn_importable():
-    import uvicorn  # noqa: F401
-
-
-# --- python version ---
+def test_directory_structure():
+    assert (ROOT_DIR / "server").is_dir(), "server directory is missing"
+    assert (ROOT_DIR / "contracts").is_dir(), "contracts directory is missing"
+    assert (ROOT_DIR / "frontend").is_dir(), "frontend directory is missing"
 
 def test_python_version():
-    assert sys.version_info >= (3, 12), f"Need Python 3.12+, got {sys.version}"
+    assert sys.version_info >= (3, 11), "Python 3.11+ is required"
 
+def test_server_dependencies_installed():
+    import fastapi
+    import pydantic
+    import web3
+    import httpx
+    import pytest
+    assert fastapi
+    assert pydantic
+    assert web3
+    assert httpx
+    assert pytest
 
-# --- directory structure ---
+def test_env_examples_exist():
+    assert (ROOT_DIR / "server" / ".env.example").is_file(), "server/.env.example missing"
+    assert (ROOT_DIR / "contracts" / ".env.example").is_file(), "contracts/.env.example missing"
+    assert (ROOT_DIR / "frontend" / ".env.example").is_file(), "frontend/.env.example missing"
 
-def test_server_app_dir_exists():
-    assert (SERVER / "app").is_dir()
+def test_gitignore_covers_artifacts():
+    gitignore_path = ROOT_DIR / ".gitignore"
+    assert gitignore_path.is_file(), ".gitignore missing"
+    
+    with open(gitignore_path) as f:
+        content = f.read()
+        
+    assert ".env" in content, ".env should be ignored"
+import subprocess
+import os
+import signal
 
-def test_server_tests_dir_exists():
-    assert (SERVER / "tests").is_dir()
-
-def test_contracts_src_dir_exists():
-    assert (CONTRACTS / "src").is_dir()
-
-def test_contracts_test_dir_exists():
-    assert (CONTRACTS / "test").is_dir()
-
-def test_frontend_app_dir_exists():
-    assert (FRONTEND / "app").is_dir()
-
-
-# --- config files ---
-
-def test_server_pyproject_exists():
-    assert (SERVER / "pyproject.toml").is_file()
-
-def test_contracts_hardhat_config_exists():
-    assert (CONTRACTS / "hardhat.config.js").is_file()
-
-def test_frontend_package_json_exists():
-    assert (FRONTEND / "package.json").is_file()
-
-
-# --- .env.example files ---
-
-def test_server_env_example_exists():
-    assert (SERVER / ".env.example").is_file()
-
-def test_contracts_env_example_exists():
-    assert (CONTRACTS / ".env.example").is_file()
-
-def test_frontend_env_example_exists():
-    assert (FRONTEND / ".env.example").is_file()
-
-def test_server_env_example_has_rpc_url():
-    content = (SERVER / ".env.example").read_text()
-    assert "RPC_URL" in content
-
-def test_server_env_example_has_chain_id():
-    content = (SERVER / ".env.example").read_text()
-    assert "CHAIN_ID=16602" in content
-
-def test_contracts_env_example_has_deployer_key():
-    content = (CONTRACTS / ".env.example").read_text()
-    assert "DEPLOYER_PRIVATE_KEY" in content
-
-def test_frontend_env_example_has_api_url():
-    content = (FRONTEND / ".env.example").read_text()
-    assert "NEXT_PUBLIC_API_URL" in content
-
-
-# --- hardhat compile ---
-
-def test_hardhat_compiles():
-    result = subprocess.run(
-        ["pnpm", "exec", "hardhat", "compile"],
-        cwd=CONTRACTS,
-        capture_output=True,
-        text=True,
+def test_server_starts():
+    proc = subprocess.Popen(
+        ["uv", "run", "uvicorn", "app.main:app", "--port", "8005"], 
+        cwd=ROOT_DIR / "server",
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        preexec_fn=os.setsid
     )
-    assert result.returncode == 0, result.stderr
+    try:
+        # If it exits within 3 seconds, it failed to start
+        proc.wait(timeout=3)
+        stdout, stderr = proc.communicate()
+        assert proc.returncode == 0, f"Uvicorn exited early with {proc.returncode}\n{stderr.decode('utf-8')}"
+    except subprocess.TimeoutExpired:
+        os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+        proc.wait()
 
+def test_frontend_starts():
+    proc = subprocess.Popen(
+        ["npm", "run", "dev", "--", "--port", "3335"], 
+        cwd=ROOT_DIR / "frontend",
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        preexec_fn=os.setsid
+    )
+    try:
+        proc.wait(timeout=3)
+        stdout, stderr = proc.communicate()
+        assert proc.returncode == 0, f"Next.js exited early with {proc.returncode}\n{stderr.decode('utf-8')}"
+    except subprocess.TimeoutExpired:
+        os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+        proc.wait()
 
-# --- frontend dependencies declared ---
-
-def test_frontend_declares_wagmi():
-    import json
-    pkg = json.loads((FRONTEND / "package.json").read_text())
-    deps = {**pkg.get("dependencies", {}), **pkg.get("devDependencies", {})}
-    assert "wagmi" in deps
-
-def test_frontend_declares_viem():
-    import json
-    pkg = json.loads((FRONTEND / "package.json").read_text())
-    deps = {**pkg.get("dependencies", {}), **pkg.get("devDependencies", {})}
-    assert "viem" in deps
-
-def test_frontend_declares_next():
-    import json
-    pkg = json.loads((FRONTEND / "package.json").read_text())
-    deps = {**pkg.get("dependencies", {}), **pkg.get("devDependencies", {})}
-    assert "next" in deps

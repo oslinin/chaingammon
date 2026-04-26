@@ -1,0 +1,15 @@
+{
+  "name": "chaingammon",
+  "private": true,
+  "description": "Monorepo for the Chaingammon project, including server, contracts, and frontend components.",
+  "scripts": {
+    "contracts:compile": "pnpm --filter contracts exec hardhat compile",
+    "contracts:test": "pnpm --filter contracts exec hardhat test",
+    "contracts:deploy": "pnpm --filter contracts exec hardhat run script/deploy.js --network 0g-testnet",
+    "frontend:dev": "pnpm --filter frontend dev",
+    "frontend:build": "pnpm --filter frontend build",
+    "frontend:test": "pnpm --filter frontend test",
+    "server:test": "cd server && uv run pytest tests/",
+    "test": "pnpm server:test && pnpm --filter contracts test && pnpm --filter frontend test"
+  }
+}
