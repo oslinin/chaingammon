@@ -125,7 +125,7 @@ def slide_title(prs):
     txt(s, "CHAINGAMMON", Inches(0.6), Inches(1.2), Inches(8), Inches(1.2),
         size=Pt(54), bold=True, color=WHITE)
 
-    txt(s, "An open protocol for portable backgammon reputation",
+    txt(s, "5,000 years of strategy. Finally, a permanent record.",
         Inches(0.6), Inches(2.5), Inches(8), Inches(0.8),
         size=Pt(22), color=ACCENT2)
 
@@ -225,7 +225,7 @@ def slide_market(prs):
 
     pm_rows = [
         ("Polymarket",      "Chaingammon"),
-        ("Centralised prediction\nmarkets (PredictIt)", "Centralised game ratings\n(Backgammon Galaxy, Chess.com)"),
+        ("Centralised prediction\nmarkets (PredictIt)", "Decentralised game ratings\n(on-chain ELO, ENS subnames)"),
         ("Opaque odds set\nby operators",                "ELO computed on-chain,\nverifiable by anyone"),
         ("Permissioned who can\ncreate a market",        "Permissionless: any platform\ncan read ENS text records"),
         ("Real $ at stake\naligns accuracy",             "Real match history on-chain\naligns trust"),
@@ -259,11 +259,11 @@ def slide_market(prs):
         size=Pt(16), bold=True, color=ACCENT2)
 
     why_bg = [
-        "Oldest recorded board game — 5,000+ year history, global player base",
-        "ELO is well-understood and already used on every major platform",
-        "gnubg: open-source world-class AI engine — a ready benchmark",
-        "Skill gap between humans and AI is measurable, auditable, and meaningful",
-        "Small, well-defined state space: every position is reproducible from dice + moves",
+        "One of humanity\u2019s oldest games — traced to ancient Mesopotamia, played continuously for 5,000 years across Persian, Roman, and Ottoman empires",
+        "Never needed a central authority to stay alive — until the internet put it inside platform silos",
+        "The rules haven\u2019t changed; the infrastructure should finally catch up",
+        "ELO already used on every platform — portable ratings are the natural next step",
+        "gnubg gives a world-class AI baseline: human vs. machine skill gaps are measurable and auditable",
     ]
     bullet_frame(s, why_bg, Inches(7.0), Inches(2.2), Inches(5.9), Inches(2.8),
                  size=Pt(13), color=WHITE)
@@ -299,7 +299,7 @@ def slide_solution(prs):
     cols = [
         ("🪪  Identity", "ENS subname\nalice.chaingammon.eth\ncarries ELO, match count,\nstyle URI, archive URI", ACCENT),
         ("🧠  Agent iNFT", "ERC-7857 iNFT on 0G Chain.\nEncrypted gnubg weights +\nlearned experience overlay,\nboth on 0G Storage.", ACCENT2),
-        ("⚖️  Settlement", "KeeperHub workflow:\nrecordMatch + ENS text\nrecords + overlay update +\nverifiable audit trail.", GOLD),
+        ("⚖️  Settlement", "Each result is cryptographically committed: the full move-by-move archive is hashed and tied permanently to an on-chain record. Your rating reflects every game you actually played.\nKeeperHub orchestrates: recordMatch \u2192 ENS update \u2192 overlay hash \u2192 public audit trail.", GOLD),
     ]
     for i, (title, body, col) in enumerate(cols):
         x = Inches(0.5 + i * 4.25)
