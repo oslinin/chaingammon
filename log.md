@@ -754,4 +754,44 @@ Smoke test:
 - `pnpm exec next build` — clean, all 5 routes (`/`, `/_not-found`, `/match`) prerender as static content; the match page is wholly client-rendered after hydration.
 - End-to-end against the local server: roll → move → opponent auto-plays → repeat → game-over banner. Wallet not yet wired into the match (no signing happens here in v1; that arrives with Phase 17 settlement).
 
-### Phase 15 onward — pending
+## Phase 15 — frontend ENS name resolution + display
+
+Goal: a connected wallet gets a real identity in the header — `alice.chaingammon.eth (1547)` — instead of the raw shortened address. If the wallet hasn't claimed a name yet, an inline "Claim name" form lets the user mint one without leaving the page.
+
+This is the first phase where the ENS framing actually shows up in the UI. The plumbing was in place since Phase 10 (registrar contract) and Phase 11 (server-side text records); now it surfaces to the user.
+
+Server endpoint:
+
+- **server/app/main.py** — `POST /subname/mint` (new). Body: `{label, owner_address}`. Calls `EnsClient.mint_subname` (Phase 11 client) which signs as `DEPLOYER_PRIVATE_KEY` (the registrar's `Ownable` owner). Returns `{label, node, tx_hash}`. The user never pays gas for the claim in v1; the server eats it. Empty / whitespace labels are rejected with HTTP 400; on-chain failure (e.g. `SubnameAlreadyExists`) bubbles back as HTTP 502 so the frontend can show the error inline.
+
+Frontend contracts wiring:
+
+- **frontend/app/contracts.ts** — adds `PLAYER_SUBNAME_REGISTRAR_ADDRESS` (read from `NEXT_PUBLIC_PLAYER_SUBNAME_REGISTRAR_ADDRESS`) and `PlayerSubnameRegistrarABI` (imported from the Hardhat artifact at `contracts/artifacts/src/PlayerSubnameRegistrar.sol/PlayerSubnameRegistrar.json`). All wagmi reads route through this single source of truth.
+
+Address → label lookup:
+
+- **frontend/app/useChaingammonName.ts** (new) — Client-side hook. The registrar doesn't have an on-chain reverse mapping (address → label) because that would double the storage cost per mint. Instead the hook walks the `SubnameMinted(string indexed labelHashed, string label, bytes32 indexed node, address indexed subnameOwner)` event log filtered by `subnameOwner = address`. The label sits in the unindexed event data, so it's readable straight off the log. If a wallet owns multiple subnames (shouldn't happen in v1 but possible), the most recent mint wins. Returns `{label, name, isLoading}` where `name = "<label>.chaingammon.eth"`.
+
+Profile (ELO) lookup:
+
+- **frontend/app/useChaingammonProfile.ts** (new) — uses wagmi's `useReadContract` twice: once for `parentNode()` (immutable, cached forever via `staleTime: Infinity`), once for `text(node, "elo")`. The namehash is computed locally with `keccak256(encodePacked(["bytes32","bytes32"], [parentNode, keccak256(label)]))` — no extra RPC call for `subnameNode(label)`. Returns `{elo, node, isLoading}`.
+
+Badge component:
+
+- **frontend/app/ProfileBadge.tsx** (new) — Client Component with three states:
+  - Lookup in flight → shows the shortened address (`0xabcd…1234`) so the header isn't blank.
+  - Subname found → `alice.chaingammon.eth (1547)`. The ELO comes from the registrar text record that Phase 11 writes after every match; if the player hasn't played yet, the parenthetical is omitted.
+  - No subname → shortened address plus a "Claim name" pill. Clicking opens an inline `<label>.chaingammon.eth` text input. Submitting POSTs to `/subname/mint`. On success the page reloads so every consumer of `useChaingammonName` re-runs its log scan and picks up the new mint.
+
+UI integration:
+
+- **frontend/app/ConnectButton.tsx** — replaces the inline shortened-address span with `<ProfileBadge address={address} />`. The chain-switch nudge and Disconnect button are unchanged.
+- **frontend/app/AgentCard.tsx** — strips the `ipfs://` (or any `<scheme>://`) prefix from `agentMetadata`, replaces `/` with `-`, and formats as `<cleanLabel>.chaingammon.eth` for visual parity with player names. For agent #1 (`ipfs://gnubg-default-placeholder`) this renders as `gnubg-default-placeholder.chaingammon.eth`. Falls back to `Agent #N` if the metadata is missing or too long (>60 chars) to be a clean label.
+
+Smoke test:
+
+- `pnpm exec next build` — clean build, all 5 routes (`/`, `/_not-found`, `/match`) prerender as static content; the badge and agents list hydrate client-side.
+- `next dev` SSR DOM contains "Chaingammon", "Connect wallet", "Available agents", and "chaingammon.eth" — the agent card already shows the ENS-style name on first paint because the registrar parent node is reachable via the public RPC during SSR.
+- Live mint flow needs a browser + wallet; not automated. Once a wallet claims a label, the header re-renders to show it after the page reloads.
+
+### Phase 16 onward — pending

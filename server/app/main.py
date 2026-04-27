@@ -234,6 +234,43 @@ def resign(game_id: str):
 # ---------------------------------------------------------------------------
 
 
+class MintSubnameRequest(BaseModel):
+    """Phase 15: claim a subname for a connected wallet.
+
+    `label` is the leftmost component (the `alice` in
+    `alice.chaingammon.eth`). `owner_address` is the wallet that will
+    own the subname (the wagmi-connected address from the frontend).
+    The server, as the registrar's `Ownable` owner, signs the
+    `mintSubname` transaction on the user's behalf — the user doesn't
+    need any 0G gas for this in v1.
+    """
+
+    label: str
+    owner_address: str
+
+
+class MintSubnameResponse(BaseModel):
+    label: str
+    node: str  # ENS namehash of `<label>.chaingammon.eth`
+    tx_hash: str
+
+
+@app.post("/subname/mint", response_model=MintSubnameResponse)
+def mint_subname(req: MintSubnameRequest):
+    if not req.label.strip():
+        raise HTTPException(status_code=400, detail="label cannot be empty")
+    try:
+        ens = EnsClient.from_env()
+    except EnsError as e:
+        raise HTTPException(status_code=500, detail=f"ens client misconfigured: {e}") from e
+    try:
+        tx_hash = ens.mint_subname(req.label, req.owner_address)
+        node = ens.subname_node(req.label)
+    except EnsError as e:
+        raise HTTPException(status_code=502, detail=f"mintSubname failed: {e}") from e
+    return MintSubnameResponse(label=req.label, node=node, tx_hash=tx_hash)
+
+
 class FinalizeRequest(BaseModel):
     """Identifies the participants so we can record the match on-chain.
 
