@@ -141,7 +141,7 @@ Full ERC-7857 transfer-with-reencryption-proof flow is out of scope for
 v1; we implement the data-hash *shape* that makes the iNFT story
 verifiable to other tools.
 
-Contract changes (**AgentRegistry.sol**):
+Contract changes (**[AgentRegistry.sol](contracts/src/AgentRegistry.sol)**):
 - Constructor: (matchRegistryAddress, initialBaseWeightsHash)
 - `mintAgent(to, metadataURI, tier)` — tier validated 0..3 at mint
 - `setBaseWeightsHash(bytes32)` — owner-only; lets Phase 8 publish the
@@ -153,10 +153,10 @@ Contract changes (**AgentRegistry.sol**):
 - New events: `AgentMinted` now carries tier; `OverlayUpdated`; `BaseWeightsHashSet`
 
 Deploy + verify:
-- **script/deploy.js** mints the seed agent at tier 2 (advanced) and
+- **[script/deploy.js](contracts/script/deploy.js)** mints the seed agent at tier 2 (advanced) and
   writes the AgentRegistry constructor args into
-  **deployments/0g-testnet.json** so **script/verify.js** can replay them.
-- **script/verify.js** reads `agentRegistryConstructorArgs` from the
+  **[deployments/0g-testnet.json](contracts/deployments/0g-testnet.json)** so **[script/verify.js](contracts/script/verify.js)** can replay them.
+- **[script/verify.js](contracts/script/verify.js)** reads `agentRegistryConstructorArgs` from the
   deployment JSON, falling back to the legacy single-arg form for older
   deployments.
 - Redeployed to 0G testnet:
@@ -164,16 +164,16 @@ Deploy + verify:
     AgentRegistry: 0xCb0a562fa9079184922754717BB3035C0F7A983E
   Both verified on chainscan-galileo. The Phase 4 contracts (0x9058... and
   0x025a...) are now stale.
-- **server/.env** and **frontend/.env.local** updated to point at the new
+- **[server/.env](server/.env)** and **[frontend/.env.local](frontend/.env.local)** updated to point at the new
   addresses (those files are gitignored).
 
 Tests:
-- **phase5_AgentRegistry_iNFT.test.js** (new): 14 cases covering
+- **[phase5_AgentRegistry_iNFT.test.js](contracts/test/phase5_AgentRegistry_iNFT.test.js)** (new): 14 cases covering
   `baseWeightsHash` get/set/auth, `tier` storage and validation at mint,
   initial `dataHashes` shape, `updateOverlayHash` semantics + auth +
   non-existent-agent guard, and divergence between two same-tier agents
   after independent matches.
-- **phase2_AgentRegistry.test.js**: existing 5 tests updated for the new
+- **[phase2_AgentRegistry.test.js](contracts/test/phase2_AgentRegistry.test.js)**: existing 5 tests updated for the new
   `mintAgent` signature (passes `tier`) and new constructor (passes
   `ZeroHash`). Behavior unchanged.
 
@@ -189,18 +189,18 @@ wraps the official `@0gfoundation/0g-ts-sdk` and exposes two stdin/stdout
 CLI scripts. The Python server shells out to them via `subprocess`.
 
 og-bridge layout:
-- **og-bridge/package.json** declares `@0gfoundation/0g-ts-sdk` + `ethers`
+- **[og-bridge/package.json](og-bridge/package.json)** declares `@0gfoundation/0g-ts-sdk` + `ethers`
   as deps and exposes the two scripts as bin entries.
-- **og-bridge/src/upload.mjs** — reads bytes from stdin, wraps them in
+- **[og-bridge/src/upload.mjs](og-bridge/src/upload.mjs)** — reads bytes from stdin, wraps them in
   the SDK's `MemData`, calls `Indexer.upload`, writes a single JSON line
   `{"rootHash": "0x…", "txHash": "0x…"}` to stdout. SDK progress logging
   is redirected to stderr so stdout stays parseable.
-- **og-bridge/src/download.mjs** — takes a `rootHash` arg, calls
+- **[og-bridge/src/download.mjs](og-bridge/src/download.mjs)** — takes a `rootHash` arg, calls
   `Indexer.downloadToBlob`, writes the raw bytes to stdout.
 - og-bridge is a workspace member alongside **contracts/** and
-  **frontend/** (added to **pnpm-workspace.yaml**).
+  **frontend/** (added to **[pnpm-workspace.yaml](pnpm-workspace.yaml)**).
 
-Python wrapper (**server/app/og_storage_client.py**):
+Python wrapper (**[server/app/og_storage_client.py](server/app/og_storage_client.py)**):
 - `put_blob(data: bytes) → UploadResult(root_hash, tx_hash)`
 - `get_blob(root_hash: str) → bytes`
 - Both spawn `node og-bridge/src/<script>.mjs` with the server's env so
@@ -212,11 +212,11 @@ Env additions (server/.env.example):
 - `OG_STORAGE_RPC=https://evmrpc-testnet.0g.ai`
 - `OG_STORAGE_INDEXER=https://indexer-storage-testnet-turbo.0g.ai`
 - `OG_STORAGE_PRIVATE_KEY=` (locally mirrors `DEPLOYER_PRIVATE_KEY` from
-  **contracts/.env** since the same wallet pays storage flow-tx fees;
+  **[contracts/.env](contracts/.env)** since the same wallet pays storage flow-tx fees;
   both .env files are gitignored)
 
 Tests:
-- **server/tests/test_phase6_og_storage.py** (new): a live round-trip test that
+- **[server/tests/test_phase6_og_storage.py](server/tests/test_phase6_og_storage.py)** (new): a live round-trip test that
   uploads 64 random bytes prefixed with a magic header, then downloads
   by `rootHash` and asserts byte-exact equality. Skipped automatically
   when `OG_STORAGE_PRIVATE_KEY` is unset, so CI without secrets stays
@@ -231,13 +231,13 @@ base weights) will both call `put_blob` / `get_blob` through this
 client.
 
 Also in this commit:
-- **README.md** — new "Agent Intelligence Model" section between How It
+- **[README.md](README.md)** — new "Agent Intelligence Model" section between How It
   Works and Architecture. Spells out the two-layer model (shared gnubg
   base on `dataHashes[0]`, per-agent overlay on `dataHashes[1]`) and
   answers "why not fine-tune gnubg's nets directly" — they're small
   feedforward MLPs, not transformer LLMs, so 0G's fine-tuning service
   (LLM-only, LoRA output) doesn't apply.
-- **.claudeignore** — heavy build/cache directories that Claude
+- **[.claudeignore](.claudeignore)** — heavy build/cache directories that Claude
   shouldn't waste context scanning (`node_modules/`, `.venv/`,
   `target/`, `.next/`, `contracts/artifacts/`, etc.).
 
@@ -247,7 +247,7 @@ End-of-game now does three things in one server-side flow: it builds
 a canonical match archive (a `GameRecord` envelope), uploads that
 archive to 0G Storage to get back a 32-byte Merkle `rootHash` (the
 content-addressed identifier 0G Storage uses for blobs), and calls
-`recordMatch` on **contracts/src/MatchRegistry.sol** with that
+`recordMatch` on **[contracts/src/MatchRegistry.sol](contracts/src/MatchRegistry.sol)** with that
 `rootHash` as the `gameRecordHash` field. The on-chain match record is
 now cryptographically tied to the off-chain archive: anyone can read
 `MatchRegistry.getMatch(id).gameRecordHash` and pull the canonical
@@ -255,7 +255,7 @@ replay from 0G Storage.
 
 New modules:
 
-- **server/app/game_record.py** — defines:
+- **[server/app/game_record.py](server/app/game_record.py)** — defines:
   - `PlayerRef` — one side of the match: either a human (wallet address)
     or an agent iNFT (token id, the ERC-7857 agent registry id).
   - `MoveEntry` / `CubeAction` — per-turn play and doubling-cube events.
@@ -272,7 +272,7 @@ New modules:
   - `build_from_state(state, ...)` — convenience constructor from a
     final-state `GameState`.
 
-- **server/app/chain_client.py** — `ChainClient`, a thin web3.py wrapper
+- **[server/app/chain_client.py](server/app/chain_client.py)** — `ChainClient`, a thin web3.py wrapper
   around MatchRegistry. v1 sends `recordMatch` from the deployer wallet
   (which owns the contract); Phase 18 will route this through a
   KeeperHub workflow instead. Methods:
@@ -286,12 +286,12 @@ New modules:
   - The MatchRegistry ABI is embedded as a Python list (only the
     surface we touch — recordMatch, getMatch, matchCount, agentElo,
     humanElo, MatchRecorded, EloUpdated, GameRecordStored). Keep in
-    sync with **contracts/src/MatchRegistry.sol** when that contract
+    sync with **[contracts/src/MatchRegistry.sol](contracts/src/MatchRegistry.sol)** when that contract
     changes.
 
 Server endpoint:
 
-- **server/app/main.py** — new `POST /games/{game_id}/finalize` that
+- **[server/app/main.py](server/app/main.py)** — new `POST /games/{game_id}/finalize` that
   takes `{winner_agent_id, winner_human_address, loser_agent_id,
   loser_human_address}`, validates the game has ended, builds the
   GameRecord, calls `put_blob` (Phase 6's 0G Storage upload), then
@@ -300,14 +300,14 @@ Server endpoint:
 
 Move-history tracking:
 
-- **server/app/main.py** also keeps a per-game `_move_history` dict.
+- **[server/app/main.py](server/app/main.py)** also keeps a per-game `_move_history` dict.
   `POST /games/{game_id}/move` and `POST /games/{game_id}/agent-move`
   capture turn + dice *before* the gnubg call (since dice get cleared
   after a successful move) and append a `MoveEntry(turn, dice, move,
   position_id_after)` after the call returns. `/finalize` passes that
   list into `build_from_state` so the GameRecord uploaded to 0G
   Storage carries the full play sequence.
-- **server/app/gnubg_client.py** — `get_agent_move` now surfaces
+- **[server/app/gnubg_client.py](server/app/gnubg_client.py)** — `get_agent_move` now surfaces
   `best_move` (the move string gnubg chose) on its return dict so
   the agent's checker actions are recordable. Auto-played positions
   return `best_move=None` and the server logs `"(auto-played)"`.
@@ -315,15 +315,15 @@ Move-history tracking:
   list in v1 because the doubling-cube flow isn't wired through any
   endpoint yet. That's a separate scope item, not a Phase 7 gap.
 
-Env additions (**server/.env.example**):
+Env additions (**[server/.env.example](server/.env.example)**):
 
 - `DEPLOYER_PRIVATE_KEY=` — server signs `recordMatch` as the contract
-  owner. Mirror the value from **contracts/.env** locally; both
+  owner. Mirror the value from **[contracts/.env](contracts/.env)** locally; both
   files are gitignored.
 
 Tests:
 
-- **server/tests/test_phase7_game_record_schema.py** (new): 15 fast
+- **[server/tests/test_phase7_game_record_schema.py](server/tests/test_phase7_game_record_schema.py)** (new): 15 fast
   unit tests pinning down the GameRecord schema and serializer. They
   cover `PlayerRef` validation (kind must be human or agent), JSON
   round-trip (serialize → parse → equality), serialization
@@ -335,7 +335,7 @@ Tests:
   coverage for `build_from_state`. No network — runs in ~130 ms.
   Uses Hardhat's well-known account #0 as a recognizable fake
   address for schema-only fields.
-- **server/tests/test_phase7_chain_client.py** (new): 9 fast unit
+- **[server/tests/test_phase7_chain_client.py](server/tests/test_phase7_chain_client.py)** (new): 9 fast unit
   tests for `ChainClient.record_match` and `from_env` with every
   web3 dependency mocked. Covers happy-path return values
   (matchId parsed from the MatchRecorded log, tx_hash gets a 0x
@@ -344,14 +344,14 @@ Tests:
   MatchRecorded event missing, game_record_hash without 0x prefix),
   and `from_env` behaviour (missing env, unreachable RPC, full
   construction). No network — runs in ~650 ms.
-- **server/tests/test_phase7_move_tracking.py** (new): 3 fast unit
+- **[server/tests/test_phase7_move_tracking.py](server/tests/test_phase7_move_tracking.py)** (new): 3 fast unit
   tests covering the runtime move-history wiring with `gnubg` and
   `_build_game_state` mocked. Asserts that `/games` initialises an
   empty history, that `/move` records a `MoveEntry` carrying
   pre-move turn/dice (since dice get cleared after the move), and
   that `/agent-move` records `gnubg`'s `best_move` string. No
   network — runs in ~1 s.
-- **server/tests/test_phase7_game_record.py** (new): a live
+- **[server/tests/test_phase7_game_record.py](server/tests/test_phase7_game_record.py)** (new): a live
   integration test that builds a synthetic finished GameRecord,
   uploads via `put_blob`, calls `chain.record_match`, then reads the
   match back on-chain and asserts `gameRecordHash` equals the
@@ -378,7 +378,7 @@ Notes:
 
 Also in this commit:
 
-- **README.md** — new "Match Archive on 0G Storage" section between
+- **[README.md](README.md)** — new "Match Archive on 0G Storage" section between
   "Agent Intelligence Model" and "Architecture". Explains *why* matches
   are archived off-chain (games are the substance, not just ELO),
   enumerates every field of the `GameRecord` envelope with what each
@@ -388,12 +388,12 @@ Also in this commit:
   `gameRecordHash`, and pull the canonical replay from 0G Storage —
   no login, no API key, no platform.
 - Repo cleanup: removed the obsolete root-level test scripts
-  **test_dance.py**, **test_pass.py**, **test_pos.py**, and
-  **test_startup.py**. They were exploratory gnubg / startup
+  **[test_dance.py](test_dance.py)**, **[test_pass.py](test_pass.py)**, **[test_pos.py](test_pos.py)**, and
+  **[test_startup.py](test_startup.py)**. They were exploratory gnubg / startup
   one-shots from before the Phase 0 scaffold; they had been deleted
   from the working tree long ago but the deletions had never been
   staged. Deletions land with Phase 7 to clean up `git status`.
-- **.claude/settings.json** — enabled the Anthropic-published
+- **[.claude/settings.json](.claude/settings.json)** — enabled the Anthropic-published
   `superpowers` and `code-review` plugins (`claude-plugins-official`)
   at project scope. `superpowers` ships brainstorming, subagent-driven
   development, systematic debugging, and red/green TDD cycle
@@ -405,9 +405,9 @@ Also in this commit:
 
 Every agent iNFT carries `dataHashes[0]` — a 32-byte pointer to the encrypted gnubg neural-network weights file on 0G Storage. Until now it was `bytes32(0)` (a placeholder set at mint). This phase uploads the real weights file once, encrypted, and pins the resulting Merkle `rootHash` (the content-addressed identifier 0G Storage uses for blobs) on AgentRegistry via `setBaseWeightsHash`. Every existing and future agent's `dataHashes[0]` now resolves to the same shared blob.
 
-What's "the real weights file"? gnubg ships a single neural-network weights file at **/usr/lib/gnubg/gnubg.wd** (~399 KB on Ubuntu). It's the *intelligence* the gnubg engine runs against; gnubg the binary is the *runtime*. We don't retrain it — see the README's Agent Intelligence Model section for why.
+What's "the real weights file"? gnubg ships a single neural-network weights file at **[/usr/lib/gnubg/gnubg.wd](/usr/lib/gnubg/gnubg.wd)** (~399 KB on Ubuntu). It's the *intelligence* the gnubg engine runs against; gnubg the binary is the *runtime*. We don't retrain it — see the README's Agent Intelligence Model section for why.
 
-New encryption helper (**server/app/weights.py**):
+New encryption helper (**[server/app/weights.py](server/app/weights.py)**):
 
 - AES-256-GCM with a server-held key (`BASE_WEIGHTS_ENCRYPTION_KEY` env var, 32 bytes hex).
   - v2 will switch to per-owner hybrid encryption so each iNFT owner can decrypt independently.
@@ -418,18 +418,18 @@ New encryption helper (**server/app/weights.py**):
 - `EncryptedWeights.to_bytes()` / `from_bytes()` — what gets uploaded to 0G Storage; round-trips deterministically.
 - `generate_key()` returns 32 random bytes; `load_key_from_env()` reads `BASE_WEIGHTS_ENCRYPTION_KEY` and decodes hex.
 
-One-time upload script (**server/scripts/upload_base_weights.py**):
+One-time upload script (**[server/scripts/upload_base_weights.py](server/scripts/upload_base_weights.py)**):
 
-- `--print-fresh-key` mode emits a new AES key on stdout (one line of hex) so you can save it to **server/.env** before running the upload.
+- `--print-fresh-key` mode emits a new AES key on stdout (one line of hex) so you can save it to **[server/.env](server/.env)** before running the upload.
 - Default mode does the full chain in order:
-  1. Read **/usr/lib/gnubg/gnubg.wd**.
+  1. Read **[/usr/lib/gnubg/gnubg.wd](/usr/lib/gnubg/gnubg.wd)**.
   2. Encrypt with `BASE_WEIGHTS_ENCRYPTION_KEY` from env.
   3. `put_blob` to 0G Storage (Phase 6's wrapper).
   4. Call `chain.set_base_weights_hash(rootHash)` on the deployed AgentRegistry.
   5. Verify the on-chain read matches the upload before exiting.
 - Idempotent — running again replaces the on-chain hash.
 
-ChainClient extensions (**server/app/chain_client.py**):
+ChainClient extensions (**[server/app/chain_client.py](server/app/chain_client.py)**):
 
 - New embedded `_AGENT_REGISTRY_ABI` covering `baseWeightsHash`, `setBaseWeightsHash`, `agentCount`, `tier`, `dataHashes`, and the `BaseWeightsHashSet` event.
 - Constructor now accepts an optional `agent_registry_address`; when set the client exposes:
@@ -439,13 +439,13 @@ ChainClient extensions (**server/app/chain_client.py**):
   - `agent_tier(agent_id)` — returns the immutable tier set at mint.
 - `from_env()` reads `AGENT_REGISTRY_ADDRESS` if present.
 
-Deploy script update (**contracts/script/deploy.js**):
+Deploy script update (**[contracts/script/deploy.js](contracts/script/deploy.js)**):
 
 - New `INITIAL_BASE_WEIGHTS_HASH` constant defaults to the 0G testnet blob hash produced by this phase's upload script (`0x989ba07766cc35aa0011cf3f764831d9d1a7e11495db78c310d764b4478409ad`).
 - Override per-deploy via the `INITIAL_BASE_WEIGHTS_HASH` env var. Pass `0x` + 64 zeros on a fresh network and call `setBaseWeightsHash` later.
 - Future deploys (e.g. a v2 redeploy) automatically inherit the pinned hash without a follow-up tx.
 
-Env additions (**server/.env.example**):
+Env additions (**[server/.env.example](server/.env.example)**):
 
 - `BASE_WEIGHTS_ENCRYPTION_KEY=` — 32 bytes hex; the AES-256 key for the weights blob. Anyone with this key can decrypt the blob from 0G Storage; treat it like the deployer key.
 
@@ -457,7 +457,7 @@ Live on 0G testnet:
 
 Tests:
 
-- **server/tests/test_phase8_weights.py** (new) — 11 fast unit tests. No network — runs in ~70 ms. Covers:
+- **[server/tests/test_phase8_weights.py](server/tests/test_phase8_weights.py)** (new) — 11 fast unit tests. No network — runs in ~70 ms. Covers:
   - AES-256-GCM round-trip on small payloads and on 400 KB realistic-size payloads.
   - Rejection of wrong key (GCM auth tag).
   - Rejection of tampered ciphertext.
@@ -465,7 +465,7 @@ Tests:
   - Envelope `to_bytes` / `from_bytes` round-trip.
   - Version byte (`0x01`) presence.
   - Rejection of unknown version bytes and truncated envelopes.
-- **server/tests/test_phase8_base_weights_integration.py** (new) — 2 live tests, skipped when env vars or the weights file aren't present:
+- **[server/tests/test_phase8_base_weights_integration.py](server/tests/test_phase8_base_weights_integration.py)** (new) — 2 live tests, skipped when env vars or the weights file aren't present:
   - `test_base_weights_hash_resolves_to_real_gnubg_weights` — read contract `baseWeightsHash` → `get_blob` from 0G Storage → decrypt → `assert plaintext == open("/usr/lib/gnubg/gnubg.wd").read()`.
   - `test_minted_agent_inherits_the_same_base_hash` — agent #1's `dataHashes[0]` should equal the contract-level `baseWeightsHash`. Confirms the shared-base model.
 - 47 server tests pass total: Phase 0 ×7 + Phase 6 ×1 + Phase 7 ×28 + Phase 8 ×11 unit + Phase 8 ×2 live. 38 fast unit tests run in <2 s combined; the live tests run in ~10 s on testnet.
@@ -473,16 +473,16 @@ Tests:
 
 Also in this commit:
 
-- **scripts/bootstrap-network.sh** (new) — one-shot orchestrator for a fresh-network bootstrap. Runs in order:
+- **[scripts/bootstrap-network.sh](scripts/bootstrap-network.sh)** (new) — one-shot orchestrator for a fresh-network bootstrap. Runs in order:
   1. `pnpm contracts:test`
-  2. `pnpm contracts:deploy` (writes **contracts/deployments/0g-testnet.json**)
-  3. Reads the freshly-deployed AgentRegistry/MatchRegistry addresses from that JSON, sets them as env overrides, and runs **server/scripts/upload_base_weights.py** so the encrypted weights blob is pinned to the new contract — works regardless of what's in **server/.env**.
+  2. `pnpm contracts:deploy` (writes **[contracts/deployments/0g-testnet.json](contracts/deployments/0g-testnet.json)**)
+  3. Reads the freshly-deployed AgentRegistry/MatchRegistry addresses from that JSON, sets them as env overrides, and runs **[server/scripts/upload_base_weights.py](server/scripts/upload_base_weights.py)** so the encrypted weights blob is pinned to the new contract — works regardless of what's in **[server/.env](server/.env)**.
   4. `pnpm contracts:verify`
-  5. Prints the new addresses for the user to copy into **server/.env** and **frontend/.env.local** (doesn't mutate user state).
-  Pre-flight checks fail fast with readable errors if `BASE_WEIGHTS_ENCRYPTION_KEY` isn't set in **server/.env** or `/usr/lib/gnubg/gnubg.wd` doesn't exist (with `apt install gnubg` / `brew install gnubg` hint). Solves the "default `INITIAL_BASE_WEIGHTS_HASH` ages out and points at a dead blob" failure mode for clean redeploys.
-- **server/scripts/upload_base_weights.py** — improved missing-weights error message to point at `apt install gnubg` / `brew install gnubg` (gnubg's weights file ships only inside the gnubg package, no separate download URL exists).
-- **README.md** — restructured "Mode A — testnet (real demo)" around the bootstrap script. The canonical fresh-network path is now `./scripts/bootstrap-network.sh`; sub-flows (redeploy contracts only, re-upload weights only, verify only) are documented as the breakdown for cases where you don't need the full bootstrap. Bootstrap section also explicitly mentions the gnubg install requirement (`apt install gnubg` / `brew install gnubg`) and explains there's no separate weights-file download URL — gnubg ships them inside its own package.
-- Repo cleanup: removed six exploratory print-only scripts at the **server/** root (**server/test_match_id.py**, **server/test_turn.py**, **server/test_sim.py**, **server/test_sim2.py**, **server/test_sim3.py**, **server/test_sim4.py**). Same pattern as the Phase 7 root-level cleanup — they had no `assert`s, weren't collected by `pnpm server:test` (which scopes to **server/tests/**), and just confused the layout because their names looked like real tests at a glance.
+  5. Prints the new addresses for the user to copy into **[server/.env](server/.env)** and **[frontend/.env.local](frontend/.env.local)** (doesn't mutate user state).
+  Pre-flight checks fail fast with readable errors if `BASE_WEIGHTS_ENCRYPTION_KEY` isn't set in **[server/.env](server/.env)** or `/usr/lib/gnubg/gnubg.wd` doesn't exist (with `apt install gnubg` / `brew install gnubg` hint). Solves the "default `INITIAL_BASE_WEIGHTS_HASH` ages out and points at a dead blob" failure mode for clean redeploys.
+- **[server/scripts/upload_base_weights.py](server/scripts/upload_base_weights.py)** — improved missing-weights error message to point at `apt install gnubg` / `brew install gnubg` (gnubg's weights file ships only inside the gnubg package, no separate download URL exists).
+- **[README.md](README.md)** — restructured "Mode A — testnet (real demo)" around the bootstrap script. The canonical fresh-network path is now `./scripts/bootstrap-network.sh`; sub-flows (redeploy contracts only, re-upload weights only, verify only) are documented as the breakdown for cases where you don't need the full bootstrap. Bootstrap section also explicitly mentions the gnubg install requirement (`apt install gnubg` / `brew install gnubg`) and explains there's no separate weights-file download URL — gnubg ships them inside its own package.
+- Repo cleanup: removed six exploratory print-only scripts at the **server/** root (**[server/test_match_id.py](server/test_match_id.py)**, **[server/test_turn.py](server/test_turn.py)**, **[server/test_sim.py](server/test_sim.py)**, **[server/test_sim2.py](server/test_sim2.py)**, **[server/test_sim3.py](server/test_sim3.py)**, **[server/test_sim4.py](server/test_sim4.py)**). Same pattern as the Phase 7 root-level cleanup — they had no `assert`s, weren't collected by `pnpm server:test` (which scopes to **server/tests/**), and just confused the layout because their names looked like real tests at a glance.
 
 ### Phase 9: agent experience overlay — iNFTs that learn
 
@@ -494,7 +494,7 @@ Why this design (and what it isn't):
 - **What it's NOT learning:** position evaluation (gnubg still does that — the network stays frozen), move legality, dice math, bear-off mechanics, opponent modeling, or anything requiring backprop. The overlay is a tendency tracker, not an RL policy.
 - The category list is hand-coded (~20 entries spanning opening style, point-building, bear-off timing, risk profile, game-phase tendencies, and reserved cube actions). v2 may extend it; v1 freezes it.
 
-New module (**server/app/agent_overlay.py**):
+New module (**[server/app/agent_overlay.py](server/app/agent_overlay.py)**):
 
 - `CATEGORIES` — canonical tuple of category names. Stable: changes invalidate every existing 0G Storage blob. Adding categories at the end is safe; old blobs round-trip with new entries zero-filled.
 - `Overlay` dataclass with `version`, `values: {category → [-1, 1]}`, `match_count`. Frozen, clipped at construction, validated against `CATEGORIES`.
@@ -509,13 +509,13 @@ New module (**server/app/agent_overlay.py**):
   5. Damping: `alpha = N / (N + match_count)`. Early matches move the overlay a lot; late matches barely shift it. Keeps the agent's learned identity stable instead of getting overwritten by one freak win at match 200.
   6. Clip to `[-1, 1]`. The overlay is a bias, not an unbounded score.
 
-ChainClient extensions (**server/app/chain_client.py**):
+ChainClient extensions (**[server/app/chain_client.py](server/app/chain_client.py)**):
 
 - New ABI entries: `updateOverlayHash`, `experienceVersion`, `matchCount` (per-agent), `OverlayUpdated` event.
 - `update_overlay_hash(agent_id, new_overlay_hash) → tx_hash` — owner-only setter on AgentRegistry. Phase 18 will route this through a KeeperHub workflow; for v1 the server signs directly.
 - `agent_match_count(id)` and `agent_experience_version(id)` — read-only views.
 
-Server endpoint (**server/app/main.py**):
+Server endpoint (**[server/app/main.py](server/app/main.py)**):
 
 - `/games/{id}/finalize` was already calling `recordMatch` (Phase 7). It now also runs the overlay update for every agent in the match:
   1. Fetch the agent's current overlay from 0G Storage via `dataHashes[1]` (or default to zero overlay if the iNFT still has `bytes32(0)`).
@@ -529,19 +529,19 @@ Runtime overlay biasing (`/agent-move` integration):
 
 The overlay isn't just stored — every agent move now actually consults it. gnubg never knows about the overlay; the bias is applied **outside** gnubg by re-ranking its candidate list:
 
-- **server/app/gnubg_client.py** — new `get_candidate_moves(pos_id, match_id) → list[{"move", "equity"}]` parses the *full* numbered list from gnubg's `hint` output (the existing `get_agent_move` only regex-extracted the top line). Empty list = no legal moves (e.g. dance from the bar).
-- **server/app/main.py** — `/agent-move` now:
+- **[server/app/gnubg_client.py](server/app/gnubg_client.py)** — new `get_candidate_moves(pos_id, match_id) → list[{"move", "equity"}]` parses the *full* numbered list from gnubg's `hint` output (the existing `get_agent_move` only regex-extracted the top line). Empty list = no legal moves (e.g. dance from the bar).
+- **[server/app/main.py](server/app/main.py)** — `/agent-move` now:
   1. Calls `gnubg.get_candidate_moves`.
   2. If empty → falls back to `gnubg.get_agent_move` (auto-play, nothing to bias).
   3. Otherwise → loads the agent's overlay (lazy-cached per `game_id`, one 0G Storage fetch per game), runs `apply_overlay`, picks the biased-top move, submits it via `gnubg.submit_move`.
   4. Records the chosen move in `_move_history` as before.
-- **server/app/main.py** also tracks per-game agent identity (`_game_agent_id`) so the overlay loader knows which iNFT to look up. `_game_overlays` is the per-game cache so agent play stays consistent within a game even if `/finalize` on a concurrent game updates the same agent's overlay on-chain.
+- **[server/app/main.py](server/app/main.py)** also tracks per-game agent identity (`_game_agent_id`) so the overlay loader knows which iNFT to look up. `_game_overlays` is the per-game cache so agent play stays consistent within a game even if `/finalize` on a concurrent game updates the same agent's overlay on-chain.
 - The cache returns a default zero overlay (vanilla gnubg play) for `agent_id == 0`, missing iNFT, missing AGENT_REGISTRY_ADDRESS, corrupted blob, or `dataHashes[1] == bytes32(0)`. A misconfigured chain client can never block play.
 
 Tests:
 
-- **server/tests/test_phase9_overlay_schema.py** (new) — 11 fast unit tests covering `CATEGORIES`, `Overlay.default()`, validation (rejects unknown / missing categories, non-negative match_count), serialization round-trip, determinism, valid-UTF8 JSON output, version-byte and malformed-JSON rejection, and value clipping at construction. ~70 ms.
-- **server/tests/test_phase9_overlay_update.py** (new) — 9 fast unit tests for the update rule:
+- **[server/tests/test_phase9_overlay_schema.py](server/tests/test_phase9_overlay_schema.py)** (new) — 11 fast unit tests covering `CATEGORIES`, `Overlay.default()`, validation (rejects unknown / missing categories, non-negative match_count), serialization round-trip, determinism, valid-UTF8 JSON output, version-byte and malformed-JSON rejection, and value clipping at construction. ~70 ms.
+- **[server/tests/test_phase9_overlay_update.py](server/tests/test_phase9_overlay_update.py)** (new) — 9 fast unit tests for the update rule:
   - Wins reinforce categories the agent leaned into; losses discourage them.
   - Categories with zero exposure are unchanged (so an unrelated bias doesn't drift).
   - `match_count` increments by exactly 1 per update.
@@ -550,22 +550,22 @@ Tests:
   - Convergence: an agent that always plays the same way and wins settles on a stable overlay (200-match tail spread < 0.05).
   - Exposure normalization: a 50-move match doesn't apply 50× more update than a 5-move one.
   - Empty move list produces no value changes (but still increments match_count).
-- **server/tests/test_phase9_overlay_classify_apply.py** (new) — 13 fast unit tests:
+- **[server/tests/test_phase9_overlay_classify_apply.py](server/tests/test_phase9_overlay_classify_apply.py)** (new) — 13 fast unit tests:
   - `classify_move` returns a score for every category, deterministic, distinguishes structurally-different moves.
   - Specific classifier hits: `build_5_point` for `"8/5 6/5"`, `bearoff_efficient` for `"6/off 5/off"`, `runs_back_checker` for `"24/22 24/20"`, `hits_blot` for `"13/8* 6/4"`. Unrelated categories stay at 0.
   - `apply_overlay` keystone property: a zero overlay picks gnubg's top equity (vanilla-gnubg fallback), a negative `build_5_point` bias demotes 5-point moves, a positive `runs_back_checker` bias picks the running move even when gnubg ranks it third.
   - Two agents with different overlays pick different moves on the same candidate set — the iNFT-divergence keystone.
-- **server/tests/test_phase9_overlay_integration.py** (new) — 2 live tests against 0G testnet (skipped without env):
+- **[server/tests/test_phase9_overlay_integration.py](server/tests/test_phase9_overlay_integration.py)** (new) — 2 live tests against 0G testnet (skipped without env):
   - `test_overlay_update_lands_on_chain_and_round_trips_through_0g_storage` — read agent #1's pre-state → run `update_overlay` → upload → call `update_overlay_hash` → assert `dataHashes[1]` equals the upload's rootHash, `dataHashes[0]` (base weights) is unchanged, `experienceVersion` bumped by 1, and the round-tripped overlay equals what we uploaded.
   - `test_two_consecutive_updates_produce_distinct_overlay_hashes` — two updates in a row produce different rootHashes; the iNFT's `dataHashes[1]` reflects the latest. This is the visible-history property: every match is a distinct `experienceVersion` with its own immutable archive.
-- **server/tests/test_phase9_agent_move_overlay.py** (new) — 6 fast wiring tests confirming the overlay actually flows into the runtime `/agent-move` pick. gnubg is mocked so the tests stay deterministic:
+- **[server/tests/test_phase9_agent_move_overlay.py](server/tests/test_phase9_agent_move_overlay.py)** (new) — 6 fast wiring tests confirming the overlay actually flows into the runtime `/agent-move` pick. gnubg is mocked so the tests stay deterministic:
   - `test_zero_overlay_picks_gnubg_top_equity_move` — fresh agent (no learned bias) plays vanilla gnubg.
   - `test_overlay_biased_for_back_checkers_picks_running_move` — heavy `runs_back_checker` bias promotes the running move past gnubg's top equity pick.
   - `test_two_agents_with_different_overlays_pick_different_moves` — same gnubg candidate set, two different overlays → two different submitted moves. The keystone iNFT-divergence property at the runtime layer.
   - `test_no_candidates_falls_back_to_get_agent_move` — empty candidate list (dance from the bar) auto-plays via the existing path; `submit_move` is never called.
   - `test_overlay_loaded_once_per_game` — subsequent moves reuse the cached overlay; no per-move 0G Storage fetch.
   - `test_create_game_records_agent_id` — `agent_id` from `NewGameRequest` is captured at game creation so the overlay loader knows which iNFT to look up.
-- **server/tests/test_phase7_move_tracking.py** (updated) — adds `mock_gnubg.get_candidate_moves.return_value = []` so the existing tests route through the auto-play fallback (which was the path they already exercised). No behavior change for those tests.
+- **[server/tests/test_phase7_move_tracking.py](server/tests/test_phase7_move_tracking.py)** (updated) — adds `mock_gnubg.get_candidate_moves.return_value = []` so the existing tests route through the auto-play fallback (which was the path they already exercised). No behavior change for those tests.
 - 90/90 Phase 0/6/7/8/9 server tests pass; 39 fast unit tests run with no network in ~3 s combined; the 2 live tests run in ~65 s on testnet.
 - Hardhat tests still green: 52/52, no contract changes in this phase.
 
@@ -579,7 +579,7 @@ Players (and AI agents) get a subname under `chaingammon.eth` — `alice.chainga
 
 Scope (honest): v1 is a **self-contained ENS-compatible registrar deployed on 0G testnet**, not wired into real ENS on Sepolia or Linea. We can't realistically own `chaingammon.eth` on a chain with a live ENS root inside the hackathon timeline. The contract's interface is ENS-shaped (namehash, text records, resolver semantics) so a v2 deployment can mirror to real ENS via a Durin-style L2 subname registrar without rewriting anything — the *contract* is portable, the *deployment target* is what changes.
 
-New contract (**contracts/src/PlayerSubnameRegistrar.sol**):
+New contract (**[contracts/src/PlayerSubnameRegistrar.sol](contracts/src/PlayerSubnameRegistrar.sol)**):
 
 - `parentNode` (immutable) — ENS namehash of the parent name (`chaingammon.eth`). Pinned at construction.
 - `subnameNode(label) → bytes32` — computes ENS-style namehash `keccak256(parentNode || keccak256(label))` so any ENS resolver can look subnames up by the same node.
@@ -592,7 +592,7 @@ New contract (**contracts/src/PlayerSubnameRegistrar.sol**):
   - Anyone else reverts with `NotAuthorized`.
 - `subnameCount` — running counter for diagnostics.
 
-Tests (**contracts/test/phase10_PlayerSubnameRegistrar.test.js**, new):
+Tests (**[contracts/test/phase10_PlayerSubnameRegistrar.test.js](contracts/test/phase10_PlayerSubnameRegistrar.test.js)**, new):
 
 21 hardhat tests, all green. Coverage:
 
@@ -617,21 +617,92 @@ Tests (**contracts/test/phase10_PlayerSubnameRegistrar.test.js**, new):
 
 Deploy + verify integration:
 
-- **contracts/script/deploy.js** — now also deploys `PlayerSubnameRegistrar(ENS_PARENT_NODE)` after the agent + match registries. `ENS_PARENT_NODE` defaults to the namehash of `chaingammon.eth` (computed in JS at deploy time); override via the `ENS_PARENT_NODE` env var if you've registered a different parent on a real-ENS chain. Constructor args recorded in `playerSubnameRegistrarConstructorArgs` in **contracts/deployments/0g-testnet.json** for `verify.js` to replay.
-- **contracts/script/verify.js** — verifies the new registrar with the right `parentNode` arg.
+- **[contracts/script/deploy.js](contracts/script/deploy.js)** — now also deploys `PlayerSubnameRegistrar(ENS_PARENT_NODE)` after the agent + match registries. `ENS_PARENT_NODE` defaults to the namehash of `chaingammon.eth` (computed in JS at deploy time); override via the `ENS_PARENT_NODE` env var if you've registered a different parent on a real-ENS chain. Constructor args recorded in `playerSubnameRegistrarConstructorArgs` in **[contracts/deployments/0g-testnet.json](contracts/deployments/0g-testnet.json)** for `verify.js` to replay.
+- **[contracts/script/verify.js](contracts/script/verify.js)** — verifies the new registrar with the right `parentNode` arg.
 - Smoke-tested against in-process Hardhat: all three contracts deploy, the registrar gets `parentNode` `0x543cb3ed47a1ed324d00f8245468ef208194cc298026553f9adc78fb17e41cec` (namehash of `chaingammon.eth`), and the deployments JSON round-trips through `verify.js` correctly.
 
 Live deploy deliberately deferred:
 
-The registrar is ready to go but isn't redeployed to 0G testnet in this commit. Running `pnpm contracts:deploy` would bump every contract address — including AgentRegistry — which would wipe agent #1's accumulated overlay state from Phase 9 (different contract, no history). The next time a fresh bootstrap is needed, **scripts/bootstrap-network.sh** will deploy the full set including this registrar; until then the new contract lives only as code + tests.
+The registrar is ready to go but isn't redeployed to 0G testnet in this commit. Running `pnpm contracts:deploy` would bump every contract address — including AgentRegistry — which would wipe agent #1's accumulated overlay state from Phase 9 (different contract, no history). The next time a fresh bootstrap is needed, **[scripts/bootstrap-network.sh](scripts/bootstrap-network.sh)** will deploy the full set including this registrar; until then the new contract lives only as code + tests.
 
 73/73 hardhat tests pass (52 prior + 21 new). No server changes in this phase — Phase 11 wires the server up to call `mintSubname` and `setText`.
 
 Also in this commit (carry-over working-tree changes that hadn't landed yet):
 
-- **ARCHITECTURE.md** (new) — full architecture document with Mermaid diagrams covering the player → server → 0G Storage / 0G Chain / KeeperHub data flow.
-- **chaingammon.pptx** + **scripts/make_deck.py** (new) — submission slide deck and the Python script that generated it.
-- **.claude/settings.json** — enabled the `telegram` plugin from `claude-plugins-official` alongside the existing `superpowers` and `code-review` plugins.
-- **.gitignore** — added `.~lock.*#` (LibreOffice editor lock files) so they stop appearing as untracked between commits.
+- **[ARCHITECTURE.md](ARCHITECTURE.md)** (new) — full architecture document with Mermaid diagrams covering the player → server → 0G Storage / 0G Chain / KeeperHub data flow.
+- **[chaingammon.pptx](chaingammon.pptx)** + **[scripts/make_deck.py](scripts/make_deck.py)** (new) — submission slide deck and the Python script that generated it.
+- **[.claude/settings.json](.claude/settings.json)** — enabled the `telegram` plugin from `claude-plugins-official` alongside the existing `superpowers` and `code-review` plugins.
+- **[.gitignore](.gitignore)** — added `.~lock.*#` (LibreOffice editor lock files) so they stop appearing as untracked between commits.
 
-### Phase 11 onward — pending
+## Phase 11: server-side ENS text record updates from /finalize
+
+After every match, push reputation text records to each player's `<label>.chaingammon.eth` subname so any third-party tool reading their ENS profile sees the latest ELO and a pointer to the latest match. ENS (Ethereum Name Service) subnames are the standard portable-identity primitive; `PlayerSubnameRegistrar` (Phase 10) issues them under `chaingammon.eth`. This phase wires the server to call `setText` on that contract after every finalized match.
+
+Deploy script (**[contracts/script/deploy_registrar.js](contracts/script/deploy_registrar.js)**, new):
+- Deploys only `PlayerSubnameRegistrar` and merges its address into **[contracts/deployments/0g-testnet.json](contracts/deployments/0g-testnet.json)** without touching `MatchRegistry` or `AgentRegistry` addresses — redeploying `AgentRegistry` would wipe agent #1's accumulated overlay state from Phase 9.
+- Same parent-node logic as `deploy.js`: namehash of `chaingammon.eth` by default; override via `ENS_PARENT_NODE`.
+
+Server ENS client (**[server/app/ens_client.py](server/app/ens_client.py)**, new):
+- `EnsClient` with embedded `PlayerSubnameRegistrar` ABI.
+- `subname_node(label)` — pure client-side ENS namehash (`keccak256(parentNode || keccak256(label))`); `parent_node` read once at construction so per-label hashing needs no RPC.
+- `set_text(node, key, value)` — owner-only write; signs and sends as `DEPLOYER_PRIVATE_KEY`.
+- `mint_subname(label, owner)` — owner-only write; not auto-called from `/finalize` (frontend drives the mint flow), but exposed here so a single client owns all registrar writes.
+- `text(node, key)`, `owner_of(node)` — view helpers used by the live integration test.
+- `from_env()` factory keyed off `RPC_URL`, `PLAYER_SUBNAME_REGISTRAR_ADDRESS`, `DEPLOYER_PRIVATE_KEY`.
+
+Wiring into /finalize (**[server/app/main.py](server/app/main.py)**, updated):
+- `FinalizeRequest` gains optional `winner_label` and `loser_label`.
+- After `recordMatch` + agent overlay updates, iterates each side; if a label is set, calls `set_text` for `elo` (read fresh from `MatchRegistry.humanElo` / `MatchRegistry.agentElo`) and `last_match_id` (the just-recorded matchId).
+- ENS push failure is non-fatal — the match is already on-chain — and surfaces as an `error` entry in `FinalizeResponse.ens_updates`.
+- v1 pushes `elo` and `last_match_id` only; `match_count` for human sides isn't trivially derivable on-chain and `style_uri`/`archive_uri` need per-player aggregator blobs not yet built — both deferred.
+
+Env files (**[server/.env.example](server/.env.example)**, updated):
+- Added `PLAYER_SUBNAME_REGISTRAR_ADDRESS=` (filled after `pnpm exec hardhat run script/deploy_registrar.js --network 0g-testnet`).
+
+Tests (server/tests/):
+- **[server/tests/test_phase11_ens_client.py](server/tests/test_phase11_ens_client.py)** (new, 10 tests):
+  - `subname_node` matches the Solidity formula bit-for-bit (validated against an `eth_utils.keccak`-derived reference value).
+  - `set_text` builds, signs, sends a tx; rejects unprefixed nodes; raises `EnsError` on revert.
+  - `text` view delegates to the contract.
+  - `from_env` raises on missing vars and on unreachable RPC; constructs successfully with mocked Web3.
+- **[server/tests/test_phase11_ens_live.py](server/tests/test_phase11_ens_live.py)** (new, 1 test):
+  - Round-trip against the live registrar: mint a random `test-<8-hex>` label, `set_text("elo", "1500")`, read back via `text(node, "elo")` and assert match. Random label keeps re-runs idempotent (the registrar reverts on `SubnameAlreadyExists`).
+  - Skip condition: `PLAYER_SUBNAME_REGISTRAR_ADDRESS` not set.
+
+101 server unit tests pass (91 prior + 10 new). The live integration test stays skipped until `PLAYER_SUBNAME_REGISTRAR_ADDRESS` is set.
+
+Also in this commit (carry-over working-tree changes that hadn't landed yet):
+- **[CONTEXT.md](CONTEXT.md)** (updated) — added "Structure" subsection to Commit Messages section with anatomy template, section-order rule, and file-path linking policy (bold-linked in log.md, bold-plain in commit messages).
+- **[log.md](log.md)** (updated) — converted all bold file paths to relative markdown hyperlinks (`**[path](path)**`) so they are clickable in VS Code preview and on GitHub.
+- **[plan.md](plan.md)** (updated) — KeeperHub redesign notes: two-phase commitment (`registerMatch` at game start + `settleMatch` at game end), four KeeperHub workflows, integrity argument.
+
+## Phase 12: frontend wallet connect to 0G testnet
+
+First real use of the wagmi scaffold: a user lands on `/`, sees "Connect wallet", clicks it, and gets their shortened address in the header. If they're on the wrong network, an amber "Switch to 0G testnet" pill appears and calls `switchChain` to request a network add via the injected provider. wagmi is the standard React hooks library for EVM wallets; 0G Galileo testnet (chainId `16602`) is the deployment target throughout this project.
+
+Wagmi config (**[frontend/app/wagmi.ts](frontend/app/wagmi.ts)**, replaces empty stub):
+- `defineChain` for 0G Galileo testnet — chainId `16602`, native currency `OG`, RPC from `NEXT_PUBLIC_OG_RPC_URL` with `https://evmrpc-testnet.0g.ai` fallback, explorer `https://chainscan-galileo.0g.ai`.
+- `createConfig` with one connector (`injected({ shimDisconnect: true })`) and `http()` transport; `ssr: true` because the App Router pre-renders on the server.
+- Module augmentation registers the config with `wagmi` so all hooks know our chain shape.
+
+Providers (**[frontend/app/providers.tsx](frontend/app/providers.tsx)**, replaces empty stub):
+- Client Component (`"use client"`); wraps the tree in `WagmiProvider` + `QueryClientProvider`.
+- `QueryClient` created with `useState(() => new QueryClient())` so React keeps the same instance across renders (otherwise the cache resets every render, defeating react-query's purpose).
+
+Layout + page:
+- **[frontend/app/layout.tsx](frontend/app/layout.tsx)** (updated) — wraps `{children}` with `<Providers>`; renames metadata to "Chaingammon" with the project tagline.
+- **[frontend/app/page.tsx](frontend/app/page.tsx)** (updated) — replaces boilerplate with a header (project title + `<ConnectButton />`) and a one-paragraph intro pointing at the ENS subname concept.
+
+Connect button (**[frontend/app/ConnectButton.tsx](frontend/app/ConnectButton.tsx)**, new):
+- Three states: no injected wallet → "Install MetaMask" link; wallet present, not connected → "Connect wallet" button (calls `connect({ connector })`); connected → shortened address (`0x1234…abcd`), chain-switch pill, Disconnect button.
+- Hooks: `useAccount`, `useChainId`, `useConnect`, `useDisconnect`, `useSwitchChain` from wagmi.
+
+Env files (**[frontend/.env.example](frontend/.env.example)**, updated):
+- Added `NEXT_PUBLIC_OG_RPC_URL` and `NEXT_PUBLIC_PLAYER_SUBNAME_REGISTRAR_ADDRESS=0xf260aE6b2958623fC4e865433201050DC2Ed1ccC` (Phase 11 deploy).
+
+Smoke test: `pnpm exec next build` passes (4 static routes). `curl http://localhost:3000/` returns 200 with `<title>Chaingammon</title>` and `<button>Connect wallet</button>` in the SSR-rendered DOM. Full wallet flow (MetaMask popup, signing) requires a browser — not automated.
+
+Also in this commit (carry-over working-tree changes that hadn't landed yet):
+- **[chaingammon.pptx](chaingammon.pptx)** + **[scripts/make_deck.py](scripts/make_deck.py)** (updated) — slide deck extended with ELO formula + betting mechanics slide, and three sponsor spotlight slides (ENS subname table, 0G Storage primitives, KeeperHub workflow pipeline).
+
+### Phase 13 onward — pending

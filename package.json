@@ -13,5 +13,6 @@
     "frontend:test": "pnpm --filter frontend test",
     "server:test": "cd server && uv run pytest tests/",
     "test": "pnpm server:test && pnpm --filter contracts test && pnpm --filter frontend test"
-  }
+  },
+  "devDependencies": {}
 }

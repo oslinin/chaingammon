@@ -171,15 +171,16 @@ kh billing usage                 # check free-tier limits
 | `contracts/src/PlayerSubnameRegistrar.sol` | ENS-shaped subname registrar (Phase 10). Issues `<label>.chaingammon.eth` subnames with text records (`elo`, `match_count`, `last_match_id`, `style_uri`, `archive_uri`). v1 is self-contained on 0G testnet; v2 mirrors to real ENS on Sepolia/Linea. |
 | `og-bridge/src/upload.mjs` | Node CLI: bytes via stdin → 0G Storage upload → JSON {rootHash, txHash} on stdout |
 | `og-bridge/src/download.mjs` | Node CLI: rootHash arg → bytes on stdout via 0G Storage |
-| `server/app/ens_client.py` | ENS subname text record updater |
+| `server/app/ens_client.py` | web3.py wrapper for `PlayerSubnameRegistrar` (Phase 11): `subname_node` (client-side namehash), `set_text`, `mint_subname`, `text`, `owner_of`. `/finalize` calls `set_text` with `elo` + `last_match_id` for each labelled side. |
 | `server/app/keeperhub_client.py` | KeeperHub workflow trigger + audit pull |
 | `contracts/src/EloMath.sol` | Fixed-point ELO formula — test extensively |
 | `contracts/src/MatchRegistry.sol` | Records matches with `gameRecordHash`, updates ELO |
 | `contracts/src/AgentRegistry.sol` | ERC-7857 iNFT registry (or ERC-721 fallback) |
 | `contracts/src/PlayerSubnameRegistrar.sol` | ENS subname issuance + text record control |
-| `frontend/app/wagmi.ts` | wagmi config with 0G testnet custom chain |
+| `frontend/app/wagmi.ts` | wagmi config (Phase 12): `defineChain` for 0G Galileo testnet (chainId 16602) + `createConfig` with `injected` connector. |
 | `frontend/app/contracts.ts` | ABI + address constants for deployed contracts |
-| `frontend/app/providers.tsx` | wagmi + react-query providers |
+| `frontend/app/providers.tsx` | Client Component wrapping `WagmiProvider` + `QueryClientProvider` (Phase 12). |
+| `frontend/app/ConnectButton.tsx` | Client Component (Phase 12): three-state connect button (no wallet / connect / connected with chain-switch nudge). |
 | `frontend/app/profile/[ensName]/page.tsx` | Player profile page (reads ENS text records) |
 | `frontend/app/match/[matchId]/page.tsx` | Match replay + audit trail |
 | `docs/keeperhub-feedback.md` | Required for KeeperHub bounty |
@@ -196,7 +197,7 @@ Required envs by phase:
 | 6+ | server/ | `OG_STORAGE_RPC`, `OG_STORAGE_INDEXER`, `OG_STORAGE_PRIVATE_KEY` (can mirror `DEPLOYER_PRIVATE_KEY` from contracts/.env locally) |
 | 7+ | server/ | `RPC_URL`, `MATCH_REGISTRY_ADDRESS`, `DEPLOYER_PRIVATE_KEY` (mirrored from contracts/.env), optional `AGENT_REGISTRY_ADDRESS` |
 | 8+ | server/ | `BASE_WEIGHTS_ENCRYPTION_KEY` — 32-byte hex, AES-256 key for the gnubg weights blob. Generate once with `uv run python scripts/upload_base_weights.py --print-fresh-key`. |
-| 11+ | server/ | `ENS_REGISTRAR_ADDRESS`, `ENS_PARENT_NAME=chaingammon.eth` |
+| 11+ | server/ | `PLAYER_SUBNAME_REGISTRAR_ADDRESS` (parent node is loaded from the contract; default at deploy time is namehash of `chaingammon.eth`, override with `ENS_PARENT_NODE` for the deploy script). |
 | 16+ | server/ | `KH_API_KEY` (or use `kh auth login`), `KEEPERHUB_WORKFLOW_ID` |
 | 12+ | frontend/ | `NEXT_PUBLIC_*` for contract addresses, RPC, API URL |
 
@@ -225,10 +226,62 @@ gnubg is driven via its socket-based External Player interface. Install with `su
 
 ## Commit Messages
 
+### Structure
+
+Every phase commit message follows this anatomy — keep each section brief but complete enough to read without opening the code:
+
+```
+Phase N: <one-line title — what changed, not how>
+
+<Opening paragraph: the goal and why it matters. One to three sentences.
+Define any sponsor, protocol, or project term that appears here for the
+first time. No bullet points — prose only.>
+
+<Component heading> (<file path>, new|updated):
+- <public surface, method, or behaviour — one bullet per item>
+  - <sub-detail, edge case, or constraint where needed>
+  - <another sub-detail>
+- <next item>
+
+<Repeat one block per major new file or component.>
+
+<Deployed contract address block — include only when a contract was
+deployed in this phase:>
+<ContractName> deployed to <network>:
+<0xADDRESS>
+
+Tests (<sub-project>/tests/):
+- <test_phaseN_topic.py> (new, N tests):
+  - <what the first group of tests covers>
+  - <what the second group covers>
+  - <skip condition, if any>
+- <test_phaseN_live.py> (new, N tests):
+  - <what the live test does end-to-end>
+  - <skip condition>
+
+<N> <sub-project> tests pass (<prior count> prior + <new count> new).
+```
+
+**Rules:**
+- **Header** — `Phase N: title`. Max 120 chars. The `chaingammon-commit-format` Claude skill enforces this.
+- **Brief** — the goal is a scannable record, not a tutorial. If a detail is obvious from the code, omit it; if it explains a non-obvious decision (why non-fatal, why deferred, why a specific address), keep it.
+- **New functionality first, tests last.** Sections appear in the order: goal paragraph → new files/components (each as a separate block) → deployed addresses → tests → test count summary.
+- **Sponsors and tools** — name each sponsor/tool (ENS, 0G Storage, KeeperHub, gnubg) the first time it appears in the message and give a one-clause definition if it isn't obvious from context.
+- **Deployed addresses** — include the full checksummed hex address for every contract deployed in the phase. Format: contract name on one line, address on the next.
+- **Tests** — list every new test file as a top-level bullet; list the individual test cases or logical groups as sublists beneath it. Include the skip condition for any test that is not always run.
+
+The Phase 11 commit message (in `log.md`) is the canonical example of this style.
+
+### Definitions and formatting
+
 Define every project-specific term, contract field, function name, or acronym **the first time it appears** in a commit message. A reader who has only read MISSION.md and the Solidity source should be able to follow the commit message without context. If a name comes from a standard or external system (e.g. ERC-7857, gnubg, 0G Storage), give a one-clause definition the first time it shows up. Examples — what the term means, what units, who sets it, default value — pick the framing that disambiguates fastest.
 
-**Markdown formatting in commit messages and other docs:**
-- **File paths** — bold and **always relative to the repo root** (`**server/tests/test_phase6_og_storage.py**`, `**contracts/src/AgentRegistry.sol**`, `**og-bridge/src/upload.mjs**`). Never abbreviate to `tests/...` or `src/...` — the reader can't tell which sub-project is meant.
+**File paths — different rules for log.md vs commit messages:**
+
+- **In `log.md`** — use a bold relative markdown link so the path is clickable in VS Code preview and on GitHub: `**[contracts/script/deploy_registrar.js](contracts/script/deploy_registrar.js)**`. The link text and the href are both the repo-root-relative path. Never abbreviate (`tests/...` or `src/...` are ambiguous across sub-projects).
+- **In commit messages** — use bold plain text only, no markdown link syntax. Git renders commit bodies as plain text in `git log`, `git show`, and most tooling; `[path](path)` appears verbatim and is noisy. Format: `**contracts/script/deploy_registrar.js**`.
+
+**Other formatting (applies to both log.md and commit messages):**
 - **Code identifiers** (function names, struct fields, types, variables, events, addresses) — backticks (`` `mintAgent` ``, `` `dataHashes[1]` ``).
 - Standards/external system names (ERC-7857, gnubg, 0G Storage) — plain text, no formatting.
 - **No manual word-wrap inside paragraphs.** Paragraphs are single lines — markdown reflows them in any renderer. Hard line breaks at 72/80 chars look ragged on GitHub and force re-wrapping when content edits. Bullet items themselves can wrap naturally; just don't insert hard newlines mid-sentence.

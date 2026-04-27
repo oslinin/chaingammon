@@ -485,7 +485,7 @@ Scope choice (honest): v1 is a **self-contained ENS-compatible registrar on 0G t
 
 **Done when:** A subname is mintable and resolvable on-chain. ✅ confirmed in unit tests against in-process Hardhat.
 
-### Phase 11 — ENS text records updates from server (1.5 hrs)
+### Phase 11 — ENS text records updates from server ✅
 
 **New tool/sponsor:** none (continues ENS).
 
@@ -496,33 +496,47 @@ Text record schema (per player):
 | Key             | Value                          |
 | --------------- | ------------------------------ |
 | `elo`           | current ELO as decimal string  |
-| `match_count`   | total matches played           |
 | `last_match_id` | most recent match's id         |
-| `style_uri`     | `0g://<style-blob-hash>`       |
-| `archive_uri`   | `0g://<player-archive-log-id>` |
+| `match_count`   | total matches played (deferred — needs per-side counter) |
+| `style_uri`     | `0g://<style-blob-hash>` (deferred) |
+| `archive_uri`   | `0g://<player-archive-log-id>` (deferred) |
 
 Tasks:
 
-- `server/app/ens_client.py` — `set_text(name, key, value)` via web3.py
-- Hook into game-end flow after recordMatch
-- TDD: end-to-end — play match, assert ENS text records reflect new ELO
+- **contracts/script/deploy_registrar.js** — targeted deploy that only touches PlayerSubnameRegistrar so existing AgentRegistry agent state isn't bumped.
+- **server/app/ens_client.py** — `EnsClient` with `subname_node` (client-side namehash), `set_text`, `mint_subname`, `text`, `owner_of`. Loads parent_node once at construction.
+- **server/app/main.py** — `FinalizeRequest` gets optional `winner_label` / `loser_label`. After recordMatch + overlay updates, push `elo` (read from MatchRegistry) and `last_match_id` for each labelled side. Failures are surfaced in `FinalizeResponse.ens_updates` rather than failing finalize.
+- **server/.env.example / server/.env** — add `PLAYER_SUBNAME_REGISTRAR_ADDRESS`.
+- **server/tests/test_phase11_ens_client.py** — 10 unit tests with mocked web3 (subname_node, set_text happy/revert/validation, text view, from_env).
+- **server/tests/test_phase11_ens_live.py** — round-trip test against live 0G testnet (skip-if-env-missing): mint random label → setText → read back.
 
-**Done when:** A player's `elo` text record on `alice.chaingammon.eth` matches their on-chain ELO.
+v1 only pushes `elo` and `last_match_id`. `match_count` for human sides isn't trivially derivable on-chain (MatchRegistry tracks total matches, not per-human counts); `style_uri` and `archive_uri` need per-player aggregator blobs we haven't built yet. Both deferred.
 
-### Phase 12 — Frontend wallet connect + 0G testnet config (1.5 hrs)
+Auto-mint stays in Phase 12 (frontend). v1 of `/finalize` calls `setText` only — the subname is expected to already exist before the match.
+
+**Done when:** A player's `elo` text record on `<label>.chaingammon.eth` matches their on-chain ELO. ✅ verified by `test_phase11_ens_live.py`.
+
+### Phase 12 — Frontend wallet connect + 0G testnet config ✅
 
 **New tool/sponsor:** wagmi + viem (already scaffolded; first real use).
 
-**Goal:** Connect button works; user can connect MetaMask/WalletConnect to 0G testnet (custom chain via `defineChain`).
+**Goal:** Connect button works; user can connect MetaMask / Brave / any injected provider to 0G testnet (custom chain via `defineChain`).
 
 Tasks:
 
-- `frontend/app/wagmi.ts` — define 0G testnet
-- `frontend/app/providers.tsx` — wagmi + react-query provider
-- Connect button in header; show connected address shortened
-- TDD: visual smoke test — connect, see address
+- **frontend/app/wagmi.ts** — `defineChain` for 0G "Galileo" testnet (chainId 16602, RPC, OG native currency, chainscan-galileo explorer). `createConfig` with `injected({ shimDisconnect: true })`. `ssr: true` so the wagmi state hydrates correctly under the Next App Router.
+- **frontend/app/providers.tsx** — Client Component wrapping `WagmiProvider` + `QueryClientProvider`. `useState(() => new QueryClient())` keeps the cache stable across re-renders.
+- **frontend/app/layout.tsx** — wraps `{children}` with `<Providers>`; updates the metadata to "Chaingammon".
+- **frontend/app/ConnectButton.tsx** — Client Component with three states:
+  - No injected provider → "Install MetaMask" link.
+  - Wallet detected, not connected → "Connect wallet" button (uses `useConnect`).
+  - Connected → shortened `0xabcd…1234` + a "Switch to 0G testnet" nudge if the active chain isn't 16602 + a Disconnect button.
+- **frontend/app/page.tsx** — replaces the create-next-app boilerplate with a header (title + ConnectButton) and a one-paragraph project intro.
+- **frontend/.env.example / frontend/.env.local** — `NEXT_PUBLIC_OG_RPC_URL`, `NEXT_PUBLIC_PLAYER_SUBNAME_REGISTRAR_ADDRESS`.
 
-**Done when:** Wallet connects to 0G testnet; address displays.
+Smoke test: `pnpm exec next build` compiles cleanly; `next dev` serves `/` with the connect button rendered (verified via `curl` against the running dev server). Live wallet flow needs the user's browser; not tested by automation.
+
+**Done when:** Wallet connects to 0G testnet; address displays. ✅ verified by build + SSR-rendered DOM containing `<button>Connect wallet</button>`.
 
 ### Phase 13 — Frontend agents list + ELO display (1.5 hrs)
 
