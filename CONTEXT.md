@@ -18,7 +18,7 @@ Chaingammon is an **open protocol for portable backgammon reputation**. Every pl
 **Important rules** (after any phase development):
 
 1. The `README.md` should be updated with the commands to run the latest code, including deployments and tests.
-2. The `log.md` file should be updated with **a short summary entry** for the new phase — one paragraph or a few bullets, similar to the commit message. Do **not** duplicate plan content there. Architectural rationale, phase definitions, and detailed designs belong in `plan.md` and this file.
+2. The `log.md` file should be updated by **pasting the commit message verbatim** as the phase entry, *before* committing — so the log.md update lands in the same commit as the code. No separate summary, no hash (git history has the hash). Don't edit log.md after committing. Architectural rationale, phase definitions, and detailed designs belong in `plan.md` and this file, not in `log.md`.
 3. All code files (new and updated) must be documented inline with appropriate docstrings, comments, and explanations.
 
 ## Architecture

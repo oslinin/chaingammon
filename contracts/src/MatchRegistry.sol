@@ -15,6 +15,7 @@ contract MatchRegistry is Ownable {
         uint256 loserAgentId;
         address loserHuman;
         uint16 matchLength;
+        bytes32 gameRecordHash; // 0G Storage hash of the full game record; bytes32(0) if unset
     }
 
     uint256 public matchCount;
@@ -36,6 +37,7 @@ contract MatchRegistry is Ownable {
         uint256 newLoserElo
     );
     event EloUpdated(uint256 indexed agentId, address indexed human, uint256 oldElo, uint256 newElo);
+    event GameRecordStored(uint256 indexed matchId, bytes32 gameRecordHash);
 
     constructor() Ownable(msg.sender) {}
 
@@ -56,7 +58,8 @@ contract MatchRegistry is Ownable {
         address winnerHuman,
         uint256 loserAgentId,
         address loserHuman,
-        uint16 matchLength
+        uint16 matchLength,
+        bytes32 gameRecordHash
     ) external onlyOwner returns (uint256 matchId) {
         require(
             (winnerAgentId == 0) != (winnerHuman == address(0)),
@@ -103,10 +106,12 @@ contract MatchRegistry is Ownable {
             winnerHuman: winnerHuman,
             loserAgentId: loserAgentId,
             loserHuman: loserHuman,
-            matchLength: matchLength
+            matchLength: matchLength,
+            gameRecordHash: gameRecordHash
         });
         matchCount = matchId + 1;
 
         emit MatchRecorded(matchId, winnerAgentId, winnerHuman, loserAgentId, loserHuman, winnerNew, loserNew);
+        emit GameRecordStored(matchId, gameRecordHash);
     }
 }
