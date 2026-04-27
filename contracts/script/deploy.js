@@ -1,5 +1,6 @@
-// Deploys MatchRegistry + AgentRegistry to the configured network and mints
-// the seed gnubg-default agent. Writes addresses to deployments/<network>.json.
+// Deploys MatchRegistry + AgentRegistry + PlayerSubnameRegistrar to the
+// configured network and mints the seed gnubg-default agent. Writes
+// addresses to deployments/<network>.json.
 //
 // Usage:
 //   pnpm exec hardhat run script/deploy.js --network 0g-testnet
@@ -10,6 +11,26 @@ const { ethers, network } = require("hardhat");
 
 const SEED_AGENT_METADATA = "ipfs://gnubg-default-placeholder";
 const SEED_AGENT_TIER = 2; // 0=beginner, 1=intermediate, 2=advanced, 3=world-class
+
+// ENS namehash of "chaingammon.eth". Pinned at construction so the
+// PlayerSubnameRegistrar can derive subname namehashes deterministically.
+// On a chain with no real ENS root (e.g. 0G testnet), this acts as a
+// project-scoped namespace; on Sepolia/Linea with real ENS, the parent
+// would be the actual chaingammon.eth name. Override via
+// ENS_PARENT_NODE env var if you've registered a different parent.
+function namehash(name) {
+  let node = "0x" + "00".repeat(32);
+  if (name) {
+    const labels = name.split(".");
+    for (let i = labels.length - 1; i >= 0; i--) {
+      const labelHash = ethers.keccak256(ethers.toUtf8Bytes(labels[i]));
+      node = ethers.keccak256(ethers.concat([node, labelHash]));
+    }
+  }
+  return node;
+}
+const DEFAULT_ENS_PARENT_NODE = namehash("chaingammon.eth");
+const ENS_PARENT_NODE = process.env.ENS_PARENT_NODE || DEFAULT_ENS_PARENT_NODE;
 
 // Initial baseWeightsHash for the AgentRegistry constructor.
 // Phase 8 pinned the encrypted-gnubg-weights blob on 0G Storage; future
@@ -46,6 +67,14 @@ async function main() {
   const receipt = await tx.wait();
   console.log(`Seed agent #1 minted to ${deployer.address} at tier ${SEED_AGENT_TIER} (tx ${receipt.hash})`);
 
+  const PlayerSubnameRegistrar = await ethers.getContractFactory("PlayerSubnameRegistrar");
+  const registrar = await PlayerSubnameRegistrar.deploy(ENS_PARENT_NODE);
+  await registrar.waitForDeployment();
+  const registrarAddr = await registrar.getAddress();
+  console.log(
+    `PlayerSubnameRegistrar deployed: ${registrarAddr} (parent node ${ENS_PARENT_NODE})`,
+  );
+
   const out = {
     network: network.name,
     chainId: Number(network.config.chainId ?? 0),
@@ -53,10 +82,14 @@ async function main() {
     contracts: {
       MatchRegistry: matchAddr,
       AgentRegistry: agentAddr,
+      PlayerSubnameRegistrar: registrarAddr,
     },
     agentRegistryConstructorArgs: {
       matchRegistry: matchAddr,
       initialBaseWeightsHash: INITIAL_BASE_WEIGHTS_HASH,
+    },
+    playerSubnameRegistrarConstructorArgs: {
+      parentNode: ENS_PARENT_NODE,
     },
     seedAgent: {
       agentId: 1,

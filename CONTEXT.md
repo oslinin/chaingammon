@@ -168,6 +168,7 @@ kh billing usage                 # check free-tier limits
 | `server/app/weights.py` | AES-256-GCM helper for encrypting gnubg's base weights file (Phase 8) |
 | `server/scripts/upload_base_weights.py` | One-time script: encrypt **/usr/lib/gnubg/gnubg.wd**, upload to 0G Storage, pin the hash on AgentRegistry |
 | `server/app/agent_overlay.py` | Per-agent experience overlay (Phase 9): `Overlay` dataclass, `classify_move`, `apply_overlay`, `update_overlay`. Uploaded to 0G Storage; hash committed to `dataHashes[1]` on the agent iNFT. |
+| `contracts/src/PlayerSubnameRegistrar.sol` | ENS-shaped subname registrar (Phase 10). Issues `<label>.chaingammon.eth` subnames with text records (`elo`, `match_count`, `last_match_id`, `style_uri`, `archive_uri`). v1 is self-contained on 0G testnet; v2 mirrors to real ENS on Sepolia/Linea. |
 | `og-bridge/src/upload.mjs` | Node CLI: bytes via stdin → 0G Storage upload → JSON {rootHash, txHash} on stdout |
 | `og-bridge/src/download.mjs` | Node CLI: rootHash arg → bytes on stdout via 0G Storage |
 | `server/app/ens_client.py` | ENS subname text record updater |

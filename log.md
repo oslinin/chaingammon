@@ -573,4 +573,65 @@ Live on 0G testnet:
 
 - Two `updateOverlayHash` txs landed during the integration test run, each bumping agent #1's `experienceVersion` and pinning a fresh overlay rootHash on `dataHashes[1]`. Reading the iNFT now returns a non-zero `dataHashes[1]` and a `matchCount` reflecting the integration runs.
 
-### Phase 10 onward — pending
+### Phase 10: ENS subname registrar contract (PlayerSubnameRegistrar)
+
+Players (and AI agents) get a subname under `chaingammon.eth` — `alice.chaingammon.eth`, `gnubg-classic.chaingammon.eth` — whose ENS-shaped text records carry their portable reputation: `elo`, `match_count`, `last_match_id`, `style_uri`, `archive_uri`. Phase 10 ships the contract that issues those subnames and stores those records.
+
+Scope (honest): v1 is a **self-contained ENS-compatible registrar deployed on 0G testnet**, not wired into real ENS on Sepolia or Linea. We can't realistically own `chaingammon.eth` on a chain with a live ENS root inside the hackathon timeline. The contract's interface is ENS-shaped (namehash, text records, resolver semantics) so a v2 deployment can mirror to real ENS via a Durin-style L2 subname registrar without rewriting anything — the *contract* is portable, the *deployment target* is what changes.
+
+New contract (**contracts/src/PlayerSubnameRegistrar.sol**):
+
+- `parentNode` (immutable) — ENS namehash of the parent name (`chaingammon.eth`). Pinned at construction.
+- `subnameNode(label) → bytes32` — computes ENS-style namehash `keccak256(parentNode || keccak256(label))` so any ENS resolver can look subnames up by the same node.
+- `mintSubname(label, subnameOwner)` — owner-only. Rejects empty labels, the zero address, and duplicate labels. Emits `SubnameMinted(label, label, node, subnameOwner)`. (Both the indexed and the readable `label` are emitted because indexed strings are stored as keccak hashes only.)
+- `ownerOf(node) → address` — ENS-resolver shape; returns `address(0)` for missing nodes.
+- `text(node, key) → string` — ENS-resolver shape; returns `""` for unset records.
+- `setText(node, key, value)` — dual-auth:
+  - The subname's owner can update their own profile.
+  - The contract owner (the server) can update any record. This is what lets the server push ELO/match-count updates after every match.
+  - Anyone else reverts with `NotAuthorized`.
+- `subnameCount` — running counter for diagnostics.
+
+Tests (**contracts/test/phase10_PlayerSubnameRegistrar.test.js**, new):
+
+21 hardhat tests, all green. Coverage:
+
+- **Constructor** — parent node and contract owner pinned correctly.
+- **namehash helper** — `subnameNode("alice")` matches an off-chain ENS namehash computation; different labels produce different nodes.
+- **`mintSubname`**:
+  - Records the subname owner.
+  - Emits `SubnameMinted` with the right args.
+  - Rejects duplicate labels, empty labels, mint to zero address.
+  - Owner-only.
+  - Auto-increments `subnameCount`.
+- **Text records**:
+  - `text` returns `""` for unset keys.
+  - `setText` stores and emits `TextRecordSet`.
+  - Subname owner can update their own.
+  - Contract owner can update any.
+  - Strangers cannot.
+  - Reverts on non-existent subname.
+  - Multiple keys per subname coexist.
+  - Overwriting replaces the value.
+- **`ownerOf`** — returns `address(0)` for unminted subnames.
+
+Deploy + verify integration:
+
+- **contracts/script/deploy.js** — now also deploys `PlayerSubnameRegistrar(ENS_PARENT_NODE)` after the agent + match registries. `ENS_PARENT_NODE` defaults to the namehash of `chaingammon.eth` (computed in JS at deploy time); override via the `ENS_PARENT_NODE` env var if you've registered a different parent on a real-ENS chain. Constructor args recorded in `playerSubnameRegistrarConstructorArgs` in **contracts/deployments/0g-testnet.json** for `verify.js` to replay.
+- **contracts/script/verify.js** — verifies the new registrar with the right `parentNode` arg.
+- Smoke-tested against in-process Hardhat: all three contracts deploy, the registrar gets `parentNode` `0x543cb3ed47a1ed324d00f8245468ef208194cc298026553f9adc78fb17e41cec` (namehash of `chaingammon.eth`), and the deployments JSON round-trips through `verify.js` correctly.
+
+Live deploy deliberately deferred:
+
+The registrar is ready to go but isn't redeployed to 0G testnet in this commit. Running `pnpm contracts:deploy` would bump every contract address — including AgentRegistry — which would wipe agent #1's accumulated overlay state from Phase 9 (different contract, no history). The next time a fresh bootstrap is needed, **scripts/bootstrap-network.sh** will deploy the full set including this registrar; until then the new contract lives only as code + tests.
+
+73/73 hardhat tests pass (52 prior + 21 new). No server changes in this phase — Phase 11 wires the server up to call `mintSubname` and `setText`.
+
+Also in this commit (carry-over working-tree changes that hadn't landed yet):
+
+- **ARCHITECTURE.md** (new) — full architecture document with Mermaid diagrams covering the player → server → 0G Storage / 0G Chain / KeeperHub data flow.
+- **chaingammon.pptx** + **scripts/make_deck.py** (new) — submission slide deck and the Python script that generated it.
+- **.claude/settings.json** — enabled the `telegram` plugin from `claude-plugins-official` alongside the existing `superpowers` and `code-review` plugins.
+- **.gitignore** — added `.~lock.*#` (LibreOffice editor lock files) so they stop appearing as untracked between commits.
+
+### Phase 11 onward — pending

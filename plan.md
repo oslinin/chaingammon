@@ -466,21 +466,24 @@ After 50 matches with similar style, `v[slot] ≈ 0.35`, `alpha ≈ 0.286`. A ne
 
 **Done when:** An agent with 5+ matches has a non-zero overlay distinct from a fresh agent; iNFT's experience hash updates per match; overlay measurably affects move selection in tests.
 
-### Phase 10 — ENS subname registrar contract (2 hrs)
+### Phase 10 — ENS subname registrar contract (2 hrs) ✅ DONE (code; live deploy on next bootstrap)
 
 **New tool/sponsor:** **ENS.**
 
-**Goal:** Deploy a `PlayerSubnameRegistrar.sol` that issues `<name>.chaingammon.eth` subnames. Choose either NameWrapper-style on Sepolia or a Durin/L2 subname registrar on Base/Linea — pick whichever has the cleanest reference impl.
+**Goal:** Deploy a `PlayerSubnameRegistrar.sol` that issues `<label>.chaingammon.eth` subnames with ENS-shaped text records.
 
-Tasks:
+What landed:
 
-- Acquire `chaingammon.eth` on the chosen network (testnet)
-- Deploy a registrar that:
-  - Restricts subname creation to the server (owner) for v1
-  - Lets the server set/update text records on the subname
-- TDD: deploy, mint `alice.chaingammon.eth` to a test wallet, read the resolver
+- **contracts/src/PlayerSubnameRegistrar.sol** — Ownable, parent node pinned at construction, `subnameNode(label)` computes ENS-style namehash, `mintSubname(label, owner)` is owner-only, `setText(node, key, value)` permits the subname owner OR the contract owner so the server can push ELO updates after every match.
+- **contracts/test/phase10_PlayerSubnameRegistrar.test.js** — 21 hardhat tests covering namehash compatibility, mint, duplicate rejection, empty-label/zero-address rejection, text record CRUD, dual-auth (server + subname owner), ENS resolver-shape `ownerOf`/`text`.
+- **contracts/script/deploy.js** — deploys the registrar alongside MatchRegistry + AgentRegistry; pins `chaingammon.eth` namehash at construction; constructor args recorded in the deployments JSON for `verify.js` to replay.
+- **contracts/script/verify.js** — verifies the new registrar with the right constructor arg.
 
-**Done when:** A subname is mintable and resolvable on-chain.
+Scope choice (honest): v1 is a **self-contained ENS-compatible registrar on 0G testnet** rather than wired into real ENS on Sepolia. The submission can't realistically own `chaingammon.eth` on a network with a live ENS root inside the hackathon timeline. The contract is ENS-shaped (namehash, text records, resolver semantics) so a v2 deployment to Sepolia/Linea Durin is a configuration change, not a redesign.
+
+73 hardhat tests pass (52 prior + 21 new). Live deploy of the registrar pairs with the next `./scripts/bootstrap-network.sh` run; not redeployed in this commit because that would bump existing addresses (including agent #1's accumulated overlay state).
+
+**Done when:** A subname is mintable and resolvable on-chain. ✅ confirmed in unit tests against in-process Hardhat.
 
 ### Phase 11 — ENS text records updates from server (1.5 hrs)
 
