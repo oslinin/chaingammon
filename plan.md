@@ -297,19 +297,23 @@ Tasks:
 
 **Done when:** Round-trip blob through 0G Storage testnet works in `uv run pytest tests/test_phase6_og_storage.py`.
 
-### Phase 7 — Game records on 0G Storage Log (per match) (2 hrs)
+### Phase 7 — Game records on 0G Storage Log (per match) (2 hrs) ✅ DONE
 
 **New tool/sponsor:** none (uses Phase 6's 0G Storage SDK).
 
-**Goal:** Each completed match's full game record (gnubg `.mat` format wrapped in JSON) is uploaded to 0G Storage. The blob hash is the value passed to `recordMatch`'s `gameRecordHash` field.
+**Goal:** Each completed match's full game record is uploaded to 0G Storage. The Merkle root hash returned by 0G Storage is what's passed to `recordMatch`'s `gameRecordHash` field on-chain, so the on-chain match metadata is cryptographically tied to the off-chain archive.
 
-Tasks:
+What landed:
+- **server/app/game_record.py** — `GameRecord` pydantic envelope (final position, final match id, players, score, optional move history, optional cube-action history, timestamps). `serialize_record(record) → bytes` for canonical JSON encoding.
+- **server/app/chain_client.py** — web3.py wrapper around MatchRegistry with an embedded minimal ABI. Exposes `record_match(...)` (sends tx, waits for receipt, returns `(match_id, tx_hash)`), `get_match`, `agent_elo`, `human_elo`, `match_count`. Owner-only, signs with `DEPLOYER_PRIVATE_KEY`.
+- **server/app/main.py** — new `POST /games/{game_id}/finalize` endpoint that builds the GameRecord, uploads via `put_blob`, and calls `record_match` with the resulting root hash.
+- **server/tests/test_phase7_game_record.py** — live integration test: builds a synthetic finished GameRecord → `put_blob` → `record_match` → asserts the on-chain `gameRecordHash` matches the uploaded root hash, and that `get_blob(rootHash)` returns the original bytes.
 
-- `server/app/game_record.py` — define the JSON envelope. Fields: matchId, players, dice sequence, move sequence, cube actions, final position, timestamps, gnubg .mat embed.
-- On game-end in `server/app/main.py`, serialize → upload to 0G Storage → call `recordMatch` with the hash
-- TDD: end-to-end test — play a 1-point match, assert game record uploaded, hash matches what's on-chain
+v1 calls recordMatch directly from the server (the deployer wallet is the contract owner). Phase 18 will move this through a KeeperHub workflow instead.
 
-**Done when:** A completed match has a 0G Storage entry whose hash is committed in MatchRegistry.
+Move history isn't tracked in v1 — `moves` and `cube_actions` arrays are present in the envelope but empty for now. Adding move tracking is a follow-up; the on-chain hash story works regardless.
+
+**Done when:** A completed match has a 0G Storage entry whose hash is committed in MatchRegistry. ✅ confirmed against 0G testnet.
 
 ### Phase 8 — Base gnubg weights on 0G Storage (shared, encrypted) (2 hrs)
 

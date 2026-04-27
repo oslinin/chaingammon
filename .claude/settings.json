@@ -7,5 +7,9 @@
       "Bash(gnubg --version)",
       "Bash(~/.local/bin/uv run pytest *)"
     ]
+  },
+  "enabledPlugins": {
+    "superpowers@claude-plugins-official": true,
+    "code-review@claude-plugins-official": true
   }
 }
