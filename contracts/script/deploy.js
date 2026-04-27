@@ -11,10 +11,20 @@ const { ethers, network } = require("hardhat");
 const SEED_AGENT_METADATA = "ipfs://gnubg-default-placeholder";
 const SEED_AGENT_TIER = 2; // 0=beginner, 1=intermediate, 2=advanced, 3=world-class
 
-// Phase 8 will replace this with the real 0G Storage hash of the encrypted
-// gnubg base weights. For now, a zero hash is fine — owner can call
-// setBaseWeightsHash() later to update.
-const ZERO_HASH = "0x" + "0".repeat(64);
+// Initial baseWeightsHash for the AgentRegistry constructor.
+// Phase 8 pinned the encrypted-gnubg-weights blob on 0G Storage; future
+// deploys (e.g. on a fresh network) should pass the same hash here so
+// every minted agent's dataHashes[0] points at it from the start, and the
+// owner doesn't have to do a follow-up setBaseWeightsHash() call.
+//
+// Override per-deploy via INITIAL_BASE_WEIGHTS_HASH env var. Defaults to
+// the 0G testnet blob produced by `server/scripts/upload_base_weights.py`
+// on 2026-04-27. Pass `0x` + 64 zeros on a network with no upload yet —
+// owner can call setBaseWeightsHash later.
+const DEFAULT_BASE_WEIGHTS_HASH =
+  "0x989ba07766cc35aa0011cf3f764831d9d1a7e11495db78c310d764b4478409ad";
+const INITIAL_BASE_WEIGHTS_HASH =
+  process.env.INITIAL_BASE_WEIGHTS_HASH || DEFAULT_BASE_WEIGHTS_HASH;
 
 async function main() {
   const [deployer] = await ethers.getSigners();
@@ -27,10 +37,10 @@ async function main() {
   console.log(`MatchRegistry deployed: ${matchAddr}`);
 
   const AgentRegistry = await ethers.getContractFactory("AgentRegistry");
-  const agentRegistry = await AgentRegistry.deploy(matchAddr, ZERO_HASH);
+  const agentRegistry = await AgentRegistry.deploy(matchAddr, INITIAL_BASE_WEIGHTS_HASH);
   await agentRegistry.waitForDeployment();
   const agentAddr = await agentRegistry.getAddress();
-  console.log(`AgentRegistry deployed: ${agentAddr} (baseWeightsHash placeholder ${ZERO_HASH})`);
+  console.log(`AgentRegistry deployed: ${agentAddr} (initial baseWeightsHash ${INITIAL_BASE_WEIGHTS_HASH})`);
 
   const tx = await agentRegistry.mintAgent(deployer.address, SEED_AGENT_METADATA, SEED_AGENT_TIER);
   const receipt = await tx.wait();
@@ -46,7 +56,7 @@ async function main() {
     },
     agentRegistryConstructorArgs: {
       matchRegistry: matchAddr,
-      initialBaseWeightsHash: ZERO_HASH,
+      initialBaseWeightsHash: INITIAL_BASE_WEIGHTS_HASH,
     },
     seedAgent: {
       agentId: 1,

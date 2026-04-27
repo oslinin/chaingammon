@@ -22,6 +22,51 @@ from web3.types import TxReceipt
 
 # Minimal ABI — only the methods + events we touch. Mirrors
 # contracts/src/MatchRegistry.sol exactly.
+_AGENT_REGISTRY_ABI = [
+    {
+        "type": "function",
+        "name": "baseWeightsHash",
+        "stateMutability": "view",
+        "inputs": [],
+        "outputs": [{"name": "", "type": "bytes32"}],
+    },
+    {
+        "type": "function",
+        "name": "setBaseWeightsHash",
+        "stateMutability": "nonpayable",
+        "inputs": [{"name": "newHash", "type": "bytes32"}],
+        "outputs": [],
+    },
+    {
+        "type": "function",
+        "name": "agentCount",
+        "stateMutability": "view",
+        "inputs": [],
+        "outputs": [{"name": "", "type": "uint256"}],
+    },
+    {
+        "type": "function",
+        "name": "tier",
+        "stateMutability": "view",
+        "inputs": [{"name": "agentId", "type": "uint256"}],
+        "outputs": [{"name": "", "type": "uint8"}],
+    },
+    {
+        "type": "function",
+        "name": "dataHashes",
+        "stateMutability": "view",
+        "inputs": [{"name": "agentId", "type": "uint256"}],
+        "outputs": [{"name": "", "type": "bytes32[2]"}],
+    },
+    {
+        "type": "event",
+        "name": "BaseWeightsHashSet",
+        "anonymous": False,
+        "inputs": [{"name": "baseWeightsHash", "type": "bytes32", "indexed": False}],
+    },
+]
+
+
 _MATCH_REGISTRY_ABI = [
     {
         "type": "function",
@@ -128,8 +173,9 @@ class FinalizedMatch:
 
 
 class ChainClient:
-    """Owner-only client for MatchRegistry. v1 uses one wallet (the deployer)
-    to call `recordMatch`. v2 (Phase 18) routes through KeeperHub instead.
+    """Owner-only client for MatchRegistry + AgentRegistry. v1 uses one
+    wallet (the deployer) to call `recordMatch` and `setBaseWeightsHash`.
+    v2 (Phase 18) routes mutations through KeeperHub instead.
     """
 
     def __init__(
@@ -137,6 +183,7 @@ class ChainClient:
         rpc_url: str,
         match_registry_address: str,
         private_key: str,
+        agent_registry_address: Optional[str] = None,
     ) -> None:
         self.w3 = Web3(Web3.HTTPProvider(rpc_url))
         if not self.w3.is_connected():
@@ -146,10 +193,19 @@ class ChainClient:
             address=Web3.to_checksum_address(match_registry_address),
             abi=_MATCH_REGISTRY_ABI,
         )
+        self.agent_registry = (
+            self.w3.eth.contract(
+                address=Web3.to_checksum_address(agent_registry_address),
+                abi=_AGENT_REGISTRY_ABI,
+            )
+            if agent_registry_address
+            else None
+        )
 
     @classmethod
     def from_env(cls) -> "ChainClient":
-        """Construct from RPC_URL, MATCH_REGISTRY_ADDRESS, DEPLOYER_PRIVATE_KEY."""
+        """Construct from RPC_URL, MATCH_REGISTRY_ADDRESS, DEPLOYER_PRIVATE_KEY,
+        and (optionally) AGENT_REGISTRY_ADDRESS."""
         for k in ("RPC_URL", "MATCH_REGISTRY_ADDRESS", "DEPLOYER_PRIVATE_KEY"):
             if not os.environ.get(k):
                 raise ChainError(f"Missing env var {k}")
@@ -157,6 +213,7 @@ class ChainClient:
             rpc_url=os.environ["RPC_URL"],
             match_registry_address=os.environ["MATCH_REGISTRY_ADDRESS"],
             private_key=os.environ["DEPLOYER_PRIVATE_KEY"],
+            agent_registry_address=os.environ.get("AGENT_REGISTRY_ADDRESS"),
         )
 
     @property
@@ -241,3 +298,52 @@ class ChainClient:
 
     def human_elo(self, human: str) -> int:
         return int(self.match_registry.functions.humanElo(Web3.to_checksum_address(human)).call())
+
+    # --- AgentRegistry views + setters (Phase 8) ----------------------------
+
+    def _require_agent_registry(self):
+        if self.agent_registry is None:
+            raise ChainError("AGENT_REGISTRY_ADDRESS not set on this ChainClient")
+        return self.agent_registry
+
+    def base_weights_hash(self) -> str:
+        contract = self._require_agent_registry()
+        raw = contract.functions.baseWeightsHash().call()
+        return "0x" + raw.hex()
+
+    def set_base_weights_hash(self, new_hash: str) -> str:
+        """Owner-only on AgentRegistry. Updates the shared `dataHashes[0]`
+        every agent points at. Returns the tx hash."""
+        if not new_hash.startswith("0x"):
+            raise ChainError(f"new_hash must start with 0x: {new_hash!r}")
+        contract = self._require_agent_registry()
+        nonce = self.w3.eth.get_transaction_count(self.account.address)
+        tx = contract.functions.setBaseWeightsHash(
+            self.w3.to_bytes(hexstr=new_hash)
+        ).build_transaction(
+            {
+                "from": self.account.address,
+                "nonce": nonce,
+                "chainId": self.w3.eth.chain_id,
+                "gas": 100_000,
+            }
+        )
+        signed = self.account.sign_transaction(tx)
+        tx_hash = self.w3.eth.send_raw_transaction(signed.raw_transaction)
+        receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
+        if receipt.status != 1:
+            raise ChainError(f"setBaseWeightsHash tx reverted: {tx_hash.hex()}")
+        tx_hash_hex = tx_hash.hex()
+        if not tx_hash_hex.startswith("0x"):
+            tx_hash_hex = "0x" + tx_hash_hex
+        return tx_hash_hex
+
+    def agent_data_hashes(self, agent_id: int) -> list[str]:
+        """Returns [baseWeightsHash, overlayHash] for an agent."""
+        contract = self._require_agent_registry()
+        raw = contract.functions.dataHashes(agent_id).call()
+        return ["0x" + h.hex() for h in raw]
+
+    def agent_tier(self, agent_id: int) -> int:
+        contract = self._require_agent_registry()
+        return int(contract.functions.tier(agent_id).call())

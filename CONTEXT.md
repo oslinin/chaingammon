@@ -164,7 +164,9 @@ kh billing usage                 # check free-tier limits
 | `server/app/chain_client.py` | web3.py wrapper for on-chain reads |
 | `server/app/og_storage_client.py` | Python wrapper around the og-bridge Node CLI for 0G Storage put/get |
 | `server/app/game_record.py` | GameRecord pydantic schema + serializer for 0G Storage uploads (Phase 7) |
-| `server/app/chain_client.py` | web3.py client for MatchRegistry — calls recordMatch from the deployer wallet, embedded minimal ABI |
+| `server/app/chain_client.py` | web3.py client for MatchRegistry + AgentRegistry — recordMatch, setBaseWeightsHash, and read-only views; embedded minimal ABIs |
+| `server/app/weights.py` | AES-256-GCM helper for encrypting gnubg's base weights file (Phase 8) |
+| `server/scripts/upload_base_weights.py` | One-time script: encrypt **/usr/lib/gnubg/gnubg.wd**, upload to 0G Storage, pin the hash on AgentRegistry |
 | `og-bridge/src/upload.mjs` | Node CLI: bytes via stdin → 0G Storage upload → JSON {rootHash, txHash} on stdout |
 | `og-bridge/src/download.mjs` | Node CLI: rootHash arg → bytes on stdout via 0G Storage |
 | `server/app/ens_client.py` | ENS subname text record updater |
@@ -190,6 +192,8 @@ Required envs by phase:
 | --- | --- | --- |
 | 4+ | contracts/ | `DEPLOYER_PRIVATE_KEY`, `RPC_URL`, optional `CHAINSCAN_API_KEY` (placeholder works on testnet) |
 | 6+ | server/ | `OG_STORAGE_RPC`, `OG_STORAGE_INDEXER`, `OG_STORAGE_PRIVATE_KEY` (can mirror `DEPLOYER_PRIVATE_KEY` from contracts/.env locally) |
+| 7+ | server/ | `RPC_URL`, `MATCH_REGISTRY_ADDRESS`, `DEPLOYER_PRIVATE_KEY` (mirrored from contracts/.env), optional `AGENT_REGISTRY_ADDRESS` |
+| 8+ | server/ | `BASE_WEIGHTS_ENCRYPTION_KEY` — 32-byte hex, AES-256 key for the gnubg weights blob. Generate once with `uv run python scripts/upload_base_weights.py --print-fresh-key`. |
 | 11+ | server/ | `ENS_REGISTRAR_ADDRESS`, `ENS_PARENT_NAME=chaingammon.eth` |
 | 16+ | server/ | `KH_API_KEY` (or use `kh auth login`), `KEEPERHUB_WORKFLOW_ID` |
 | 12+ | frontend/ | `NEXT_PUBLIC_*` for contract addresses, RPC, API URL |
@@ -225,6 +229,8 @@ Define every project-specific term, contract field, function name, or acronym **
 - **File paths** — bold and **always relative to the repo root** (`**server/tests/test_phase6_og_storage.py**`, `**contracts/src/AgentRegistry.sol**`, `**og-bridge/src/upload.mjs**`). Never abbreviate to `tests/...` or `src/...` — the reader can't tell which sub-project is meant.
 - **Code identifiers** (function names, struct fields, types, variables, events, addresses) — backticks (`` `mintAgent` ``, `` `dataHashes[1]` ``).
 - Standards/external system names (ERC-7857, gnubg, 0G Storage) — plain text, no formatting.
+- **No manual word-wrap inside paragraphs.** Paragraphs are single lines — markdown reflows them in any renderer. Hard line breaks at 72/80 chars look ragged on GitHub and force re-wrapping when content edits. Bullet items themselves can wrap naturally; just don't insert hard newlines mid-sentence.
+- **Use nested sublists for hierarchy.** When a bullet has multiple sub-points (e.g. "the upload script does five things" or "the new method exposes these surfaces"), nest them as a real sublist instead of cramming the detail into one long bullet. Numbered sublists for ordered steps, bulleted sublists for parallel facts.
 
 ## Git Policy
 

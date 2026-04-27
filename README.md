@@ -194,21 +194,48 @@ Add `DEPLOYER_PRIVATE_KEY=0x...` to `contracts/.env`. Fund the wallet with testn
 
 ### Mode A — testnet (real demo)
 
-Two terminals after a one-time deploy.
+#### Fresh-network bootstrap (one shot)
+
+For a clean repo + funded wallet, the canonical setup is one command:
 
 ```bash
-# one-time, when contracts change
-pnpm contracts:test                        # all hardhat tests
-pnpm contracts:deploy                      # writes contracts/deployments/0g-testnet.json
-# copy MatchRegistry + AgentRegistry addresses from that JSON into
-# server/.env and frontend/.env.local (NEXT_PUBLIC_*)
+./scripts/bootstrap-network.sh
+```
 
+It runs:
+
+1. `pnpm contracts:test` — fail fast if any contract test is red.
+2. `pnpm contracts:deploy` — deploy MatchRegistry + AgentRegistry to 0G testnet, mint seed agent #1, write addresses to **contracts/deployments/0g-testnet.json**.
+3. `cd server && uv run python scripts/upload_base_weights.py` — encrypt **/usr/lib/gnubg/gnubg.wd**, upload to 0G Storage, pin the resulting Merkle rootHash on AgentRegistry via `setBaseWeightsHash`. (The bootstrap reads the freshly-deployed AgentRegistry address from the deployments JSON, so it doesn't matter if **server/.env** is still pointing at an old deploy.)
+4. `pnpm contracts:verify` — verify both contracts on chainscan-galileo.
+
+When the script finishes it prints the new addresses; copy them into **server/.env** and **frontend/.env.local** (the script doesn't touch those files because they're user state).
+
+Prereqs:
+
+- gnubg installed locally (`sudo apt install gnubg` on Ubuntu/Debian, `brew install gnubg` on macOS). The bootstrap reads `/usr/lib/gnubg/gnubg.wd` to encrypt and upload, and the running server shells out to the gnubg binary at inference time. There's no separate download URL for just the weights file — gnubg only ships them inside its own package.
+- **server/.env** (gitignored) populated with:
+  - `DEPLOYER_PRIVATE_KEY` (mirrored from **contracts/.env**)
+  - `OG_STORAGE_PRIVATE_KEY` (same wallet is fine on testnet)
+  - `BASE_WEIGHTS_ENCRYPTION_KEY` — generate once with `cd server && uv run python scripts/upload_base_weights.py --print-fresh-key`
+
+#### Then run server + frontend
+
+Two terminals.
+
+```bash
 # terminal 1: game server
 cd server && uv run uvicorn app.main:app --reload
 
 # terminal 2: frontend
 pnpm frontend:dev
 ```
+
+#### Sub-flows (when you don't need the full bootstrap)
+
+- **Just redeploy contracts (re-use the existing weights blob):** `pnpm contracts:deploy`. The default `INITIAL_BASE_WEIGHTS_HASH` baked into **contracts/script/deploy.js** points at the project's pinned blob, so freshly minted agents inherit it.
+- **Just re-upload weights (without redeploying):** `cd server && uv run python scripts/upload_base_weights.py`. Idempotent — replaces the on-chain hash. Useful if you change the source weights file or rotate `BASE_WEIGHTS_ENCRYPTION_KEY`.
+- **Just verify after a deploy:** `pnpm contracts:verify`.
 
 ### Mode B — local dev (fast iteration)
 
