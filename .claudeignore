@@ -1,0 +1,37 @@
+# Directories Claude shouldn't waste time/context scanning.
+# Mirrors the heavy-output directories in .gitignore. Pure scan-skip,
+# not security — anything secret-sensitive should be in .env / .gitignore.
+
+# Node
+node_modules/
+.next/
+.turbo/
+out/
+dist/
+build/
+
+# Python
+.venv/
+venv/
+__pycache__/
+.pytest_cache/
+*.egg-info/
+
+# Hardhat
+contracts/artifacts/
+contracts/cache/
+contracts/typechain-types/
+
+# Locally-generated deploy artifacts (transient hardhat-network only)
+contracts/deployments/hardhat*.json
+contracts/deployments/localhost/
+
+# Compiled targets
+target/
+
+# pnpm store
+.pnpm-store/
+
+# OS / editor
+.DS_Store
+*.log

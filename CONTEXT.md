@@ -162,7 +162,9 @@ kh billing usage                 # check free-tier limits
 | `server/app/game_state.py` | Typed GameState model |
 | `server/app/game_record.py` | Match game-record serializer (uploaded to 0G Storage) |
 | `server/app/chain_client.py` | web3.py wrapper for on-chain reads |
-| `server/app/og_storage_client.py` | 0G Storage SDK wrapper (blob, log, KV) |
+| `server/app/og_storage_client.py` | Python wrapper around the og-bridge Node CLI for 0G Storage put/get |
+| `og-bridge/src/upload.mjs` | Node CLI: bytes via stdin → 0G Storage upload → JSON {rootHash, txHash} on stdout |
+| `og-bridge/src/download.mjs` | Node CLI: rootHash arg → bytes on stdout via 0G Storage |
 | `server/app/ens_client.py` | ENS subname text record updater |
 | `server/app/keeperhub_client.py` | KeeperHub workflow trigger + audit pull |
 | `contracts/src/EloMath.sol` | Fixed-point ELO formula — test extensively |
@@ -185,7 +187,7 @@ Required envs by phase:
 | Phase | Sub-project | Variables |
 | --- | --- | --- |
 | 4+ | contracts/ | `DEPLOYER_PRIVATE_KEY`, `RPC_URL`, optional `CHAINSCAN_API_KEY` (placeholder works on testnet) |
-| 6+ | server/ | `OG_STORAGE_RPC`, `OG_STORAGE_INDEXER`, `OG_STORAGE_PRIVATE_KEY` |
+| 6+ | server/ | `OG_STORAGE_RPC`, `OG_STORAGE_INDEXER`, `OG_STORAGE_PRIVATE_KEY` (can mirror `DEPLOYER_PRIVATE_KEY` from contracts/.env locally) |
 | 11+ | server/ | `ENS_REGISTRAR_ADDRESS`, `ENS_PARENT_NAME=chaingammon.eth` |
 | 16+ | server/ | `KH_API_KEY` (or use `kh auth login`), `KEEPERHUB_WORKFLOW_ID` |
 | 12+ | frontend/ | `NEXT_PUBLIC_*` for contract addresses, RPC, API URL |
@@ -218,7 +220,7 @@ gnubg is driven via its socket-based External Player interface. Install with `su
 Define every project-specific term, contract field, function name, or acronym **the first time it appears** in a commit message. A reader who has only read MISSION.md and the Solidity source should be able to follow the commit message without context. If a name comes from a standard or external system (e.g. ERC-7857, gnubg, 0G Storage), give a one-clause definition the first time it shows up. Examples — what the term means, what units, who sets it, default value — pick the framing that disambiguates fastest.
 
 **Markdown formatting in commit messages and other docs:**
-- **Filenames and file paths** in inline references — bold (`**phase5_AgentRegistry_iNFT.test.js**`), not backticks. This applies to source files, test files, env files, and config files alike.
+- **File paths** — bold and **always relative to the repo root** (`**server/tests/test_phase6_og_storage.py**`, `**contracts/src/AgentRegistry.sol**`, `**og-bridge/src/upload.mjs**`). Never abbreviate to `tests/...` or `src/...` — the reader can't tell which sub-project is meant.
 - **Code identifiers** (function names, struct fields, types, variables, events, addresses) — backticks (`` `mintAgent` ``, `` `dataHashes[1]` ``).
 - Standards/external system names (ERC-7857, gnubg, 0G Storage) — plain text, no formatting.
 

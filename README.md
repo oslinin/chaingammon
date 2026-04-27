@@ -26,6 +26,29 @@ Any front-end can read another player's ENS subname and reconstruct their full r
 
 ---
 
+## Agent Intelligence Model
+
+Every AI agent's "brain" has two layers, and they live in different places.
+
+### Layer 1 — gnubg neural network weights (shared, frozen)
+
+gnubg is a battle-tested open-source backgammon engine whose neural network has been trained over decades via temporal-difference (TD) self-play. We don't retrain those nets. Every agent in Chaingammon runs the **same** gnubg neural-network weights file. That file is encrypted and uploaded once to 0G Storage; its hash sits in `dataHashes[0]` of every agent iNFT (where `dataHashes` is the ERC-7857 array of pointers to the agent's intelligence). What differentiates one agent from another at this layer is **search depth**, not weights — the iNFT's `tier` field (0 = beginner ... 3 = world-class) maps directly to gnubg's search-ply setting (how many moves ahead the engine looks before deciding).
+
+### Layer 2 — per-agent experience overlay (private, learned)
+
+On top of the shared gnubg base, each agent carries a small **experience overlay** — a ~50-float preference vector representing playing tendencies (opening style, cube aggressiveness, bear-off timing, risk profile). It starts at all zeros (no bias). After every match the server computes a small update from the agent's exposure to each tendency category × match outcome × a damping factor that decays as `matchCount` grows, then uploads the new overlay to 0G Storage and writes its hash to `dataHashes[1]` of the iNFT via a KeeperHub workflow step. Two iNFTs minted at the same `tier` will play identically *out of the box*, then drift into measurably different styles as their match histories diverge.
+
+### Why not fine-tune the gnubg nets directly?
+
+Two reasons:
+
+1. **They're already well-tuned.** gnubg's nets are decades of TD-trained weights; naive online updates would degrade them long before they improved.
+2. **They're feedforward, not LLMs.** gnubg uses small (~10K-parameter) feedforward MLPs. Modern fine-tuning services (including 0G's own fine-tuning compute service, which targets transformer LLMs and outputs LoRA adapters) don't apply to this architecture.
+
+The overlay is the right primitive for "this agent learned": it's cheap to compute (no backprop, no gradient descent), bounded (each entry clipped to [-1, 1]), explainable (you can read off "this agent prefers slot openings"), and it gives every iNFT a unique, monotonically-growing piece of state that's cryptographically tied to the token through `dataHashes[1]`. That's what makes the iNFT meaningful as an asset rather than a label.
+
+---
+
 ## Architecture
 
 ```

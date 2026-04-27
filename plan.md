@@ -283,14 +283,19 @@ Tasks:
 
 **Goal:** A `og_storage_client.py` module that can `put_blob(bytes) -> hash` and `get_blob(hash) -> bytes` against 0G Storage testnet. Hello-world only.
 
+There is no native Python SDK for 0G Storage; only Go and TypeScript SDKs exist. v1 approach: a thin Node helper package (**og-bridge/**) using `@0gfoundation/0g-ts-sdk`, with two stdin/stdout CLI scripts (`upload.mjs`, `download.mjs`). Python calls them via `subprocess`. og-bridge is a workspace member alongside contracts/ and frontend/.
+
 Tasks:
 
-- Read 0G Storage docs (https://docs.0g.ai), pick the right SDK (Python or HTTP gateway)
-- Create `server/app/og_storage_client.py`
-- TDD: integration test — upload a known blob, read it back, assert equality
-- Configure `OG_STORAGE_*` env vars in `server/.env.example`
+- Create **og-bridge/** workspace package; install `@0gfoundation/0g-ts-sdk` + `ethers`
+- Add **og-bridge/src/upload.mjs** (bytes via stdin → JSON `{rootHash, txHash}`) and **og-bridge/src/download.mjs** (rootHash arg → bytes on stdout). Redirect SDK progress logging to stderr so stdout stays clean.
+- Add og-bridge to **pnpm-workspace.yaml**
+- Create **server/app/og_storage_client.py** with `put_blob(bytes) → UploadResult` and `get_blob(rootHash) → bytes`, both shelling out to the bridge
+- Add `OG_STORAGE_RPC`, `OG_STORAGE_INDEXER`, `OG_STORAGE_PRIVATE_KEY` to **server/.env.example**
+- Add `python-dotenv` to server dependencies
+- TDD: live integration test that uploads a small random blob and asserts `get_blob(rootHash) == blob`. Skip-if-env-missing so it doesn't run when keys aren't set.
 
-**Done when:** Round-trip blob through 0G Storage works in CI/locally.
+**Done when:** Round-trip blob through 0G Storage testnet works in `uv run pytest tests/test_phase6_og_storage.py`.
 
 ### Phase 7 — Game records on 0G Storage Log (per match) (2 hrs)
 
