@@ -538,7 +538,7 @@ Smoke test: `pnpm exec next build` compiles cleanly; `next dev` serves `/` with 
 
 **Done when:** Wallet connects to 0G testnet; address displays. ✅ verified by build + SSR-rendered DOM containing `<button>Connect wallet</button>`.
 
-### Phase 13 — Frontend agents list + ELO display (1.5 hrs)
+### Phase 13 — Frontend agents list + ELO display ✅
 
 **New tool/sponsor:** none (frontend continued).
 
@@ -546,10 +546,11 @@ Smoke test: `pnpm exec next build` compiles cleanly; `next dev` serves `/` with 
 
 Tasks:
 
-- Use wagmi `useReadContract` to query agentCount, then map agentIds → metadata + ELO
-- Tailwind cards (form > fashion)
+- **frontend/app/AgentsList.tsx** (new) — Client Component; reads `agentCount` from `AgentRegistry` via wagmi `useReadContract`, then renders one `<AgentCard>` per agent ID (1..count). Shows a "Loading agents…" / "No agents registered yet." fallback.
+- **frontend/app/AgentCard.tsx** (replaces empty stub) — Client Component; per-agent card with `useReadContracts` batched call: `agentMetadata(id)` from `AgentRegistry` + `agentElo(id)` from `MatchRegistry`. Falls back to `Agent #N` if metadata is empty or looks like a long URI. "Play" link routes to `/match?agentId=N`.
+- **frontend/app/page.tsx** — adds an "Available agents" section under the intro, mounting `<AgentsList />`. The page shell stays a server component; only `AgentsList` and `AgentCard` hydrate on the client.
 
-**Done when:** Page lists at least the seed agent with live ELO.
+**Done when:** Page lists at least the seed agent (agent #1, gnubg-default) with live ELO read from on-chain.
 
 ### Phase 14 — Frontend match flow (start, roll, move, end) (3 hrs)
 

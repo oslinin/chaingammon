@@ -705,4 +705,19 @@ Smoke test: `pnpm exec next build` passes (4 static routes). `curl http://localh
 Also in this commit (carry-over working-tree changes that hadn't landed yet):
 - **[chaingammon.pptx](chaingammon.pptx)** + **[scripts/make_deck.py](scripts/make_deck.py)** (updated) — slide deck extended with ELO formula + betting mechanics slide, and three sponsor spotlight slides (ENS subname table, 0G Storage primitives, KeeperHub workflow pipeline).
 
-### Phase 13 onward — pending
+## Phase 13 — frontend agents list + on-chain ELO display
+
+Goal: the landing page now shows a live list of agents pulled from `AgentRegistry`. Each card shows the agent's metadata label (the string passed at `mintAgent` time, e.g. "gnubg-default-placeholder"), its ELO read from `MatchRegistry`, and a "Play" link to `/match?agentId=N`. This is the first place where the user *sees* on-chain state in the UI rather than just connecting a wallet.
+
+Components:
+
+- **frontend/app/AgentsList.tsx** (new) — Client Component (`"use client"`). Calls `useReadContract` for `AgentRegistry.agentCount()` (Phase 5; the per-mint counter), then renders one `<AgentCard>` per ID `1..count`. Shows "Loading agents…" while the read is in flight and "No agents registered yet." if `count === 0`. Separated from `page.tsx` so the page shell stays a server component and only this subtree hydrates on the client.
+- **frontend/app/AgentCard.tsx** (replaces the empty stub from Phase 0) — Client Component; one batched `useReadContracts` call hits `agentMetadata(agentId)` on `AgentRegistry` + `agentElo(agentId)` on `MatchRegistry` so each card pays exactly one RPC. Falls back to `Agent #N` if `agentMetadata` is empty or longer than 80 chars (which would mean it's a URI rather than a short label). "Play" routes to `/match?agentId=N`, the route built in Phase 14.
+- **frontend/app/page.tsx** — adds an "Available agents" section between the intro and the page footer; mounts `<AgentsList />`. The intro paragraph was tightened ("Every match settles on 0G Chain…") and now mentions the iNFT framing ("AI agents are ERC-7857 iNFTs — their skill persists on-chain").
+
+Smoke test:
+
+- `pnpm exec next build` — clean prod build, all routes prerender static (`/` is still static; the agents list hydrates client-side).
+- Live: with the seed agent (#1 = `gnubg-default-placeholder`, tier 2) on 0G testnet, the card renders the metadata label + the live ELO from `MatchRegistry`.
+
+### Phase 14 onward — pending
