@@ -21,14 +21,17 @@ async function main() {
   const deployment = JSON.parse(fs.readFileSync(deploymentPath, "utf8"));
 
   // Constructor arguments per contract. Keys must match deployment.contracts.
-  // For AgentRegistry, we read the exact args used at deploy time from the
-  // deployment JSON so verify always matches what was actually deployed.
+  // For AgentRegistry / PlayerSubnameRegistrar, we read the exact args used
+  // at deploy time from the deployment JSON so verify always matches what
+  // was actually deployed.
   const agentArgs = deployment.agentRegistryConstructorArgs;
+  const registrarArgs = deployment.playerSubnameRegistrarConstructorArgs;
   const constructorArgs = {
     MatchRegistry: [],
     AgentRegistry: agentArgs
       ? [agentArgs.matchRegistry, agentArgs.initialBaseWeightsHash]
       : [deployment.contracts.MatchRegistry], // legacy fallback for older deployments
+    PlayerSubnameRegistrar: registrarArgs ? [registrarArgs.parentNode] : undefined,
   };
 
   for (const [name, address] of Object.entries(deployment.contracts)) {

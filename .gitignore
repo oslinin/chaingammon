@@ -30,3 +30,6 @@ contracts/typechain-types/
 # Misc
 .DS_Store
 *.log
+
+# LibreOffice / OpenOffice editor lock files
+.~lock.*#
