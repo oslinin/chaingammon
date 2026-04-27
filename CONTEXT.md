@@ -81,10 +81,12 @@ The server is the trusted dice roller in v1 (commit-reveal is v2 roadmap). Game 
 Root-level workspace scripts (run from repo root):
 
 ```bash
-pnpm contracts:compile   # compile contracts
-pnpm contracts:test      # run Hardhat tests
-pnpm contracts:deploy    # deploy to 0G testnet
-pnpm frontend:dev        # Next.js dev server
+pnpm contracts:compile             # compile contracts
+pnpm contracts:test                # run Hardhat tests
+pnpm contracts:deploy              # deploy to 0G testnet (writes deployments/0g-testnet.json)
+pnpm contracts:verify              # verify deployed contracts on chainscan-galileo
+pnpm contracts:deploy-and-verify   # both in one shot
+pnpm frontend:dev                  # Next.js dev server
 pnpm frontend:build      # production build
 pnpm frontend:test       # frontend build check
 pnpm server:test         # run pytest suite
@@ -182,7 +184,7 @@ Required envs by phase:
 
 | Phase | Sub-project | Variables |
 | --- | --- | --- |
-| 4+ | contracts/ | `DEPLOYER_PRIVATE_KEY`, `RPC_URL` |
+| 4+ | contracts/ | `DEPLOYER_PRIVATE_KEY`, `RPC_URL`, optional `CHAINSCAN_API_KEY` (placeholder works on testnet) |
 | 6+ | server/ | `OG_STORAGE_RPC`, `OG_STORAGE_INDEXER`, `OG_STORAGE_PRIVATE_KEY` |
 | 11+ | server/ | `ENS_REGISTRAR_ADDRESS`, `ENS_PARENT_NAME=chaingammon.eth` |
 | 16+ | server/ | `KH_API_KEY` (or use `kh auth login`), `KEEPERHUB_WORKFLOW_ID` |
@@ -213,7 +215,14 @@ gnubg is driven via its socket-based External Player interface. Install with `su
 
 ## Git Policy
 
-Never commit or push without explicit instruction from the owner. When work is ready to commit, show a summary of changed files and a draft commit message, then wait for approval.
+The flow at the end of every phase is **always**:
+
+1. Show the owner a summary of changed files and a draft commit message
+2. Paste the commit message verbatim into `log.md` as the new phase entry (no hash, no separate summary — see the log.md header)
+3. **Stop and wait.** Do not run `git commit` or `git push`.
+4. Only when the owner explicitly says "commit" (or equivalent — "ship it", "go", etc.), run the commit and push.
+
+Approval is **per-commit, not per-workflow**. A previously approved flow does not stand as approval for future commits. Pasting the message into `log.md` is part of the prep, not a green light to commit. When in doubt, stop and ask.
 
 ## Test-Driven Development
 

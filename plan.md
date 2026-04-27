@@ -233,14 +233,16 @@ Tasks:
 
 - Generate or pick a deployer wallet, fund via faucet (https://build.0g.ai)
 - Set `DEPLOYER_PRIVATE_KEY` in `contracts/.env`
-- `pnpm contracts:deploy` against `0g-testnet`
-- Save addresses to `contracts/deployments/0g-testnet.json` and `frontend/app/contracts.ts`
-- Verify on https://chainscan-galileo.0g.ai
-- Mint a seed agent (`gnubg-classic-v1`) from the deploy script
+- `pnpm contracts:deploy` against `0g-testnet` — runs `script/deploy.js`, mints seed agent, writes `contracts/deployments/0g-testnet.json`
+- `pnpm contracts:verify` — runs `script/verify.js`, which reads the deployments JSON and submits source code for verification on chainscan-galileo. Or `pnpm contracts:deploy-and-verify` for both in one shot.
+- Update `server/.env` and `frontend/.env.local` with the deployed addresses (gitignored)
+- Confirm on https://chainscan-galileo.0g.ai that the contracts show source code (✓ Code verified)
 
-**Note:** Phase 5 redeploys a new AgentRegistry with ERC-7857 + tier, so this v1 agent will be superseded. That's intentional — Phase 4 is a smoke test that the deploy pipeline works end-to-end on testnet before we add iNFT complexity. Cost: gas on testnet (free).
+**Verification setup:** `hardhat.config.js` has an `etherscan` block with a custom chain entry pointing at `https://chainscan-galileo.0g.ai/open/api`. The API key is optional on testnet — `CHAINSCAN_API_KEY` env var if you have one, else a placeholder works. The `verify.js` script keeps a `constructorArgs` map so each deployed contract is verified with the right constructor inputs; update that map whenever a new contract is added to the deploy.
 
-**Done when:** AgentRegistry + MatchRegistry both visible on 0G explorer; seed agent mint tx confirmed.
+**Note:** Phase 5 redeploys a new AgentRegistry with ERC-7857 + tier, so this v1 agent will be superseded. That's intentional — Phase 4 is a smoke test that the deploy + verify pipeline works end-to-end on testnet before we add iNFT complexity. Cost: gas on testnet (free).
+
+**Done when:** AgentRegistry + MatchRegistry both visible on 0G explorer with verified source code; seed agent mint tx confirmed.
 
 ### Phase 5 — Upgrade AgentRegistry to ERC-7857 (2 hrs)
 
