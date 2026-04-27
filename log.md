@@ -484,4 +484,93 @@ Also in this commit:
 - **README.md** — restructured "Mode A — testnet (real demo)" around the bootstrap script. The canonical fresh-network path is now `./scripts/bootstrap-network.sh`; sub-flows (redeploy contracts only, re-upload weights only, verify only) are documented as the breakdown for cases where you don't need the full bootstrap. Bootstrap section also explicitly mentions the gnubg install requirement (`apt install gnubg` / `brew install gnubg`) and explains there's no separate weights-file download URL — gnubg ships them inside its own package.
 - Repo cleanup: removed six exploratory print-only scripts at the **server/** root (**server/test_match_id.py**, **server/test_turn.py**, **server/test_sim.py**, **server/test_sim2.py**, **server/test_sim3.py**, **server/test_sim4.py**). Same pattern as the Phase 7 root-level cleanup — they had no `assert`s, weren't collected by `pnpm server:test` (which scopes to **server/tests/**), and just confused the layout because their names looked like real tests at a glance.
 
-### Phase 9 onward — pending
+### Phase 9: agent experience overlay — iNFTs that learn
+
+Every agent iNFT carries `dataHashes[1]` — a 32-byte pointer to the agent's "experience overlay" on 0G Storage. Until now it was `bytes32(0)` (a placeholder set at mint). This phase populates it: after every match the server reads the agent's current overlay from 0G Storage, runs a damped-reinforcement update against the match's move history, uploads the new overlay, and calls `updateOverlayHash` on the iNFT to pin the new hash. `matchCount` and `experienceVersion` (the on-chain counters) bump together. Two iNFTs minted at the same `tier` with the same shared base weights now drift into measurably different playing styles as their match histories diverge — that drift is what makes the iNFT meaningful as an asset rather than a label.
+
+Why this design (and what it isn't):
+
+- **What it's learning:** which categories of behavior correlate with this specific agent's wins vs losses across its match history. After many matches the overlay carries a personalised lean — "this agent wins more often when it builds the 5-point and runs back checkers, so it prefers those shapes."
+- **What it's NOT learning:** position evaluation (gnubg still does that — the network stays frozen), move legality, dice math, bear-off mechanics, opponent modeling, or anything requiring backprop. The overlay is a tendency tracker, not an RL policy.
+- The category list is hand-coded (~20 entries spanning opening style, point-building, bear-off timing, risk profile, game-phase tendencies, and reserved cube actions). v2 may extend it; v1 freezes it.
+
+New module (**server/app/agent_overlay.py**):
+
+- `CATEGORIES` — canonical tuple of category names. Stable: changes invalidate every existing 0G Storage blob. Adding categories at the end is safe; old blobs round-trip with new entries zero-filled.
+- `Overlay` dataclass with `version`, `values: {category → [-1, 1]}`, `match_count`. Frozen, clipped at construction, validated against `CATEGORIES`.
+- `Overlay.to_bytes()` / `Overlay.from_bytes()` — canonical UTF-8 JSON, sorted keys, deterministic. Same overlay → same Merkle root.
+- `classify_move(move) → {category: score in [0, 1]}` — hand-coded heuristics. Reads gnubg's move string (`"8/5 6/5"`, `"24/22 13/9*"`), extracts `(source, dest, hit)` triples, and lights up categories like `build_5_point`, `runs_back_checker`, `hits_blot`, `bearoff_efficient`, `anchors_back`, `opening_split`. v1 doesn't need to be tactically correct; it needs to be deterministic and distinguish moves with different characters.
+- `apply_overlay(candidates, overlay) → ranked` — re-ranks gnubg's candidate moves by `gnubg_equity + sum(v[c] * classifier_c(move))`. Picks `argmax(biased_score)`. With a zero overlay this is a no-op (the fresh-agent case picks gnubg's top move every time).
+- `update_overlay(overlay, agent_moves, won, match_count) → new_overlay` — applies the post-match update rule:
+  1. Compute per-category exposure across the agent's moves.
+  2. Normalize so total signal is bounded (a 50-move match doesn't apply 50× more update than a 5-move match).
+  3. Outcome signal = +1 win / -1 loss.
+  4. Proposed delta = `LEARNING_RATE * outcome * exposure[c]`.
+  5. Damping: `alpha = N / (N + match_count)`. Early matches move the overlay a lot; late matches barely shift it. Keeps the agent's learned identity stable instead of getting overwritten by one freak win at match 200.
+  6. Clip to `[-1, 1]`. The overlay is a bias, not an unbounded score.
+
+ChainClient extensions (**server/app/chain_client.py**):
+
+- New ABI entries: `updateOverlayHash`, `experienceVersion`, `matchCount` (per-agent), `OverlayUpdated` event.
+- `update_overlay_hash(agent_id, new_overlay_hash) → tx_hash` — owner-only setter on AgentRegistry. Phase 18 will route this through a KeeperHub workflow; for v1 the server signs directly.
+- `agent_match_count(id)` and `agent_experience_version(id)` — read-only views.
+
+Server endpoint (**server/app/main.py**):
+
+- `/games/{id}/finalize` was already calling `recordMatch` (Phase 7). It now also runs the overlay update for every agent in the match:
+  1. Fetch the agent's current overlay from 0G Storage via `dataHashes[1]` (or default to zero overlay if the iNFT still has `bytes32(0)`).
+  2. Call `update_overlay` with the match's move history and the win/loss flag.
+  3. `put_blob` the new overlay envelope to 0G Storage.
+  4. `chain.update_overlay_hash(agent_id, root_hash)` to pin it on-chain.
+- Added `_fetch_overlay` and `_update_agent_overlay` helpers; they degrade gracefully if a blob is corrupted (fall back to zero overlay rather than blocking finalize).
+- The `FinalizeResponse` now carries an `overlay_updates` list with one entry per agent (`{agent_id, won, overlay_root_hash, update_overlay_tx_hash, match_count}`). Empty for human-vs-human matches.
+
+Runtime overlay biasing (`/agent-move` integration):
+
+The overlay isn't just stored — every agent move now actually consults it. gnubg never knows about the overlay; the bias is applied **outside** gnubg by re-ranking its candidate list:
+
+- **server/app/gnubg_client.py** — new `get_candidate_moves(pos_id, match_id) → list[{"move", "equity"}]` parses the *full* numbered list from gnubg's `hint` output (the existing `get_agent_move` only regex-extracted the top line). Empty list = no legal moves (e.g. dance from the bar).
+- **server/app/main.py** — `/agent-move` now:
+  1. Calls `gnubg.get_candidate_moves`.
+  2. If empty → falls back to `gnubg.get_agent_move` (auto-play, nothing to bias).
+  3. Otherwise → loads the agent's overlay (lazy-cached per `game_id`, one 0G Storage fetch per game), runs `apply_overlay`, picks the biased-top move, submits it via `gnubg.submit_move`.
+  4. Records the chosen move in `_move_history` as before.
+- **server/app/main.py** also tracks per-game agent identity (`_game_agent_id`) so the overlay loader knows which iNFT to look up. `_game_overlays` is the per-game cache so agent play stays consistent within a game even if `/finalize` on a concurrent game updates the same agent's overlay on-chain.
+- The cache returns a default zero overlay (vanilla gnubg play) for `agent_id == 0`, missing iNFT, missing AGENT_REGISTRY_ADDRESS, corrupted blob, or `dataHashes[1] == bytes32(0)`. A misconfigured chain client can never block play.
+
+Tests:
+
+- **server/tests/test_phase9_overlay_schema.py** (new) — 11 fast unit tests covering `CATEGORIES`, `Overlay.default()`, validation (rejects unknown / missing categories, non-negative match_count), serialization round-trip, determinism, valid-UTF8 JSON output, version-byte and malformed-JSON rejection, and value clipping at construction. ~70 ms.
+- **server/tests/test_phase9_overlay_update.py** (new) — 9 fast unit tests for the update rule:
+  - Wins reinforce categories the agent leaned into; losses discourage them.
+  - Categories with zero exposure are unchanged (so an unrelated bias doesn't drift).
+  - `match_count` increments by exactly 1 per update.
+  - Damping: early matches move overlay more than late matches.
+  - Values stay clipped to `[-1, 1]` even after 500 consecutive wins.
+  - Convergence: an agent that always plays the same way and wins settles on a stable overlay (200-match tail spread < 0.05).
+  - Exposure normalization: a 50-move match doesn't apply 50× more update than a 5-move one.
+  - Empty move list produces no value changes (but still increments match_count).
+- **server/tests/test_phase9_overlay_classify_apply.py** (new) — 13 fast unit tests:
+  - `classify_move` returns a score for every category, deterministic, distinguishes structurally-different moves.
+  - Specific classifier hits: `build_5_point` for `"8/5 6/5"`, `bearoff_efficient` for `"6/off 5/off"`, `runs_back_checker` for `"24/22 24/20"`, `hits_blot` for `"13/8* 6/4"`. Unrelated categories stay at 0.
+  - `apply_overlay` keystone property: a zero overlay picks gnubg's top equity (vanilla-gnubg fallback), a negative `build_5_point` bias demotes 5-point moves, a positive `runs_back_checker` bias picks the running move even when gnubg ranks it third.
+  - Two agents with different overlays pick different moves on the same candidate set — the iNFT-divergence keystone.
+- **server/tests/test_phase9_overlay_integration.py** (new) — 2 live tests against 0G testnet (skipped without env):
+  - `test_overlay_update_lands_on_chain_and_round_trips_through_0g_storage` — read agent #1's pre-state → run `update_overlay` → upload → call `update_overlay_hash` → assert `dataHashes[1]` equals the upload's rootHash, `dataHashes[0]` (base weights) is unchanged, `experienceVersion` bumped by 1, and the round-tripped overlay equals what we uploaded.
+  - `test_two_consecutive_updates_produce_distinct_overlay_hashes` — two updates in a row produce different rootHashes; the iNFT's `dataHashes[1]` reflects the latest. This is the visible-history property: every match is a distinct `experienceVersion` with its own immutable archive.
+- **server/tests/test_phase9_agent_move_overlay.py** (new) — 6 fast wiring tests confirming the overlay actually flows into the runtime `/agent-move` pick. gnubg is mocked so the tests stay deterministic:
+  - `test_zero_overlay_picks_gnubg_top_equity_move` — fresh agent (no learned bias) plays vanilla gnubg.
+  - `test_overlay_biased_for_back_checkers_picks_running_move` — heavy `runs_back_checker` bias promotes the running move past gnubg's top equity pick.
+  - `test_two_agents_with_different_overlays_pick_different_moves` — same gnubg candidate set, two different overlays → two different submitted moves. The keystone iNFT-divergence property at the runtime layer.
+  - `test_no_candidates_falls_back_to_get_agent_move` — empty candidate list (dance from the bar) auto-plays via the existing path; `submit_move` is never called.
+  - `test_overlay_loaded_once_per_game` — subsequent moves reuse the cached overlay; no per-move 0G Storage fetch.
+  - `test_create_game_records_agent_id` — `agent_id` from `NewGameRequest` is captured at game creation so the overlay loader knows which iNFT to look up.
+- **server/tests/test_phase7_move_tracking.py** (updated) — adds `mock_gnubg.get_candidate_moves.return_value = []` so the existing tests route through the auto-play fallback (which was the path they already exercised). No behavior change for those tests.
+- 90/90 Phase 0/6/7/8/9 server tests pass; 39 fast unit tests run with no network in ~3 s combined; the 2 live tests run in ~65 s on testnet.
+- Hardhat tests still green: 52/52, no contract changes in this phase.
+
+Live on 0G testnet:
+
+- Two `updateOverlayHash` txs landed during the integration test run, each bumping agent #1's `experienceVersion` and pinning a fresh overlay rootHash on `dataHashes[1]`. Reading the iNFT now returns a non-zero `dataHashes[1]` and a `matchCount` reflecting the integration runs.
+
+### Phase 10 onward — pending

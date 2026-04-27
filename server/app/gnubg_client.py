@@ -30,6 +30,45 @@ class GnubgClient:
         cmds = f"set matchid {match_id}\nset board {position_id}\nmove {move}\nshow board\n"
         return self._run_commands(cmds)
 
+    def get_candidate_moves(self, position_id: str, match_id: str) -> list[dict]:
+        """Return all candidate moves gnubg's `hint` ranked, with equities.
+
+        gnubg emits lines like:
+            1. Cubeful 2-ply 8/5 6/5  Eq.: +0.123
+            2. Cubeful 2-ply 13/11 13/9  Eq.: +0.117
+            3. Cubeful 2-ply 8/5 8/4  Eq.: +0.108
+
+        Returns `[{"move": "8/5 6/5", "equity": 0.123}, ...]` ranked by
+        gnubg's equity score (highest first). Empty if no legal moves
+        (e.g. dance from the bar) — caller should fall back to auto-play.
+
+        Used by `apply_overlay` (Phase 9) to bias the agent's pick by its
+        learned style without retraining gnubg's net.
+        """
+        cmds = f"set matchid {match_id}\nset board {position_id}\nhint\n"
+        proc = subprocess.Popen(
+            self.cmd_base,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        stdout, _ = proc.communicate(cmds)
+
+        # rank | eval-tag (Cubeful/Cubefree) | ply | move text | equity
+        rows = re.findall(
+            r"(\d+)\.\s+[\w-]+\s+[0-9]+-ply\s+([\d/a-zA-Z*()\s]+?)\s*Eq\.:\s*([+\-]?[0-9.]+)",
+            stdout,
+        )
+        candidates = []
+        for _rank, move_str, eq_str in rows:
+            try:
+                equity = float(eq_str)
+            except ValueError:
+                continue
+            candidates.append({"move": move_str.strip(), "equity": equity})
+        return candidates
+
     def get_agent_move(self, position_id: str, match_id: str) -> dict:
         # Ask for a hint to get the best move
         cmds = f"set matchid {match_id}\nset board {position_id}\nhint\n"
