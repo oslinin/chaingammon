@@ -1,0 +1,70 @@
+// Phase 15: address → chaingammon-subname lookup.
+//
+// The PlayerSubnameRegistrar (Phase 10) doesn't have an on-chain reverse
+// mapping (address → label) because that would double the storage cost
+// per mint. Instead we walk the `SubnameMinted(string indexed
+// labelHashed, string label, bytes32 indexed node, address indexed
+// subnameOwner)` event log filtered by `subnameOwner = address`. The
+// label sits in the unindexed event data so we get it back from the
+// log directly.
+"use client";
+
+import { useEffect, useState } from "react";
+import { parseAbiItem } from "viem";
+import { usePublicClient } from "wagmi";
+
+import { PLAYER_SUBNAME_REGISTRAR_ADDRESS } from "./contracts";
+
+const SUBNAME_MINTED_EVENT = parseAbiItem(
+  "event SubnameMinted(string indexed labelHashed, string label, bytes32 indexed node, address indexed subnameOwner)",
+);
+
+export function useChaingammonName(address: `0x${string}` | undefined) {
+  const client = usePublicClient();
+  const [label, setLabel] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+
+  useEffect(() => {
+    if (
+      !address ||
+      !client ||
+      !PLAYER_SUBNAME_REGISTRAR_ADDRESS ||
+      PLAYER_SUBNAME_REGISTRAR_ADDRESS.length < 4
+    ) {
+      setLabel(null);
+      return;
+    }
+    let cancelled = false;
+    setIsLoading(true);
+    client
+      .getLogs({
+        address: PLAYER_SUBNAME_REGISTRAR_ADDRESS,
+        event: SUBNAME_MINTED_EVENT,
+        args: { subnameOwner: address },
+        fromBlock: "earliest",
+      })
+      .then((logs) => {
+        if (cancelled) return;
+        if (logs.length > 0) {
+          // A wallet could in theory own multiple subnames; take the most
+          // recently-minted one as the canonical display name.
+          const latest = logs[logs.length - 1];
+          setLabel(latest.args?.label ?? null);
+        } else {
+          setLabel(null);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setLabel(null);
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [address, client]);
+
+  const name = label ? `${label}.chaingammon.eth` : null;
+  return { label, name, isLoading };
+}

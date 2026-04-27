@@ -11,11 +11,8 @@
 
 import { useAccount, useChainId, useConnect, useDisconnect, useSwitchChain } from "wagmi";
 
+import { ProfileBadge } from "./ProfileBadge";
 import { ogTestnet } from "./wagmi";
-
-function shorten(addr: string) {
-  return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
-}
 
 export function ConnectButton() {
   const { address, isConnected } = useAccount();
@@ -72,9 +69,7 @@ export function ConnectButton() {
           {switchPending ? "Switching…" : "Switch to 0G testnet"}
         </button>
       ) : null}
-      <span className="font-mono text-sm text-zinc-700 dark:text-zinc-300">
-        {address ? shorten(address) : ""}
-      </span>
+      {address ? <ProfileBadge address={address} /> : null}
       <button
         type="button"
         onClick={() => disconnect()}

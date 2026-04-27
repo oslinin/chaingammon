@@ -6,9 +6,12 @@
 
 import AgentRegistryArtifact from "../../contracts/artifacts/src/AgentRegistry.sol/AgentRegistry.json";
 import MatchRegistryArtifact from "../../contracts/artifacts/src/MatchRegistry.sol/MatchRegistry.json";
+import PlayerSubnameRegistrarArtifact from "../../contracts/artifacts/src/PlayerSubnameRegistrar.sol/PlayerSubnameRegistrar.json";
 
 export const AGENT_REGISTRY_ADDRESS = (process.env.NEXT_PUBLIC_AGENT_REGISTRY_ADDRESS ?? "") as `0x${string}`;
 export const MATCH_REGISTRY_ADDRESS = (process.env.NEXT_PUBLIC_MATCH_REGISTRY_ADDRESS ?? "") as `0x${string}`;
+export const PLAYER_SUBNAME_REGISTRAR_ADDRESS = (process.env.NEXT_PUBLIC_PLAYER_SUBNAME_REGISTRAR_ADDRESS ?? "") as `0x${string}`;
 
 export const AgentRegistryABI = AgentRegistryArtifact.abi;
 export const MatchRegistryABI = MatchRegistryArtifact.abi;
+export const PlayerSubnameRegistrarABI = PlayerSubnameRegistrarArtifact.abi;

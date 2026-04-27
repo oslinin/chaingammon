@@ -569,19 +569,23 @@ No backgammon-component package matched the simple-tactile look I wanted, so the
 
 **Done when:** Frontend can play a full match, server returns winner. ✅ verified end-to-end against the local server.
 
-### Phase 15 — Frontend ENS name resolution + display (1.5 hrs)
+### Phase 15 — Frontend ENS name resolution + display ✅
 
 **New tool/sponsor:** none (continues ENS, frontend side).
 
-**Goal:** When a wallet connects, frontend resolves the wallet's chaingammon.eth subname (if any) and displays the name + ELO from text records. Agent cards show their ENS name too.
+**Goal:** When a wallet connects, frontend resolves the wallet's chaingammon.eth subname (if any) and displays the name + ELO from text records. Agent cards show their ENS-style name too.
 
 Tasks:
 
-- Add ENS resolver call to wagmi config
-- Header shows `alice.chaingammon.eth (1547)` instead of `0xABC...`
-- Agent cards show `gnubg-classic.chaingammon.eth`
+- **server/app/main.py** — `POST /subname/mint` (new) calls `EnsClient.mint_subname` so the server (registrar owner) signs the mint on the user's behalf — the user doesn't need 0G gas to claim a name in v1.
+- **frontend/app/contracts.ts** — adds `PLAYER_SUBNAME_REGISTRAR_ADDRESS` + `PlayerSubnameRegistrarABI` (imported from the Hardhat artifact).
+- **frontend/app/useChaingammonName.ts** (new) — hook that scans `SubnameMinted` logs filtered by `subnameOwner = address`. The label sits in the unindexed event data so we recover it directly from the log. Returns `{label, name, isLoading}`.
+- **frontend/app/useChaingammonProfile.ts** (new) — hook that reads the `elo` text record. `parentNode` is read once (immutable, cached forever); the namehash is computed locally with viem's `keccak256` + `encodePacked`.
+- **frontend/app/ProfileBadge.tsx** (new) — three-state badge: looking up → shortened address; subname found → `<label>.chaingammon.eth (1547)`; no subname → shortened address + "Claim name" inline form. Submitting the form POSTs to `/subname/mint`; after success the page reloads so the subname appears.
+- **frontend/app/ConnectButton.tsx** — replaces the inline shortened-address span with `<ProfileBadge address={address} />`.
+- **frontend/app/AgentCard.tsx** — strips the `ipfs://` prefix from `agentMetadata` and reformats as `<label>.chaingammon.eth` for visual parity with player names. Falls back to `Agent #N` if metadata is missing or too long to be a clean label.
 
-**Done when:** Connected user sees their ENS name in the header.
+**Done when:** Connected user sees their ENS name in the header (and can claim one if they don't have one yet). ✅ verified via prod build + SSR DOM smoke test.
 
 ### Phase 16 — KeeperHub direct execute spike (1 hr)
 
