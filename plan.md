@@ -552,7 +552,7 @@ Tasks:
 
 **Done when:** Page lists at least the seed agent (agent #1, gnubg-default) with live ELO read from on-chain.
 
-### Phase 14 — Frontend match flow (start, roll, move, end) (3 hrs)
+### Phase 14 — Frontend match flow (start, roll, move, end) ✅
 
 **New tool/sponsor:** none (frontend continued).
 
@@ -560,11 +560,14 @@ Tasks:
 
 Tasks:
 
-- Search npm for a backgammon board component (e.g., react-backgammon, bgboard); if no good fit, simple SVG board
-- Wire the move/roll/end flow to server endpoints
-- Match-end UI: show result, "settle on-chain" button (placeholder; real wiring happens in Phase 17)
+- **frontend/app/match/page.tsx** (new) — `/match?agentId=N` route. Client Component (under a `<Suspense>` boundary because `useSearchParams` requires it for static prerendering). State machine: idle → playing (human turn or agent turn) → over. POSTs `/games`, `/games/:id/roll`, `/games/:id/move`, `/games/:id/agent-move` to the FastAPI server. Match-end banner with placeholder "Settle on-chain" button (wired in Phase 17 via KeeperHub). Move notation is gnubg's standard (`8/5 6/5`, `bar/N`, `N/off`).
+- **frontend/app/Board.tsx** (replaces empty stub) — minimal SVG-free Tailwind board. Top row points 13→24 left-to-right; bottom row 12→1 left-to-right; central bar in the middle. Checkers shown as colored dots (blue=player 0/human, red=player 1/agent); counts >5 fall back to a `+N` label so the cell never overflows. Includes a turn indicator and the borne-off counts.
+- **frontend/app/DiceRoll.tsx** (replaces empty stub) — pip-pattern dice rendered as inline SVG with the standard 1-6 dot positions. Doubles render as two identical dice; nothing if dice are null (mid-turn).
+- Auto-drives the agent: once `state.turn === 1`, the page rolls (if no dice) and then calls `/agent-move`, with a 400ms delay so the human sees the board flash. A `useRef` guard keeps the auto-drive idempotent against React's StrictMode double-invokes.
 
-**Done when:** Frontend can play a full match, server returns winner.
+No backgammon-component package matched the simple-tactile look I wanted, so the board is hand-built. Future polish (drag-and-drop, animated moves, cube doubling UI) can layer on top.
+
+**Done when:** Frontend can play a full match, server returns winner. ✅ verified end-to-end against the local server.
 
 ### Phase 15 — Frontend ENS name resolution + display (1.5 hrs)
 

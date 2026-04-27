@@ -720,4 +720,38 @@ Smoke test:
 - `pnpm exec next build` — clean prod build, all routes prerender static (`/` is still static; the agents list hydrates client-side).
 - Live: with the seed agent (#1 = `gnubg-default-placeholder`, tier 2) on 0G testnet, the card renders the metadata label + the live ELO from `MatchRegistry`.
 
-### Phase 14 onward — pending
+## Phase 14 — frontend match flow
+
+Goal: a user can pick an agent on the landing page and play a complete backgammon match in the browser. Frontend talks to the FastAPI server (gnubg subprocess wrapper) for all game logic; nothing on-chain in this phase — settlement is Phase 17 (KeeperHub).
+
+Match page:
+
+- **frontend/app/match/page.tsx** (new) — `/match?agentId=N` route. Client Component wrapped in a `<Suspense>` boundary (Next 16 requires it whenever `useSearchParams` is used inside a page, otherwise static prerendering bails at build time).
+- State machine: starts a new game on mount via `POST /games {match_length: 3, agent_id}` (the seed agent from Phase 5 is `agentId=1`). After that, the human turn (`turn=0`) shows a "Roll dice" button until dice land, then a free-form move input; the agent turn (`turn=1`) auto-drives via `POST /games/:id/roll` (if no dice yet) followed by `POST /games/:id/agent-move` (Phase 9's overlay-biased pick).
+- Auto-drive guard: a `useRef(false)` flag flips to `true` while the agent is mid-step and back to `false` afterwards, so React's StrictMode double-invocation in dev doesn't fire two parallel agent moves. A 400ms delay before each agent step makes the board flash visible.
+- Match-end banner: shows winner, final score, and a *disabled* "Settle on-chain (coming Phase 17)" button as a placeholder for the KeeperHub workflow.
+- Errors render inline; missing-server case shows a "make sure the game server is running at \<API\>" hint.
+
+Visual board:
+
+- **frontend/app/Board.tsx** (replaces empty stub) — Tailwind-only board (no SVG). Top row points `13..24` left-to-right; bottom row `12..1` left-to-right; vertical "BAR" cell in the middle of each row. Checkers shown as colored dots (blue = player 0 / human; red = player 1 / agent). When a point holds more than 5 checkers, the extras render as a `+N` text label so a stacked point never overflows the cell. Turn indicator above the board ("Your turn (blue)" / "Agent's turn (red)") and borne-off counts below.
+- The point ordering matches gnubg's convention (player 0 enters at point 24, bears off at points 1..6); `flip` reverses dot growth direction so top-row checkers grow downward and bottom-row checkers grow upward, as in a physical board.
+
+Dice:
+
+- **frontend/app/DiceRoll.tsx** (replaces empty stub) — inline-SVG dice (one rounded square per die) with the standard 1-6 pip patterns; doubles render as two identical dice. Returns `null` if `dice` is empty / null so the same component stays in the layout across turns.
+
+Notation:
+
+- The frontend exposes gnubg's native move syntax to the user (`8/5 6/5` for two checker movements, `bar/N` to enter from the bar, `N/off` for bear-off). A small footnote on the move row documents this. Could move to a graphical move-picker in a later phase, but keeping notation explicit makes test reproduction easy.
+
+API helper:
+
+- A tiny `apiFetch` wraps `fetch(API + path, …)` and decodes the response as `GameState`. The `API` URL comes from `NEXT_PUBLIC_API_URL` (already in the env from Phase 0) with `http://localhost:8000` as a default.
+
+Smoke test:
+
+- `pnpm exec next build` — clean, all 5 routes (`/`, `/_not-found`, `/match`) prerender as static content; the match page is wholly client-rendered after hydration.
+- End-to-end against the local server: roll → move → opponent auto-plays → repeat → game-over banner. Wallet not yet wired into the match (no signing happens here in v1; that arrives with Phase 17 settlement).
+
+### Phase 15 onward — pending
