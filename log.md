@@ -401,4 +401,87 @@ Also in this commit:
   these from Phase 8 onward in place of the manually-maintained
   policies in CONTEXT.md.
 
-### Phase 8 onward — pending
+### Phase 8: encrypt gnubg base weights and pin them on 0G Storage
+
+Every agent iNFT carries `dataHashes[0]` — a 32-byte pointer to the encrypted gnubg neural-network weights file on 0G Storage. Until now it was `bytes32(0)` (a placeholder set at mint). This phase uploads the real weights file once, encrypted, and pins the resulting Merkle `rootHash` (the content-addressed identifier 0G Storage uses for blobs) on AgentRegistry via `setBaseWeightsHash`. Every existing and future agent's `dataHashes[0]` now resolves to the same shared blob.
+
+What's "the real weights file"? gnubg ships a single neural-network weights file at **/usr/lib/gnubg/gnubg.wd** (~399 KB on Ubuntu). It's the *intelligence* the gnubg engine runs against; gnubg the binary is the *runtime*. We don't retrain it — see the README's Agent Intelligence Model section for why.
+
+New encryption helper (**server/app/weights.py**):
+
+- AES-256-GCM with a server-held key (`BASE_WEIGHTS_ENCRYPTION_KEY` env var, 32 bytes hex).
+  - v2 will switch to per-owner hybrid encryption so each iNFT owner can decrypt independently.
+  - v1 keeps a single key because every owner runs the same shared gnubg base.
+- `encrypt_weights(plaintext, key) → EncryptedWeights` — fresh random 12-byte nonce per call (GCM mandates nonce uniqueness).
+- `decrypt_weights(envelope, key) → bytes` — wraps `cryptography`'s `AESGCM.decrypt`, raises `WeightsCryptoError` on auth-tag failure.
+- Envelope on-disk layout: `[version=0x01][nonce: 12 bytes][ciphertext+GCM tag]`. The version byte is reserved so v2 can change layout without breaking v1 readers.
+- `EncryptedWeights.to_bytes()` / `from_bytes()` — what gets uploaded to 0G Storage; round-trips deterministically.
+- `generate_key()` returns 32 random bytes; `load_key_from_env()` reads `BASE_WEIGHTS_ENCRYPTION_KEY` and decodes hex.
+
+One-time upload script (**server/scripts/upload_base_weights.py**):
+
+- `--print-fresh-key` mode emits a new AES key on stdout (one line of hex) so you can save it to **server/.env** before running the upload.
+- Default mode does the full chain in order:
+  1. Read **/usr/lib/gnubg/gnubg.wd**.
+  2. Encrypt with `BASE_WEIGHTS_ENCRYPTION_KEY` from env.
+  3. `put_blob` to 0G Storage (Phase 6's wrapper).
+  4. Call `chain.set_base_weights_hash(rootHash)` on the deployed AgentRegistry.
+  5. Verify the on-chain read matches the upload before exiting.
+- Idempotent — running again replaces the on-chain hash.
+
+ChainClient extensions (**server/app/chain_client.py**):
+
+- New embedded `_AGENT_REGISTRY_ABI` covering `baseWeightsHash`, `setBaseWeightsHash`, `agentCount`, `tier`, `dataHashes`, and the `BaseWeightsHashSet` event.
+- Constructor now accepts an optional `agent_registry_address`; when set the client exposes:
+  - `base_weights_hash()` — read the contract-level shared hash.
+  - `set_base_weights_hash(new_hash)` — owner-only setter.
+  - `agent_data_hashes(agent_id)` — returns `[base, overlay]` for an agent.
+  - `agent_tier(agent_id)` — returns the immutable tier set at mint.
+- `from_env()` reads `AGENT_REGISTRY_ADDRESS` if present.
+
+Deploy script update (**contracts/script/deploy.js**):
+
+- New `INITIAL_BASE_WEIGHTS_HASH` constant defaults to the 0G testnet blob hash produced by this phase's upload script (`0x989ba07766cc35aa0011cf3f764831d9d1a7e11495db78c310d764b4478409ad`).
+- Override per-deploy via the `INITIAL_BASE_WEIGHTS_HASH` env var. Pass `0x` + 64 zeros on a fresh network and call `setBaseWeightsHash` later.
+- Future deploys (e.g. a v2 redeploy) automatically inherit the pinned hash without a follow-up tx.
+
+Env additions (**server/.env.example**):
+
+- `BASE_WEIGHTS_ENCRYPTION_KEY=` — 32 bytes hex; the AES-256 key for the weights blob. Anyone with this key can decrypt the blob from 0G Storage; treat it like the deployer key.
+
+Live on 0G testnet:
+
+- Encrypted weights blob (~408 KB envelope) at 0G Storage `rootHash` `0x989ba07766cc35aa0011cf3f764831d9d1a7e11495db78c310d764b4478409ad`.
+- AgentRegistry.setBaseWeightsHash tx: https://chainscan-galileo.0g.ai/tx/0xa129ce4f8bc230cdc944a061c8902897c7877db6d15e0956f5dd418387936c7b
+- Reading `dataHashes[0]` on agent #1 now returns the same hash, so the iNFT's claim ("this agent runs on real gnubg weights") is cryptographically verifiable end-to-end.
+
+Tests:
+
+- **server/tests/test_phase8_weights.py** (new) — 11 fast unit tests. No network — runs in ~70 ms. Covers:
+  - AES-256-GCM round-trip on small payloads and on 400 KB realistic-size payloads.
+  - Rejection of wrong key (GCM auth tag).
+  - Rejection of tampered ciphertext.
+  - Nonce uniqueness across calls — so the same plaintext doesn't produce the same blob, and you don't accidentally re-encrypt and clobber.
+  - Envelope `to_bytes` / `from_bytes` round-trip.
+  - Version byte (`0x01`) presence.
+  - Rejection of unknown version bytes and truncated envelopes.
+- **server/tests/test_phase8_base_weights_integration.py** (new) — 2 live tests, skipped when env vars or the weights file aren't present:
+  - `test_base_weights_hash_resolves_to_real_gnubg_weights` — read contract `baseWeightsHash` → `get_blob` from 0G Storage → decrypt → `assert plaintext == open("/usr/lib/gnubg/gnubg.wd").read()`.
+  - `test_minted_agent_inherits_the_same_base_hash` — agent #1's `dataHashes[0]` should equal the contract-level `baseWeightsHash`. Confirms the shared-base model.
+- 47 server tests pass total: Phase 0 ×7 + Phase 6 ×1 + Phase 7 ×28 + Phase 8 ×11 unit + Phase 8 ×2 live. 38 fast unit tests run in <2 s combined; the live tests run in ~10 s on testnet.
+- Hardhat tests: 52/52 still green; no contract changes in this phase.
+
+Also in this commit:
+
+- **scripts/bootstrap-network.sh** (new) — one-shot orchestrator for a fresh-network bootstrap. Runs in order:
+  1. `pnpm contracts:test`
+  2. `pnpm contracts:deploy` (writes **contracts/deployments/0g-testnet.json**)
+  3. Reads the freshly-deployed AgentRegistry/MatchRegistry addresses from that JSON, sets them as env overrides, and runs **server/scripts/upload_base_weights.py** so the encrypted weights blob is pinned to the new contract — works regardless of what's in **server/.env**.
+  4. `pnpm contracts:verify`
+  5. Prints the new addresses for the user to copy into **server/.env** and **frontend/.env.local** (doesn't mutate user state).
+  Pre-flight checks fail fast with readable errors if `BASE_WEIGHTS_ENCRYPTION_KEY` isn't set in **server/.env** or `/usr/lib/gnubg/gnubg.wd` doesn't exist (with `apt install gnubg` / `brew install gnubg` hint). Solves the "default `INITIAL_BASE_WEIGHTS_HASH` ages out and points at a dead blob" failure mode for clean redeploys.
+- **server/scripts/upload_base_weights.py** — improved missing-weights error message to point at `apt install gnubg` / `brew install gnubg` (gnubg's weights file ships only inside the gnubg package, no separate download URL exists).
+- **README.md** — restructured "Mode A — testnet (real demo)" around the bootstrap script. The canonical fresh-network path is now `./scripts/bootstrap-network.sh`; sub-flows (redeploy contracts only, re-upload weights only, verify only) are documented as the breakdown for cases where you don't need the full bootstrap. Bootstrap section also explicitly mentions the gnubg install requirement (`apt install gnubg` / `brew install gnubg`) and explains there's no separate weights-file download URL — gnubg ships them inside its own package.
+- Repo cleanup: removed six exploratory print-only scripts at the **server/** root (**server/test_match_id.py**, **server/test_turn.py**, **server/test_sim.py**, **server/test_sim2.py**, **server/test_sim3.py**, **server/test_sim4.py**). Same pattern as the Phase 7 root-level cleanup — they had no `assert`s, weren't collected by `pnpm server:test` (which scopes to **server/tests/**), and just confused the layout because their names looked like real tests at a glance.
+
+### Phase 9 onward — pending

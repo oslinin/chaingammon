@@ -315,19 +315,27 @@ Move history isn't tracked in v1 — `moves` and `cube_actions` arrays are prese
 
 **Done when:** A completed match has a 0G Storage entry whose hash is committed in MatchRegistry. ✅ confirmed against 0G testnet.
 
-### Phase 8 — Base gnubg weights on 0G Storage (shared, encrypted) (2 hrs)
+### Phase 8 — Base gnubg weights on 0G Storage (shared, encrypted) (2 hrs) ✅ DONE
 
 **New tool/sponsor:** none (continues 0G Storage).
 
 **Goal:** Upload gnubg's default weights file to 0G Storage **once** as a shared base. All agents reference the same blob via `dataHashes[0]`. Per-agent differentiation comes from tier (Phase 5) and experience overlay (Phase 9), not different base weights — gnubg's "skill levels" are settings, not separate weight files.
 
-Tasks:
+What landed:
+- **server/app/weights.py** — AES-256-GCM helper. `encrypt_weights(plaintext, key)` / `decrypt_weights(envelope, key)` round-trip arbitrary bytes with a fresh nonce per call. Envelope format: 1-byte version + 12-byte nonce + ciphertext-with-GCM-tag. Version byte (0x01) reserved so v2 can change layout (e.g. hybrid encryption keyed off the iNFT owner's key) without breaking v1 readers.
+- **server/scripts/upload_base_weights.py** — one-time CLI: reads **/usr/lib/gnubg/gnubg.wd** (~399 KB), encrypts with `BASE_WEIGHTS_ENCRYPTION_KEY` from env, uploads to 0G Storage via Phase 6's `put_blob`, then calls `setBaseWeightsHash` on the deployed AgentRegistry. Idempotent — running it again replaces the on-chain hash.
+- **server/app/chain_client.py** — extended with `set_base_weights_hash(hash)`, `base_weights_hash()`, `agent_data_hashes(id)`, `agent_tier(id)`. AgentRegistry ABI added alongside the MatchRegistry ABI; constructor now takes optional `agent_registry_address` and reads `AGENT_REGISTRY_ADDRESS` from env.
+- **contracts/script/deploy.js** — `INITIAL_BASE_WEIGHTS_HASH` constant defaults to the testnet-pinned blob (`0x989b...09ad`). Fresh deploys on a new network can override via env var or pass the zero hash and update later via `setBaseWeightsHash`.
 
-- Encrypt `gnubg_ts0.weights` (or equivalent default file) with AES-GCM. v1 key management: a server-held key is fine; per-owner encryption is v2.
-- Upload to 0G Storage once → record the resulting hash as `BASE_WEIGHTS_HASH` constant
-- Update deploy script: when minting any agent, populate `dataHashes[0]` with `BASE_WEIGHTS_HASH`
-- Document the runtime/intelligence split in `CONTEXT.md`: gnubg = inference runtime, weights = learned intelligence, both required to run an agent
-- TDD: mint two agents at different tiers, fetch their `dataHashes[0]`, assert they match `BASE_WEIGHTS_HASH`; decrypt the blob and verify it matches the source file
+Live on 0G testnet:
+- Encrypted weights blob (~408 KB envelope): `0x989ba07766cc35aa0011cf3f764831d9d1a7e11495db78c310d764b4478409ad`
+- AgentRegistry's `baseWeightsHash` updated tx: [`0xa129ce4f...936c7b`](https://chainscan-galileo.0g.ai/tx/0xa129ce4f8bc230cdc944a061c8902897c7877db6d15e0956f5dd418387936c7b)
+
+Tests:
+- **server/tests/test_phase8_weights.py** — 11 fast unit tests covering AES-256-GCM round-trip, large-payload (400 KB) round-trip, wrong-key rejection, tampered-ciphertext rejection (GCM auth tag), nonce uniqueness, envelope serialization round-trip, version byte presence, malformed-envelope rejection.
+- **server/tests/test_phase8_base_weights_integration.py** — 2 live tests: read on-chain `baseWeightsHash` → `get_blob` from 0G Storage → decrypt → assert byte-exact match with **/usr/lib/gnubg/gnubg.wd**; and assert agent #1's `dataHashes[0]` equals the contract-level hash. Skipped when env or weights file aren't present.
+
+**Done when:** Both seed agents (e.g. one beginner, one advanced) hash-commit to the same base weights blob on 0G Storage; the blob is decryptable and verifies. ✅ confirmed against 0G testnet.
 
 **Done when:** Both seed agents (e.g. one beginner, one advanced) hash-commit to the same base weights blob on 0G Storage; the blob is decryptable and verifies.
 
