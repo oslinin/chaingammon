@@ -36,7 +36,7 @@ gnubg is a battle-tested open-source backgammon engine whose neural network has 
 
 ### Layer 2 — per-agent experience overlay (private, learned)
 
-On top of the shared gnubg base, each agent carries a small **experience overlay** — a ~50-float preference vector representing playing tendencies (opening style, cube aggressiveness, bear-off timing, risk profile). It starts at all zeros (no bias). After every match the server computes a small update from the agent's exposure to each tendency category × match outcome × a damping factor that decays as `matchCount` grows, then uploads the new overlay to 0G Storage and writes its hash to `dataHashes[1]` of the iNFT via a KeeperHub workflow step. Two iNFTs minted at the same `tier` will play identically *out of the box*, then drift into measurably different styles as their match histories diverge.
+On top of the shared gnubg base, each agent carries a small **experience overlay** — a ~50-float preference vector representing playing tendencies (opening style, cube aggressiveness, bear-off timing, risk profile). It starts at all zeros (no bias). After every match the server computes a small update from the agent's exposure to each tendency category × match outcome × a damping factor that decays as `matchCount` grows, then uploads the new overlay to 0G Storage and writes its hash to `dataHashes[1]` of the iNFT via a KeeperHub workflow step. Two iNFTs minted at the same `tier` will play identically _out of the box_, then drift into measurably different styles as their match histories diverge.
 
 ### Why not fine-tune the gnubg nets directly?
 
@@ -46,6 +46,44 @@ Two reasons:
 2. **They're feedforward, not LLMs.** gnubg uses small (~10K-parameter) feedforward MLPs. Modern fine-tuning services (including 0G's own fine-tuning compute service, which targets transformer LLMs and outputs LoRA adapters) don't apply to this architecture.
 
 The overlay is the right primitive for "this agent learned": it's cheap to compute (no backprop, no gradient descent), bounded (each entry clipped to [-1, 1]), explainable (you can read off "this agent prefers slot openings"), and it gives every iNFT a unique, monotonically-growing piece of state that's cryptographically tied to the token through `dataHashes[1]`. That's what makes the iNFT meaningful as an asset rather than a label.
+
+---
+
+## Match Archive on 0G Storage
+
+Every completed match is preserved as a canonical, content-addressed archive on **0G Storage**. The on-chain `MatchRegistry` only stores match metadata (timestamp, participants, winner, length); the _full_ match — every move, every dice roll, the final position — lives off-chain on 0G Storage Log, and the on-chain record carries a cryptographic pointer to it.
+
+### Why a separate archive layer?
+
+ELO without games is just a number. The games themselves are the substance — they're how a player improves, how a coach teaches, how a community builds canon. Storing them once, immutably, owned by no platform, is the actual point of an open backgammon protocol. 0G Storage is built for exactly this: cheap, content-addressed, replicated, and decentralized.
+
+### What gets stored
+
+Each match produces a `GameRecord` envelope (defined in **server/app/game_record.py**) — JSON, sorted keys, UTF-8, deterministic so the bytes always hash the same way:
+
+| Field                                 | What it carries                                                                                           |
+| ------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `match_length`, `final_score`         | match-point target and final score                                                                        |
+| `winner`, `loser`                     | each side's identity (a wallet address for humans, an ERC-7857 token id for agent iNFTs)                  |
+| `final_position_id`, `final_match_id` | gnubg's native base64 strings — any tool with gnubg installed can reconstruct the end state bit-perfectly |
+| `moves`                               | the full play sequence: `(turn, dice, move, position_id_after)` for every committed checker move          |
+| `cube_actions`                        | doubling-cube events (offer / take / drop / beaver / raccoon)                                             |
+| `started_at`, `ended_at`              | ISO-8601 UTC timestamps                                                                                   |
+| `mat_format`                          | reserved for v2 — a literal `.mat` text export from gnubg's `export match` command                        |
+
+Sized at ~2–10 KB compressed per match. A player with 1,000 lifetime matches has ~5–10 MB of game data.
+
+### The on-chain ↔ off-chain link
+
+When a match ends, the server runs three actions in one flow:
+
+1. **Build** the `GameRecord` from the final state and the move history captured during play.
+2. **Upload** the JSON bytes to 0G Storage. The indexer returns a 32-byte Merkle `rootHash` — a content-addressed identifier that names this exact archive.
+3. **Record on-chain.** The server calls `MatchRegistry.recordMatch(...)` with that `rootHash` as the `gameRecordHash` field. The `MatchInfo` struct now permanently links match metadata to the archive.
+
+Anyone can later resolve a match by id, read `MatchInfo.gameRecordHash`, fetch the bytes from 0G Storage, and replay the game move-by-move. No login, no API key, no platform — the archive is content-addressed and replicated across 0G's network.
+
+In v1 the server signs `recordMatch` directly via web3.py. In Phase 17/18 the same flow becomes a KeeperHub workflow with retries, gas optimization, and a verifiable audit trail.
 
 ---
 
@@ -87,36 +125,36 @@ The overlay is the right primitive for "this agent learned": it's cheap to compu
 
 ## Tech Stack
 
-| Layer | Technology |
-|---|---|
-| Frontend | Next.js 16, React 19, TypeScript, Tailwind CSS 4 |
-| Wallet / chain | wagmi 3, viem 2, @tanstack/react-query 5 |
-| Game server | Python 3.12, FastAPI, uvicorn, pydantic, web3.py |
-| Backgammon engine | GNU Backgammon (gnubg) via External Player interface |
-| Smart contracts | Solidity 0.8.24, Hardhat 2, evmVersion cancun, OpenZeppelin v5 |
-| Blockchain | 0G Chain testnet (EVM, chainId 16602) |
-| Identity | ENS subnames + text records |
-| Decentralized storage | 0G Storage (Log + KV + Blob) |
-| Tx execution + audit | KeeperHub workflows |
-| Package management | uv (Python), pnpm workspace (Node) |
+| Layer                 | Technology                                                     |
+| --------------------- | -------------------------------------------------------------- |
+| Frontend              | Next.js 16, React 19, TypeScript, Tailwind CSS 4               |
+| Wallet / chain        | wagmi 3, viem 2, @tanstack/react-query 5                       |
+| Game server           | Python 3.12, FastAPI, uvicorn, pydantic, web3.py               |
+| Backgammon engine     | GNU Backgammon (gnubg) via External Player interface           |
+| Smart contracts       | Solidity 0.8.24, Hardhat 2, evmVersion cancun, OpenZeppelin v5 |
+| Blockchain            | 0G Chain testnet (EVM, chainId 16602)                          |
+| Identity              | ENS subnames + text records                                    |
+| Decentralized storage | 0G Storage (Log + KV + Blob)                                   |
+| Tx execution + audit  | KeeperHub workflows                                            |
+| Package management    | uv (Python), pnpm workspace (Node)                             |
 
 ### Where each protocol fits
 
-| Protocol | Role | Where it lives |
-|---|---|---|
-| **ENS** | Portable player identity. `<name>.chaingammon.eth` subnames per player; text records (`elo`, `match_count`, `last_match_id`, `style_uri`, `archive_uri`) carry the reputation. | `contracts/src/PlayerSubnameRegistrar.sol`, `server/app/ens_client.py` |
-| **0G Chain** | Hosts AgentRegistry, MatchRegistry, EloMath, and the subname registrar. | `contracts/src/`, `contracts/deployments/0g-testnet.json` |
-| **0G Storage** | Per-match game record archive (Log); per-player style profile (KV); per-agent encrypted gnubg weights (Blob); audit trail mirror so it's publicly viewable. | `server/app/og_storage_client.py`, `server/app/game_record.py`, `server/app/style.py` |
-| **KeeperHub** | Match settlement is a multi-step orchestration (recordMatch + ENS text record updates + agent overlay refresh). KeeperHub's workflow primitive handles retry, gas, and audit. | `server/app/keeperhub_client.py`, `docs/keeperhub-feedback.md` |
+| Protocol       | Role                                                                                                                                                                           | Where it lives                                                                        |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------- |
+| **ENS**        | Portable player identity. `<name>.chaingammon.eth` subnames per player; text records (`elo`, `match_count`, `last_match_id`, `style_uri`, `archive_uri`) carry the reputation. | `contracts/src/PlayerSubnameRegistrar.sol`, `server/app/ens_client.py`                |
+| **0G Chain**   | Hosts AgentRegistry, MatchRegistry, EloMath, and the subname registrar.                                                                                                        | `contracts/src/`, `contracts/deployments/0g-testnet.json`                             |
+| **0G Storage** | Per-match game record archive (Log); per-player style profile (KV); per-agent encrypted gnubg weights (Blob); audit trail mirror so it's publicly viewable.                    | `server/app/og_storage_client.py`, `server/app/game_record.py`, `server/app/style.py` |
+| **KeeperHub**  | Match settlement is a multi-step orchestration (recordMatch + ENS text record updates + agent overlay refresh). KeeperHub's workflow primitive handles retry, gas, and audit.  | `server/app/keeperhub_client.py`, `docs/keeperhub-feedback.md`                        |
 
 ### Claude Skills Used
 
 This project was built with [Claude Code](https://claude.ai/code).
 
-| Skill | What it did |
-|---|---|
-| `/init` | Generated `CONTEXT.md` so future Claude sessions have the architecture, commands, and conventions without re-deriving them |
-| `/fewer-permission-prompts` | Scanned session transcripts and added common read-only commands to the project allowlist |
+| Skill                       | What it did                                                                                                                |
+| --------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `/init`                     | Generated `CONTEXT.md` so future Claude sessions have the architecture, commands, and conventions without re-deriving them |
+| `/fewer-permission-prompts` | Scanned session transcripts and added common read-only commands to the project allowlist                                   |
 
 ---
 
@@ -135,9 +173,9 @@ Contracts live on a chain and are deployed once. Two long-running processes: **g
 
 You can run against either chain:
 
-| Mode | Chain | When |
-|---|---|---|
-| **Testnet** | 0G testnet (chainId 16602) | Demo, recording, submission |
+| Mode          | Chain                             | When                                      |
+| ------------- | --------------------------------- | ----------------------------------------- |
+| **Testnet**   | 0G testnet (chainId 16602)        | Demo, recording, submission               |
 | **Local dev** | Hardhat localhost (chainId 31337) | Fast iteration; state resets each restart |
 
 ### One-time setup
@@ -203,12 +241,12 @@ pnpm frontend:test         # next build (production correctness check)
 
 ## 0G Testnet
 
-| | |
-|---|---|
-| RPC | `https://evmrpc-testnet.0g.ai` |
-| Chain ID | `16602` |
+|          |                                 |
+| -------- | ------------------------------- |
+| RPC      | `https://evmrpc-testnet.0g.ai`  |
+| Chain ID | `16602`                         |
 | Explorer | https://chainscan-galileo.0g.ai |
-| Faucet | https://build.0g.ai |
+| Faucet   | https://build.0g.ai             |
 
 After deploy, contract addresses live in `contracts/deployments/0g-testnet.json` and need to be copied into `server/.env` and `frontend/.env.local`.
 
@@ -226,6 +264,7 @@ After deploy, contract addresses live in `contracts/deployments/0g-testnet.json`
 ## Submission Checklist
 
 **All tracks:**
+
 - [x] Public GitHub repo
 - [ ] README with pitch, demo link, live URL, deployed addresses
 - [ ] Demo video < 3 min
@@ -233,20 +272,24 @@ After deploy, contract addresses live in `contracts/deployments/0g-testnet.json`
 - [ ] Team name + contact (Telegram + X)
 
 **ENS:**
+
 - [ ] Subname registrar deployed (address + explorer link)
 - [ ] At least one `<name>.chaingammon.eth` minted with text records
 - [ ] Write-up: text record schema and resolver flow
 
 **0G:**
+
 - [ ] Contracts deployed on 0G testnet (chainscan-galileo links)
 - [ ] At least one agent iNFT with hash-committed encrypted gnubg weights on 0G Storage
 - [ ] Match game records visible on 0G Storage
 - [ ] Write-up: which 0G features used (Chain, Storage)
 
 **KeeperHub:**
+
 - [ ] Working KeeperHub workflow handling settlement
 - [ ] `docs/keeperhub-feedback.md` with ≥5 specific actionable items
 - [ ] Write-up: workflow architecture and what the audit trail captures
 
 **Main track:**
+
 - [ ] Open-protocol thesis written up — anyone can read another player's ENS profile and reconstruct their reputation

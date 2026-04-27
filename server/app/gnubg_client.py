@@ -35,7 +35,7 @@ class GnubgClient:
         cmds = f"set matchid {match_id}\nset board {position_id}\nhint\n"
         proc = subprocess.Popen(self.cmd_base, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         stdout, stderr = proc.communicate(cmds)
-        
+
         # The best move is usually prefixed with "1. Cubeful " or "1. Cubefree "
         move_match = re.search(r"1\.\s+[\w-]+\s+[0-9]+-ply\s+([\d/a-zA-Z*\(\)\s]+?)\s*Eq\.:", stdout)
         if not move_match:
@@ -43,14 +43,19 @@ class GnubgClient:
             import base64
             b = base64.b64decode(match_id + "==")
             turn = (b[1] >> 3) & 1 # Bit 11 is turn
-            
+
             # Temporarily set the active player to gnubg to let it auto-play (pass or end game)
             cmds = f"set matchid {match_id}\nset board {position_id}\nset player {turn} gnubg\nplay\nshow board\n"
-            return self._run_commands(cmds)
-            
+            result = self._run_commands(cmds)
+            result["best_move"] = None  # auto-played; no single move to record
+            return result
+
         best_move = move_match.group(1).strip()
-        # Now apply the best move
-        return self.submit_move(position_id, match_id, best_move)
+        # Now apply the best move and surface what was played so the
+        # server can record it in the match's GameRecord.
+        result = self.submit_move(position_id, match_id, best_move)
+        result["best_move"] = best_move
+        return result
         
     def roll_dice(self, position_id: str, match_id: str) -> dict:
         cmds = f"set matchid {match_id}\nset board {position_id}\nroll\nshow board\n"

@@ -241,4 +241,164 @@ Also in this commit:
   shouldn't waste context scanning (`node_modules/`, `.venv/`,
   `target/`, `.next/`, `contracts/artifacts/`, etc.).
 
-### Phase 7 onward — pending
+### Phase 7: archive each match to 0G Storage and record it on-chain
+
+End-of-game now does three things in one server-side flow: it builds
+a canonical match archive (a `GameRecord` envelope), uploads that
+archive to 0G Storage to get back a 32-byte Merkle `rootHash` (the
+content-addressed identifier 0G Storage uses for blobs), and calls
+`recordMatch` on **contracts/src/MatchRegistry.sol** with that
+`rootHash` as the `gameRecordHash` field. The on-chain match record is
+now cryptographically tied to the off-chain archive: anyone can read
+`MatchRegistry.getMatch(id).gameRecordHash` and pull the canonical
+replay from 0G Storage.
+
+New modules:
+
+- **server/app/game_record.py** — defines:
+  - `PlayerRef` — one side of the match: either a human (wallet address)
+    or an agent iNFT (token id, the ERC-7857 agent registry id).
+  - `MoveEntry` / `CubeAction` — per-turn play and doubling-cube events.
+  - `GameRecord` — the canonical envelope: `match_length`, `final_score`,
+    `winner` / `loser` (PlayerRefs), `final_position_id` and
+    `final_match_id` (gnubg's native base64 strings, so any tool with
+    gnubg installed can reconstruct the end state bit-perfectly), optional
+    `moves` and `cube_actions` lists, optional ISO-8601 `started_at` /
+    `ended_at`, and a reserved `mat_format` slot for a v2 `.mat` text
+    export from gnubg's `export match` command.
+  - `serialize_record(record) → bytes` — canonical JSON, sorted keys,
+    UTF-8, so the same record always produces the same Merkle root on
+    0G Storage.
+  - `build_from_state(state, ...)` — convenience constructor from a
+    final-state `GameState`.
+
+- **server/app/chain_client.py** — `ChainClient`, a thin web3.py wrapper
+  around MatchRegistry. v1 sends `recordMatch` from the deployer wallet
+  (which owns the contract); Phase 18 will route this through a
+  KeeperHub workflow instead. Methods:
+  - `record_match(winner_agent_id, winner_human, loser_agent_id,
+    loser_human, match_length, game_record_hash) → FinalizedMatch(match_id, tx_hash)`
+  - `get_match(match_id) → dict` (returns the on-chain `MatchInfo`
+    fields including `gameRecordHash`)
+  - `agent_elo(agent_id)`, `human_elo(address)`, `match_count()`
+  - `from_env()` constructor reading `RPC_URL`,
+    `MATCH_REGISTRY_ADDRESS`, `DEPLOYER_PRIVATE_KEY`.
+  - The MatchRegistry ABI is embedded as a Python list (only the
+    surface we touch — recordMatch, getMatch, matchCount, agentElo,
+    humanElo, MatchRecorded, EloUpdated, GameRecordStored). Keep in
+    sync with **contracts/src/MatchRegistry.sol** when that contract
+    changes.
+
+Server endpoint:
+
+- **server/app/main.py** — new `POST /games/{game_id}/finalize` that
+  takes `{winner_agent_id, winner_human_address, loser_agent_id,
+  loser_human_address}`, validates the game has ended, builds the
+  GameRecord, calls `put_blob` (Phase 6's 0G Storage upload), then
+  calls `chain.record_match` with the resulting root hash. Returns
+  `{match_id, tx_hash, root_hash}`.
+
+Move-history tracking:
+
+- **server/app/main.py** also keeps a per-game `_move_history` dict.
+  `POST /games/{game_id}/move` and `POST /games/{game_id}/agent-move`
+  capture turn + dice *before* the gnubg call (since dice get cleared
+  after a successful move) and append a `MoveEntry(turn, dice, move,
+  position_id_after)` after the call returns. `/finalize` passes that
+  list into `build_from_state` so the GameRecord uploaded to 0G
+  Storage carries the full play sequence.
+- **server/app/gnubg_client.py** — `get_agent_move` now surfaces
+  `best_move` (the move string gnubg chose) on its return dict so
+  the agent's checker actions are recordable. Auto-played positions
+  return `best_move=None` and the server logs `"(auto-played)"`.
+- Cube actions aren't tracked yet — `cube_actions` stays an empty
+  list in v1 because the doubling-cube flow isn't wired through any
+  endpoint yet. That's a separate scope item, not a Phase 7 gap.
+
+Env additions (**server/.env.example**):
+
+- `DEPLOYER_PRIVATE_KEY=` — server signs `recordMatch` as the contract
+  owner. Mirror the value from **contracts/.env** locally; both
+  files are gitignored.
+
+Tests:
+
+- **server/tests/test_phase7_game_record_schema.py** (new): 15 fast
+  unit tests pinning down the GameRecord schema and serializer. They
+  cover `PlayerRef` validation (kind must be human or agent), JSON
+  round-trip (serialize → parse → equality), serialization
+  determinism (same record → same bytes — required because the bytes'
+  Merkle root *is* the on-chain hash), valid-UTF8 + JSON output,
+  None-field omission (so the canonical form stays stable), and
+  field-by-field preservation of `final_score`, `final_position_id`,
+  `final_match_id`, moves, cube_actions, and player kinds. Plus
+  coverage for `build_from_state`. No network — runs in ~130 ms.
+  Uses Hardhat's well-known account #0 as a recognizable fake
+  address for schema-only fields.
+- **server/tests/test_phase7_chain_client.py** (new): 9 fast unit
+  tests for `ChainClient.record_match` and `from_env` with every
+  web3 dependency mocked. Covers happy-path return values
+  (matchId parsed from the MatchRecorded log, tx_hash gets a 0x
+  prefix), arg pass-through to the contract, correct nonce/chainId
+  on the built transaction, error paths (receipt reverted,
+  MatchRecorded event missing, game_record_hash without 0x prefix),
+  and `from_env` behaviour (missing env, unreachable RPC, full
+  construction). No network — runs in ~650 ms.
+- **server/tests/test_phase7_move_tracking.py** (new): 3 fast unit
+  tests covering the runtime move-history wiring with `gnubg` and
+  `_build_game_state` mocked. Asserts that `/games` initialises an
+  empty history, that `/move` records a `MoveEntry` carrying
+  pre-move turn/dice (since dice get cleared after the move), and
+  that `/agent-move` records `gnubg`'s `best_move` string. No
+  network — runs in ~1 s.
+- **server/tests/test_phase7_game_record.py** (new): a live
+  integration test that builds a synthetic finished GameRecord,
+  uploads via `put_blob`, calls `chain.record_match`, then reads the
+  match back on-chain and asserts `gameRecordHash` equals the
+  upload's root hash. Also re-downloads from 0G Storage and asserts
+  byte-exact equality. Skipped automatically when any of
+  `OG_STORAGE_PRIVATE_KEY`, `RPC_URL`, `MATCH_REGISTRY_ADDRESS`,
+  `DEPLOYER_PRIVATE_KEY` are unset, so CI without secrets stays
+  green.
+- 36/36 server tests pass: Phase 0 scaffold ×7 + Phase 6 round-trip
+  + Phase 7 schema ×15 + Phase 7 chain_client ×9 + Phase 7 move
+  tracking ×3 + Phase 7 integration. The 27 fast unit tests run
+  with no network in <1 s combined; the one live test runs against
+  0G testnet in ~24 s.
+- Hardhat tests still green: 52/52, no contract changes in this
+  phase.
+
+Notes:
+
+- The web3.py `process_receipt` call warned on every `recordMatch`
+  because it tries to decode every log against the `MatchRecorded`
+  event ABI (other events fire in the same tx). Suppressed inside
+  `chain_client.record_match` with `warnings.catch_warnings` so the
+  server log stays clean.
+
+Also in this commit:
+
+- **README.md** — new "Match Archive on 0G Storage" section between
+  "Agent Intelligence Model" and "Architecture". Explains *why* matches
+  are archived off-chain (games are the substance, not just ELO),
+  enumerates every field of the `GameRecord` envelope with what each
+  carries, and walks through the on-chain ↔ off-chain link (build →
+  upload → record on-chain with the resulting `rootHash`). Lands the
+  punchline: anyone can resolve a match by id, read the on-chain
+  `gameRecordHash`, and pull the canonical replay from 0G Storage —
+  no login, no API key, no platform.
+- Repo cleanup: removed the obsolete root-level test scripts
+  **test_dance.py**, **test_pass.py**, **test_pos.py**, and
+  **test_startup.py**. They were exploratory gnubg / startup
+  one-shots from before the Phase 0 scaffold; they had been deleted
+  from the working tree long ago but the deletions had never been
+  staged. Deletions land with Phase 7 to clean up `git status`.
+- **.claude/settings.json** — enabled the Anthropic-published
+  `superpowers` and `code-review` plugins (`claude-plugins-official`)
+  at project scope. `superpowers` ships brainstorming, subagent-driven
+  development, systematic debugging, and red/green TDD cycle
+  enforcement; `code-review` adds an inline reviewer pass. Adopting
+  these from Phase 8 onward in place of the manually-maintained
+  policies in CONTEXT.md.
+
+### Phase 8 onward — pending

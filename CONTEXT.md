@@ -163,6 +163,8 @@ kh billing usage                 # check free-tier limits
 | `server/app/game_record.py` | Match game-record serializer (uploaded to 0G Storage) |
 | `server/app/chain_client.py` | web3.py wrapper for on-chain reads |
 | `server/app/og_storage_client.py` | Python wrapper around the og-bridge Node CLI for 0G Storage put/get |
+| `server/app/game_record.py` | GameRecord pydantic schema + serializer for 0G Storage uploads (Phase 7) |
+| `server/app/chain_client.py` | web3.py client for MatchRegistry — calls recordMatch from the deployer wallet, embedded minimal ABI |
 | `og-bridge/src/upload.mjs` | Node CLI: bytes via stdin → 0G Storage upload → JSON {rootHash, txHash} on stdout |
 | `og-bridge/src/download.mjs` | Node CLI: rootHash arg → bytes on stdout via 0G Storage |
 | `server/app/ens_client.py` | ENS subname text record updater |
