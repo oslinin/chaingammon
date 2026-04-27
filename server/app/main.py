@@ -7,6 +7,7 @@ import uuid
 
 from .agent_overlay import Overlay, OverlayError, apply_overlay, update_overlay
 from .chain_client import ChainClient, ChainError
+from .ens_client import EnsClient, EnsError
 from .game_record import (
     GameRecord,
     MoveEntry,
@@ -239,12 +240,20 @@ class FinalizeRequest(BaseModel):
     Exactly one of agent_id / human_address must be set per side. agent_id
     of 0 means "no agent on this side" (i.e. human player); human_address
     of zero-address means "no human on this side" (i.e. agent player).
+
+    `winner_label` / `loser_label` are optional ENS subname labels (the
+    `<label>` in `<label>.chaingammon.eth`). When non-empty, the server
+    pushes reputation text records (`elo`, `last_match_id`) to that
+    player's subname on the PlayerSubnameRegistrar. Phase 11 only handles
+    setText; minting is driven by Phase 12 frontend.
     """
 
     winner_agent_id: int = 0
     winner_human_address: str = "0x0000000000000000000000000000000000000000"
     loser_agent_id: int = 0
     loser_human_address: str = "0x0000000000000000000000000000000000000000"
+    winner_label: str = ""
+    loser_label: str = ""
 
 
 class FinalizeResponse(BaseModel):
@@ -254,6 +263,11 @@ class FinalizeResponse(BaseModel):
     # Phase 9: per-agent overlay update results, one entry per agent that
     # played in the match. Empty for human-vs-human matches.
     overlay_updates: list[dict] = []
+    # Phase 11: per-side ENS text-record push results. One entry per side
+    # whose `winner_label`/`loser_label` was provided. Skipped sides do
+    # not appear. ENS push failure does NOT fail finalize — instead the
+    # entry contains an `error` field so the caller can see what broke.
+    ens_updates: list[dict] = []
 
 
 def _fetch_overlay(chain: ChainClient, agent_id: int) -> Overlay:
@@ -271,6 +285,41 @@ def _fetch_overlay(chain: ChainClient, agent_id: int) -> Overlay:
         # Fall back to a zero overlay so a corrupted blob doesn't block
         # finalize. Phase 9.5 can add stricter handling.
         return Overlay.default()
+
+
+def _push_ens_updates(
+    *,
+    chain: ChainClient,
+    label: str,
+    agent_id: int,
+    human_address: str,
+    match_id: int,
+) -> dict:
+    """Push reputation text records to `<label>.chaingammon.eth`.
+
+    For agent sides we push the agent's ELO from MatchRegistry; for human
+    sides we push the human's ELO. `last_match_id` is the just-recorded
+    matchId so any follower can look up the latest archive on 0G Storage.
+
+    The ENS client is constructed lazily here (inside the helper) so that
+    finalize_game on a network without PLAYER_SUBNAME_REGISTRAR_ADDRESS
+    set still works — only labelled sides pay for the env lookup.
+    """
+    ens = EnsClient.from_env()
+    node = ens.subname_node(label)
+    if agent_id != 0:
+        elo = chain.agent_elo(agent_id)
+    else:
+        elo = chain.human_elo(human_address)
+    elo_tx = ens.set_text(node=node, key="elo", value=str(elo))
+    last_tx = ens.set_text(node=node, key="last_match_id", value=str(match_id))
+    return {
+        "label": label,
+        "node": node,
+        "elo": elo,
+        "elo_tx_hash": elo_tx,
+        "last_match_id_tx_hash": last_tx,
+    }
 
 
 def _update_agent_overlay(
@@ -387,9 +436,35 @@ def finalize_game(game_id: str, req: FinalizeRequest):
                     status_code=502, detail=f"loser overlay update failed: {e}"
                 ) from e
 
+    # Phase 11 — push reputation text records to each labelled side's
+    # subname. Failure here is non-fatal: ENS reachability shouldn't block
+    # finalize, since the match is already on-chain. Errors are surfaced
+    # in the response so the frontend can retry.
+    ens_updates: list[dict] = []
+    sides = [
+        ("winner", req.winner_label, req.winner_agent_id, req.winner_human_address),
+        ("loser", req.loser_label, req.loser_agent_id, req.loser_human_address),
+    ]
+    for side_name, label, agent_id, human_addr in sides:
+        if not label:
+            continue
+        try:
+            ens_updates.append(
+                _push_ens_updates(
+                    chain=chain,
+                    label=label,
+                    agent_id=agent_id,
+                    human_address=human_addr,
+                    match_id=finalized.match_id,
+                )
+            )
+        except (EnsError, ChainError) as e:
+            ens_updates.append({"label": label, "side": side_name, "error": str(e)})
+
     return FinalizeResponse(
         match_id=finalized.match_id,
         tx_hash=finalized.tx_hash,
         root_hash=upload.root_hash,
         overlay_updates=overlay_updates,
+        ens_updates=ens_updates,
     )

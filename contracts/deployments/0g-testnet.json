@@ -4,7 +4,8 @@
   "deployer": "0xa2219C4f48bC9e6806Bce3B391aB9e23f55FEbb5",
   "contracts": {
     "MatchRegistry": "0x60E52e2d9Ea7b4A851Dd63365222c7d102A11eaE",
-    "AgentRegistry": "0xCb0a562fa9079184922754717BB3035C0F7A983E"
+    "AgentRegistry": "0xCb0a562fa9079184922754717BB3035C0F7A983E",
+    "PlayerSubnameRegistrar": "0xf260aE6b2958623fC4e865433201050DC2Ed1ccC"
   },
   "agentRegistryConstructorArgs": {
     "matchRegistry": "0x60E52e2d9Ea7b4A851Dd63365222c7d102A11eaE",
@@ -16,5 +17,9 @@
     "tier": 2,
     "owner": "0xa2219C4f48bC9e6806Bce3B391aB9e23f55FEbb5"
   },
-  "deployedAt": "2026-04-27T02:21:09.052Z"
+  "deployedAt": "2026-04-27T02:21:09.052Z",
+  "playerSubnameRegistrarConstructorArgs": {
+    "parentNode": "0x543cb3ed47a1ed324d00f8245468ef208194cc298026553f9adc78fb17e41cec"
+  },
+  "registrarDeployedAt": "2026-04-27T07:02:14.843Z"
 }
