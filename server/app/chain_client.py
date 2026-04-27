@@ -64,6 +64,40 @@ _AGENT_REGISTRY_ABI = [
         "anonymous": False,
         "inputs": [{"name": "baseWeightsHash", "type": "bytes32", "indexed": False}],
     },
+    {
+        "type": "function",
+        "name": "updateOverlayHash",
+        "stateMutability": "nonpayable",
+        "inputs": [
+            {"name": "agentId", "type": "uint256"},
+            {"name": "newOverlayHash", "type": "bytes32"},
+        ],
+        "outputs": [],
+    },
+    {
+        "type": "function",
+        "name": "experienceVersion",
+        "stateMutability": "view",
+        "inputs": [{"name": "agentId", "type": "uint256"}],
+        "outputs": [{"name": "", "type": "uint32"}],
+    },
+    {
+        "type": "function",
+        "name": "matchCount",
+        "stateMutability": "view",
+        "inputs": [{"name": "agentId", "type": "uint256"}],
+        "outputs": [{"name": "", "type": "uint32"}],
+    },
+    {
+        "type": "event",
+        "name": "OverlayUpdated",
+        "anonymous": False,
+        "inputs": [
+            {"name": "agentId", "type": "uint256", "indexed": True},
+            {"name": "overlayHash", "type": "bytes32", "indexed": False},
+            {"name": "experienceVersion", "type": "uint32", "indexed": False},
+        ],
+    },
 ]
 
 
@@ -347,3 +381,43 @@ class ChainClient:
     def agent_tier(self, agent_id: int) -> int:
         contract = self._require_agent_registry()
         return int(contract.functions.tier(agent_id).call())
+
+    def agent_match_count(self, agent_id: int) -> int:
+        contract = self._require_agent_registry()
+        return int(contract.functions.matchCount(agent_id).call())
+
+    def agent_experience_version(self, agent_id: int) -> int:
+        contract = self._require_agent_registry()
+        return int(contract.functions.experienceVersion(agent_id).call())
+
+    def update_overlay_hash(self, agent_id: int, new_overlay_hash: str) -> str:
+        """Owner-only on AgentRegistry. Sets the agent's `dataHashes[1]`
+        (the experience overlay hash) and bumps `matchCount` and
+        `experienceVersion` together. Returns the tx hash.
+
+        Phase 18 will move this through a KeeperHub workflow; for v1 the
+        server signs directly."""
+        if not new_overlay_hash.startswith("0x"):
+            raise ChainError(f"new_overlay_hash must start with 0x: {new_overlay_hash!r}")
+        contract = self._require_agent_registry()
+        nonce = self.w3.eth.get_transaction_count(self.account.address)
+        tx = contract.functions.updateOverlayHash(
+            agent_id,
+            self.w3.to_bytes(hexstr=new_overlay_hash),
+        ).build_transaction(
+            {
+                "from": self.account.address,
+                "nonce": nonce,
+                "chainId": self.w3.eth.chain_id,
+                "gas": 150_000,
+            }
+        )
+        signed = self.account.sign_transaction(tx)
+        tx_hash = self.w3.eth.send_raw_transaction(signed.raw_transaction)
+        receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
+        if receipt.status != 1:
+            raise ChainError(f"updateOverlayHash tx reverted: {tx_hash.hex()}")
+        tx_hash_hex = tx_hash.hex()
+        if not tx_hash_hex.startswith("0x"):
+            tx_hash_hex = "0x" + tx_hash_hex
+        return tx_hash_hex

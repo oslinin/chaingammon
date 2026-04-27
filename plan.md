@@ -304,6 +304,7 @@ Tasks:
 **Goal:** Each completed match's full game record is uploaded to 0G Storage. The Merkle root hash returned by 0G Storage is what's passed to `recordMatch`'s `gameRecordHash` field on-chain, so the on-chain match metadata is cryptographically tied to the off-chain archive.
 
 What landed:
+
 - **server/app/game_record.py** — `GameRecord` pydantic envelope (final position, final match id, players, score, optional move history, optional cube-action history, timestamps). `serialize_record(record) → bytes` for canonical JSON encoding.
 - **server/app/chain_client.py** — web3.py wrapper around MatchRegistry with an embedded minimal ABI. Exposes `record_match(...)` (sends tx, waits for receipt, returns `(match_id, tx_hash)`), `get_match`, `agent_elo`, `human_elo`, `match_count`. Owner-only, signs with `DEPLOYER_PRIVATE_KEY`.
 - **server/app/main.py** — new `POST /games/{game_id}/finalize` endpoint that builds the GameRecord, uploads via `put_blob`, and calls `record_match` with the resulting root hash.
@@ -322,24 +323,32 @@ Move history isn't tracked in v1 — `moves` and `cube_actions` arrays are prese
 **Goal:** Upload gnubg's default weights file to 0G Storage **once** as a shared base. All agents reference the same blob via `dataHashes[0]`. Per-agent differentiation comes from tier (Phase 5) and experience overlay (Phase 9), not different base weights — gnubg's "skill levels" are settings, not separate weight files.
 
 What landed:
+
 - **server/app/weights.py** — AES-256-GCM helper. `encrypt_weights(plaintext, key)` / `decrypt_weights(envelope, key)` round-trip arbitrary bytes with a fresh nonce per call. Envelope format: 1-byte version + 12-byte nonce + ciphertext-with-GCM-tag. Version byte (0x01) reserved so v2 can change layout (e.g. hybrid encryption keyed off the iNFT owner's key) without breaking v1 readers.
 - **server/scripts/upload_base_weights.py** — one-time CLI: reads **/usr/lib/gnubg/gnubg.wd** (~399 KB), encrypts with `BASE_WEIGHTS_ENCRYPTION_KEY` from env, uploads to 0G Storage via Phase 6's `put_blob`, then calls `setBaseWeightsHash` on the deployed AgentRegistry. Idempotent — running it again replaces the on-chain hash.
 - **server/app/chain_client.py** — extended with `set_base_weights_hash(hash)`, `base_weights_hash()`, `agent_data_hashes(id)`, `agent_tier(id)`. AgentRegistry ABI added alongside the MatchRegistry ABI; constructor now takes optional `agent_registry_address` and reads `AGENT_REGISTRY_ADDRESS` from env.
 - **contracts/script/deploy.js** — `INITIAL_BASE_WEIGHTS_HASH` constant defaults to the testnet-pinned blob (`0x989b...09ad`). Fresh deploys on a new network can override via env var or pass the zero hash and update later via `setBaseWeightsHash`.
 
 Live on 0G testnet:
+
 - Encrypted weights blob (~408 KB envelope): `0x989ba07766cc35aa0011cf3f764831d9d1a7e11495db78c310d764b4478409ad`
 - AgentRegistry's `baseWeightsHash` updated tx: [`0xa129ce4f...936c7b`](https://chainscan-galileo.0g.ai/tx/0xa129ce4f8bc230cdc944a061c8902897c7877db6d15e0956f5dd418387936c7b)
 
 Tests:
+
 - **server/tests/test_phase8_weights.py** — 11 fast unit tests covering AES-256-GCM round-trip, large-payload (400 KB) round-trip, wrong-key rejection, tampered-ciphertext rejection (GCM auth tag), nonce uniqueness, envelope serialization round-trip, version byte presence, malformed-envelope rejection.
 - **server/tests/test_phase8_base_weights_integration.py** — 2 live tests: read on-chain `baseWeightsHash` → `get_blob` from 0G Storage → decrypt → assert byte-exact match with **/usr/lib/gnubg/gnubg.wd**; and assert agent #1's `dataHashes[0]` equals the contract-level hash. Skipped when env or weights file aren't present.
 
 **Done when:** Both seed agents (e.g. one beginner, one advanced) hash-commit to the same base weights blob on 0G Storage; the blob is decryptable and verifies. ✅ confirmed against 0G testnet.
 
-**Done when:** Both seed agents (e.g. one beginner, one advanced) hash-commit to the same base weights blob on 0G Storage; the blob is decryptable and verifies.
+### Phase 9 — Agent experience overlay (light learning loop) (2 hrs) ✅ DONE
 
-### Phase 9 — Agent experience overlay (light learning loop) (2 hrs)
+What landed (see log.md for the full commit message):
+
+- **server/app/agent_overlay.py** — `Overlay` dataclass (~20 categories, JSON envelope, deterministic serialization), `classify_move` heuristics, `apply_overlay` re-ranker, `update_overlay` damped-reinforcement update.
+- **server/app/chain_client.py** — `update_overlay_hash`, `agent_match_count`, `agent_experience_version`, plus the `OverlayUpdated` event in the embedded ABI.
+- **server/app/main.py** — `/games/{id}/finalize` now reads the agent's current overlay from 0G Storage, runs `update_overlay`, uploads the new blob, and calls `chain.update_overlay_hash` for each agent in the match. Returns the per-agent overlay update info on the response.
+- 4 new test files, 35 new tests (33 unit + 2 live). 82 server tests pass total.
 
 **New tool/sponsor:** none (continues 0G Storage).
 
@@ -415,6 +424,7 @@ def update_overlay(v, agent_moves, won, match_count):
 **Worked example.** Fresh advanced agent. `v = [0, 0, ...]`, `match_count = 0`. Plays a match, wins. During play: 60% slots, 30% splits, aggressive cube, efficient bear-off.
 
 After the match, with `outcome = +1` and `match_count = 0`:
+
 - `alpha = 20 / (20 + 0) = 1.0`
 - `v[slot] += 0.05 * 1 * 0.30 = +0.015`
 - `v[split] += 0.05 * 1 * 0.15 = +0.0075`
@@ -480,13 +490,13 @@ Tasks:
 
 Text record schema (per player):
 
-| Key | Value |
-|---|---|
-| `elo` | current ELO as decimal string |
-| `match_count` | total matches played |
-| `last_match_id` | most recent match's id |
-| `style_uri` | `0g://<style-blob-hash>` |
-| `archive_uri` | `0g://<player-archive-log-id>` |
+| Key             | Value                          |
+| --------------- | ------------------------------ |
+| `elo`           | current ELO as decimal string  |
+| `match_count`   | total matches played           |
+| `last_match_id` | most recent match's id         |
+| `style_uri`     | `0g://<style-blob-hash>`       |
+| `archive_uri`   | `0g://<player-archive-log-id>` |
 
 Tasks:
 
@@ -702,18 +712,18 @@ Tasks:
 
 ~36 hrs / 10 days = ~3.5 hrs/evening. (Phase counts and hour estimates above. Hours are upper bound; many phases will go faster.)
 
-| Day | Phases | Hrs |
-| --- | --- | --- |
-| 1 | Phase 3 + 4 (gameRecordHash field + first 0G testnet deploy) | 2 |
-| 2 | Phase 5 + 6 (ERC-7857 + 0G Storage hello world) | 3 |
-| 3 | Phase 7 (game records on 0G Storage Log) | 2 |
-| 4 | Phase 8 + 9 (shared base weights + agent experience overlay) | 4 |
-| 5 | Phase 10 + 11 (ENS subnames + text records) | 3.5 |
-| 6 | Phase 12 + 13 + 15 (frontend wagmi + agents + ENS display) | 4.5 |
-| 7 | Phase 14 + 16 (frontend match flow + KeeperHub spike) | 4 |
-| 8 | Phase 17 + 18 + 19 (KeeperHub workflow + audit) | 5 |
-| 9 | Phase 20 + 21 + 22 (replay + audit display + feedback doc) | 4 |
-| 10 | Phase 23 + 24 + 25 (docs + deploy + submit) | 4 |
+| Day | Phases                                                       | Hrs |
+| --- | ------------------------------------------------------------ | --- |
+| 1   | Phase 3 + 4 (gameRecordHash field + first 0G testnet deploy) | 2   |
+| 2   | Phase 5 + 6 (ERC-7857 + 0G Storage hello world)              | 3   |
+| 3   | Phase 7 (game records on 0G Storage Log)                     | 2   |
+| 4   | Phase 8 + 9 (shared base weights + agent experience overlay) | 4   |
+| 5   | Phase 10 + 11 (ENS subnames + text records)                  | 3.5 |
+| 6   | Phase 12 + 13 + 15 (frontend wagmi + agents + ENS display)   | 4.5 |
+| 7   | Phase 14 + 16 (frontend match flow + KeeperHub spike)        | 4   |
+| 8   | Phase 17 + 18 + 19 (KeeperHub workflow + audit)              | 5   |
+| 9   | Phase 20 + 21 + 22 (replay + audit display + feedback doc)   | 4   |
+| 10  | Phase 23 + 24 + 25 (docs + deploy + submit)                  | 4   |
 
 **If behind by Day 7 (cut order, easiest first):**
 

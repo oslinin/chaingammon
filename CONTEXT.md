@@ -167,6 +167,7 @@ kh billing usage                 # check free-tier limits
 | `server/app/chain_client.py` | web3.py client for MatchRegistry + AgentRegistry — recordMatch, setBaseWeightsHash, and read-only views; embedded minimal ABIs |
 | `server/app/weights.py` | AES-256-GCM helper for encrypting gnubg's base weights file (Phase 8) |
 | `server/scripts/upload_base_weights.py` | One-time script: encrypt **/usr/lib/gnubg/gnubg.wd**, upload to 0G Storage, pin the hash on AgentRegistry |
+| `server/app/agent_overlay.py` | Per-agent experience overlay (Phase 9): `Overlay` dataclass, `classify_move`, `apply_overlay`, `update_overlay`. Uploaded to 0G Storage; hash committed to `dataHashes[1]` on the agent iNFT. |
 | `og-bridge/src/upload.mjs` | Node CLI: bytes via stdin → 0G Storage upload → JSON {rootHash, txHash} on stdout |
 | `og-bridge/src/download.mjs` | Node CLI: rootHash arg → bytes on stdout via 0G Storage |
 | `server/app/ens_client.py` | ENS subname text record updater |

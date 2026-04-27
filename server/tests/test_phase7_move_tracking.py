@@ -92,6 +92,10 @@ def client(monkeypatch):
         "output": "",
         "best_move": "13/11 13/9",
     }
+    # Phase 9 added a candidate-list path. These tests cover the auto-play
+    # fallback (empty candidates → gnubg.get_agent_move). The biased-pick
+    # path has its own coverage in test_phase9_agent_move_overlay.py.
+    mock_gnubg.get_candidate_moves.return_value = []
     monkeypatch.setattr(main_module, "gnubg", mock_gnubg)
 
     # Mock the position/match-id decoders so we can hand-build states from
