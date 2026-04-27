@@ -1,10 +1,30 @@
-# Development Log
+# Chaingammon — Build Log
 
-## Phase 1: GNUBG Wrapper Service
-Commit: 48d2653684d4ddb3d9430f63111eff216af9dd13 (and subsequent Phase 1 work)
-Tests: All Phase 1 tests pass.
+Short per-phase summary. One paragraph or a few bullets per phase — like a commit message. Architectural rationale and detailed designs live in `plan.md` and `CONTEXT.md`; don't duplicate them here.
 
-- `server/app/gnubg_client.py`: uses python CLI library pexpect to spawn gnubg and interact with it through FastAPI
-- `server/app/game_state.py`: contains the Pydantic models for tracking the state of the backgammon match
-- `server/app/main.py`: implements the FastAPI server and REST endpoints for creating and playing games against the gnubg agent
-- `server/tests/test_phase1_game.py`: includes end-to-end integration tests for playing a full match using the API
+Append a new entry at the bottom as each phase lands.
+
+---
+
+### Phase 0 — Scaffolding ✅
+
+**Commit:** `48d26536`
+pnpm workspace at root with `contracts:*`, `frontend:*`, `server:*`, `test` scripts. Server uses uv + Python 3.12. Contracts on Hardhat 2 + Solidity 0.8.24. Frontend on Next.js 16 + wagmi + viem. Scaffold tests confirm all three start without errors.
+
+### Phase 1 — gnubg wrapper service ✅
+
+**Commit:** `7893a198`
+`server/app/gnubg_client.py` drives gnubg via pexpect. Pydantic GameState model. FastAPI endpoints (new game, roll, move, agent-move, resign). End-to-end pytest plays a full match.
+
+### Phase 2 — Core contracts (code + tests) ✅ (no agent minted persistently)
+
+**Commit:** `a98d94ef`
+`EloMath.sol` library (K=32, INITIAL=1500, lookup-table expected score, integer math). `MatchRegistry.sol` owner-only `recordMatch`. `AgentRegistry.sol` ERC-721 with `mintAgent` / `agentMetadata` / `agentElo` proxy. 32 hardhat tests passing. Deploy script written and runs against in-process Hardhat without error. **Nothing is live on 0G testnet yet** — that's Phase 4.
+
+### Plan revision — multi-protocol architecture
+
+ENS for identity (subnames + text records), 0G for agent iNFTs and the match archive, KeeperHub for orchestrated settlement. Agent iNFT carries a tier (immutable) plus two data hashes — shared base gnubg weights and a per-agent experience overlay that grows with play. 25 incremental phases, each introducing at most one new tool. See `plan.md` for the full plan.
+
+### Phase 3 onward — pending
+
+(See `plan.md` for the incremental phase list.)
