@@ -3,7 +3,7 @@ const fs = require("fs");
 const path = require("path");
 const { execSync } = require("child_process");
 
-describe("Phase 0 Scaffolding", function () {
+describe("Phase 0 — Scaffolding", function () {
   const rootDir = path.join(__dirname, "..", "..");
 
   it("Should have Hardhat installed and compile without errors", function () {

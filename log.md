@@ -58,6 +58,26 @@ Tests:
 Also: clarified in CONTEXT.md and log.md header that log entries are
 the commit message pasted verbatim, no separate summary.
 
+### Tests: rename hardhat files and describe blocks with phase prefixes
+
+Mocha runs test files alphabetically, so `scaffold.test.js` was running
+last after `AgentRegistry`/`EloMath`/`MatchRegistry`. Renaming files to
+`phaseN_*.test.js` makes the run order match phase order. Each describe
+block also now starts with `Phase N — ...` so the test output reads in
+phase order even when files are run in a different order.
+
+Renamed files:
+- `scaffold.test.js` → `phase0_scaffold.test.js`
+- `EloMath.test.js` → `phase2_EloMath.test.js`
+- `MatchRegistry.test.js` → `phase2_MatchRegistry.test.js`
+- `AgentRegistry.test.js` → `phase2_AgentRegistry.test.js`
+- `MatchRegistry_gameRecord.test.js` → `phase3_MatchRegistry_gameRecord.test.js`
+
+Describe block labels updated to a consistent `Phase N — Title` format.
+CONTEXT.md's "run a single test file" example points at the new path.
+37/37 hardhat tests still passing; output now reads top-to-bottom in
+phase order.
+
 ### Phase 4 onward — pending
 
 (See `plan.md` for the incremental phase list.)

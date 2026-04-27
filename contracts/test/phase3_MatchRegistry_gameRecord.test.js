@@ -11,7 +11,7 @@ const ZERO = ethers.ZeroAddress;
 const ZERO_HASH = ethers.ZeroHash;
 const TEST_HASH = "0x" + "ab".repeat(32);
 
-describe("MatchRegistry — gameRecordHash (Phase 3)", function () {
+describe("Phase 3 — MatchRegistry gameRecordHash", function () {
   let registry;
   let owner, alice;
 

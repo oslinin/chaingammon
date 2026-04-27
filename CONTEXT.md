@@ -122,7 +122,7 @@ pnpm exec hardhat compile
 pnpm exec hardhat test
 
 # Run a single test file
-pnpm exec hardhat test test/EloMath.test.js
+pnpm exec hardhat test test/phase2_EloMath.test.js
 
 # Deploy to 0G testnet (requires DEPLOYER_PRIVATE_KEY + RPC_URL in .env)
 pnpm exec hardhat run script/deploy.js --network 0g-testnet

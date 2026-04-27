@@ -1,7 +1,7 @@
 const { expect } = require("chai");
 const { ethers } = require("hardhat");
 
-describe("AgentRegistry (iNFT)", function () {
+describe("Phase 2 — AgentRegistry (iNFT)", function () {
   let agentRegistry;
   let matchRegistry;
   let owner, alice;
