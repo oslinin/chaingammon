@@ -6,6 +6,8 @@
     "contracts:compile": "pnpm --filter contracts exec hardhat compile",
     "contracts:test": "pnpm --filter contracts exec hardhat test",
     "contracts:deploy": "pnpm --filter contracts exec hardhat run script/deploy.js --network 0g-testnet",
+    "contracts:verify": "pnpm --filter contracts exec hardhat run script/verify.js --network 0g-testnet",
+    "contracts:deploy-and-verify": "pnpm contracts:deploy && pnpm contracts:verify",
     "frontend:dev": "pnpm --filter frontend dev",
     "frontend:build": "pnpm --filter frontend build",
     "frontend:test": "pnpm --filter frontend test",

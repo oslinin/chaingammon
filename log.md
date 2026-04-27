@@ -78,6 +78,37 @@ CONTEXT.md's "run a single test file" example points at the new path.
 37/37 hardhat tests still passing; output now reads top-to-bottom in
 phase order.
 
-### Phase 4 onward — pending
+### Phase 4: deploy and verify contracts on 0G testnet
+
+First persistent deploy. MatchRegistry and AgentRegistry are now live
+on 0G testnet (chainId 16602); seed agent #1 minted to the deployer.
+Both contracts are verified on chainscan-galileo with source code
+visible.
+
+Contracts:
+- MatchRegistry: 0x905856d067B84E3B51E12DaF95e68B3D525216E6
+- AgentRegistry: 0x025a51F5ea78291B303F1416FC05FC0B051393e2
+
+Tooling additions:
+- `contracts/hardhat.config.js`: loads `contracts/.env` via dotenv; new
+  `etherscan` block with custom chain pointing at chainscan-galileo's
+  Etherscan-compatible endpoint (`https://chainscan-galileo.0g.ai/open/api`)
+- `contracts/script/verify.js`: reads `deployments/<network>.json`, looks
+  up constructor args per contract, calls `verify:verify` for each. Idempotent
+  (already-verified contracts are reported and skipped).
+- Root `package.json`: new `contracts:verify` and `contracts:deploy-and-verify`
+  scripts so verify is part of the standard flow.
+- `contracts/package.json`: added `dotenv` devDependency.
+
+Addresses recorded in `contracts/deployments/0g-testnet.json`. Local
+`server/.env` and `frontend/.env.local` have been updated to point at
+the deployed contracts (those `.env` files are gitignored).
+
+Note: Phase 5 will redeploy AgentRegistry as ERC-7857; this v1 ERC-721
+agent will be superseded then. Phase 4 is the smoke test confirming
+the deploy + verify pipeline (compile, sign, broadcast, post-confirm
+reads, source verification) works end-to-end against a live testnet.
+
+### Phase 5 onward — pending
 
 (See `plan.md` for the incremental phase list.)

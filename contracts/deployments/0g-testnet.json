@@ -1,0 +1,15 @@
+{
+  "network": "0g-testnet",
+  "chainId": 16602,
+  "deployer": "0xa2219C4f48bC9e6806Bce3B391aB9e23f55FEbb5",
+  "contracts": {
+    "MatchRegistry": "0x905856d067B84E3B51E12DaF95e68B3D525216E6",
+    "AgentRegistry": "0x025a51F5ea78291B303F1416FC05FC0B051393e2"
+  },
+  "seedAgent": {
+    "agentId": 1,
+    "metadataURI": "ipfs://gnubg-default-placeholder",
+    "owner": "0xa2219C4f48bC9e6806Bce3B391aB9e23f55FEbb5"
+  },
+  "deployedAt": "2026-04-27T01:42:55.488Z"
+}
