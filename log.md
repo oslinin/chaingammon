@@ -109,6 +109,74 @@ agent will be superseded then. Phase 4 is the smoke test confirming
 the deploy + verify pipeline (compile, sign, broadcast, post-confirm
 reads, source verification) works end-to-end against a live testnet.
 
-### Phase 5 onward — pending
+### Phase 5: AgentRegistry as ERC-7857-compatible iNFT
 
-(See `plan.md` for the incremental phase list.)
+ERC-7857 is the proposed **iNFT (Intelligent NFT)** standard — an extension
+of ERC-721 where each token carries one or more hashes pointing at encrypted
+"intelligence" stored off-chain. AgentRegistry now implements the iNFT
+shape so each agent token carries:
+
+- **tier** (uint8, 0..3) — the agent's skill level: 0=beginner,
+  1=intermediate, 2=advanced, 3=world-class. Set at mint time, immutable.
+  In Phase 9 this will map to gnubg's search-ply settings (deeper tiers
+  search more moves ahead).
+
+- **dataHashes[0] = baseWeightsHash** — 32-byte hash of the encrypted
+  gnubg neural-network weights file stored on 0G Storage. Shared across
+  all agents (every agent runs against the same gnubg base). Phase 8
+  uploads the real weights and sets this hash; for now it's bytes32(0).
+
+- **dataHashes[1] = overlayHash** — 32-byte hash of *this* agent's
+  "experience overlay" stored on 0G Storage. The overlay (Phase 9) is a
+  small preference vector that biases the agent's move choices and grows
+  after every match — that's how each iNFT acquires a unique playing
+  style on top of the shared gnubg base. Starts at bytes32(0).
+
+- **matchCount** (uint32) — how many matches this agent has played.
+
+- **experienceVersion** (uint32) — bumped every time the overlay is
+  updated. In v1 it tracks 1:1 with matchCount.
+
+Full ERC-7857 transfer-with-reencryption-proof flow is out of scope for
+v1; we implement the data-hash *shape* that makes the iNFT story
+verifiable to other tools.
+
+Contract changes (**AgentRegistry.sol**):
+- Constructor: (matchRegistryAddress, initialBaseWeightsHash)
+- `mintAgent(to, metadataURI, tier)` — tier validated 0..3 at mint
+- `setBaseWeightsHash(bytes32)` — owner-only; lets Phase 8 publish the
+  real `baseWeightsHash` without redeploying
+- `updateOverlayHash(agentId, bytes32)` — owner-only; sets `dataHashes[1]`
+  and bumps `matchCount` + `experienceVersion` together
+- New views: `dataHashes(agentId)` → [base, overlay]; `tier(agentId)`;
+  `matchCount(agentId)`; `experienceVersion(agentId)`
+- New events: `AgentMinted` now carries tier; `OverlayUpdated`; `BaseWeightsHashSet`
+
+Deploy + verify:
+- **script/deploy.js** mints the seed agent at tier 2 (advanced) and
+  writes the AgentRegistry constructor args into
+  **deployments/0g-testnet.json** so **script/verify.js** can replay them.
+- **script/verify.js** reads `agentRegistryConstructorArgs` from the
+  deployment JSON, falling back to the legacy single-arg form for older
+  deployments.
+- Redeployed to 0G testnet:
+    MatchRegistry: 0x60E52e2d9Ea7b4A851Dd63365222c7d102A11eaE
+    AgentRegistry: 0xCb0a562fa9079184922754717BB3035C0F7A983E
+  Both verified on chainscan-galileo. The Phase 4 contracts (0x9058... and
+  0x025a...) are now stale.
+- **server/.env** and **frontend/.env.local** updated to point at the new
+  addresses (those files are gitignored).
+
+Tests:
+- **phase5_AgentRegistry_iNFT.test.js** (new): 14 cases covering
+  `baseWeightsHash` get/set/auth, `tier` storage and validation at mint,
+  initial `dataHashes` shape, `updateOverlayHash` semantics + auth +
+  non-existent-agent guard, and divergence between two same-tier agents
+  after independent matches.
+- **phase2_AgentRegistry.test.js**: existing 5 tests updated for the new
+  `mintAgent` signature (passes `tier`) and new constructor (passes
+  `ZeroHash`). Behavior unchanged.
+
+52 hardhat tests passing (37 prior + 15 new in Phase 5).
+
+### Phase 6 onward — pending

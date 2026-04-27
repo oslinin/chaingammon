@@ -9,6 +9,12 @@ const path = require("path");
 const { ethers, network } = require("hardhat");
 
 const SEED_AGENT_METADATA = "ipfs://gnubg-default-placeholder";
+const SEED_AGENT_TIER = 2; // 0=beginner, 1=intermediate, 2=advanced, 3=world-class
+
+// Phase 8 will replace this with the real 0G Storage hash of the encrypted
+// gnubg base weights. For now, a zero hash is fine — owner can call
+// setBaseWeightsHash() later to update.
+const ZERO_HASH = "0x" + "0".repeat(64);
 
 async function main() {
   const [deployer] = await ethers.getSigners();
@@ -21,14 +27,14 @@ async function main() {
   console.log(`MatchRegistry deployed: ${matchAddr}`);
 
   const AgentRegistry = await ethers.getContractFactory("AgentRegistry");
-  const agentRegistry = await AgentRegistry.deploy(matchAddr);
+  const agentRegistry = await AgentRegistry.deploy(matchAddr, ZERO_HASH);
   await agentRegistry.waitForDeployment();
   const agentAddr = await agentRegistry.getAddress();
-  console.log(`AgentRegistry deployed: ${agentAddr}`);
+  console.log(`AgentRegistry deployed: ${agentAddr} (baseWeightsHash placeholder ${ZERO_HASH})`);
 
-  const tx = await agentRegistry.mintAgent(deployer.address, SEED_AGENT_METADATA);
+  const tx = await agentRegistry.mintAgent(deployer.address, SEED_AGENT_METADATA, SEED_AGENT_TIER);
   const receipt = await tx.wait();
-  console.log(`Seed agent #1 minted to ${deployer.address} (tx ${receipt.hash})`);
+  console.log(`Seed agent #1 minted to ${deployer.address} at tier ${SEED_AGENT_TIER} (tx ${receipt.hash})`);
 
   const out = {
     network: network.name,
@@ -38,9 +44,14 @@ async function main() {
       MatchRegistry: matchAddr,
       AgentRegistry: agentAddr,
     },
+    agentRegistryConstructorArgs: {
+      matchRegistry: matchAddr,
+      initialBaseWeightsHash: ZERO_HASH,
+    },
     seedAgent: {
       agentId: 1,
       metadataURI: SEED_AGENT_METADATA,
+      tier: SEED_AGENT_TIER,
       owner: deployer.address,
     },
     deployedAt: new Date().toISOString(),

@@ -213,6 +213,15 @@ Required envs by phase:
 
 gnubg is driven via its socket-based External Player interface. Install with `sudo apt install gnubg`. `gnubg_client.py` manages the subprocess; do not bypass it.
 
+## Commit Messages
+
+Define every project-specific term, contract field, function name, or acronym **the first time it appears** in a commit message. A reader who has only read MISSION.md and the Solidity source should be able to follow the commit message without context. If a name comes from a standard or external system (e.g. ERC-7857, gnubg, 0G Storage), give a one-clause definition the first time it shows up. Examples — what the term means, what units, who sets it, default value — pick the framing that disambiguates fastest.
+
+**Markdown formatting in commit messages and other docs:**
+- **Filenames and file paths** in inline references — bold (`**phase5_AgentRegistry_iNFT.test.js**`), not backticks. This applies to source files, test files, env files, and config files alike.
+- **Code identifiers** (function names, struct fields, types, variables, events, addresses) — backticks (`` `mintAgent` ``, `` `dataHashes[1]` ``).
+- Standards/external system names (ERC-7857, gnubg, 0G Storage) — plain text, no formatting.
+
 ## Git Policy
 
 The flow at the end of every phase is **always**:

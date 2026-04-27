@@ -3,13 +3,18 @@
   "chainId": 16602,
   "deployer": "0xa2219C4f48bC9e6806Bce3B391aB9e23f55FEbb5",
   "contracts": {
-    "MatchRegistry": "0x905856d067B84E3B51E12DaF95e68B3D525216E6",
-    "AgentRegistry": "0x025a51F5ea78291B303F1416FC05FC0B051393e2"
+    "MatchRegistry": "0x60E52e2d9Ea7b4A851Dd63365222c7d102A11eaE",
+    "AgentRegistry": "0xCb0a562fa9079184922754717BB3035C0F7A983E"
+  },
+  "agentRegistryConstructorArgs": {
+    "matchRegistry": "0x60E52e2d9Ea7b4A851Dd63365222c7d102A11eaE",
+    "initialBaseWeightsHash": "0x0000000000000000000000000000000000000000000000000000000000000000"
   },
   "seedAgent": {
     "agentId": 1,
     "metadataURI": "ipfs://gnubg-default-placeholder",
+    "tier": 2,
     "owner": "0xa2219C4f48bC9e6806Bce3B391aB9e23f55FEbb5"
   },
-  "deployedAt": "2026-04-27T01:42:55.488Z"
+  "deployedAt": "2026-04-27T02:21:09.052Z"
 }
