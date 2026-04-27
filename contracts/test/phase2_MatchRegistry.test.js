@@ -4,7 +4,7 @@ const { ethers } = require("hardhat");
 const ZERO = ethers.ZeroAddress;
 const ZERO_HASH = ethers.ZeroHash;
 
-describe("MatchRegistry", function () {
+describe("Phase 2 — MatchRegistry", function () {
   let registry;
   let owner, alice, bob;
 

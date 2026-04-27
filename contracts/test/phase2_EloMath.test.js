@@ -1,7 +1,7 @@
 const { expect } = require("chai");
 const { ethers } = require("hardhat");
 
-describe("EloMath", function () {
+describe("Phase 2 — EloMath", function () {
   let elo;
 
   before(async function () {
