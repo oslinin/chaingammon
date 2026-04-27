@@ -179,4 +179,66 @@ Tests:
 
 52 hardhat tests passing (37 prior + 15 new in Phase 5).
 
-### Phase 6 onward — pending
+### Phase 6: 0G Storage round-trip via the og-bridge Node helper
+
+0G Storage is the decentralized storage layer of 0G; clients upload bytes
+and get back a Merkle `rootHash` that any other client can use to fetch
+those bytes. There is no native Python SDK — only Go and TypeScript — so
+this phase introduces **og-bridge**, a thin Node workspace package that
+wraps the official `@0gfoundation/0g-ts-sdk` and exposes two stdin/stdout
+CLI scripts. The Python server shells out to them via `subprocess`.
+
+og-bridge layout:
+- **og-bridge/package.json** declares `@0gfoundation/0g-ts-sdk` + `ethers`
+  as deps and exposes the two scripts as bin entries.
+- **og-bridge/src/upload.mjs** — reads bytes from stdin, wraps them in
+  the SDK's `MemData`, calls `Indexer.upload`, writes a single JSON line
+  `{"rootHash": "0x…", "txHash": "0x…"}` to stdout. SDK progress logging
+  is redirected to stderr so stdout stays parseable.
+- **og-bridge/src/download.mjs** — takes a `rootHash` arg, calls
+  `Indexer.downloadToBlob`, writes the raw bytes to stdout.
+- og-bridge is a workspace member alongside **contracts/** and
+  **frontend/** (added to **pnpm-workspace.yaml**).
+
+Python wrapper (**server/app/og_storage_client.py**):
+- `put_blob(data: bytes) → UploadResult(root_hash, tx_hash)`
+- `get_blob(root_hash: str) → bytes`
+- Both spawn `node og-bridge/src/<script>.mjs` with the server's env so
+  `OG_STORAGE_RPC`, `OG_STORAGE_INDEXER`, `OG_STORAGE_PRIVATE_KEY` flow
+  through. `OgStorageError` is raised on any non-zero exit.
+- Env loading uses `python-dotenv` (added to server deps).
+
+Env additions (server/.env.example):
+- `OG_STORAGE_RPC=https://evmrpc-testnet.0g.ai`
+- `OG_STORAGE_INDEXER=https://indexer-storage-testnet-turbo.0g.ai`
+- `OG_STORAGE_PRIVATE_KEY=` (locally mirrors `DEPLOYER_PRIVATE_KEY` from
+  **contracts/.env** since the same wallet pays storage flow-tx fees;
+  both .env files are gitignored)
+
+Tests:
+- **server/tests/test_phase6_og_storage.py** (new): a live round-trip test that
+  uploads 64 random bytes prefixed with a magic header, then downloads
+  by `rootHash` and asserts byte-exact equality. Skipped automatically
+  when `OG_STORAGE_PRIVATE_KEY` is unset, so CI without secrets stays
+  green.
+- Confirmed end-to-end against 0G Storage testnet (~14 s round-trip,
+  most of which is waiting for the on-chain transaction that pins the
+  data to 0G Storage's flow contract). All 52 hardhat tests still
+  passing — no contract changes in this phase.
+
+Phase 7 (game records on 0G Storage Log) and Phase 8 (encrypted gnubg
+base weights) will both call `put_blob` / `get_blob` through this
+client.
+
+Also in this commit:
+- **README.md** — new "Agent Intelligence Model" section between How It
+  Works and Architecture. Spells out the two-layer model (shared gnubg
+  base on `dataHashes[0]`, per-agent overlay on `dataHashes[1]`) and
+  answers "why not fine-tune gnubg's nets directly" — they're small
+  feedforward MLPs, not transformer LLMs, so 0G's fine-tuning service
+  (LLM-only, LoRA output) doesn't apply.
+- **.claudeignore** — heavy build/cache directories that Claude
+  shouldn't waste context scanning (`node_modules/`, `.venv/`,
+  `target/`, `.next/`, `contracts/artifacts/`, etc.).
+
+### Phase 7 onward — pending

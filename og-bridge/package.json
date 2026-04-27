@@ -1,0 +1,19 @@
+{
+  "name": "og-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Thin Node.js wrapper around the 0G Storage TypeScript SDK so the Python server can upload/download blobs via subprocess.",
+  "type": "module",
+  "bin": {
+    "og-upload": "src/upload.mjs",
+    "og-download": "src/download.mjs"
+  },
+  "scripts": {
+    "upload": "node src/upload.mjs",
+    "download": "node src/download.mjs"
+  },
+  "dependencies": {
+    "@0gfoundation/0g-ts-sdk": "^1.2.6",
+    "ethers": "^6.15.0"
+  }
+}
