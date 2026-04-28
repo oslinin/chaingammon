@@ -44,11 +44,18 @@ interface GameState {
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
+// Every game endpoint is POST on the server (FastAPI), even the
+// no-body ones (`/roll`, `/agent-move`). A previous version of this
+// helper sent GET when no body was provided, which made roll +
+// agent-move 405 with `{"detail":"Method Not Allowed"}` and stalled
+// the auto-drive after the first human move. POST always; body is
+// optional and goes empty if absent. Regression locked in by
+// `frontend/tests/match-flow-methods.spec.ts`.
 async function apiFetch(path: string, body?: object): Promise<GameState> {
   const res = await fetch(`${API}${path}`, {
-    method: body !== undefined ? "POST" : "GET",
-    headers: body !== undefined ? { "Content-Type": "application/json" } : {},
-    body: body !== undefined ? JSON.stringify(body) : undefined,
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body ?? {}),
   });
   if (!res.ok) {
     const detail = await res.text().catch(() => res.statusText);
@@ -168,6 +175,25 @@ function MatchInner() {
       });
       setGame(state);
       setMoveInput("");
+    } catch (e: unknown) {
+      setError(String(e));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const doForfeit = async () => {
+    if (!game || game.game_over) return;
+    if (!window.confirm("Forfeit this match? You'll be marked as the loser.")) {
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    try {
+      // Server's /resign endpoint resigns + accepts (single normal-game
+      // resignation), which ends the game with the current player as loser.
+      const state = await apiFetch(`/games/${game.game_id}/resign`);
+      setGame(state);
     } catch (e: unknown) {
       setError(String(e));
     } finally {
@@ -335,6 +361,21 @@ function MatchInner() {
           <p className="text-sm text-zinc-500 dark:text-zinc-400 animate-pulse">
             Agent is thinking…
           </p>
+        )}
+
+        {/* Forfeit — available any time the game isn't over. Resigns the
+            current side, ends the match with that side as the loser. */}
+        {!game.game_over && (
+          <div className="mt-2 flex justify-end">
+            <button
+              type="button"
+              onClick={doForfeit}
+              disabled={loading}
+              className="rounded-md border border-red-300 px-3 py-1 text-xs font-medium text-red-700 hover:bg-red-50 disabled:opacity-50 dark:border-red-700/60 dark:text-red-400 dark:hover:bg-red-900/20"
+            >
+              Forfeit match
+            </button>
+          </div>
         )}
       </main>
     </div>

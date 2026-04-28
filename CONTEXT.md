@@ -133,12 +133,15 @@ pnpm exec hardhat run script/deploy.js --network 0g-testnet
 ### frontend/ (Next.js 16, wagmi v3, viem v2)
 
 ```bash
-pnpm dev          # dev server
-pnpm build        # production build
+pnpm dev          # dev server (next dev --webpack)
+pnpm build        # production build (next build --webpack)
 pnpm lint         # eslint
+pnpm test:e2e     # Playwright suite — required before any frontend commit
 ```
 
 > **Important:** This Next.js version has breaking changes from prior versions. Read `node_modules/next/dist/docs/` before writing frontend code and heed deprecation notices (see `frontend/AGENTS.md`).
+
+See `## Frontend Policies` below for the three rules every frontend change must follow (chain registry, Playwright, no Turbopack).
 
 ### KeeperHub CLI (`kh`)
 
@@ -305,13 +308,51 @@ This project follows TDD strictly. For every phase:
 1. **Write tests first** describing the phase's "done when" criteria. Tests **MUST** live in the correct sub-project:
    - Server/Python tests in `server/tests/`
    - Solidity tests in `contracts/test/`
-   - Frontend tests in `frontend/`
+   - Frontend unit-style tests via build/typecheck; visual + DOM regressions via Playwright in `frontend/tests/`
 2. **Run tests** — they must fail (red) before implementation.
 3. **Implement** the minimum code to make tests pass (green).
 4. **Update `log.md`** — append the phase entry with changes, decisions, test results.
 5. **Update `README.md`** — keep commands and instructions current.
 
-**Naming:** `server/tests/test_phase{N}_*.py`, `contracts/test/*.test.js`. Each phase adds its own test file. Never delete or weaken existing tests.
+**Naming:** `server/tests/test_phase{N}_*.py`, `contracts/test/*.test.js`, `frontend/tests/<topic>.spec.ts`. Each phase adds its own test file. Never delete or weaken existing tests.
+
+See `## Frontend Policies` for Playwright, chain registry, and bundler rules — they apply to every frontend commit.
+
+## Frontend Policies
+
+Three rules every change inside `frontend/` must follow. They exist because each one came from a real broken state we don't want to revisit.
+
+### 1. Chain registry — never hardcode chains or addresses
+
+`frontend/app/chains.ts` is the single source of truth for which chains the frontend speaks to and which contract addresses live where. It pairs `chainId → {viem Chain, contract addresses}` by combining a small `CHAIN_DEFS` map (display metadata: name, RPC, explorer) with deployment JSON imported from `contracts/deployments/<network>.json` (which Hardhat writes on every `script/deploy.js` run).
+
+- **Adding a new chain:**
+  1. Deploy: `cd contracts && pnpm exec hardhat run script/deploy.js --network <name>` — produces `contracts/deployments/<name>.json` with chainId + addresses.
+  2. Edit `frontend/app/chains.ts`: add a `CHAIN_DEFS[<chainId>] = { name, nativeCurrency, rpcUrl, explorerUrl, testnet }` entry and import the new deployment JSON into `ALL_DEPLOYMENTS`. Both `wagmi.ts` and `contracts.ts` pick it up automatically.
+- **Active chain follows the wallet at runtime.** There is NO `NEXT_PUBLIC_CHAIN_ID` env var — chainIds live in the deployment JSON, the active selector lives in MetaMask. Switch networks in the wallet and the UI re-targets that chain's contracts. SSR / not-connected falls back to the first chain in `ALL_CHAINS` (the wagmi config default).
+- **No per-address env vars.** `NEXT_PUBLIC_AGENT_REGISTRY_ADDRESS` etc. were removed and must not come back. Addresses ride from the deployment JSON files.
+- **Reading addresses in components:** call `useChainContracts()` from `frontend/app/contracts.ts` — returns `{matchRegistry, agentRegistry, playerSubnameRegistrar}` for the wallet's current chain. Pair every `useReadContract` / `useReadContracts` with `chainId: useActiveChainId()` so the read goes to the same chain whose addresses you're using.
+
+Why: before this design, switching between Mode A (0G testnet) and Mode B (Hardhat localhost) meant editing four env vars and three TS files. We shipped at least one bug from address/chain mismatch where the wallet was on Hardhat but reads went to testnet addresses.
+
+### 2. Playwright is the visual-regression gate
+
+Any change touching `frontend/app/**` (component, layout, routing) MUST be verified by running `pnpm --filter frontend test:e2e` before committing. The suite (`playwright.config.ts`) spins up `next dev` automatically with `reuseExistingServer: true` so it works whether or not a dev server is already up.
+
+- **Canonical example:** `frontend/tests/dice-size.spec.ts` renders `<DiceRoll>` on a deps-free fixture page (`frontend/app/test-dice/page.tsx`) and asserts each die's bounding box ≤ 32px in both dimensions. The original 40px (`h-10 w-10`) regression is what motivated the test; an accidental upgrade back to `h-10` would fail the spec instantly.
+- **Every new visual primitive** (board overflow, dice size, header chrome) gets a similar bounding-box / DOM-shape spec. Don't trust the build + typecheck to catch visual regressions — they won't.
+- **Skipping `test:e2e` on a frontend commit is a process violation** even if the build is green.
+
+Why: Tailwind class drift is invisible to TS and the build, but very visible to humans on the demo screen.
+
+### 3. Webpack only — no Turbopack
+
+`frontend/package.json` pins `dev`, `build`, and `test` to `next … --webpack`. **Do not remove the `--webpack` flag** and do not run `next dev` / `next build` without it.
+
+- Reason: Turbopack made the dev box freeze under load (large memory footprint + tight watcher loop). Webpack is slower to compile but stable.
+- The `injected` connector is imported from `@wagmi/core` (not `wagmi/connectors`) for the same reason: Webpack chokes on `wagmi/connectors`'s umbrella export, which transitively pulls in `@wagmi/core/tempo` (which imports a missing `accounts` package). Turbopack tree-shakes that path away; Webpack does not. If you reintroduce a `wagmi/connectors` import, you'll break the build.
+
+Why: a frozen dev machine costs more time than a slightly slower bundler. Stability over speed for this project.
 
 ## Out of Scope (do not implement without asking)
 

@@ -7,11 +7,12 @@
 
 import Link from "next/link";
 import { useReadContracts } from "wagmi";
+
+import { useActiveChainId } from "./chains";
 import {
   AgentRegistryABI,
   MatchRegistryABI,
-  AGENT_REGISTRY_ADDRESS,
-  MATCH_REGISTRY_ADDRESS,
+  useChainContracts,
 } from "./contracts";
 
 interface AgentCardProps {
@@ -19,19 +20,24 @@ interface AgentCardProps {
 }
 
 export function AgentCard({ agentId }: AgentCardProps) {
+  const chainId = useActiveChainId();
+  const { agentRegistry, matchRegistry } = useChainContracts();
+
   const { data, isLoading } = useReadContracts({
     contracts: [
       {
-        address: AGENT_REGISTRY_ADDRESS,
+        address: agentRegistry,
         abi: AgentRegistryABI,
         functionName: "agentMetadata",
         args: [BigInt(agentId)],
+        chainId,
       },
       {
-        address: MATCH_REGISTRY_ADDRESS,
+        address: matchRegistry,
         abi: MatchRegistryABI,
         functionName: "agentElo",
         args: [BigInt(agentId)],
+        chainId,
       },
     ],
   });

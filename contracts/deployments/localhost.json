@@ -4,12 +4,21 @@
   "deployer": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
   "contracts": {
     "MatchRegistry": "0x5FbDB2315678afecb367f032d93F642f64180aa3",
-    "AgentRegistry": "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512"
+    "AgentRegistry": "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512",
+    "PlayerSubnameRegistrar": "0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9"
+  },
+  "agentRegistryConstructorArgs": {
+    "matchRegistry": "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+    "initialBaseWeightsHash": "0x989ba07766cc35aa0011cf3f764831d9d1a7e11495db78c310d764b4478409ad"
+  },
+  "playerSubnameRegistrarConstructorArgs": {
+    "parentNode": "0x543cb3ed47a1ed324d00f8245468ef208194cc298026553f9adc78fb17e41cec"
   },
   "seedAgent": {
     "agentId": 1,
     "metadataURI": "ipfs://gnubg-default-placeholder",
+    "tier": 2,
     "owner": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
   },
-  "deployedAt": "2026-04-26T18:30:10.555Z"
+  "deployedAt": "2026-04-28T01:28:03.444Z"
 }

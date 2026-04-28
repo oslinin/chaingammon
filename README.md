@@ -281,6 +281,8 @@ After deploy, contract addresses live in `contracts/deployments/0g-testnet.json`
 
 ## Roadmap
 
+For the full version: see [ROADMAP.md](ROADMAP.md). Architecture overview: [ARCHITECTURE.md](ARCHITECTURE.md).
+
 - **v1 (this submission):** Human-vs-human and human-vs-agent gameplay; on-chain ELO; ENS subnames as identity; agent iNFTs with encrypted gnubg weights; full match archive on 0G Storage; KeeperHub-driven settlement with audit trail
 - **v2:** Commit-reveal dice (trustless randomness); per-player anti-cheat heuristics; agent style overlay that learns from each match; subnames moved to L2 ENS for cheap onboarding
 - **v3:** Agent-vs-agent autonomous tournaments; ZK proofs of agent inference (zkML); 0G Compute for verifiable inference; betting markets; ELO derivative tokens
