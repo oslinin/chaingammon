@@ -55,8 +55,14 @@ const CHAIN_DEFS: Record<number, ChainDef> = {
     nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
     // Public RPC; replace via NEXT_PUBLIC_SEPOLIA_RPC_URL for an Alchemy
     // / Infura key if the public endpoint is rate-limiting the demo.
+    // The historic `https://rpc.sepolia.org` endpoint hangs (Cloudflare
+    // 522 / connection timeout) — wagmi's read sits in `isLoading: true`
+    // until viem's retry budget exhausts, so the "No agents found"
+    // fallback in `AgentsList` never runs in time. publicnode responds
+    // immediately and is a stable free public endpoint.
     rpcUrl:
-      process.env.NEXT_PUBLIC_SEPOLIA_RPC_URL ?? "https://rpc.sepolia.org",
+      process.env.NEXT_PUBLIC_SEPOLIA_RPC_URL ??
+      "https://ethereum-sepolia.publicnode.com",
     explorerUrl: "https://sepolia.etherscan.io",
     testnet: true,
   },
