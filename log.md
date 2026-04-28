@@ -873,4 +873,30 @@ Also in this commit (carry-over working-tree changes that hadn't landed yet):
 - **web_readme.html** (updated) — one-line whitespace cleanup.
 - **frontend/.gitignore** — adds `/test-results` and `/playwright-report` so Playwright run artifacts don't show up as untracked noise.
 
+### Pivot — Gensyn AXL + two-sig settlement + LLM coach
+
+pivot: drop FastAPI server + KeeperHub; adopt Gensyn AXL + two-sig settlement + LLM coach
+
+This commit records the architectural pivot in **[docs/superpowers/specs/2026-04-28-decentralized-server-design.md](docs/superpowers/specs/2026-04-28-decentralized-server-design.md)** and the implementation plan in **[docs/superpowers/plans/2026-04-28-decentralized-server.md](docs/superpowers/plans/2026-04-28-decentralized-server.md)**. No code changes land here — implementation follows in Phases 17+.
+
+Motivation: the centralized FastAPI server (gnubg subprocess, dice roller, game state relay) was a single point of failure. ELO and identity were already decentralized (ENS + 0G) but live gameplay was not.
+
+Game server (**[server/](server/)**, to be removed in Phase 17): gnubg evaluation moves out of FastAPI entirely.
+
+AXL agent nodes (**[agent/](agent/)**, incoming): Gensyn AXL (Agent eXchange Layer) — a P2P network node built on Yggdrasil — provides the encrypted communication mesh. Two FastAPI services run as AXL-registered agents: `gnubg_service.py` for move evaluation (wraps gnubg subprocess, reuses gnubg_client.py logic) and `coach_service.py` for LLM coaching hints (flan-t5-base inference on gnubg equity output + gnubg strategy docs from 0G Storage as RAG context). Any operator can run these nodes; the canonical gnubg agent's AXL public key is published as an ENS text record (`gnubg_axl_pubkey`) on chaingammon.eth for serverless discovery.
+
+KeeperHub (to be removed): settlement moves to a permissionless two-ECDSA-signature flow. Both players sign `keccak256(winner, loser, winner, gameRecordHash)` off-chain; either submits both signatures to `MatchRegistry.recordMatch`. The contract verifies via `ecrecover`, updates ELO via EloMath, and calls `PlayerSubnameRegistrar.setTextBatch` for each player atomically — one transaction, no orchestrator.
+
+WebRTC + 0G KV signaling (to be removed): all P2P communication (AI move requests, coach hints, H-vs-H relay) routes through AXL at `localhost:9002/a2a/<pubkey>/<service>/<endpoint>`.
+
+Sponsor coverage after pivot:
+- ENS: portable identity + ELO text records + AXL agent key discovery via `gnubg_axl_pubkey` text record
+- 0G Chain: MatchRegistry (two-sig, permissionless), AgentRegistry, PlayerSubnameRegistrar (`setTextBatch` added)
+- 0G Storage: game records, gnubg weights, gnubg strategy docs (coach RAG context)
+- Gensyn AXL: encrypted P2P mesh — AI moves, LLM coach hints, H-vs-H game relay
+
+Also in this commit:
+- **[docs/superpowers/specs/2026-04-28-decentralized-server-design.md](docs/superpowers/specs/2026-04-28-decentralized-server-design.md)** (new) — full architectural spec
+- **[docs/superpowers/plans/2026-04-28-decentralized-server.md](docs/superpowers/plans/2026-04-28-decentralized-server.md)** (new) — 10-task implementation plan
+
 ### Phase 21 onward — pending

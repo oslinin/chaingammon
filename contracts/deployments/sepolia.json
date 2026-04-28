@@ -1,0 +1,24 @@
+{
+  "network": "sepolia",
+  "chainId": 11155111,
+  "deployer": "0xa2219C4f48bC9e6806Bce3B391aB9e23f55FEbb5",
+  "contracts": {
+    "MatchRegistry": "0x8708C6DaA55F9B322f6d83c5D89774febeEff2da",
+    "AgentRegistry": "0xaBbC7484A444967a6B7b1752416B8d2ee516B81c",
+    "PlayerSubnameRegistrar": "0x077a62a6aA3f28E8f2Ef586411613a55639BA734"
+  },
+  "agentRegistryConstructorArgs": {
+    "matchRegistry": "0x8708C6DaA55F9B322f6d83c5D89774febeEff2da",
+    "initialBaseWeightsHash": "0x989ba07766cc35aa0011cf3f764831d9d1a7e11495db78c310d764b4478409ad"
+  },
+  "playerSubnameRegistrarConstructorArgs": {
+    "parentNode": "0x543cb3ed47a1ed324d00f8245468ef208194cc298026553f9adc78fb17e41cec"
+  },
+  "seedAgent": {
+    "agentId": 1,
+    "metadataURI": "ipfs://gnubg-default-placeholder",
+    "tier": 2,
+    "owner": "0xa2219C4f48bC9e6806Bce3B391aB9e23f55FEbb5"
+  },
+  "deployedAt": "2026-04-28T17:06:24.475Z"
+}
