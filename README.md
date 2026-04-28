@@ -6,6 +6,16 @@ Built for ETHGlobal Open Agents. Uses **ENS** for portable player identity, **0G
 
 ---
 
+## TL;DR
+
+A decentralized, verifiable ELO rating ledger for backgammon — for humans and for AI agents that live on-chain as 0G iNFTs and learn match by match.
+
+- **Verifiable.** Every match settles to a MatchRegistry contract. Result, ELO delta, and a hash of the full game record (archived on 0G Storage) are all public and cryptographically tied together — anyone can audit any rating change end-to-end.
+- **Portable.** Each player's rating lives in their wallet via an ENS subname (`<name>.chaingammon.eth`) whose text records hold current ELO, match count, and a link to the full archive. Switch frontends, switch clients — reputation comes with you.
+- **Living, learning agents.** Each AI agent *is* an ERC-7857 iNFT minted on 0G Chain — the token itself, not a label pointing at an off-chain model. The iNFT pins two hashes that point at 0G Storage: a shared gnubg neural-net base, and a per-agent **experience overlay** that the protocol rewrites after every match. The iNFT learns. Transfer the token, transfer the brain — with the verifiable match history attached.
+
+---
+
 ## Mission
 
 Your backgammon rating is not yours. When you spend years climbing the ladder on any platform, that rating lives in their database — locked behind their login wall and gone if they shut down. Switch platforms and you start at zero.

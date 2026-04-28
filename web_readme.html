@@ -52,6 +52,7 @@
   .badge-ens  { background: #1a2040; color: #6c8cff; border: 1px solid #2a3060; }
   .badge-0g   { background: #001a10; color: var(--accent2); border: 1px solid #003020; }
   .badge-kh   { background: #20100a; color: var(--gold); border: 1px solid #40200a; }
+  .badge-gensyn { background: #1a0a30; color: #c084fc; border: 1px solid #3b1d6e; }
 
   /* ── LAYOUT ── */
   .layout {
@@ -440,6 +441,9 @@
   <div class="nav-item done" data-page="p15"><span class="phase-num">P15</span>ENS name in UI</div>
   <div class="nav-item done" data-page="p20"><span class="phase-num">P20</span>Match replay UI</div>
   <div class="nav-item done" data-page="p23"><span class="phase-num">P23</span>ROADMAP.md</div>
+  <div class="nav-section">Pivots</div>
+  <div class="nav-item done" data-page="pivot-sepolia"><span class="phase-num">↳</span>Sepolia clone (KH)</div>
+  <div class="nav-item done" data-page="pivot-axl"><span class="phase-num">↳</span>AXL Pivot</div>
 </nav>
 
 <!-- ════════════════════════════════════════════════════ CONTENT ═══ -->
@@ -1735,6 +1739,137 @@ sequenceDiagram
     <li><a class="file-path" href="https://github.com/oslinin/chaingammon/blob/master/ROADMAP.md" target="_blank">ROADMAP.md</a><span class="file-tag tag-new">new</span><span class="file-desc">Shipped-vs-next; near / medium / long-term sections; "won't do" list (closed-source agents, mandatory subs, rating manipulation knobs)</span></li>
     <li><a class="file-path" href="https://github.com/oslinin/chaingammon/blob/master/README.md" target="_blank">README.md</a><span class="file-tag tag-upd">upd</span><span class="file-desc">One-line pointer at top of Roadmap section linking to <code>ROADMAP.md</code> + <code>ARCHITECTURE.md</code></span></li>
   </ul>
+</div>
+
+<!-- ─────────────────────────────── PIVOT: Sepolia ─────── -->
+<div class="page" id="page-pivot-sepolia">
+  <div class="phase-header">
+    <span class="phase-badge">Pivot</span>
+    <div>
+      <h2>Sepolia clone deploy (KeeperHub bounty unblock)</h2>
+      <p class="subtitle">KeeperHub doesn't support 0G chainId 16602 — and offers no way to add custom chains. To submit to the KeeperHub track, contracts re-deployed on Sepolia (a chain KH supports). 0G stays the canonical chain.</p>
+      <div class="sponsor-tags">
+        <span class="badge badge-kh">KeeperHub</span>
+        <span class="badge badge-0g">0G Chain</span>
+      </div>
+    </div>
+    <span class="phase-status status-done">Done ✓</span>
+  </div>
+
+  <p class="phase-desc">Verified empirically via <code>kh chain list</code>: KeeperHub supports 19 EVM chains (mainnet, Sepolia, Base, Arbitrum, Avalanche, BNB, Polygon, …) — none of them is 0G testnet. The CLI offers <code>kh chain list</code> only, no <code>add</code>; web UI behaves the same. To use KeeperHub for match-settlement orchestration (the bounty's value proposition), the contracts have to live on a chain KH already speaks. Pivot: dual-mode architecture. <strong>0G stays the canonical chain</strong> — full match archive on 0G Storage, server-signed settlement (existing flow). <strong>Sepolia is a parallel deployment</strong> — KeeperHub-orchestrated settlement, no 0G Storage. Frontend's <code>chains.ts</code> registry already follows the wallet via <code>useActiveChainId()</code>; switching MetaMask between 0G and Sepolia just makes <code>useChainContracts()</code> resolve to the corresponding deployment. The frontend dispatch + KH workflow itself is the next pivot step.</p>
+  <p class="phase-note">Same <code>DEPLOYER_PRIVATE_KEY</code> on both chains (EVM addresses are chain-agnostic). Ownership stays with our deployer in this commit; whether to transfer to a KH-managed wallet is decided in the next step. <code>ENS_PARENT_NODE</code> on Sepolia is <code>namehash("chaingammon.eth")</code> — same as 0G — no real ENS resolver wiring on Sepolia in this commit.</p>
+
+  <h3 class="layer">Contracts</h3>
+  <ul class="file-list">
+    <li><a class="file-path" href="https://github.com/oslinin/chaingammon/blob/master/contracts/hardhat.config.js" target="_blank">contracts/hardhat.config.js</a><span class="file-tag tag-upd">upd</span><span class="file-desc">Added <code>sepolia</code> network (chainId 11155111, RPC from <code>SEPOLIA_RPC_URL</code>, public fallback). Migrated <code>etherscan.apiKey</code> to V2 single-string format (V1 deprecated 2025).</span></li>
+    <li><a class="file-path" href="https://github.com/oslinin/chaingammon/blob/master/contracts/deployments/sepolia.json" target="_blank">contracts/deployments/sepolia.json</a><span class="file-tag tag-new">new</span><span class="file-desc">Written by <code>deploy.js --network sepolia</code> — addresses + constructor args + seed-agent record.</span></li>
+  </ul>
+
+  <h3>Deployed on Sepolia (verified on etherscan-sepolia)</h3>
+  <ul class="file-list">
+    <li><a class="file-path" href="https://sepolia.etherscan.io/address/0x8708C6DaA55F9B322f6d83c5D89774febeEff2da#code" target="_blank">MatchRegistry</a><span class="file-desc"><code>0x8708C6DaA55F9B322f6d83c5D89774febeEff2da</code></span></li>
+    <li><a class="file-path" href="https://sepolia.etherscan.io/address/0xaBbC7484A444967a6B7b1752416B8d2ee516B81c#code" target="_blank">AgentRegistry</a><span class="file-desc"><code>0xaBbC7484A444967a6B7b1752416B8d2ee516B81c</code> · seed gnubg agent #1 minted, tier 2</span></li>
+    <li><a class="file-path" href="https://sepolia.etherscan.io/address/0x077a62a6aA3f28E8f2Ef586411613a55639BA734#code" target="_blank">PlayerSubnameRegistrar</a><span class="file-desc"><code>0x077a62a6aA3f28E8f2Ef586411613a55639BA734</code> · parent node <code>namehash("chaingammon.eth")</code></span></li>
+  </ul>
+
+  <h3 class="layer">Frontend</h3>
+  <ul class="file-list">
+    <li><a class="file-path" href="https://github.com/oslinin/chaingammon/blob/master/frontend/app/chains.ts" target="_blank">frontend/app/chains.ts</a><span class="file-tag tag-upd">upd</span><span class="file-desc">Added Sepolia entry to <code>CHAIN_DEFS</code> + <code>ALL_DEPLOYMENTS</code>. Registry now has 0G (16602), Hardhat localhost (31337), Sepolia (11155111). Same hook-based API: switching MetaMask resolves <code>useChainContracts()</code> to the matching deployment automatically.</span></li>
+  </ul>
+
+  <h3>What's NOT in this commit</h3>
+  <p class="phase-note">The KeeperHub workflow + the <code>/finalize-via-keeperhub</code> server endpoint + frontend chain-aware settle dispatch are the next pivot step. Sepolia path's overlay updates and subname-mint flow are deferred — Sepolia is settle-only for the demo.</p>
+
+  <h3>Smoke test</h3>
+  <p><code>pnpm exec next build --webpack</code> clean. Playwright suite (<code>dice-size.spec.ts</code> + <code>match-flow-methods.spec.ts</code>) green. Manual: switch MetaMask to Sepolia → "Available agents" fetches from Sepolia and shows seed agent #1.</p>
+</div>
+
+<div class="page" id="page-pivot-axl">
+  <div class="phase-header">
+    <span class="phase-badge">Pivot</span>
+    <div>
+      <h2>Drop FastAPI server + KeeperHub; adopt Gensyn AXL + two-sig settlement + LLM coach</h2>
+      <p class="subtitle">agent/gnubg_service.py · agent/coach_service.py · frontend/app/axl_client.ts · MatchRegistry two-sig</p>
+      <div class="sponsor-tags">
+        <span class="badge badge-gensyn">Gensyn AXL</span>
+        <span class="badge badge-ens">ENS</span>
+        <span class="badge badge-0g">0G Chain</span>
+        <span class="badge badge-0g">0G Storage</span>
+      </div>
+    </div>
+    <span class="phase-status status-done">Done ✓</span>
+  </div>
+
+  <p class="phase-desc">The FastAPI server and KeeperHub are removed entirely. gnubg and an flan-t5-base LLM coach now run as AXL agent nodes — FastAPI services exposed over the Gensyn AXL (Agent eXchange Layer) P2P mesh. AXL is a single binary built on Yggdrasil that gives each node an end-to-end encrypted identity; the browser talks to <code>localhost:9002</code> and AXL routes requests to whichever gnubg/coach node is available. Human-vs-human game relay also uses AXL A2A — no WebRTC, no 0G KV signaling. Settlement moves to a two-signature on-chain call: both players sign the result off-chain, either submits both sigs to <code>MatchRegistry.recordMatch</code>, the contract verifies via <code>ecrecover</code> and updates ELO atomically. No orchestrator, no single point of failure.</p>
+  <p class="phase-note">This commit contains only the spec and plan documents. Implementation (Tasks 1–9) follows in subsequent commits.</p>
+
+  <h3 class="layer">Architecture</h3>
+  <div class="diagram-section"><div class="mermaid-wrap"><pre class="mermaid">
+graph TD
+  Browser -->|HTTP localhost:9002| AXL[AXL node]
+  AXL -->|a2a gnubg-pubkey /move| GN[gnubg agent node]
+  AXL -->|a2a coach-pubkey /hint| CO[coach agent node]
+  AXL -->|a2a opponent-pubkey /game| OP[opponent AXL node]
+  GN -->|fetch weights| OGS[0G Storage]
+  CO -->|fetch docs RAG| OGS
+  Browser -->|recordMatch sig1 sig2| MR[MatchRegistry]
+  MR -->|setTextBatch| PSR[PlayerSubnameRegistrar]
+  PSR -->|text records elo last_match_id| ENS[ENS]
+  Browser -->|read gnubg_axl_pubkey| ENS
+  </pre></div></div>
+
+  <h3 class="layer">Agent</h3>
+  <ul class="file-list">
+    <li><span class="file-path">agent/gnubg_service.py</span><span class="file-tag tag-new">new</span><span class="file-desc">FastAPI service exposed via AXL. <code>POST /move</code> → gnubg subprocess eval; <code>POST /evaluate</code> → candidates. Fetches weights from 0G Storage.</span></li>
+    <li><span class="file-path">agent/coach_service.py</span><span class="file-tag tag-new">new</span><span class="file-desc">FastAPI service exposed via AXL. <code>POST /hint</code> → flan-t5-base inference with gnubg equity + 0G Storage strategy docs as RAG context.</span></li>
+    <li><span class="file-path">agent/axl-config.json</span><span class="file-tag tag-new">new</span><span class="file-desc">AXL node configuration for the agent host.</span></li>
+    <li><span class="file-path">agent/start.sh</span><span class="file-tag tag-new">new</span><span class="file-desc">Starts AXL node binary + both FastAPI services.</span></li>
+    <li><span class="file-path">agent/requirements.txt</span><span class="file-tag tag-new">new</span><span class="file-desc">Python deps: fastapi, uvicorn, transformers, torch, py-sdk-0g.</span></li>
+  </ul>
+
+  <h3 class="layer">Frontend</h3>
+  <ul class="file-list">
+    <li><span class="file-path">frontend/app/axl_client.ts</span><span class="file-tag tag-new">new</span><span class="file-desc"><code>AXLClient</code> class: <code>move()</code>, <code>hint()</code>, <code>send()</code>, <code>recv()</code> over <code>localhost:9002/a2a/&lt;pubkey&gt;/&lt;service&gt;/&lt;endpoint&gt;</code>. Agent discovery reads <code>gnubg_axl_pubkey</code> ENS text record.</span></li>
+    <li><span class="file-path">frontend/app/dice.ts</span><span class="file-tag tag-new">new</span><span class="file-desc">Commit-reveal dice (H vs H over AXL) + block-hash PRNG (H vs AI). <code>blockHashPRNG</code>, <code>commit</code>, <code>verify</code>, <code>combine</code>.</span></li>
+    <li><span class="file-path">frontend/app/CoachPanel.tsx</span><span class="file-tag tag-new">new</span><span class="file-desc">Hint popup with dismiss + toggle. On by default; player can disable to reduce latency.</span></li>
+    <li><span class="file-path">frontend/app/settlement.ts</span><span class="file-tag tag-new">new</span><span class="file-desc"><code>buildDigest</code>, <code>signSettlement</code>, <code>submitSettlement</code> — two-signature flow.</span></li>
+  </ul>
+
+  <h3 class="layer">Contracts</h3>
+  <ul class="file-list">
+    <li><span class="file-path">contracts/src/MatchRegistry.sol</span><span class="file-tag tag-upd">upd</span><span class="file-desc">Removes <code>Ownable</code>. <code>recordMatch(sig1, sig2)</code> verifies both signatures via <code>ecrecover</code>, prevents double-settlement with <code>_settled</code> mapping, calls <code>setTextBatch</code> on registrar. Constructor takes registrar address.</span></li>
+    <li><span class="file-path">contracts/src/PlayerSubnameRegistrar.sol</span><span class="file-tag tag-upd">upd</span><span class="file-desc">New <code>setTextBatch(node, elo, matchId, archiveUri)</code> callable only by <code>MatchRegistry</code>. Atomic ELO + record update in one transaction.</span></li>
+  </ul>
+
+  <h3>What was removed</h3>
+  <ul class="file-list">
+    <li><span class="file-path">server/</span><span class="file-tag tag-del">del</span><span class="file-desc">FastAPI app — game logic moves to AXL agent nodes.</span></li>
+    <li><span class="file-path">og-bridge/</span><span class="file-tag tag-del">del</span><span class="file-desc">0G bridge CLI — uploads handled by 0G JS SDK in browser.</span></li>
+    <li><span class="file-desc">KeeperHub workflow — replaced by two-signature on-chain call. WebRTC + 0G KV signaling — replaced by AXL mesh.</span></li>
+  </ul>
+
+  <div class="test-grid">
+    <div class="test-card">
+      <div class="test-file">contracts/test/phase17_settlement.test.js</div>
+      <div class="test-count">4 contract tests</div>
+      <ul class="test-bullets">
+        <li>valid two-sig settlement updates ELO</li>
+        <li>invalid sig1 reverts with InvalidSignature</li>
+        <li>invalid sig2 reverts with InvalidSignature</li>
+        <li>double-settlement reverts with AlreadySettled</li>
+      </ul>
+    </div>
+    <div class="test-card">
+      <div class="test-file">frontend/tests/coach-panel.spec.ts</div>
+      <div class="test-count">3 Playwright tests</div>
+      <ul class="test-bullets">
+        <li>coach hint renders when enabled</li>
+        <li>dismiss hides panel</li>
+        <li>toggle disables coach</li>
+      </ul>
+    </div>
+  </div>
+  <div class="test-summary"><span class="num">7</span> tests across contracts + frontend</div>
 </div>
 
 </main>

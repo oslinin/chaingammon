@@ -22,13 +22,18 @@ module.exports = {
       chainId: 16602,
       accounts: process.env.DEPLOYER_PRIVATE_KEY ? [process.env.DEPLOYER_PRIVATE_KEY] : [],
     },
-  },
-  // chainscan-galileo accepts an Etherscan-compatible verification API.
-  // The API key is optional on testnet — placeholder works if CHAINSCAN_API_KEY is unset.
-  etherscan: {
-    apiKey: {
-      "0g-testnet": process.env.CHAINSCAN_API_KEY || "placeholder",
+    sepolia: {
+      url: process.env.SEPOLIA_RPC_URL || "https://rpc.sepolia.org",
+      chainId: 11155111,
+      accounts: process.env.DEPLOYER_PRIVATE_KEY ? [process.env.DEPLOYER_PRIVATE_KEY] : [],
     },
+  },
+  // Etherscan verification — Etherscan migrated to a unified V2 API in
+  // 2025; the `apiKey` is now a single string used for any chain
+  // Etherscan V2 covers (incl. Sepolia). chainscan-galileo (0G) still
+  // uses the V1-style per-chain endpoint, kept here as a customChain.
+  etherscan: {
+    apiKey: process.env.ETHERSCAN_API_KEY || "placeholder",
     customChains: [
       {
         network: "0g-testnet",
