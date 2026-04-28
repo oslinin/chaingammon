@@ -794,4 +794,83 @@ Smoke test:
 - `next dev` SSR DOM contains "Chaingammon", "Connect wallet", "Available agents", and "chaingammon.eth" — the agent card already shows the ENS-style name on first paint because the registrar parent node is reachable via the public RPC during SSR.
 - Live mint flow needs a browser + wallet; not automated. Once a wallet claims a label, the header re-renders to show it after the page reloads.
 
-### Phase 16 onward — pending
+## cleanup: External Player gnubg, dual-mode chain registry, Playwright + Alice/Bob invariants, frontend policies
+
+A grab-bag of cleanup that landed on top of Phase 15. Three structural changes worth reading separately: the gnubg integration was rewritten because the old flow was silently auto-rolling and auto-playing past the single move we asked for; the frontend's chain wiring was collapsed into a single `chains.ts` registry that follows the wallet at runtime instead of an env-var-pinned chainId; and Playwright now gates frontend commits because Tailwind class drift is invisible to the build. Also folds in the match-replay route + 0G Storage archive viewer, and a forward-looking ROADMAP, both originally drafted as separate phases.
+
+Match replay route (**[frontend/app/match/[matchId]/page.tsx](frontend/app/match/%5BmatchId%5D/page.tsx)**, new) + game-record endpoint (**[server/app/main.py](server/app/main.py)**, updated):
+
+- Frontend can now replay any finalized match move-by-move. `/match/<matchId>` reads `MatchRegistry.getMatch(matchId)` via wagmi → `gameRecordHash` (the 0G Storage Merkle root pinned at finalize time, Phase 7), fetches the archive via react-query against `GET /game-records/<hash>`, and steps through the moves with a `<Board>` render per step.
+- New `GET /game-records/{root_hash}` server endpoint fetches the 0G Storage blob by Merkle root, parses it as a `GameRecord` (Phase 7 schema), and decodes each `position_id_after` via the existing `decode_position_id` so the frontend can render `<Board>` without a gnubg subprocess.
+- Coexists with `/match?agentId=N` (the live-play route from Phase 14) — Next 16 prefers the static `match/page.tsx` for `/match` exactly, the dynamic `[matchId]/page.tsx` for `/match/<id>`.
+- First place the match archive becomes user-visible — until now the on-chain `gameRecordHash` was an opaque commitment.
+
+ROADMAP and architecture pointers (**[ROADMAP.md](ROADMAP.md)**, new; **[README.md](README.md)**, updated):
+
+- New `ROADMAP.md` with: a **Shipped (v1)** table (one row per capability cross-referenced to the phase that landed it and the file(s) it lives in); **Near-term (weeks)** — commit-reveal VRF, agent-vs-agent, KeeperHub-orchestrated settlement, the "Settle on-chain" button getting wired, match replay polish; **Medium-term (months)** — ZK move proofs, anti-cheat for agent swap-out, betting + doubling cube, ELO derivatives, `style_uri` aggregator, 0G Compute; **Long-term (year+)** — real-ENS chain migration, on-chain tournament protocol, cross-platform rating imports, gnubg PR certification; and a **Won't do** section pinning closed-source agents, mandatory subscriptions, and server-side rating manipulation knobs as out of scope.
+- README's existing "Roadmap" section gets a one-line pointer to `ROADMAP.md` for the full version and `ARCHITECTURE.md` for the diagrams.
+
+
+gnubg integration bugfix (**[server/app/gnubg_client.py](server/app/gnubg_client.py)**, **[server/app/main.py](server/app/main.py)**, **[server/app/game_state.py](server/app/game_state.py)**):
+
+- Rewrote `gnubg_client` to use gnubg's deterministic External Player command set: every gnubg auto-behaviour is disabled at session start, both players are pinned as `human`, and structured `set output rawboard on` is parsed for the canonical board state. Without these guards, applying X's move silently auto-rolled and auto-played past the move, producing the user-visible "my pieces are in the wrong place after the agent moves" symptom.
+- New `decode_board(position_id, match_id)` reads points + bars from gnubg's rawboard output. `position_id` is player-on-roll relative — it mirrors when fTurn flips — so passing `match_id` is mandatory to restore the correct fTurn before reading.
+- Bar field indexing in the rawboard layout: `values[27]` = X bar (positive), `values[2]` = −O_bar (sign-flipped). Verified empirically by sweeping `set board simple <26 values>`.
+- `_build_game_state` (**[server/app/main.py](server/app/main.py)**) now sources board state from `gnubg.decode_board` instead of pure-Python `decode_position_id` (the latter has bit-alignment edge cases on mid-game positions).
+- `decode_match_id` inverts gnubg's bit-11 turn convention (gnubg: 0=O / 1=X) into our convention (0=human / 1=agent), and same for `player_on_roll`.
+- `decode_position_id` keeps its `elif → if` fix (player 1's checkers were silently dropped at any board index where player 0 had checkers — the agent's red checkers wouldn't appear on the board). Still exported for tests.
+
+Phase-1 game-flow invariant tests (**[server/tests/test_phase24_decode_position.py](server/tests/test_phase24_decode_position.py)**, **[server/tests/test_phase24_game_flow.py](server/tests/test_phase24_game_flow.py)**, new):
+
+- `test_bob_pieces_do_not_change_while_alice_plays` and `test_alice_pieces_do_not_change_while_bob_plays` — during one player's turn, the other player's checker count at every point can only ever decrease (via a hit). Captures the wrong-place-pieces symptom in a per-point before/after diff.
+- `test_turn_convention_matches_human_zero_agent_one` — drives one agent move from any starting state and asserts `state["turn"] == 1 - starting_turn`. Pins the gnubg-bit-11 inversion deterministically.
+- `test_create_game_returns_initial_state_with_both_players_on_board` and `test_roll_then_move_advances_position_id` — small invariants that pin the elif fix and the no-op `/move` regression.
+- `test_phase24_decode_position.py` — three unit tests pinning the opening position's expected layout.
+- 20 sequential runs: 20/20 pass. Full server unit-test suite: 105/105 non-network tests pass.
+
+
+Frontend chain registry (**[frontend/app/chains.ts](frontend/app/chains.ts)**, new):
+
+- Single source of truth for `{chainId → {viem Chain, contract addresses}}` built from `CHAIN_DEFS` (display metadata) + deployment JSON imported from `contracts/deployments/<network>.json`. Adding a chain is two steps: deploy + edit `chains.ts`.
+- `useActiveChain()` / `useActiveChainId()` hooks return the wallet's current chain entry. SSR / not-connected falls back to the first registry chain.
+- **[frontend/app/contracts.ts](frontend/app/contracts.ts)** exposes `useChainContracts()` returning `{matchRegistry, agentRegistry, playerSubnameRegistrar}` for the active chain. Static address constants are gone.
+- **[frontend/app/wagmi.ts](frontend/app/wagmi.ts)** builds `chains:` and `transports:` from the registry. The `injected` connector imports from `@wagmi/core` (not `wagmi/connectors`) to avoid the umbrella export's broken `tempo/Connectors.js`.
+- `ConnectButton`, `AgentsList`, `AgentCard`, `match/[matchId]/page.tsx`, `useChaingammonName`, `useChaingammonProfile` all switched to the hook-based API and pin `chainId: useActiveChainId()` so reads go to the chain whose addresses they're using.
+- **[frontend/.env.example](frontend/.env.example)** stripped of all `NEXT_PUBLIC_*_ADDRESS` and `NEXT_PUBLIC_CHAIN_ID` vars; only `NEXT_PUBLIC_API_URL` and the optional RPC override remain.
+
+Webpack-only frontend (**[frontend/package.json](frontend/package.json)**, **[frontend/next.config.js](frontend/next.config.js)**, **[frontend/next.config.ts](frontend/next.config.ts)**):
+
+- `dev`, `build`, `test` scripts pinned to `next … --webpack`. Reason: Turbopack froze the dev box under load.
+- Deleted empty **frontend/postcss.config.js** (was shadowing `postcss.config.mjs` and crashing Webpack).
+- `next.config.{js,ts}` set `turbopack.root` to silence the workspace-root warning.
+
+Frontend Playwright suite (**[frontend/playwright.config.ts](frontend/playwright.config.ts)** + **frontend/tests/**, new):
+
+- `dice-size.spec.ts` — renders `<DiceRoll>` on a deps-free fixture page and asserts each die's bounding box ≤ 32 px (catches the original `h-10 w-10` 40 px regression).
+- `match-flow-methods.spec.ts` — drives the live-play page with mocked endpoints via `page.route()`, asserts every game endpoint is POSTed (catches a regression where `apiFetch` defaulted to GET when no body was provided, 405-ing the auto-drive's `/roll` and `/agent-move`).
+- **[frontend/app/match/page.tsx](frontend/app/match/page.tsx)**'s `apiFetch` always POSTs now; body is optional and defaults to `JSON.stringify({})`.
+
+CORS middleware (**[server/app/main.py](server/app/main.py)**):
+
+- `CORSMiddleware(allow_origins=["*"], …)` at startup so the Next dev server (`:3000`) reaches FastAPI (`:8000`) cross-origin in dev. Production should restrict `allow_origins`.
+
+Forfeit button (**[frontend/app/match/page.tsx](frontend/app/match/page.tsx)**):
+
+- New `doForfeit` handler + small red-bordered "Forfeit match" button under the move/roll controls. POSTs `/games/<id>/resign` (Phase 1 endpoint, runs gnubg's `resign normal; accept`). `window.confirm` guards against accidental clicks.
+
+Frontend policies (**[CONTEXT.md](CONTEXT.md)**, new section):
+
+Three rules every change inside `frontend/` must follow, codified after each one came from a real broken state:
+
+1. **Chain registry — never hardcode chains or addresses.** `chains.ts` is the single source of truth; no per-address env vars; reads pair with `chainId: useActiveChainId()`.
+2. **Playwright is the visual-regression gate.** `pnpm --filter frontend test:e2e` runs before any `frontend/**` commit. Build + typecheck don't catch Tailwind class drift.
+3. **Webpack only — no Turbopack.** Turbopack froze the dev machine; the `@wagmi/core` import workaround is part of this rule.
+
+Also in this commit (carry-over working-tree changes that hadn't landed yet):
+
+- **chaingammon.pptx** (updated) — submission slide deck refreshed.
+- **contracts/deployments/localhost.json** (updated) — fresh Hardhat localhost deployment record from the latest `script/deploy.js` run.
+- **web_readme.html** (updated) — one-line whitespace cleanup.
+- **frontend/.gitignore** — adds `/test-results` and `/playwright-report` so Playwright run artifacts don't show up as untracked noise.
+
+### Phase 21 onward — pending

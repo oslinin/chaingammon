@@ -1,0 +1,1817 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Chaingammon — Architecture &amp; Build Log</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<style>
+  :root {
+    --bg: #0d0d1a;
+    --surface: #141428;
+    --border: #1e1e3a;
+    --accent: #6c63ff;
+    --accent2: #00d4aa;
+    --gold: #ffc84b;
+    --red: #ff5f6d;
+    --text: #e2e2f0;
+    --muted: #7070a0;
+    --code-bg: #0a0a18;
+    --nav-w: 260px;
+    --header-h: 48px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    overflow: hidden;
+  }
+
+  /* ── HEADER ── */
+  header {
+    height: var(--header-h);
+    display: flex;
+    align-items: center;
+    padding: 0 20px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+    gap: 12px;
+    flex-shrink: 0;
+  }
+  header h1 { font-size: 15px; font-weight: 700; color: var(--text); }
+  header .chain { color: var(--accent); }
+  header .badges { display: flex; gap: 6px; margin-left: auto; }
+  .badge {
+    font-size: 11px; padding: 2px 8px; border-radius: 999px;
+    font-weight: 600; letter-spacing: .03em;
+  }
+  .badge-ens  { background: #1a2040; color: #6c8cff; border: 1px solid #2a3060; }
+  .badge-0g   { background: #001a10; color: var(--accent2); border: 1px solid #003020; }
+  .badge-kh   { background: #20100a; color: var(--gold); border: 1px solid #40200a; }
+
+  /* ── LAYOUT ── */
+  .layout {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+  }
+
+  /* ── NAV ── */
+  nav {
+    width: var(--nav-w);
+    flex-shrink: 0;
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    overflow-y: auto;
+    padding: 8px 0 24px;
+  }
+  nav::-webkit-scrollbar { width: 4px; }
+  nav::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+  .nav-section {
+    padding: 12px 16px 4px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  .nav-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 16px;
+    cursor: pointer;
+    font-size: 13px;
+    color: var(--muted);
+    border-left: 2px solid transparent;
+    transition: all .15s;
+    user-select: none;
+  }
+  .nav-item:hover { color: var(--text); background: rgba(108,99,255,.08); }
+  .nav-item.active {
+    color: var(--accent);
+    border-left-color: var(--accent);
+    background: rgba(108,99,255,.12);
+  }
+  .nav-dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    flex-shrink: 0;
+    background: var(--border);
+  }
+  .nav-item.active .nav-dot { background: var(--accent); }
+  .nav-item.done .nav-dot  { background: var(--accent2); }
+  .phase-num {
+    font-size: 10px;
+    font-weight: 700;
+    font-family: monospace;
+    color: var(--muted);
+    min-width: 22px;
+  }
+  .nav-item.active .phase-num { color: var(--accent); }
+
+  /* ── CONTENT ── */
+  main {
+    flex: 1;
+    overflow-y: auto;
+    padding: 32px 40px;
+  }
+  main::-webkit-scrollbar { width: 6px; }
+  main::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+  .page { display: none; }
+  .page.active { display: block; }
+
+  /* ── TYPOGRAPHY ── */
+  h2 {
+    font-size: 22px;
+    font-weight: 700;
+    margin-bottom: 6px;
+    color: var(--text);
+  }
+  h3 {
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--accent);
+    margin: 28px 0 10px;
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    font-size: 11px;
+  }
+  h3.sub {
+    text-transform: none;
+    letter-spacing: 0;
+    font-size: 14px;
+    color: var(--text);
+    margin: 20px 0 8px;
+  }
+  p { font-size: 14px; line-height: 1.7; color: #b0b0d0; margin-bottom: 10px; }
+  .subtitle { color: var(--muted); font-size: 13px; margin-bottom: 24px; }
+
+  /* ── PHASE HEADER ── */
+  .phase-header {
+    display: flex;
+    align-items: flex-start;
+    gap: 16px;
+    margin-bottom: 24px;
+    padding-bottom: 20px;
+    border-bottom: 1px solid var(--border);
+  }
+  .phase-badge {
+    font-size: 11px;
+    font-weight: 700;
+    font-family: monospace;
+    padding: 3px 8px;
+    border-radius: 4px;
+    background: rgba(108,99,255,.15);
+    color: var(--accent);
+    border: 1px solid rgba(108,99,255,.3);
+    white-space: nowrap;
+    margin-top: 3px;
+  }
+  .phase-status {
+    font-size: 11px;
+    padding: 3px 8px;
+    border-radius: 4px;
+    font-weight: 600;
+    margin-top: 3px;
+  }
+  .status-done { background: rgba(0,212,170,.12); color: var(--accent2); border: 1px solid rgba(0,212,170,.25); }
+  .status-pending { background: rgba(255,200,75,.08); color: var(--gold); border: 1px solid rgba(255,200,75,.2); }
+
+  /* ── CARDS ── */
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; margin: 12px 0; }
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 16px;
+  }
+  .card-title { font-size: 12px; font-weight: 700; color: var(--muted); letter-spacing: .05em; text-transform: uppercase; margin-bottom: 8px; }
+  .card-value { font-size: 13px; font-family: monospace; color: var(--text); word-break: break-all; }
+  .card-sub { font-size: 11px; color: var(--muted); margin-top: 4px; }
+
+  /* ── CONTRACT ADDRESSES ── */
+  .addr-table { width: 100%; border-collapse: collapse; margin: 10px 0; }
+  .addr-table th { font-size: 11px; font-weight: 700; text-align: left; padding: 6px 10px; color: var(--muted); border-bottom: 1px solid var(--border); letter-spacing: .05em; text-transform: uppercase; }
+  .addr-table td { font-size: 12px; padding: 7px 10px; border-bottom: 1px solid rgba(30,30,58,.5); }
+  .addr-table td:first-child { color: var(--text); font-weight: 600; }
+  .addr-table td:last-child  { font-family: monospace; color: var(--accent2); font-size: 11px; }
+  .addr-table a { color: inherit; text-decoration: none; }
+  .addr-table a:hover { text-decoration: underline; }
+
+  /* ── FILE LIST ── */
+  .file-list { list-style: none; margin: 8px 0 16px; }
+  .file-list li {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 5px 0;
+    font-size: 13px;
+    border-bottom: 1px solid rgba(30,30,58,.4);
+  }
+  .file-list li:last-child { border-bottom: none; }
+  .file-path {
+    font-family: monospace;
+    font-size: 12px;
+    color: var(--accent);
+    text-decoration: none;
+    white-space: nowrap;
+  }
+  .file-path:hover { text-decoration: underline; }
+  .file-desc { color: #8888b0; font-size: 12px; line-height: 1.5; }
+  .file-tag {
+    font-size: 10px;
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-weight: 600;
+    white-space: nowrap;
+    margin-top: 1px;
+  }
+  .tag-new  { background: rgba(0,212,170,.12); color: var(--accent2); }
+  .tag-upd  { background: rgba(108,99,255,.12); color: var(--accent); }
+
+  /* ── API METHODS ── */
+  .method-list { margin: 8px 0; }
+  .method {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 6px 0;
+    border-bottom: 1px solid rgba(30,30,58,.4);
+    font-size: 13px;
+  }
+  .method:last-child { border-bottom: none; }
+  .method-verb {
+    font-size: 10px;
+    font-weight: 700;
+    font-family: monospace;
+    padding: 2px 5px;
+    border-radius: 3px;
+    min-width: 38px;
+    text-align: center;
+    flex-shrink: 0;
+    margin-top: 1px;
+  }
+  .verb-post { background: rgba(0,212,170,.15); color: var(--accent2); }
+  .verb-get  { background: rgba(108,99,255,.15); color: var(--accent); }
+  .method-path { font-family: monospace; font-size: 12px; color: var(--text); }
+  .method-desc { font-size: 12px; color: #8888b0; }
+
+  /* ── TESTS ── */
+  .test-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px; margin: 10px 0; }
+  .test-card {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px 12px;
+  }
+  .test-file { font-family: monospace; font-size: 11px; color: var(--accent); margin-bottom: 5px; word-break: break-all; }
+  .test-file a { color: inherit; text-decoration: none; }
+  .test-file a:hover { text-decoration: underline; }
+  .test-count { font-size: 11px; color: var(--accent2); font-weight: 700; }
+  .test-bullets { font-size: 11px; color: #7070a0; margin-top: 4px; list-style: none; }
+  .test-bullets li::before { content: "· "; color: var(--accent); }
+  .test-skip { font-size: 10px; color: var(--gold); margin-top: 4px; }
+
+  /* ── TESTS SUMMARY BAR ── */
+  .test-summary {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(0,212,170,.08);
+    border: 1px solid rgba(0,212,170,.2);
+    border-radius: 6px;
+    padding: 5px 12px;
+    font-size: 12px;
+    color: var(--accent2);
+    margin: 8px 0 20px;
+  }
+  .test-summary .num { font-weight: 700; font-size: 15px; }
+
+  /* ── CLASS DIAGRAM ── */
+  .class-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; margin: 10px 0; }
+  .class-box {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow: hidden;
+  }
+  .class-name {
+    background: rgba(108,99,255,.15);
+    padding: 7px 12px;
+    font-family: monospace;
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--accent);
+    border-bottom: 1px solid var(--border);
+  }
+  .class-members { padding: 8px 12px; }
+  .member {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    font-size: 11px;
+    padding: 2px 0;
+  }
+  .member-type { color: var(--gold); font-family: monospace; min-width: 60px; flex-shrink: 0; }
+  .member-name { color: var(--text); font-family: monospace; }
+  .member-desc { color: var(--muted); font-size: 10px; margin-left: 2px; }
+
+  /* ── MERMAID WRAPPER ── */
+  .diagram-section { margin: 8px 0 24px; }
+  .diagram-title {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .05em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 8px;
+  }
+  .mermaid-wrap {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 20px;
+    overflow-x: auto;
+  }
+  .mermaid { text-align: center; }
+
+  /* ── OVERLAY BIAS TABLE ── */
+  .bias-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: 6px;
+    margin: 8px 0;
+  }
+  .bias-item {
+    font-family: monospace;
+    font-size: 11px;
+    padding: 4px 8px;
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text);
+  }
+  .bias-item span { color: var(--muted); }
+
+  /* ── DATA TABLE ── */
+  .data-table { width: 100%; border-collapse: collapse; margin: 10px 0 20px; font-size: 13px; }
+  .data-table th { padding: 7px 12px; text-align: left; font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); border-bottom: 1px solid var(--border); }
+  .data-table td { padding: 7px 12px; border-bottom: 1px solid rgba(30,30,58,.5); color: #b0b0d0; vertical-align: top; }
+  .data-table td:first-child { color: var(--text); font-family: monospace; font-size: 12px; }
+  .data-table code { font-family: monospace; font-size: 12px; background: var(--code-bg); padding: 1px 4px; border-radius: 3px; color: var(--accent2); }
+  .yes  { color: var(--red) !important; }
+  .no   { color: var(--accent2) !important; }
+
+  /* ── INLINE CODE ── */
+  code { font-family: monospace; font-size: 12px; background: var(--code-bg); padding: 1px 5px; border-radius: 3px; color: var(--accent2); }
+  a { color: var(--accent); }
+  a:hover { color: #9d97ff; }
+
+  /* ── DIVIDER ── */
+  hr { border: none; border-top: 1px solid var(--border); margin: 24px 0; }
+
+  /* ── GANTT override: make mermaid use dark bg ── */
+  .mermaid svg { max-width: 100%; }
+
+  /* ── SPONSOR TAGS ── */
+  .sponsor-tags { display: flex; gap: 6px; margin: 8px 0 0; flex-wrap: wrap; }
+
+  /* ── LAYER SECTION HEADERS (Contracts / Server / Frontend) ── */
+  h3.layer {
+    text-transform: none;
+    letter-spacing: 0;
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--text);
+    margin: 28px 0 8px;
+    border-left: 2px solid var(--accent);
+    padding-left: 8px;
+  }
+
+  /* ── DIAGRAM FILE LABEL ── */
+  .diagram-file { font-size: 10px; font-family: ui-monospace, monospace; color: var(--muted); font-style: normal; margin-left: 6px; }
+
+  /* ── PHASE DESCRIPTION ── */
+  .phase-desc { font-size: 13px; line-height: 1.75; color: #c0c0d8; margin-bottom: 4px; }
+  .phase-note { font-size: 12px; line-height: 1.6; color: var(--muted); background: rgba(108,99,255,.06); border-left: 2px solid rgba(108,99,255,.3); padding: 8px 12px; border-radius: 0 4px 4px 0; margin: 8px 0 4px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1><span class="chain">Chain</span>gammon</h1>
+  <span style="color:var(--muted);font-size:12px;">Architecture &amp; Build Log</span>
+  <div class="badges">
+    <span class="badge badge-ens">ENS</span>
+    <span class="badge badge-0g">0G Storage</span>
+    <span class="badge badge-kh">KeeperHub</span>
+  </div>
+</header>
+
+<div class="layout">
+<!-- ═══════════════════════════════════════════════════════ NAV ═══ -->
+<nav id="nav">
+  <div class="nav-section">Overview</div>
+  <div class="nav-item active" data-page="overview">
+    <div class="nav-dot"></div>
+    <span>Architecture</span>
+  </div>
+  <div class="nav-section">Phases — Done</div>
+  <div class="nav-item done" data-page="p0"><span class="phase-num">P0</span>Scaffold</div>
+  <div class="nav-item done" data-page="p1"><span class="phase-num">P1</span>gnubg wrapper</div>
+  <div class="nav-item done" data-page="p2"><span class="phase-num">P2</span>Core contracts</div>
+  <div class="nav-item done" data-page="p3"><span class="phase-num">P3</span>Game-record hash</div>
+  <div class="nav-item done" data-page="p4"><span class="phase-num">P4</span>Deploy to 0G</div>
+  <div class="nav-item done" data-page="p5"><span class="phase-num">P5</span>iNFT AgentRegistry</div>
+  <div class="nav-item done" data-page="p6"><span class="phase-num">P6</span>0G Storage bridge</div>
+  <div class="nav-item done" data-page="p7"><span class="phase-num">P7</span>Archive + finalize</div>
+  <div class="nav-item done" data-page="p8"><span class="phase-num">P8</span>Encrypted weights</div>
+  <div class="nav-item done" data-page="p9"><span class="phase-num">P9</span>Experience overlay</div>
+  <div class="nav-item done" data-page="p10"><span class="phase-num">P10</span>ENS registrar</div>
+  <div class="nav-item done" data-page="p11"><span class="phase-num">P11</span>ENS text records</div>
+  <div class="nav-item done" data-page="p12"><span class="phase-num">P12</span>Frontend wallet</div>
+  <div class="nav-item done" data-page="p13"><span class="phase-num">P13</span>Agents list UI</div>
+  <div class="nav-item done" data-page="p14"><span class="phase-num">P14</span>Match flow UI</div>
+  <div class="nav-item done" data-page="p15"><span class="phase-num">P15</span>ENS name in UI</div>
+  <div class="nav-item done" data-page="p20"><span class="phase-num">P20</span>Match replay UI</div>
+  <div class="nav-item done" data-page="p23"><span class="phase-num">P23</span>ROADMAP.md</div>
+</nav>
+
+<!-- ════════════════════════════════════════════════════ CONTENT ═══ -->
+<main id="main">
+
+<!-- ─────────────────────────────── OVERVIEW ─────── -->
+<div class="page active" id="page-overview">
+  <div class="phase-header">
+    <div>
+      <h2>Chaingammon — Architecture</h2>
+      <p class="subtitle">Open protocol for portable backgammon reputation. Players and agents carry ENS subnames whose text records hold ELO + match archive on 0G Storage. Agents are ERC-7857 iNFTs.</p>
+    </div>
+  </div>
+
+  <h3>Components</h3>
+  <div class="cards">
+    <div class="card"><div class="card-title">Frontend</div><div class="card-value">Next.js 16 + wagmi + viem</div><div class="card-sub">App Router · SSR · Tailwind</div></div>
+    <div class="card"><div class="card-title">Game Server</div><div class="card-value">FastAPI (Python 3.12 + uv)</div><div class="card-sub">gnubg via pexpect · web3.py</div></div>
+    <div class="card"><div class="card-title">Chain</div><div class="card-value">0G Galileo testnet · chainId 16602</div><div class="card-sub">EVM-compatible · <a href="https://chainscan-galileo.0g.ai" target="_blank">chainscan-galileo.0g.ai</a></div></div>
+    <div class="card"><div class="card-title">Storage</div><div class="card-value">0G Storage · og-bridge (Node.js)</div><div class="card-sub">@0gfoundation/0g-ts-sdk · Merkle rootHash</div></div>
+  </div>
+
+  <h3>System Diagram</h3>
+  <div class="diagram-section">
+    <div class="diagram-title">Frontend → Server → Chain</div>
+    <div class="mermaid-wrap">
+      <pre class="mermaid">
+graph LR
+    FE[Frontend\nNext.js]
+    API[Game Server\nFastAPI]
+    GN[gnubg]
+    BR[og-bridge\nNode.js]
+    OGS[0G Storage]
+    MR[MatchRegistry]
+    AR[AgentRegistry]
+    EM[EloMath]
+    ENS[PlayerSubname\nRegistrar]
+    KH[KeeperHub]
+
+    FE -->|REST| API
+    API --> GN
+    API --> BR
+    BR <--> OGS
+    API -->|recordMatch| MR
+    MR --> EM
+    AR -->|reads ELO| MR
+    API -->|setText| ENS
+    KH -->|orchestrate| MR
+    KH --> ENS
+    KH --> OGS
+      </pre>
+    </div>
+  </div>
+
+  <h3>Smart Contracts</h3>
+  <div class="diagram-section">
+    <div class="mermaid-wrap">
+      <pre class="mermaid">
+graph TD
+    AR[AgentRegistry\nERC-721 / ERC-7857 iNFT]
+    MR[MatchRegistry\nELO + match log]
+    EM[EloMath\nfixed-point K=32]
+    PSR[PlayerSubnameRegistrar\nENS subnames]
+
+    AR -->|IMatchRegistry.agentElo| MR
+    MR --> EM
+      </pre>
+    </div>
+  </div>
+
+  <h3>Deployed Contracts (0G Galileo Testnet)</h3>
+  <table class="addr-table">
+    <tr><th>Contract</th><th>Address</th></tr>
+    <tr><td>MatchRegistry</td><td><a href="https://chainscan-galileo.0g.ai/address/0x60E52e2d9Ea7b4A851Dd63365222c7d102A11eaE" target="_blank">0x60E52e2d9Ea7b4A851Dd63365222c7d102A11eaE</a></td></tr>
+    <tr><td>AgentRegistry</td><td><a href="https://chainscan-galileo.0g.ai/address/0xCb0a562fa9079184922754717BB3035C0F7A983E" target="_blank">0xCb0a562fa9079184922754717BB3035C0F7A983E</a></td></tr>
+    <tr><td>PlayerSubnameRegistrar</td><td><a href="https://chainscan-galileo.0g.ai/address/0xf260aE6b2958623fC4e865433201050DC2Ed1ccC" target="_blank">0xf260aE6b2958623fC4e865433201050DC2Ed1ccC</a></td></tr>
+  </table>
+
+  <h3>Finalize Flow</h3>
+  <div class="diagram-section">
+    <div class="mermaid-wrap">
+      <pre class="mermaid">
+sequenceDiagram
+    participant FE as Frontend
+    participant API as Server
+    participant OG as 0G Storage
+    participant CH as 0G Chain
+
+    FE->>API: POST /games/{id}/finalize
+    API->>API: build GameRecord JSON
+    API->>OG: put_blob(record)
+    OG-->>API: rootHash + txHash
+    API->>CH: MatchRegistry.recordMatch(…, rootHash)
+    CH-->>API: matchId
+    API->>CH: AgentRegistry.updateOverlayHash(agentId, overlayHash)
+    API->>CH: PlayerSubnameRegistrar.setText(node, elo, value)
+    API-->>FE: match_id + root_hash
+      </pre>
+    </div>
+  </div>
+
+  <h3>0G Storage — What's Stored</h3>
+  <table class="data-table">
+    <tr><th>Blob</th><th>Encrypted</th><th>Writer</th><th>Key</th></tr>
+    <tr><td>Game record JSON</td><td class="no">No</td><td>Server on <code>/finalize</code></td><td>rootHash in MatchRegistry</td></tr>
+    <tr><td>KeeperHub audit trail</td><td class="no">No</td><td>KeeperHub workflow</td><td>—</td></tr>
+    <tr><td>gnubg base weights (~399 KB)</td><td class="yes">AES-256-GCM</td><td><code>upload_base_weights.py</code> once</td><td><code>dataHashes[0]</code></td></tr>
+    <tr><td>Agent experience overlay</td><td class="yes">AES-256-GCM</td><td>Server after each match</td><td><code>dataHashes[1]</code></td></tr>
+  </table>
+
+  <h3>Trust Model (v1)</h3>
+  <div class="diagram-section">
+    <div class="mermaid-wrap">
+      <pre class="mermaid">
+graph LR
+    SRV[Server\nholds deployer key]
+    MR[MatchRegistry\non-chain ELO]
+    OG[0G Storage\narchive]
+    CH[gameRecordHash\non-chain]
+
+    SRV -->|signs recordMatch| MR
+    SRV -->|uploads record| OG
+    SRV -->|passes rootHash| CH
+    CH -.->|verifiable link| OG
+      </pre>
+    </div>
+  </div>
+  <p>Server is the trusted dice roller and settlement submitter in v1. Commit-reveal VRF is a v2 roadmap item. KeeperHub (planned Phase 18) removes the server as settlement bottleneck.</p>
+
+  <h3>Phase Timeline</h3>
+  <div class="diagram-section">
+    <div class="mermaid-wrap">
+      <pre class="mermaid">
+gantt
+    dateFormat YYYY-MM-DD
+    section Done
+    P0 Scaffold            :done, 2026-04-01, 1d
+    P1 gnubg wrapper       :done, 2026-04-02, 1d
+    P2 Core contracts      :done, 2026-04-03, 1d
+    P3 Game-record hash    :done, 2026-04-04, 1d
+    P4 Deploy to 0G        :done, 2026-04-08, 1d
+    P5 iNFT AgentRegistry  :done, 2026-04-09, 1d
+    P6 0G Storage bridge   :done, 2026-04-11, 1d
+    P7 Archive + finalize  :done, 2026-04-13, 1d
+    P8 Encrypted weights   :done, 2026-04-16, 1d
+    P9 Experience overlay  :done, 2026-04-19, 1d
+    P10 ENS registrar      :done, 2026-04-22, 1d
+    P11 ENS text records   :done, 2026-04-25, 1d
+    P12 Frontend wallet    :done, 2026-04-26, 1d
+    section In Progress
+    P13 Agents list UI     :active, 2026-04-27, 1d
+    P14 Match flow UI      :active, 2026-04-27, 1d
+      </pre>
+    </div>
+  </div>
+</div>
+
+<!-- ─────────────────────────────── PHASE 0 ─────── -->
+<div class="page" id="page-p0">
+  <div class="phase-header">
+    <span class="phase-badge">Phase 0</span>
+    <div>
+      <h2>Scaffold</h2>
+      <p class="subtitle">pnpm monorepo — contracts (Hardhat + Solidity) · server (FastAPI + uv) · frontend (Next.js + wagmi)</p>
+    </div>
+    <span class="phase-status status-done">Done ✓</span>
+  </div>
+
+  <p class="phase-desc">Establishes the monorepo skeleton so all three packages can be tested, built, and deployed independently but share root scripts. No business logic yet — only the plumbing that every subsequent phase builds on. The three-package split reflects the three distinct deployment targets: contracts go to a chain, the server runs as a process (gnubg subprocess wrapper), and the frontend is a static Next.js build.</p>
+  <p class="phase-note">All stub component files (AgentCard, Board, DiceRoll) are created empty here so git tracks them from the start. Their real content lands in the phases that introduce them.</p>
+
+  <h3>Stack</h3>
+  <div class="cards">
+    <div class="card"><div class="card-title">Contracts</div><div class="card-value">Hardhat 2 · Solidity 0.8.24</div></div>
+    <div class="card"><div class="card-title">Server</div><div class="card-value">Python 3.12 · uv · FastAPI</div></div>
+    <div class="card"><div class="card-title">Frontend</div><div class="card-value">Next.js 16 · wagmi · viem</div></div>
+    <div class="card"><div class="card-title">Workspace</div><div class="card-value">pnpm · pnpm-workspace.yaml</div></div>
+  </div>
+
+  <h3 class="layer">Contracts</h3>
+  <ul class="file-list">
+    <li><a class="file-path" href="https://github.com/oslinin/chaingammon/blob/master/contracts/src/" target="_blank">contracts/src/</a><span class="file-tag tag-new">new</span><span class="file-desc">Empty Solidity stubs — filled Phase 2</span></li>
+    <li><a class="file-path" href="https://github.com/oslinin/chaingammon/blob/master/contracts/hardhat.config.js" target="_blank">contracts/hardhat.config.js</a><span class="file-tag tag-new">new</span><span class="file-desc">Basic Hardhat config; extended in Phase 4 for 0G testnet deploy</span></li>
+  </ul>
+
+  <h3 class="layer">Server</h3>
+  <ul class="file-list">
+    <li><a class="file-path" href="https://github.com/oslinin/chaingammon/blob/master/server/app/main.py" target="_blank">server/app/main.py</a><span class="file-tag tag-new">new</span><span class="file-desc">FastAPI app stub; <code>POST /games</code> returns a placeholder response until Phase 1</span></li>
+    <li><a class="file-path" href="https://github.com/oslinin/chaingammon/blob/master/server/pyproject.toml" target="_blank">server/pyproject.toml</a><span class="file-tag tag-new">new</span><span class="file-desc">uv-managed deps: fastapi, uvicorn, pexpect, pydantic</span></li>
+  </ul>
+
+  <h3 class="layer">Frontend</h3>
+  <ul class="file-list">
+    <li><a class="file-path" href="https://github.com/oslinin/chaingammon/blob/master/frontend/app/page.tsx" target="_blank">frontend/app/page.tsx</a><span class="file-tag tag-new">new</span><span class="file-desc">Landing page stub; real content added Phase 12–13</span></li>
+    <li><a class="file-path" href="https://github.com/oslinin/chaingammon/blob/master/frontend/app/AgentCard.tsx" target="_blank">frontend/app/AgentCard.tsx</a><span class="file-tag tag-new">new</span><span class="file-desc">Empty stub — replaced Phase 13</span></li>
+    <li><a class="file-path" href="https://github.com/oslinin/chaingammon/blob/master/frontend/app/Board.tsx" target="_blank">frontend/app/Board.tsx</a><span class="file-tag tag-new">new</span><span class="file-desc">Empty stub — replaced Phase 14</span></li>
+    <li><a class="file-path" href="https://github.com/oslinin/chaingammon/blob/master/frontend/app/DiceRoll.tsx" target="_blank">frontend/app/DiceRoll.tsx</a><span class="file-tag tag-new">new</span><span class="file-desc">Empty stub — replaced Phase 14</span></li>
+    <li><a class="file-path" href="https://github.com/oslinin/chaingammon/blob/master/pnpm-workspace.yaml" target="_blank">pnpm-workspace.yaml</a><span class="file-tag tag-new">new</span><span class="file-desc">Workspace members: contracts, frontend, server (og-bridge added Phase 6)</span></li>
+    <li><a class="file-path" href="https://github.com/oslinin/chaingammon/blob/master/package.json" target="_blank">package.json</a><span class="file-tag tag-new">new</span><span class="file-desc">Root scripts: <code>contracts:test</code>, <code>server:test</code>, <code>frontend:dev</code>, <code>test</code></span></li>
+  </ul>
+
+  <h3>Tests</h3>
+  <div class="test-grid">
+    <div class="test-card">
+      <div class="test-file">Scaffold tests (all packages)</div>
+      <div class="test-count">7 tests</div>
+      <ul class="test-bullets">
+        <li>contracts package starts without error</li>
+        <li>server package imports without error</li>
+        <li>frontend build produces static routes</li>
+      </ul>
+    </div>
+  </div>
+  <div class="test-summary"><span class="num">7</span> scaffold tests · all pass</div>
+</div>
+
+<!-- ─────────────────────────────── PHASE 1 ─────── -->
+<div class="page" id="page-p1">
+  <div class="phase-header">
+    <span class="phase-badge">Phase 1</span>
+    <div>
+      <h2>gnubg Wrapper Service</h2>
+      <p class="subtitle">FastAPI drives gnubg via pexpect. Full match playable through REST endpoints.</p>
+    </div>
+    <span class="phase-status status-done">Done ✓</span>
+  </div>
+
+  <p class="phase-desc">The game server is the load-bearing piece of the whole system — every piece of on-chain logic depends on gnubg producing legal positions, valid move strings, and correct dice. This phase wraps the gnubg binary via pexpect (a Python subprocess expect library), exposes it as a FastAPI service, and defines the canonical <code>GameState</code> model that all subsequent phases consume. The gnubg binary is a robust, heavily-tested open-source backgammon engine; by wrapping it in a subprocess rather than reimplementing it, Phase 1 offloads all position validation and equity calculation to a mature implementation.</p>
+  <p class="phase-note">gnubg's native move notation (<code>8/5 6/5</code>, <code>bar/N</code>, <code>N/off</code>) is passed through unmodified to the REST API and later to the frontend. This transparency makes test reproduction easy — any failing position can be replayed by hand with gnubg's interactive CLI.</p>
+
+  <h3>Game flow <code class="diagram-file">gnubg_client.py</code></h3>
+  <div class="diagram-section">
+    <div class="mermaid-wrap">
+      <pre class="mermaid">
+sequenceDiagram
+    participant FE as Client
+    participant API as Server
+    participant GN as gnubg
+
+    FE->>API: POST /games {agent_id, match_length}
+    API->>GN: new_match()
+    GN-->>API: position_id + match_id
+    API-->>FE: GameState
+
+    loop Each turn
+        FE->>API: POST /games/{id}/roll
+        API->>GN: roll_dice()
+        GN-->>API: state with dice
+        API-->>FE: GameState
+
+        alt Human move
+            FE->>API: POST /games/{id}/move {move}
+            API->>GN: submit_move()
+        else Agent move
+            FE->>API: POST /games/{id}/agent-move
+            API->>GN: get_agent_move()
+        end
+        GN-->>API: new state
+        API-->>FE: GameState
+    end
+      </pre>
+    </div>
+  </div>
+
+  <h3 class="layer">Server</h3>
+  <ul class="file-list">
+    <li><a class="file-path" href="https://github.com/oslinin/chaingammon/blob/master/server/app/gnubg_client.py" target="_blank">server/app/gnubg_client.py</a><span class="file-tag tag-new">new</span><span class="file-desc">pexpect subprocess wrapper — <code>new_match</code>, <code>roll_dice</code>, <code>submit_move</code>, <code>get_agent_move</code>, <code>get_candidate_moves</code></span></li>
+    <li><a class="file-path" href="https://github.com/oslinin/chaingammon/blob/master/server/app/game_state.py" target="_blank">server/app/game_state.py</a><span class="file-tag tag-new">new</span><span class="file-desc">Pydantic <code>GameState</code>: board[24], bar[2], off[2], turn, dice, cube, score, game_over, winner</span></li>
+    <li><a class="file-path" href="https://github.com/oslinin/chaingammon/blob/master/server/app/main.py" target="_blank">server/app/main.py</a><span class="file-tag tag-new">new</span><span class="file-desc">FastAPI app — REST endpoints for game, roll, move, agent-move, resign</span></li>
+  </ul>
+
+  <h3>API Endpoints</h3>
+  <div class="method-list">
+    <div class="method"><span class="method-verb verb-post">POST</span><div><div class="method-path">/games</div><div class="method-desc">Create game — <code>{agent_id, match_length}</code> → <code>GameState</code></div></div></div>
+    <div class="method"><span class="method-verb verb-get">GET</span><div><div class="method-path">/games/{id}</div><div class="method-desc">Fetch current state</div></div></div>
+    <div class="method"><span class="method-verb verb-post">POST</span><div><div class="method-path">/games/{id}/roll</div><div class="method-desc">Roll dice → <code>GameState</code> with dice field set</div></div></div>
+    <div class="method"><span class="method-verb verb-post">POST</span><div><div class="method-path">/games/{id}/move</div><div class="method-desc"><code>{move: "8/5 6/5"}</code> — submit human move in gnubg notation</div></div></div>
+    <div class="method"><span class="method-verb verb-post">POST</span><div><div class="method-path">/games/{id}/agent-move</div><div class="method-desc">Server picks gnubg's top-equity move (Phase 9 biases this with overlay)</div></div></div>
+    <div class="method"><span class="method-verb verb-post">POST</span><div><div class="method-path">/games/{id}/resign</div><div class="method-desc">Resign current match</div></div></div>
+  </div>
+
+  <div class="test-summary"><span class="num">~15</span> server tests · full match end-to-end</div>
+</div>
+
+<!-- ─────────────────────────────── PHASE 2 ─────── -->
+<div class="page" id="page-p2">
+  <div class="phase-header">
+    <span class="phase-badge">Phase 2</span>
+    <div>
+      <h2>Core Contracts</h2>
+      <p class="subtitle">EloMath library · MatchRegistry · AgentRegistry (ERC-721 stub)</p>
+    </div>
+    <span class="phase-status status-done">Done ✓</span>
+  </div>
+
+  <p class="phase-desc">Defines the on-chain data model: ELO math as a pure Solidity library, a match registry that stores results and updates ratings, and an ERC-721 agent registry. EloMath uses integer arithmetic with a lookup table for expected scores, avoiding floating-point which the EVM doesn't support. Every future phase that touches ratings or agent identity builds on these contracts — no later phase changes the EloMath algorithm or the core MatchInfo struct layout. The contracts compile and test against Hardhat's local in-process node at this stage; Phase 4 deploys them to a live testnet.</p>
+  <p class="phase-note">Nothing is live on 0G testnet yet in Phase 2. The deploy script runs against in-process Hardhat only. Persistent live addresses land in Phase 4, and the Phase 5 redeploy supersedes those.</p>
+
+  <h3>Contract Architecture <code class="diagram-file">EloMath.sol · MatchRegistry.sol · AgentRegistry.sol</code></h3>
+  <div class="diagram-section">
+    <div class="mermaid-wrap">
+      <pre class="mermaid">
+classDiagram
+    class EloMath {
+        +uint16 K = 32
+        +uint16 INITIAL = 1500
+        +expectedScore(ra, rb) uint16
+        +updateElo(elo, expected, won) uint16
+    }
+    class MatchRegistry {
+        +recordMatch(w_agent, w_human, l_agent, l_human, len, hash) matchId
+        +getMatch(matchId) MatchInfo
+        +agentElo(agentId) uint16
+        +humanElo(address) uint16
+        +matchCount() uint256
+    }
+    class AgentRegistry {
+        +mintAgent(to, metadataURI, tier) agentId
+        +agentMetadata(agentId) string
+        +agentElo(agentId) uint16
+        +agentCount() uint256
+    }
+    MatchRegistry --> EloMath
+    AgentRegistry --> MatchRegistry : reads ELO
+      </pre>
+    </div>
+  </div>
+
+  <h3 class="layer">Contracts</h3>
+  <ul class="file-list">
+    <li><a class="file-path" href="https://github.com/oslinin/chaingammon/blob/master/contracts/src/EloMath.sol" target="_blank">contracts/src/EloMath.sol</a><span class="file-tag tag-new">new</span><span class="file-desc">Pure library — K=32, INITIAL=1500, lookup-table expected score, integer math (no floats)</span></li>
+    <li><a class="file-path" href="https://github.com/oslinin/chaingammon/blob/master/contracts/src/MatchRegistry.sol" target="_blank">contracts/src/MatchRegistry.sol</a><span class="file-tag tag-new">new</span><span class="file-desc">Owner-only <code>recordMatch</code> · stores <code>MatchInfo</code> · updates ELO via EloMath · events: <code>MatchRecorded</code>, <code>EloUpdated</code></span></li>
+    <li><a class="file-path" href="https://github.com/oslinin/chaingammon/blob/master/contracts/src/AgentRegistry.sol" target="_blank">contracts/src/AgentRegistry.sol</a><span class="file-tag tag-new">new</span><span class="file-desc">ERC-721 · <code>mintAgent</code> · <code>agentMetadata</code> · <code>agentElo</code> proxy to MatchRegistry</span></li>
+  </ul>
+
+  <div class="test-grid">
+    <div class="test-card">
+      <div class="test-file"><a href="https://github.com/oslinin/chaingammon/blob/master/contracts/test/phase2_EloMath.test.js" target="_blank">phase2_EloMath.test.js</a></div>
+      <div class="test-count">hardhat tests</div>
+      <ul class="test-bullets"><li>K=32, INITIAL=1500 constants</li><li>expectedScore symmetry</li><li>ELO update: win raises, loss lowers</li></ul>
+    </div>
+    <div class="test-card">
+      <div class="test-file"><a href="https://github.com/oslinin/chaingammon/blob/master/contracts/test/phase2_MatchRegistry.test.js" target="_blank">phase2_MatchRegistry.test.js</a></div>
+      <div class="test-count">hardhat tests</div>
+      <ul class="test-bullets"><li>recordMatch owner-only</li><li>MatchRecorded + EloUpdated events</li><li>agentElo / humanElo reads</li></ul>
+    </div>
+    <div class="test-card">
+      <div class="test-file"><a href="https://github.com/oslinin/chaingammon/blob/master/contracts/test/phase2_AgentRegistry.test.js" target="_blank">phase2_AgentRegistry.test.js</a></div>
+      <div class="test-count">hardhat tests</div>
+      <ul class="test-bullets"><li>mintAgent ERC-721 basics</li><li>agentMetadata round-trip</li><li>agentElo proxies MatchRegistry</li></ul>
+    </div>
+  </div>
+  <div class="test-summary"><span class="num">32</span> hardhat tests · all pass</div>
+</div>
+
+<!-- ─────────────────────────────── PHASE 3 ─────── -->
+<div class="page" id="page-p3">
+  <div class="phase-header">
+    <span class="phase-badge">Phase 3</span>
+    <div>
+      <h2>Game-Record Hash on MatchRegistry</h2>
+      <p class="subtitle">MatchInfo gains a <code>bytes32 gameRecordHash</code> slot. Enables cryptographic tie between on-chain match and 0G Storage archive.</p>
+    </div>
+    <span class="phase-status status-done">Done ✓</span>
+  </div>
+  <p class="phase-desc">Adds a <code>bytes32</code> slot to MatchRegistry to hold a 0G Storage Merkle root hash alongside each match record. No upload logic yet — that arrives in Phase 6. The design decision to add the field first (Phase 3) rather than alongside the upload (Phase 7) means the contract's storage layout is stable from this point: any tooling that reads <code>MatchInfo</code> doesn't need to be updated when upload logic is added later. The new <code>GameRecordStored</code> event allows off-chain indexers to subscribe separately from ELO-update events.</p>
+  <p class="phase-note"><code>bytes32(0)</code> is explicitly permitted so the contract remains usable before Phase 6 wires up uploads, and the 32 prior tests pass unchanged by simply passing <code>ZeroHash</code> as the new argument.</p>
+
+  <h3>MatchInfo Struct</h3>
+  <div class="class-grid">
+    <div class="class-box">
+      <div class="class-name">MatchInfo</div>
+      <div class="class-members">
+        <div class="member"><span class="member-type">uint64</span><span class="member-name">timestamp</span></div>
+        <div class="member"><span class="member-type">uint256</span><span class="member-name">winnerAgentId</span></div>
+        <div class="member"><span class="member-type">address</span><span class="member-name">winnerHuman</span></div>
+        <div class="member"><span class="member-type">uint256</span><span class="member-name">loserAgentId</span></div>
+        <div class="member"><span class="member-type">address</span><span class="member-name">loserHuman</span></div>
+        <div class="member"><span class="member-type">uint16</span><span class="member-name">matchLength</span></div>
+        <div class="member"><span class="member-type">bytes32</span><span class="member-name">gameRecordHash</span><span class="member-desc">← added P3</span></div>
+      </div>
+    </div>
+  </div>
+
+  <h3>New Event</h3>
+  <div class="class-grid">
+    <div class="class-box">
+      <div class="class-name">GameRecordStored</div>
+      <div class="class-members">
+        <div class="member"><span class="member-type">uint256</span><span class="member-name">matchId</span></div>
+        <div class="member"><span class="member-type">bytes32</span><span class="member-name">gameRecordHash</span></div>
+      </div>
+    </div>
+  </div>
+
+  <h3 class="layer">Contracts</h3>
+  <ul class="file-list">
+    <li><a class="file-path" href="https://github.com/oslinin/chaingammon/blob/master/contracts/src/MatchRegistry.sol" target="_blank">contracts/src/MatchRegistry.sol</a><span class="file-tag tag-upd">upd</span><span class="file-desc">MatchInfo gets <code>bytes32 gameRecordHash</code>; recordMatch gains new arg; <code>GameRecordStored</code> event added</span></li>
+    <li><a class="file-path" href="https://github.com/oslinin/chaingammon/blob/master/contracts/test/phase3_MatchRegistry_gameRecord.test.js" target="_blank">contracts/test/phase3_MatchRegistry_gameRecord.test.js</a><span class="file-tag tag-new">new</span><span class="file-desc">5 tests: new arg, struct round-trip, event, zero-hash permitted, distinct hashes</span></li>
+  </ul>
+  <div class="test-grid">
+    <div class="test-card">
+      <div class="test-file"><a href="https://github.com/oslinin/chaingammon/blob/master/contracts/test/phase3_MatchRegistry_gameRecord.test.js" target="_blank">phase3_MatchRegistry_gameRecord.test.js</a></div>
+      <div class="test-count">5 new tests</div>
+      <ul class="test-bullets"><li>New gameRecordHash arg stored on struct</li><li>GameRecordStored event emission</li><li>bytes32(0) permitted</li><li>Two matches → distinct hashes</li></ul>
+    </div>
+  </div>
+  <div class="test-summary"><span class="num">37</span> hardhat tests · 5 new in Phase 3</div>
+</div>
+
+<!-- ─────────────────────────────── PHASE 4 ─────── -->
+<div class="page" id="page-p4">
+  <div class="phase-header">
+    <span class="phase-badge">Phase 4</span>
+    <div>
+      <h2>Deploy &amp; Verify on 0G Testnet</h2>
+      <p class="subtitle">First persistent deploy. MatchRegistry + AgentRegistry live on chainId 16602. Seed agent #1 minted.</p>
+      <div class="sponsor-tags">
+        <span class="badge badge-0g">0G Chain</span>
+      </div>
+    </div>
+    <span class="phase-status status-done">Done ✓</span>
+  </div>
+
+  <p class="phase-desc">First persistent deployment to a live EVM chain (0G Galileo testnet, chainId 16602). Proves the compile → sign → broadcast → post-confirm read → source-verify pipeline works end-to-end against real infrastructure. Phase 4 is deliberately minimal — only deploy + verify, no new contract logic — so any pipeline failure is isolated to deployment tooling, not contract changes. The deploy script records addresses and constructor args in a JSON file so the verify step can replay them idempotently.</p>
+  <p class="phase-note">The Phase 4 addresses are superseded by the Phase 5 redeploy. The Phase 4 contracts (0x9058… and 0x025a…) remain on-chain but are stale — use the Phase 5 addresses for all interactions.</p>
+
+  <h3>Deployed Addresses (Phase 4 — superseded by Phase 5)</h3>
+  <table class="addr-table">
+    <tr><th>Contract</th><th>Address (stale — see Phase 5)</th></tr>
+    <tr><td>MatchRegistry</td><td>0x905856d067B84E3B51E12DaF95e68B3D525216E6</td></tr>
+    <tr><td>AgentRegistry</td><td>0x025a51F5ea78291B303F1416FC05FC0B051393e2</td></tr>
+  </table>
+
+  <h3 class="layer">Contracts</h3>
+  <ul class="file-list">
+    <li><a class="file-path" href="https://github.com/oslinin/chaingammon/blob/master/contracts/hardhat.config.js" target="_blank">contracts/hardhat.config.js</a><span class="file-tag tag-upd">upd</span><span class="file-desc">dotenv · custom <code>etherscan</code> block → chainscan-galileo Etherscan-compatible endpoint</span></li>
+    <li><a class="file-path" href="https://github.com/oslinin/chaingammon/blob/master/contracts/script/deploy.js" target="_blank">contracts/script/deploy.js</a><span class="file-tag tag-upd">upd</span><span class="file-desc">Writes deployment addresses + constructor args to JSON for verify.js</span></li>
+    <li><a class="file-path" href="https://github.com/oslinin/chaingammon/blob/master/contracts/script/verify.js" target="_blank">contracts/script/verify.js</a><span class="file-tag tag-new">new</span><span class="file-desc">Reads <code>deployments/0g-testnet.json</code> · replays constructor args · calls <code>verify:verify</code>. Idempotent.</span></li>
+    <li><a class="file-path" href="https://github.com/oslinin/chaingammon/blob/master/contracts/deployments/0g-testnet.json" target="_blank">contracts/deployments/0g-testnet.json</a><span class="file-tag tag-new">new</span><span class="file-desc">Canonical deployment record — addresses, constructor args, seed agent info</span></li>
+  </ul>
+  <div class="test-summary"><span class="num">37</span> hardhat tests · no new in Phase 4 (deploy-only phase)</div>
+</div>
+
+<!-- ─────────────────────────────── PHASE 5 ─────── -->
+<div class="page" id="page-p5">
+  <div class="phase-header">
+    <span class="phase-badge">Phase 5</span>
+    <div>
+      <h2>AgentRegistry as ERC-7857 iNFT</h2>
+      <p class="subtitle">Each agent token carries two data hashes pointing at encrypted intelligence on 0G Storage. Divergent overlays = divergent playing styles.</p>
+      <div class="sponsor-tags">
+        <span class="badge badge-0g">0G Storage</span>
+        <span class="badge badge-0g">0G Chain</span>
+      </div>
+    </div>
+    <span class="phase-status status-done">Done ✓</span>
+  </div>
+
+  <p class="phase-desc">Upgrades AgentRegistry from a plain ERC-721 to the ERC-7857 iNFT shape — each token carries two cryptographic pointers: <code>dataHashes[0]</code> to the shared gnubg base weights (Phase 8 uploads the real file), and <code>dataHashes[1]</code> to this agent's growing experience overlay (Phase 9 populates it after each match). The <code>tier</code> field (0=beginner … 3=world-class, immutable at mint) controls gnubg search depth. This is the contract foundation for the core user-facing claim: two agents minted at the same tier will diverge into measurably different playing styles as their match histories accumulate. The full ERC-7857 transfer-with-reencryption-proof flow is out of scope for v1; only the data-hash <em>shape</em> is implemented.</p>
+
+  <h3>iNFT Token Fields</h3>
+  <div class="class-grid">
+    <div class="class-box">
+      <div class="class-name">AgentToken (ERC-7857 shape)</div>
+      <div class="class-members">
+        <div class="member"><span class="member-type">uint8</span><span class="member-name">tier</span><span class="member-desc">0=beginner … 3=world-class. Immutable.</span></div>
+        <div class="member"><span class="member-type">bytes32</span><span class="member-name">dataHashes[0]</span><span class="member-desc">baseWeightsHash — shared gnubg .wd file</span></div>
+        <div class="member"><span class="member-type">bytes32</span><span class="member-name">dataHashes[1]</span><span class="member-desc">overlayHash — this agent's experience blob</span></div>
+        <div class="member"><span class="member-type">uint32</span><span class="member-name">matchCount</span><span class="member-desc">Increments on updateOverlayHash</span></div>
+        <div class="member"><span class="member-type">uint32</span><span class="member-name">experienceVersion</span><span class="member-desc">1:1 with matchCount in v1</span></div>
+      </div>
+    </div>
+  </div>
+
+  <h3>New Contract Methods</h3>
+  <div class="class-grid">
+    <div class="class-box">
+      <div class="class-name">AgentRegistry additions</div>
+      <div class="class-members">
+        <div class="member"><span class="member-type">write</span><span class="member-name">mintAgent(to, uri, tier)</span></div>
+        <div class="member"><span class="member-type">write</span><span class="member-name">setBaseWeightsHash(h)</span><span class="member-desc">owner-only</span></div>
+        <div class="member"><span class="member-type">write</span><span class="member-name">updateOverlayHash(id, h)</span><span class="member-desc">owner-only; bumps matchCount + version</span></div>
+        <div class="member"><span class="member-type">view</span><span class="member-name">dataHashes(id)</span><span class="member-desc">→ [base, overlay]</span></div>
+        <div class="member"><span class="member-type">view</span><span class="member-name">tier(id)</span></div>
+        <div class="member"><span class="member-type">view</span><span class="member-name">matchCount(id)</span></div>
+        <div class="member"><span class="member-type">view</span><span class="member-name">experienceVersion(id)</span></div>
+      </div>
+    </div>
+  </div>
+
+  <h3>Redeployed Addresses (current)</h3>
+  <table class="addr-table">
+    <tr><th>Contract</th><th>Address</th></tr>
+    <tr><td>MatchRegistry</td><td><a href="https://chainscan-galileo.0g.ai/address/0x60E52e2d9Ea7b4A851Dd63365222c7d102A11eaE" target="_blank">0x60E52e2d9Ea7b4A851Dd63365222c7d102A11eaE</a></td></tr>
+    <tr><td>AgentRegistry</td><td><a href="https://chainscan-galileo.0g.ai/address/0xCb0a562fa9079184922754717BB3035C0F7A983E" target="_blank">0xCb0a562fa9079184922754717BB3035C0F7A983E</a></td></tr>
+  </table>
+
+  <h3 class="layer">Contracts</h3>
+  <ul class="file-list">
+    <li><a class="file-path" href="https://github.com/oslinin/chaingammon/blob/master/contracts/src/AgentRegistry.sol" target="_blank">contracts/src/AgentRegistry.sol</a><span class="file-tag tag-upd">upd</span><span class="file-desc">Gains <code>tier</code>, <code>dataHashes[2]</code>, <code>matchCount</code>, <code>experienceVersion</code>; new constructor takes <code>matchRegistryAddress</code> + <code>initialBaseWeightsHash</code></span></li>
+    <li><a class="file-path" href="https://github.com/oslinin/chaingammon/blob/master/contracts/script/deploy.js" target="_blank">contracts/script/deploy.js</a><span class="file-tag tag-upd">upd</span><span class="file-desc">Mints seed agent at tier 2; records <code>agentRegistryConstructorArgs</code> in deployment JSON for verify.js replay</span></li>
+  </ul>
+  <div class="test-grid">
+    <div class="test-card">
+      <div class="test-file"><a href="https://github.com/oslinin/chaingammon/blob/master/contracts/test/phase5_AgentRegistry_iNFT.test.js" target="_blank">phase5_AgentRegistry_iNFT.test.js</a></div>
+      <div class="test-count">14 new tests</div>
+      <ul class="test-bullets"><li>baseWeightsHash get/set/auth</li><li>tier validation at mint (0..3)</li><li>dataHashes shape: [base, overlay]</li><li>updateOverlayHash semantics + auth</li><li>Two same-tier agents diverge after matches</li></ul>
+    </div>
+    <div class="test-card">
+      <div class="test-file"><a href="https://github.com/oslinin/chaingammon/blob/master/contracts/test/phase2_AgentRegistry.test.js" target="_blank">phase2_AgentRegistry.test.js</a></div>
+      <div class="test-count">updated (existing 5)</div>
+      <ul class="test-bullets"><li>Updated for new mintAgent signature (passes tier)</li><li>New constructor (passes ZeroHash)</li><li>Behavior unchanged</li></ul>
+    </div>
+  </div>
+  <div class="test-summary"><span class="num">52</span> hardhat tests · 15 new in Phase 5</div>
+</div>
+
+<!-- ─────────────────────────────── PHASE 6 ─────── -->
+<div class="page" id="page-p6">
+  <div class="phase-header">
+    <span class="phase-badge">Phase 6</span>
+    <div>
+      <h2>0G Storage Bridge</h2>
+      <p class="subtitle">og-bridge Node.js package wraps @0gfoundation/0g-ts-sdk. Python server shells out via subprocess.</p>
+      <div class="sponsor-tags">
+        <span class="badge badge-0g">0G Storage</span>
+      </div>
+    </div>
+    <span class="phase-status status-done">Done ✓</span>
+  </div>
+
+  <p class="phase-desc">0G Storage is the decentralized storage layer of the 0G network — clients upload bytes and get back a Merkle <code>rootHash</code> that anyone can use to fetch those bytes, with no login or API key. The only officially supported SDKs are TypeScript and Go; there is no native Python SDK. Rather than rewriting the SDK, this phase introduces <strong>og-bridge</strong>: a tiny Node.js workspace package that exposes two stdin/stdout CLI scripts backed by the official <code>@0gfoundation/0g-ts-sdk</code>. The Python server shells out to these scripts via <code>subprocess</code>, isolating the language boundary to a clean pipe interface. SDK progress logs are redirected to stderr so stdout stays parseable. This pattern is reused by all subsequent 0G Storage uploads (weights in Phase 8, overlays in Phase 9).</p>
+  <p class="phase-note">The round-trip test (~14 s) runs against 0G Storage testnet. Most of that time is waiting for the on-chain transaction that pins data to 0G Storage's flow contract. The test is automatically skipped when <code>OG_STORAGE_PRIVATE_KEY</code> is unset, so CI without secrets stays green.</p>
+
+  <h3 class="layer">Server</h3>
+  <ul class="file-list">
+    <li><a class="file-path" href="https://github.com/oslinin/chaingammon/blob/master/og-bridge/src/upload.mjs" target="_blank">og-bridge/src/upload.mjs</a><span class="file-tag tag-new">new</span><span class="file-desc">stdin → <code>Indexer.upload(MemData)</code> → stdout: <code>{"rootHash":"0x…","txHash":"0x…"}</code>. SDK logs → stderr.</span></li>
+    <li><a class="file-path" href="https://github.com/oslinin/chaingammon/blob/master/og-bridge/src/download.mjs" target="_blank">og-bridge/src/download.mjs</a><span class="file-tag tag-new">new</span><span class="file-desc">arg: rootHash → <code>Indexer.downloadToBlob</code> → raw bytes on stdout</span></li>
+    <li><a class="file-path" href="https://github.com/oslinin/chaingammon/blob/master/og-bridge/package.json" target="_blank">og-bridge/package.json</a><span class="file-tag tag-new">new</span><span class="file-desc">workspace member · deps: <code>@0gfoundation/0g-ts-sdk</code>, <code>ethers</code>; bin entries for upload/download</span></li>
+    <li><a class="file-path" href="https://github.com/oslinin/chaingammon/blob/master/server/app/og_storage_client.py" target="_blank">server/app/og_storage_client.py</a><span class="file-tag tag-new">new</span><span class="file-desc"><code>OgStorageClient</code> — spawns <code>node og-bridge/src/upload.mjs</code> / <code>download.mjs</code> via <code>subprocess</code>; <code>OgStorageError</code> on non-zero exit</span></li>
+    <li><a class="file-path" href="https://github.com/oslinin/chaingammon/blob/master/server/tests/test_phase6_og_storage.py" target="_blank">server/tests/test_phase6_og_storage.py</a><span class="file-tag tag-new">new</span><span class="file-desc">Live round-trip: 64 random bytes → upload → download → assert byte-exact. Skip if <code>OG_STORAGE_PRIVATE_KEY</code> unset.</span></li>
+  </ul>
+
+  <h3>Python wrapper</h3>
+  <div class="class-grid">
+    <div class="class-box">
+      <div class="class-name">OgStorageClient</div>
+      <div class="class-members">
+        <div class="member"><span class="member-type">method</span><span class="member-name">put_blob(data: bytes)</span><span class="member-desc">→ UploadResult(root_hash, tx_hash)</span></div>
+        <div class="member"><span class="member-type">method</span><span class="member-name">get_blob(root_hash: str)</span><span class="member-desc">→ bytes</span></div>
+        <div class="member"><span class="member-type">error</span><span class="member-name">OgStorageError</span><span class="member-desc">non-zero exit from og-bridge</span></div>
+      </div>
+    </div>
+  </div>
+
+  <h3>Required Env Vars</h3>
+  <div class="cards">
+    <div class="card"><div class="card-title">OG_STORAGE_RPC</div><div class="card-value">https://evmrpc-testnet.0g.ai</div></div>
+    <div class="card"><div class="card-title">OG_STORAGE_INDEXER</div><div class="card-value">https://indexer-storage-testnet-turbo.0g.ai</div></div>
+    <div class="card"><div class="card-title">OG_STORAGE_PRIVATE_KEY</div><div class="card-value">mirrors DEPLOYER_PRIVATE_KEY</div><div class="card-sub">pays storage flow-tx fees</div></div>
+  </div>
+
+  <div class="test-summary"><span class="num">1</span> live round-trip test · skip if key unset · ~14s on testnet</div>
+</div>
+
+<!-- ─────────────────────────────── PHASE 7 ─────── -->
+<div class="page" id="page-p7">
+  <div class="phase-header">
+    <span class="phase-badge">Phase 7</span>
+    <div>
+      <h2>Archive &amp; Finalize</h2>
+      <p class="subtitle">POST /finalize builds GameRecord → uploads to 0G Storage → calls MatchRegistry.recordMatch with rootHash. On-chain match is now cryptographically tied to off-chain replay.</p>
+      <div class="sponsor-tags">
+        <span class="badge badge-0g">0G Storage</span>
+        <span class="badge badge-0g">0G Chain</span>
+      </div>
+    </div>
+    <span class="phase-status status-done">Done ✓</span>
+  </div>
+
+  <p class="phase-desc">The keystone of the on-chain integrity claim: after a match ends, the server serializes the full play sequence (moves, dice, positions) into a canonical JSON envelope, uploads it to 0G Storage to get a deterministic Merkle <code>rootHash</code>, then calls <code>MatchRegistry.recordMatch</code> with that hash embedded. Anyone with the match ID can read the hash on-chain and re-download the original game record from 0G Storage — no login, no API key, no platform. The serialization uses sorted keys and UTF-8 encoding so the same record always produces the same Merkle root; the <code>rootHash</code> is the content-addressed identity of the game. <code>ChainClient</code> is a thin web3.py wrapper that signs <code>recordMatch</code> directly as the deployer wallet in v1 — Phase 17/18 will route this through KeeperHub.</p>
+
+  <h3>GameRecord Schema <code class="diagram-file">game_record.py</code></h3>
+  <div class="diagram-section">
+    <div class="mermaid-wrap">
+      <pre class="mermaid">
+classDiagram
+    class GameRecord {
+        int match_length
+        list~int~ final_score
+        str final_position_id
+        str final_match_id
+        str started_at
+        str ended_at
+    }
+    class PlayerRef {
+        str kind : human|agent
+        str address
+        int agent_id
+    }
+    class MoveEntry {
+        int turn
+        list~int~ dice
+        str move
+        str position_id_after
+    }
+    GameRecord --> PlayerRef : winner
+    GameRecord --> PlayerRef : loser
+    GameRecord --> MoveEntry : moves 0..*
+      </pre>
+    </div>
+  </div>
+
+  <h3 class="layer">Server</h3>
+  <ul class="file-list">
+    <li><a class="file-path" href="https://github.com/oslinin/chaingammon/blob/master/server/app/game_record.py" target="_blank">server/app/game_record.py</a><span class="file-tag tag-new">new</span><span class="file-desc"><code>GameRecord</code> · <code>PlayerRef</code> · <code>MoveEntry</code> · <code>serialize_record()</code> (sorted keys, UTF-8, deterministic) · <code>build_from_state()</code></span></li>
+    <li><a class="file-path" href="https://github.com/oslinin/chaingammon/blob/master/server/app/chain_client.py" target="_blank">server/app/chain_client.py</a><span class="file-tag tag-new">new</span><span class="file-desc"><code>ChainClient</code> — thin web3.py wrapper for MatchRegistry. <code>record_match()</code> · <code>get_match()</code> · <code>agent_elo()</code> · <code>human_elo()</code> · <code>from_env()</code></span></li>
+    <li><a class="file-path" href="https://github.com/oslinin/chaingammon/blob/master/server/app/main.py" target="_blank">server/app/main.py</a><span class="file-tag tag-upd">upd</span><span class="file-desc">New <code>POST /games/{id}/finalize</code>; per-game <code>_move_history</code> dict captures turn + dice before each move for replay</span></li>
+  </ul>
+
+  <div class="test-grid">
+    <div class="test-card">
+      <div class="test-file"><a href="https://github.com/oslinin/chaingammon/blob/master/server/tests/test_phase7_game_record_schema.py" target="_blank">test_phase7_game_record_schema.py</a></div>
+      <div class="test-count">15 unit tests</div>
+      <ul class="test-bullets">
+        <li>PlayerRef kind validation</li>
+        <li>JSON round-trip</li>
+        <li>Serialization determinism</li>
+        <li>None-field omission</li>
+        <li>build_from_state coverage</li>
+      </ul>
+    </div>
+    <div class="test-card">
+      <div class="test-file"><a href="https://github.com/oslinin/chaingammon/blob/master/server/tests/test_phase7_chain_client.py" target="_blank">test_phase7_chain_client.py</a></div>
+      <div class="test-count">9 unit tests</div>
+      <ul class="test-bullets">
+        <li>record_match happy path</li>
+        <li>matchId from MatchRecorded log</li>
+        <li>Error paths (revert, missing event)</li>
+        <li>from_env construction</li>
+      </ul>
+    </div>
+    <div class="test-card">
+      <div class="test-file"><a href="https://github.com/oslinin/chaingammon/blob/master/server/tests/test_phase7_move_tracking.py" target="_blank">test_phase7_move_tracking.py</a></div>
+      <div class="test-count">3 unit tests</div>
+      <ul class="test-bullets">
+        <li>Empty history on create</li>
+        <li>/move records pre-move dice</li>
+        <li>/agent-move records best_move string</li>
+      </ul>
+    </div>
+    <div class="test-card">
+      <div class="test-file"><a href="https://github.com/oslinin/chaingammon/blob/master/server/tests/test_phase7_game_record.py" target="_blank">test_phase7_game_record.py</a></div>
+      <div class="test-count">1 live test</div>
+      <ul class="test-bullets">
+        <li>Upload → recordMatch → read back gameRecordHash</li>
+        <li>Re-download from 0G, assert byte-exact</li>
+      </ul>
+      <div class="test-skip">Skip: OG_STORAGE_PRIVATE_KEY / RPC_URL / addresses unset</div>
+    </div>
+  </div>
+  <div class="test-summary"><span class="num">36</span> server tests total (P0+P6+P7) · fast unit &lt;1s combined</div>
+</div>
+
+<!-- ─────────────────────────────── PHASE 8 ─────── -->
+<div class="page" id="page-p8">
+  <div class="phase-header">
+    <span class="phase-badge">Phase 8</span>
+    <div>
+      <h2>Encrypted gnubg Weights</h2>
+      <p class="subtitle">AES-256-GCM envelope uploaded to 0G Storage. Hash pinned on AgentRegistry via setBaseWeightsHash. Every agent's dataHashes[0] is now cryptographically verifiable.</p>
+      <div class="sponsor-tags">
+        <span class="badge badge-0g">0G Storage</span>
+        <span class="badge badge-0g">0G Chain</span>
+      </div>
+    </div>
+    <span class="phase-status status-done">Done ✓</span>
+  </div>
+
+  <p class="phase-desc">The gnubg neural-network weights file (<code>/usr/lib/gnubg/gnubg.wd</code>, ~399 KB) is the shared intelligence base every agent token runs against. This phase encrypts it with AES-256-GCM, uploads the ciphertext envelope to 0G Storage, and pins the resulting <code>rootHash</code> on <code>AgentRegistry</code> via <code>setBaseWeightsHash</code>. Every agent's <code>dataHashes[0]</code> now points at the same verifiable blob — anyone can read the hash on-chain, download the blob from 0G Storage, decrypt with the known key, and confirm they get the same gnubg weights. The <code>version</code> byte (0x01) in the envelope is reserved so a v2 upgrade to per-owner hybrid encryption can change the layout without breaking v1 readers.</p>
+  <p class="phase-note">The encryption key is server-held in v1 — anyone with the key can decrypt the blob from 0G Storage. This is intentional because every agent runs the same shared base; there's no per-owner secret to protect. v2 would use hybrid encryption (per-iNFT-owner capability) once agents carry unique weights.</p>
+
+  <h3>Encryption Envelope Layout</h3>
+  <div class="class-grid">
+    <div class="class-box">
+      <div class="class-name">EncryptedWeights (binary)</div>
+      <div class="class-members">
+        <div class="member"><span class="member-type">1 byte</span><span class="member-name">version = 0x01</span></div>
+        <div class="member"><span class="member-type">12 bytes</span><span class="member-name">nonce</span><span class="member-desc">random per call (GCM mandates unique)</span></div>
+        <div class="member"><span class="member-type">N bytes</span><span class="member-name">ciphertext + GCM tag</span></div>
+      </div>
+    </div>
+    <div class="class-box">
+      <div class="class-name">weights.py API</div>
+      <div class="class-members">
+        <div class="member"><span class="member-type">fn</span><span class="member-name">encrypt_weights(pt, key)</span><span class="member-desc">→ EncryptedWeights</span></div>
+        <div class="member"><span class="member-type">fn</span><span class="member-name">decrypt_weights(env, key)</span><span class="member-desc">→ bytes; raises WeightsCryptoError</span></div>
+        <div class="member"><span class="member-type">fn</span><span class="member-name">generate_key()</span><span class="member-desc">→ 32 random bytes</span></div>
+        <div class="member"><span class="member-type">fn</span><span class="member-name">load_key_from_env()</span><span class="member-desc">reads BASE_WEIGHTS_ENCRYPTION_KEY</span></div>
+      </div>
+    </div>
+  </div>
+
+  <h3>Live 0G Storage</h3>
+  <div class="cards">
+    <div class="card"><div class="card-title">Blob rootHash</div><div class="card-value" style="font-size:10px">0x989ba07766cc35aa0011cf3f764831d9d1a7e11495db78c310d764b4478409ad</div><div class="card-sub">~408 KB AES-GCM envelope</div></div>
+    <div class="card"><div class="card-title">setBaseWeightsHash tx</div><div class="card-value"><a href="https://chainscan-galileo.0g.ai/tx/0xa129ce4f8bc230cdc944a061c8902897c7877db6d15e0956f5dd418387936c7b" target="_blank" style="font-size:10px">0xa129ce4…387936c7b</a></div></div>
+  </div>
+
+  <div class="test-grid">
+    <div class="test-card">
+      <div class="test-file"><a href="https://github.com/oslinin/chaingammon/blob/master/server/tests/test_phase8_weights.py" target="_blank">test_phase8_weights.py</a></div>
+      <div class="test-count">11 unit tests</div>
+      <ul class="test-bullets">
+        <li>AES-GCM round-trip (small + 400KB)</li>
+        <li>Wrong key rejection</li>
+        <li>Nonce uniqueness across calls</li>
+        <li>Version byte, truncated envelope</li>
+      </ul>
+    </div>
+    <div class="test-card">
+      <div class="test-file"><a href="https://github.com/oslinin/chaingammon/blob/master/server/tests/test_phase8_base_weights_integration.py" target="_blank">test_phase8_base_weights_integration.py</a></div>
+      <div class="test-count">2 live tests</div>
+      <ul class="test-bullets">
+        <li>baseWeightsHash → get_blob → decrypt → equals gnubg.wd</li>
+        <li>Agent #1 dataHashes[0] equals contract baseWeightsHash</li>
+      </ul>
+      <div class="test-skip">Skip: env vars or /usr/lib/gnubg/gnubg.wd missing</div>
+    </div>
+  </div>
+  <h3 class="layer">Server</h3>
+  <ul class="file-list">
+    <li><a class="file-path" href="https://github.com/oslinin/chaingammon/blob/master/server/app/weights.py" target="_blank">server/app/weights.py</a><span class="file-tag tag-new">new</span><span class="file-desc">AES-256-GCM: <code>encrypt_weights</code>, <code>decrypt_weights</code>, <code>generate_key</code>, <code>load_key_from_env</code>. Envelope: <code>[v=0x01][nonce 12B][ciphertext+tag]</code></span></li>
+    <li><a class="file-path" href="https://github.com/oslinin/chaingammon/blob/master/server/scripts/upload_base_weights.py" target="_blank">server/scripts/upload_base_weights.py</a><span class="file-tag tag-new">new</span><span class="file-desc">One-time upload script: read <code>/usr/lib/gnubg/gnubg.wd</code> → encrypt → put_blob → setBaseWeightsHash on chain. <code>--print-fresh-key</code> mode.</span></li>
+    <li><a class="file-path" href="https://github.com/oslinin/chaingammon/blob/master/server/app/chain_client.py" target="_blank">server/app/chain_client.py</a><span class="file-tag tag-upd">upd</span><span class="file-desc">New <code>_AGENT_REGISTRY_ABI</code>; adds <code>base_weights_hash()</code>, <code>set_base_weights_hash()</code>, <code>agent_data_hashes()</code>, <code>agent_tier()</code></span></li>
+    <li><a class="file-path" href="https://github.com/oslinin/chaingammon/blob/master/scripts/bootstrap-network.sh" target="_blank">scripts/bootstrap-network.sh</a><span class="file-tag tag-new">new</span><span class="file-desc">One-shot orchestrator: test → deploy → upload weights → verify → print addresses. Pre-flight checks fail fast for missing key or missing gnubg.wd.</span></li>
+  </ul>
+  <div class="test-summary"><span class="num">47</span> server tests total (P0+P6+P7+P8)</div>
+</div>
+
+<!-- ─────────────────────────────── PHASE 9 ─────── -->
+<div class="page" id="page-p9">
+  <div class="phase-header">
+    <span class="phase-badge">Phase 9</span>
+    <div>
+      <h2>Experience Overlay — iNFTs That Learn</h2>
+      <p class="subtitle">Each agent iNFT carries a preference vector that biases its move choices. After every match the overlay is updated, uploaded to 0G Storage, and committed on-chain. Two agents on the same base weights diverge into measurably different styles.</p>
+      <div class="sponsor-tags">
+        <span class="badge badge-0g">0G Storage</span>
+        <span class="badge badge-0g">0G Chain</span>
+      </div>
+    </div>
+    <span class="phase-status status-done">Done ✓</span>
+  </div>
+
+  <p class="phase-desc">Makes each agent iNFT a living asset: after every match, a damped-reinforcement update biases the agent's move choices in the direction of moves that correlated with wins. The overlay is a 20-category preference vector (values in [-1,1]) stored as deterministic canonical JSON on 0G Storage; the <code>rootHash</code> is committed on-chain via <code>updateOverlayHash</code> after each match. With a zero overlay, an agent plays vanilla gnubg. As wins accumulate, the overlay tilts the agent toward its winning style. Every match is an immutable <code>experienceVersion</code> entry — the iNFT's on-chain history of how it learned. The overlay biasing happens entirely outside gnubg: gnubg produces a ranked candidate list, <code>apply_overlay</code> re-scores it using the preference vector, and the top-scored move is submitted.</p>
+  <p class="phase-note">The overlay is a <em>tendency tracker</em>, not a neural network or RL policy. It tracks which ~20 behavioral categories (point-building, running, hitting, etc.) correlate with this agent's wins. The category list is frozen in v1 — adding categories at the end is safe (old blobs round-trip with new entries zero-filled), but reordering or removing would invalidate all existing overlays.</p>
+
+  <h3>Overlay Architecture <code class="diagram-file">agent_overlay.py · main.py</code></h3>
+  <div class="diagram-section">
+    <div class="mermaid-wrap">
+      <pre class="mermaid">
+graph LR
+    GN[gnubg] -->|candidate list + equities| AP[apply_overlay]
+    OV[Overlay\npreference vector] --> AP
+    AP -->|biased top move| SR[submit_move]
+    SR --> GN
+
+    FM[/finalize] --> UO[update_overlay]
+    UO -->|new overlay JSON| PB[put_blob → 0G]
+    PB -->|rootHash| UH[updateOverlayHash → chain]
+      </pre>
+    </div>
+  </div>
+
+  <h3>Overlay Module</h3>
+  <div class="class-grid">
+    <div class="class-box">
+      <div class="class-name">Overlay dataclass</div>
+      <div class="class-members">
+        <div class="member"><span class="member-type">int</span><span class="member-name">version</span></div>
+        <div class="member"><span class="member-type">dict</span><span class="member-name">values</span><span class="member-desc">category → float [-1, 1]</span></div>
+        <div class="member"><span class="member-type">int</span><span class="member-name">match_count</span></div>
+        <div class="member"><span class="member-type">fn</span><span class="member-name">to_bytes() / from_bytes()</span></div>
+        <div class="member"><span class="member-type">fn</span><span class="member-name">default()</span><span class="member-desc">zero vector — vanilla gnubg</span></div>
+      </div>
+    </div>
+    <div class="class-box">
+      <div class="class-name">Functions</div>
+      <div class="class-members">
+        <div class="member"><span class="member-type">fn</span><span class="member-name">classify_move(move)</span><span class="member-desc">→ {category: score}</span></div>
+        <div class="member"><span class="member-type">fn</span><span class="member-name">apply_overlay(candidates, ov)</span><span class="member-desc">biased re-ranking</span></div>
+        <div class="member"><span class="member-type">fn</span><span class="member-name">update_overlay(ov, moves, won, n)</span><span class="member-desc">damped reinforcement</span></div>
+      </div>
+    </div>
+  </div>
+
+  <h3>Overlay Categories (~20)</h3>
+  <div class="bias-grid">
+    <div class="bias-item">build_5_point</div>
+    <div class="bias-item">runs_back_checker</div>
+    <div class="bias-item">hits_blot</div>
+    <div class="bias-item">bearoff_efficient</div>
+    <div class="bias-item">anchors_back</div>
+    <div class="bias-item">opening_split</div>
+    <div class="bias-item">prime_builder</div>
+    <div class="bias-item">risk_taker</div>
+    <div class="bias-item">conservative</div>
+    <div class="bias-item">game_phase_early</div>
+    <div class="bias-item">game_phase_late</div>
+    <div class="bias-item"><span style="color:var(--muted)">+ more…</span></div>
+  </div>
+
+  <h3>Update Rule</h3>
+  <p>Damped reinforcement — early matches move overlay a lot; late matches barely shift it. <code>alpha = N / (N + match_count)</code>. Clips to [-1, 1]. Exposure-normalized so a 50-move match ≠ 50× more update than a 5-move match.</p>
+
+  <div class="test-grid">
+    <div class="test-card"><div class="test-file"><a href="https://github.com/oslinin/chaingammon/blob/master/server/tests/test_phase9_overlay_schema.py" target="_blank">test_phase9_overlay_schema.py</a></div><div class="test-count">11 unit tests</div><ul class="test-bullets"><li>CATEGORIES validation</li><li>Serialization determinism</li><li>Value clipping</li></ul></div>
+    <div class="test-card"><div class="test-file"><a href="https://github.com/oslinin/chaingammon/blob/master/server/tests/test_phase9_overlay_update.py" target="_blank">test_phase9_overlay_update.py</a></div><div class="test-count">9 unit tests</div><ul class="test-bullets"><li>Win reinforces, loss discourages</li><li>Damping: early > late</li><li>Convergence after 200 matches</li></ul></div>
+    <div class="test-card"><div class="test-file"><a href="https://github.com/oslinin/chaingammon/blob/master/server/tests/test_phase9_overlay_classify_apply.py" target="_blank">test_phase9_overlay_classify_apply.py</a></div><div class="test-count">13 unit tests</div><ul class="test-bullets"><li>build_5_point for "8/5 6/5"</li><li>Zero overlay = gnubg top pick</li><li>Two agents pick differently</li></ul></div>
+    <div class="test-card"><div class="test-file"><a href="https://github.com/oslinin/chaingammon/blob/master/server/tests/test_phase9_agent_move_overlay.py" target="_blank">test_phase9_agent_move_overlay.py</a></div><div class="test-count">6 fast wiring tests</div><ul class="test-bullets"><li>Overlay flows into /agent-move</li><li>Cached per game (1 fetch/game)</li><li>Missing overlay → default zero</li></ul></div>
+    <div class="test-card"><div class="test-file"><a href="https://github.com/oslinin/chaingammon/blob/master/server/tests/test_phase9_overlay_integration.py" target="_blank">test_phase9_overlay_integration.py</a></div><div class="test-count">2 live tests</div><ul class="test-bullets"><li>Round-trip → chain commit</li><li>Two updates → distinct hashes</li></ul><div class="test-skip">Skip: env vars unset</div></div>
+  </div>
+  <h3 class="layer">Server</h3>
+  <ul class="file-list">
+    <li><a class="file-path" href="https://github.com/oslinin/chaingammon/blob/master/server/app/agent_overlay.py" target="_blank">server/app/agent_overlay.py</a><span class="file-tag tag-new">new</span><span class="file-desc"><code>CATEGORIES</code> tuple · <code>Overlay</code> dataclass · <code>classify_move</code> · <code>apply_overlay</code> · <code>update_overlay</code> (damped reinforcement)</span></li>
+    <li><a class="file-path" href="https://github.com/oslinin/chaingammon/blob/master/server/app/gnubg_client.py" target="_blank">server/app/gnubg_client.py</a><span class="file-tag tag-upd">upd</span><span class="file-desc">New <code>get_candidate_moves(pos_id, match_id)</code> parses full hint list; used by overlay biasing</span></li>
+    <li><a class="file-path" href="https://github.com/oslinin/chaingammon/blob/master/server/app/chain_client.py" target="_blank">server/app/chain_client.py</a><span class="file-tag tag-upd">upd</span><span class="file-desc">Adds <code>update_overlay_hash()</code>, <code>agent_match_count()</code>, <code>agent_experience_version()</code>; new ABI entries</span></li>
+    <li><a class="file-path" href="https://github.com/oslinin/chaingammon/blob/master/server/app/main.py" target="_blank">server/app/main.py</a><span class="file-tag tag-upd">upd</span><span class="file-desc">/finalize now runs overlay update loop per agent; /agent-move uses overlay-biased candidate ranking; per-game caches: <code>_game_agent_id</code>, <code>_game_overlays</code></span></li>
+  </ul>
+
+  <h3>Live on 0G Testnet</h3>
+  <p>Two <code>updateOverlayHash</code> txs landed during the integration test run, bumping agent #1's <code>experienceVersion</code> and pinning fresh overlay rootHashes on <code>dataHashes[1]</code>.</p>
+
+  <div class="test-summary"><span class="num">90</span> server tests total (P0+P6+P7+P8+P9) · Hardhat 52/52</div>
+</div>
+
+<!-- ─────────────────────────────── PHASE 10 ─────── -->
+<div class="page" id="page-p10">
+  <div class="phase-header">
+    <span class="phase-badge">Phase 10</span>
+    <div>
+      <h2>ENS Subname Registrar</h2>
+      <p class="subtitle">PlayerSubnameRegistrar — issues &lt;label&gt;.chaingammon.eth subnames with ENS-shaped text records. Deployed on 0G testnet; v2 can mirror to real ENS on Sepolia/Linea without rewriting.</p>
+      <div class="sponsor-tags">
+        <span class="badge badge-ens">ENS</span>
+        <span class="badge badge-0g">0G Chain</span>
+      </div>
+    </div>
+    <span class="phase-status status-done">Done ✓</span>
+  </div>
+
+  <p class="phase-desc">Portable reputation requires portable identity. ENS subnames (e.g. <code>alice.chaingammon.eth</code>) are the standard for this in the EVM ecosystem — their text records can hold arbitrary key-value data that any ENS-aware tool can read. <code>PlayerSubnameRegistrar</code> issues subnames under <code>chaingammon.eth</code> on 0G testnet, with ENS-compatible namehash computation (<code>keccak256(parentNode || keccak256(label))</code>) and dual-auth text record writes: the contract owner (the server) can push ELO after each match, while the subname holder can update their own profile. The contract is deliberately self-contained on 0G testnet — a v2 deployment could mirror to real ENS on Sepolia via a Durin-style L2 registrar without rewriting any contract logic.</p>
+  <p class="phase-note">We can't realistically own <code>chaingammon.eth</code> on a chain with a live ENS root within the hackathon timeline. The contract's interface is ENS-shaped (namehash, text records, resolver semantics) so the portable-identity story works as a demo and the upgrade path to real ENS is clear. Live deploy of this contract is deferred one phase (deployed in Phase 11's <code>deploy_registrar.js</code>) to avoid redeploying AgentRegistry and wiping agent #1's overlay state.</p>
+
+  <h3>Contract Interface</h3>
+  <div class="class-grid">
+    <div class="class-box">
+      <div class="class-name">PlayerSubnameRegistrar</div>
+      <div class="class-members">
+        <div class="member"><span class="member-type">immutable</span><span class="member-name">parentNode</span><span class="member-desc">namehash of chaingammon.eth</span></div>
+        <div class="member"><span class="member-type">view</span><span class="member-name">subnameNode(label)</span><span class="member-desc">→ bytes32 ENS namehash</span></div>
+        <div class="member"><span class="member-type">write</span><span class="member-name">mintSubname(label, owner)</span><span class="member-desc">owner-only; emits SubnameMinted</span></div>
+        <div class="member"><span class="member-type">write</span><span class="member-name">setText(node, key, value)</span><span class="member-desc">dual-auth: owner or subname holder</span></div>
+        <div class="member"><span class="member-type">view</span><span class="member-name">text(node, key)</span><span class="member-desc">→ string (ENS resolver shape)</span></div>
+        <div class="member"><span class="member-type">view</span><span class="member-name">ownerOf(node)</span><span class="member-desc">→ address(0) if unminted</span></div>
+        <div class="member"><span class="member-type">view</span><span class="member-name">subnameCount</span></div>
+      </div>
+    </div>
+    <div class="class-box">
+      <div class="class-name">Text Record Keys</div>
+      <div class="class-members">
+        <div class="member"><span class="member-type">key</span><span class="member-name">elo</span><span class="member-desc">current ELO rating string</span></div>
+        <div class="member"><span class="member-type">key</span><span class="member-name">last_match_id</span><span class="member-desc">on-chain matchId</span></div>
+        <div class="member"><span class="member-type">key</span><span class="member-name">match_count</span><span class="member-desc">(future)</span></div>
+        <div class="member"><span class="member-type">key</span><span class="member-name">style_uri</span><span class="member-desc">0g://… (future)</span></div>
+        <div class="member"><span class="member-type">key</span><span class="member-name">archive_uri</span><span class="member-desc">0g://… (future)</span></div>
+      </div>
+    </div>
+  </div>
+
+  <h3>Deployed Address</h3>
+  <table class="addr-table">
+    <tr><th>Contract</th><th>Address</th></tr>
+    <tr><td>PlayerSubnameRegistrar</td><td><a href="https://chainscan-galileo.0g.ai/address/0xf260aE6b2958623fC4e865433201050DC2Ed1ccC" target="_blank">0xf260aE6b2958623fC4e865433201050DC2Ed1ccC</a></td></tr>
+  </table>
+  <p style="font-size:12px;color:var(--muted)">parentNode: 0x543cb3ed47a1ed324d00f8245468ef208194cc298026553f9adc78fb17e41cec (namehash of chaingammon.eth)</p>
+
+  <h3 class="layer">Contracts</h3>
+  <ul class="file-list">
+    <li><a class="file-path" href="https://github.com/oslinin/chaingammon/blob/master/contracts/src/PlayerSubnameRegistrar.sol" target="_blank">contracts/src/PlayerSubnameRegistrar.sol</a><span class="file-tag tag-new">new</span><span class="file-desc">ENS-shaped subname registrar: <code>mintSubname</code>, <code>setText</code> (dual-auth), <code>text</code>, <code>ownerOf</code>, <code>subnameNode</code></span></li>
+    <li><a class="file-path" href="https://github.com/oslinin/chaingammon/blob/master/contracts/script/deploy.js" target="_blank">contracts/script/deploy.js</a><span class="file-tag tag-upd">upd</span><span class="file-desc">Deploys PlayerSubnameRegistrar; records <code>playerSubnameRegistrarConstructorArgs</code> in JSON</span></li>
+    <li><a class="file-path" href="https://github.com/oslinin/chaingammon/blob/master/contracts/test/phase10_PlayerSubnameRegistrar.test.js" target="_blank">contracts/test/phase10_PlayerSubnameRegistrar.test.js</a><span class="file-tag tag-new">new</span><span class="file-desc">21 tests covering all contract methods</span></li>
+  </ul>
+  <div class="test-grid">
+    <div class="test-card">
+      <div class="test-file"><a href="https://github.com/oslinin/chaingammon/blob/master/contracts/test/phase10_PlayerSubnameRegistrar.test.js" target="_blank">phase10_PlayerSubnameRegistrar.test.js</a></div>
+      <div class="test-count">21 new tests</div>
+      <ul class="test-bullets"><li>parentNode + owner pinned at constructor</li><li>subnameNode matches off-chain ENS namehash</li><li>mintSubname: duplicate/empty/zero-addr rejected</li><li>setText dual-auth: owner OR subname holder</li><li>text/ownerOf ENS resolver shape</li></ul>
+    </div>
+  </div>
+  <div class="test-summary"><span class="num">73</span> hardhat tests · 21 new in Phase 10</div>
+</div>
+
+<!-- ─────────────────────────────── PHASE 11 ─────── -->
+<div class="page" id="page-p11">
+  <div class="phase-header">
+    <span class="phase-badge">Phase 11</span>
+    <div>
+      <h2>ENS Text Record Updates from /finalize</h2>
+      <p class="subtitle">After every match, the server pushes elo + last_match_id to each player's chaingammon.eth subname. ENS failure is non-fatal.</p>
+      <div class="sponsor-tags">
+        <span class="badge badge-ens">ENS</span>
+        <span class="badge badge-0g">0G Chain</span>
+      </div>
+    </div>
+    <span class="phase-status status-done">Done ✓</span>
+  </div>
+
+  <p class="phase-desc">Wires the Phase 10 registrar into the game server: after every match finalized via <code>/finalize</code>, the server calls <code>PlayerSubnameRegistrar.setText</code> with the updated ELO and the latest match ID for each player who has a registered ENS label. ENS failures are non-fatal — the match is already recorded on-chain before the ENS push runs, so a failed text-record update is logged and included in the response but never blocks finalization. This separation means a bug in the ENS client can never cause a match to not be recorded. In v1, only <code>elo</code> and <code>last_match_id</code> are pushed; <code>style_uri</code> and <code>archive_uri</code> require per-player aggregator blobs not yet built.</p>
+
+  <h3>EnsClient</h3>
+  <div class="class-grid">
+    <div class="class-box">
+      <div class="class-name">EnsClient</div>
+      <div class="class-members">
+        <div class="member"><span class="member-type">method</span><span class="member-name">subname_node(label)</span><span class="member-desc">pure client-side namehash — no RPC</span></div>
+        <div class="member"><span class="member-type">method</span><span class="member-name">set_text(node, key, value)</span><span class="member-desc">owner-only write</span></div>
+        <div class="member"><span class="member-type">method</span><span class="member-name">mint_subname(label, owner)</span><span class="member-desc">owner-only; called by frontend</span></div>
+        <div class="member"><span class="member-type">method</span><span class="member-name">text(node, key)</span><span class="member-desc">view — read text record</span></div>
+        <div class="member"><span class="member-type">method</span><span class="member-name">owner_of(node)</span><span class="member-desc">view</span></div>
+        <div class="member"><span class="member-type">factory</span><span class="member-name">from_env()</span><span class="member-desc">RPC_URL + PLAYER_SUBNAME_REGISTRAR_ADDRESS + DEPLOYER_PRIVATE_KEY</span></div>
+      </div>
+    </div>
+  </div>
+
+  <h3>/finalize additions</h3>
+  <div class="class-grid">
+    <div class="class-box">
+      <div class="class-name">FinalizeRequest</div>
+      <div class="class-members">
+        <div class="member"><span class="member-type">int</span><span class="member-name">winner_agent_id</span></div>
+        <div class="member"><span class="member-type">str</span><span class="member-name">winner_human_address</span></div>
+        <div class="member"><span class="member-type">int</span><span class="member-name">loser_agent_id</span></div>
+        <div class="member"><span class="member-type">str</span><span class="member-name">loser_human_address</span></div>
+        <div class="member"><span class="member-type">str</span><span class="member-name">winner_label</span><span class="member-desc">← added P11</span></div>
+        <div class="member"><span class="member-type">str</span><span class="member-name">loser_label</span><span class="member-desc">← added P11</span></div>
+      </div>
+    </div>
+    <div class="class-box">
+      <div class="class-name">FinalizeResponse</div>
+      <div class="class-members">
+        <div class="member"><span class="member-type">int</span><span class="member-name">match_id</span></div>
+        <div class="member"><span class="member-type">str</span><span class="member-name">tx_hash</span></div>
+        <div class="member"><span class="member-type">str</span><span class="member-name">root_hash</span></div>
+        <div class="member"><span class="member-type">list</span><span class="member-name">overlay_updates</span></div>
+        <div class="member"><span class="member-type">list</span><span class="member-name">ens_updates</span><span class="member-desc">← added P11; error-tolerant</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="test-grid">
+    <div class="test-card"><div class="test-file"><a href="https://github.com/oslinin/chaingammon/blob/master/server/tests/test_phase11_ens_client.py" target="_blank">test_phase11_ens_client.py</a></div><div class="test-count">10 unit tests</div><ul class="test-bullets"><li>subname_node matches Solidity formula</li><li>set_text builds/signs/sends tx</li><li>from_env error paths</li></ul></div>
+    <div class="test-card"><div class="test-file"><a href="https://github.com/oslinin/chaingammon/blob/master/server/tests/test_phase11_ens_live.py" target="_blank">test_phase11_ens_live.py</a></div><div class="test-count">1 live test</div><ul class="test-bullets"><li>mint random label → setText → read back</li></ul><div class="test-skip">Skip: PLAYER_SUBNAME_REGISTRAR_ADDRESS unset</div></div>
+  </div>
+  <h3 class="layer">Contracts</h3>
+  <ul class="file-list">
+    <li><a class="file-path" href="https://github.com/oslinin/chaingammon/blob/master/contracts/script/deploy_registrar.js" target="_blank">contracts/script/deploy_registrar.js</a><span class="file-tag tag-new">new</span><span class="file-desc">Deploys only PlayerSubnameRegistrar and merges address into <code>0g-testnet.json</code> — no MatchRegistry/AgentRegistry redeploy (would wipe agent #1 overlay state)</span></li>
+  </ul>
+
+  <h3 class="layer">Server</h3>
+  <ul class="file-list">
+    <li><a class="file-path" href="https://github.com/oslinin/chaingammon/blob/master/server/app/ens_client.py" target="_blank">server/app/ens_client.py</a><span class="file-tag tag-new">new</span><span class="file-desc"><code>EnsClient</code> — embedded <code>PlayerSubnameRegistrar</code> ABI; <code>subname_node</code> pure client-side namehash; <code>set_text</code>, <code>mint_subname</code>, <code>text</code>, <code>owner_of</code>, <code>from_env()</code></span></li>
+    <li><a class="file-path" href="https://github.com/oslinin/chaingammon/blob/master/server/app/main.py" target="_blank">server/app/main.py</a><span class="file-tag tag-upd">upd</span><span class="file-desc">FinalizeRequest gains <code>winner_label</code>/<code>loser_label</code>; after recordMatch calls <code>ens.set_text</code> for elo + last_match_id; ENS failure non-fatal</span></li>
+  </ul>
+  <div class="test-summary"><span class="num">101</span> server unit tests (91 prior + 10 new)</div>
+</div>
+
+<!-- ─────────────────────────────── PHASE 12 ─────── -->
+<div class="page" id="page-p12">
+  <div class="phase-header">
+    <span class="phase-badge">Phase 12</span>
+    <div>
+      <h2>Frontend Wallet Connect</h2>
+      <p class="subtitle">wagmi scaffold wired to 0G Galileo testnet. Connect/disconnect, shortened address, chain-switch pill.</p>
+      <div class="sponsor-tags">
+        <span class="badge badge-0g">0G Chain</span>
+      </div>
+    </div>
+    <span class="phase-status status-done">Done ✓</span>
+  </div>
+
+  <p class="phase-desc">First real use of the wagmi scaffold — users can connect their EVM wallet and the UI detects whether they're on the right chain (0G Galileo, chainId 16602). The three-state <code>ConnectButton</code> handles: no injected wallet, disconnected wallet, and connected wallet with chain-switch pill. wagmi's <code>ssr: true</code> flag is required because Next.js App Router pre-renders on the server — the wagmi and QueryClient providers must be Client Components, while the page shell remains a Server Component. The <code>QueryClient</code> is created with <code>useState(() => new QueryClient())</code> to keep the same instance across renders.</p>
+
+  <h3>Component Tree <code class="diagram-file">layout.tsx · providers.tsx · ConnectButton.tsx</code></h3>
+  <div class="diagram-section">
+    <div class="mermaid-wrap">
+      <pre class="mermaid">
+graph TD
+    L[layout.tsx\nserver component]
+    P[Providers.tsx\nclient component]
+    WP[WagmiProvider]
+    QP[QueryClientProvider]
+    CB[ConnectButton.tsx\nclient component]
+    PG[page.tsx\nserver component]
+
+    L --> P
+    P --> WP
+    WP --> QP
+    L --> PG
+    PG --> CB
+      </pre>
+    </div>
+  </div>
+
+  <h3>wagmi Config (0G Galileo)</h3>
+  <div class="cards">
+    <div class="card"><div class="card-title">chainId</div><div class="card-value">16602</div></div>
+    <div class="card"><div class="card-title">RPC</div><div class="card-value">https://evmrpc-testnet.0g.ai</div></div>
+    <div class="card"><div class="card-title">Explorer</div><div class="card-value"><a href="https://chainscan-galileo.0g.ai" target="_blank">chainscan-galileo.0g.ai</a></div></div>
+    <div class="card"><div class="card-title">Connector</div><div class="card-value">injected({ shimDisconnect: true })</div></div>
+  </div>
+
+  <h3>ConnectButton states</h3>
+  <ul class="file-list">
+    <li><span class="file-desc">No injected wallet → "Install MetaMask" link</span></li>
+    <li><span class="file-desc">Wallet present, not connected → "Connect wallet" button</span></li>
+    <li><span class="file-desc">Connected → shortened address (<code>0x1234…abcd</code>) + chain-switch pill + Disconnect</span></li>
+  </ul>
+
+  <h3 class="layer">Frontend</h3>
+  <ul class="file-list">
+    <li><a class="file-path" href="https://github.com/oslinin/chaingammon/blob/master/frontend/app/wagmi.ts" target="_blank">frontend/app/wagmi.ts</a><span class="file-tag tag-new">new</span><span class="file-desc"><code>defineChain</code> for 0G Galileo (chainId 16602); <code>createConfig</code> with injected connector + <code>ssr: true</code></span></li>
+    <li><a class="file-path" href="https://github.com/oslinin/chaingammon/blob/master/frontend/app/providers.tsx" target="_blank">frontend/app/providers.tsx</a><span class="file-tag tag-new">new</span><span class="file-desc">Client Component — wraps children in <code>WagmiProvider</code> + <code>QueryClientProvider</code></span></li>
+    <li><a class="file-path" href="https://github.com/oslinin/chaingammon/blob/master/frontend/app/ConnectButton.tsx" target="_blank">frontend/app/ConnectButton.tsx</a><span class="file-tag tag-new">new</span><span class="file-desc">Three-state button: no wallet → install link; disconnected → connect; connected → address + chain-switch pill + disconnect</span></li>
+    <li><a class="file-path" href="https://github.com/oslinin/chaingammon/blob/master/frontend/app/layout.tsx" target="_blank">frontend/app/layout.tsx</a><span class="file-tag tag-upd">upd</span><span class="file-desc">Wraps <code>{children}</code> with <code>&lt;Providers&gt;</code>; metadata renamed to "Chaingammon"</span></li>
+    <li><a class="file-path" href="https://github.com/oslinin/chaingammon/blob/master/frontend/app/page.tsx" target="_blank">frontend/app/page.tsx</a><span class="file-tag tag-upd">upd</span><span class="file-desc">Replaces boilerplate with header + <code>&lt;ConnectButton /&gt;</code> + intro paragraph</span></li>
+    <li><a class="file-path" href="https://github.com/oslinin/chaingammon/blob/master/frontend/.env.example" target="_blank">frontend/.env.example</a><span class="file-tag tag-upd">upd</span><span class="file-desc">Adds <code>NEXT_PUBLIC_OG_RPC_URL</code> and <code>NEXT_PUBLIC_PLAYER_SUBNAME_REGISTRAR_ADDRESS</code></span></li>
+  </ul>
+
+  <h3>Smoke Test</h3>
+  <p><code>pnpm exec next build</code> passes (4 static routes). <code>curl http://localhost:3000/</code> returns <code>&lt;button&gt;Connect wallet&lt;/button&gt;</code> in SSR-rendered DOM. Full wallet flow (MetaMask popup) requires a browser — not automated.</p>
+</div>
+
+<!-- ─────────────────────────────── PHASE 13 ─────── -->
+<div class="page" id="page-p13">
+  <div class="phase-header">
+    <span class="phase-badge">Phase 13</span>
+    <div>
+      <h2>Agents List with Live ELO</h2>
+      <p class="subtitle">Landing page reads AgentRegistry on-chain. Live ELO per agent. "Play" navigates to match flow.</p>
+      <div class="sponsor-tags">
+        <span class="badge badge-0g">0G Chain</span>
+      </div>
+    </div>
+    <span class="phase-status status-done">Done ✓</span>
+  </div>
+
+  <p class="phase-desc">First place in the UI where users see live on-chain state: each agent card renders the metadata label and ELO read directly from <code>AgentRegistry</code> + <code>MatchRegistry</code> via wagmi's <code>useReadContracts</code>. The batched read (one RPC call per card covering both metadata and ELO) keeps network usage minimal. <code>AgentsList</code> is a separate Client Component from the page shell so the page can stay a Server Component and only the agents subtree hydrates on the client. The label fallback (<code>Agent #N</code>) handles both empty metadata and URI-format metadata (>80 chars) that would indicate a metadata URI rather than a short display label.</p>
+
+  <h3>Data Flow <code class="diagram-file">AgentsList.tsx · AgentCard.tsx</code></h3>
+  <div class="diagram-section">
+    <div class="mermaid-wrap">
+      <pre class="mermaid">
+sequenceDiagram
+    participant P as page.tsx
+    participant AL as AgentsList
+    participant AC as AgentCard
+    participant AR as AgentRegistry
+    participant MR as MatchRegistry
+
+    P->>AL: render
+    AL->>AR: useReadContract agentCount
+    AR-->>AL: N
+    loop i = 1..N
+        AL->>AC: agentId={i}
+        AC->>AR: useReadContracts agentMetadata(i)
+        AC->>MR: useReadContracts agentElo(i)
+        AR-->>AC: label string
+        MR-->>AC: elo uint16
+    end
+      </pre>
+    </div>
+  </div>
+
+  <h3 class="layer">Frontend</h3>
+  <ul class="file-list">
+    <li><a class="file-path" href="https://github.com/oslinin/chaingammon/blob/master/frontend/app/AgentCard.tsx" target="_blank">frontend/app/AgentCard.tsx</a><span class="file-tag tag-new">new</span><span class="file-desc">Client component — batched <code>useReadContracts</code> for <code>agentMetadata</code> + <code>agentElo</code>; Play link → <code>/match?agentId=N</code></span></li>
+    <li><a class="file-path" href="https://github.com/oslinin/chaingammon/blob/master/frontend/app/AgentsList.tsx" target="_blank">frontend/app/AgentsList.tsx</a><span class="file-tag tag-new">new</span><span class="file-desc">Client component — reads <code>agentCount</code>, renders N <code>AgentCard</code>s; separated so page stays a Server Component</span></li>
+    <li><a class="file-path" href="https://github.com/oslinin/chaingammon/blob/master/frontend/app/page.tsx" target="_blank">frontend/app/page.tsx</a><span class="file-tag tag-upd">upd</span><span class="file-desc">Server component shell with <code>&lt;AgentsList /&gt;</code> section; intro updated to mention ERC-7857 iNFTs</span></li>
+  </ul>
+
+  <h3>Smoke Test</h3>
+  <p><code>pnpm exec next build</code> — clean prod build, all routes prerender static. Live against 0G testnet: seed agent #1 (<code>gnubg-default-placeholder</code>, tier 2) renders label + live ELO from <code>MatchRegistry</code>.</p>
+</div>
+
+<!-- ─────────────────────────────── PHASE 14 ─────── -->
+<div class="page" id="page-p14">
+  <div class="phase-header">
+    <span class="phase-badge">Phase 14</span>
+    <div>
+      <h2>Match Flow UI</h2>
+      <p class="subtitle">Full turn loop: start game → roll → move → agent auto-plays → repeat → game-over banner + "Settle on-chain" placeholder.</p>
+    </div>
+    <span class="phase-status status-done">Done ✓</span>
+  </div>
+
+  <p class="phase-desc">Completes the human-vs-agent match flow: a turn-by-turn game loop driven by React state and <code>useEffect</code>. The auto-drive guard (<code>useRef(false)</code>) prevents React StrictMode's double-invocation in dev from firing two parallel agent moves. A 400ms delay before each agent step ensures the board flash is visible before the agent responds. The <code>Board</code> component uses Tailwind-only CSS (no SVG) — top row shows points 13-24, bottom row 12-1, with a vertical BAR column in the middle; checker overflow renders as <code>+N</code> when a point holds more than 5 checkers. <code>DiceRoll</code> uses inline SVG with standard 1-6 pip positions. No wallet signing happens in Phase 14 — the "Settle on-chain" button is a placeholder for Phase 17's KeeperHub settlement workflow.</p>
+  <p class="phase-note">gnubg's native move notation (<code>8/5 6/5</code>, <code>bar/N</code>, <code>N/off</code>) is exposed directly to the user in a free-form text input. This makes test reproduction easy — any failing position can be replayed by copying the gnubg notation. A graphical move-picker could replace this in a later phase without changing any server contracts.</p>
+
+  <h3>State Machine <code class="diagram-file">match/page.tsx</code></h3>
+  <div class="diagram-section">
+    <div class="mermaid-wrap">
+      <pre class="mermaid">
+stateDiagram-v2
+    [*] --> Starting : mount, POST /games
+    Starting --> HumanRoll : game created, turn=0, dice=null
+    HumanRoll --> HumanMove : POST /roll → dice set
+    HumanMove --> AgentRoll : POST /move submitted
+    AgentRoll --> AgentMove : POST /roll (auto)
+    AgentMove --> HumanRoll : POST /agent-move done
+    HumanRoll --> GameOver : game_over=true
+    AgentMove --> GameOver : game_over=true
+    GameOver --> [*]
+      </pre>
+    </div>
+  </div>
+
+  <h3 class="layer">Frontend</h3>
+  <ul class="file-list">
+    <li><a class="file-path" href="https://github.com/oslinin/chaingammon/blob/master/frontend/app/match/page.tsx" target="_blank">frontend/app/match/page.tsx</a><span class="file-tag tag-new">new</span><span class="file-desc">Client component in <code>&lt;Suspense&gt;</code> (required by Next.js for <code>useSearchParams</code>); state machine; auto-drives agent turns via <code>useEffect</code>; 400ms delay</span></li>
+    <li><a class="file-path" href="https://github.com/oslinin/chaingammon/blob/master/frontend/app/Board.tsx" target="_blank">frontend/app/Board.tsx</a><span class="file-tag tag-new">new</span><span class="file-desc">Tailwind-only 2-row board (top: pts 13-24, bottom: pts 12-1) · blue = you, red = agent · BAR · borne-off counts · +N overflow label</span></li>
+    <li><a class="file-path" href="https://github.com/oslinin/chaingammon/blob/master/frontend/app/DiceRoll.tsx" target="_blank">frontend/app/DiceRoll.tsx</a><span class="file-tag tag-new">new</span><span class="file-desc">Inline-SVG dice with standard 1-6 pip patterns; doubles render as two identical dice; returns <code>null</code> when dice is null</span></li>
+  </ul>
+
+  <h3>Move Notation (gnubg)</h3>
+  <div class="cards">
+    <div class="card"><div class="card-title">Normal move</div><div class="card-value"><code>"8/5 6/5"</code></div><div class="card-sub">from/to, space-separated</div></div>
+    <div class="card"><div class="card-title">Hit blot</div><div class="card-value"><code>"13/8* 6/4"</code></div><div class="card-sub">asterisk = hit</div></div>
+    <div class="card"><div class="card-title">From bar</div><div class="card-value"><code>"bar/24"</code></div></div>
+    <div class="card"><div class="card-title">Bear off</div><div class="card-value"><code>"6/off 5/off"</code></div></div>
+  </div>
+
+  <h3>API Helper</h3>
+  <ul class="file-list">
+    <li><span class="file-desc"><code>apiFetch(path, body?)</code> — wraps <code>fetch(NEXT_PUBLIC_API_URL + path)</code>, decodes as <code>GameState</code>. Default URL: <code>http://localhost:8000</code></span></li>
+  </ul>
+
+  <h3>Smoke Test</h3>
+  <p><code>pnpm exec next build</code> — clean, 5 routes (<code>/</code>, <code>/_not-found</code>, <code>/match</code>) all prerender as static. End-to-end against local server: roll → move → agent auto-plays → repeat → game-over banner. No wallet signing in Phase 14 — settlement is Phase 17.</p>
+  <p style="margin-top:8px;font-size:12px;color:var(--muted)">The "Settle on-chain" button is intentionally disabled — real settlement wiring is planned for Phase 17 (KeeperHub workflow).</p>
+</div>
+
+<!-- ─────────────────────────────── PHASE 15 ─────── -->
+<div class="page" id="page-p15">
+  <div class="phase-header">
+    <span class="phase-badge">Phase 15</span>
+    <div>
+      <h2>ENS Name Resolution + Display</h2>
+      <p class="subtitle">Connected wallet shows <code>&lt;label&gt;.chaingammon.eth (1547)</code> instead of <code>0xABC…</code>. Inline "Claim name" form mints if no subname yet.</p>
+      <div class="sponsor-tags">
+        <span class="badge badge-ens">ENS</span>
+        <span class="badge badge-0g">0G Chain</span>
+      </div>
+    </div>
+    <span class="phase-status status-done">Done ✓</span>
+  </div>
+
+  <p class="phase-desc">First phase where the ENS framing actually surfaces to the user. The plumbing was in place since Phase 10 (registrar) and Phase 11 (server-side text records). The address → label lookup walks <code>SubnameMinted</code> event logs filtered by <code>subnameOwner = address</code> — no on-chain reverse mapping (would double per-mint storage). The label sits in the unindexed event data so it's recoverable directly from the log. The ELO read is two RPCs: <code>parentNode()</code> (cached forever via <code>staleTime: Infinity</code> since it's immutable) and <code>text(node, "elo")</code>. Namehash computed locally with <code>viem.keccak256(encodePacked([...]))</code> to avoid an extra <code>subnameNode(label)</code> RPC.</p>
+  <p class="phase-note">Server eats the gas for the claim mint — the user POSTs to <code>/subname/mint</code>, the server (the registrar's <code>Ownable</code> owner) signs <code>mintSubname</code> on their behalf. Phase 11's <code>setText</code> writes <code>elo</code> after every match.</p>
+
+  <h3>Lookup Flow <code class="diagram-file">useChaingammonName.ts · useChaingammonProfile.ts</code></h3>
+  <div class="diagram-section">
+    <div class="mermaid-wrap">
+      <pre class="mermaid">
+sequenceDiagram
+    participant W as Wallet
+    participant H as useChaingammonName
+    participant CL as viem PublicClient
+    participant R as PlayerSubnameRegistrar
+    participant P as useChaingammonProfile
+
+    W->>H: address
+    H->>CL: getLogs SubnameMinted(subnameOwner=address)
+    CL->>R: filter event log
+    R-->>CL: [{label,node,...}]
+    CL-->>H: logs
+    H-->>W: label, name=label.chaingammon.eth
+    W->>P: label
+    P->>R: parentNode() (cached)
+    R-->>P: bytes32
+    P->>P: keccak256(parent ++ keccak256(label)) → node
+    P->>R: text(node,"elo")
+    R-->>P: "1547"
+    P-->>W: elo
+      </pre>
+    </div>
+  </div>
+
+  <h3 class="layer">Server</h3>
+  <ul class="file-list">
+    <li><a class="file-path" href="https://github.com/oslinin/chaingammon/blob/master/server/app/main.py" target="_blank">server/app/main.py</a><span class="file-tag tag-upd">upd</span><span class="file-desc"><code>POST /subname/mint</code> — calls <code>EnsClient.mint_subname</code>; user pays no gas in v1 (server signs as <code>Ownable</code> owner)</span></li>
+  </ul>
+
+  <h3 class="layer">Frontend</h3>
+  <ul class="file-list">
+    <li><a class="file-path" href="https://github.com/oslinin/chaingammon/blob/master/frontend/app/contracts.ts" target="_blank">frontend/app/contracts.ts</a><span class="file-tag tag-upd">upd</span><span class="file-desc">Adds <code>PLAYER_SUBNAME_REGISTRAR_ADDRESS</code> + <code>PlayerSubnameRegistrarABI</code></span></li>
+    <li><a class="file-path" href="https://github.com/oslinin/chaingammon/blob/master/frontend/app/useChaingammonName.ts" target="_blank">frontend/app/useChaingammonName.ts</a><span class="file-tag tag-new">new</span><span class="file-desc">Walks <code>SubnameMinted</code> event log filtered by <code>subnameOwner = address</code> — most recent mint wins</span></li>
+    <li><a class="file-path" href="https://github.com/oslinin/chaingammon/blob/master/frontend/app/useChaingammonProfile.ts" target="_blank">frontend/app/useChaingammonProfile.ts</a><span class="file-tag tag-new">new</span><span class="file-desc"><code>parentNode()</code> + <code>text(node,"elo")</code>; namehash computed locally with viem</span></li>
+    <li><a class="file-path" href="https://github.com/oslinin/chaingammon/blob/master/frontend/app/ProfileBadge.tsx" target="_blank">frontend/app/ProfileBadge.tsx</a><span class="file-tag tag-new">new</span><span class="file-desc">Three-state badge: looking up · subname found (<code>label.chaingammon.eth (elo)</code>) · no subname (Claim form)</span></li>
+    <li><a class="file-path" href="https://github.com/oslinin/chaingammon/blob/master/frontend/app/ConnectButton.tsx" target="_blank">frontend/app/ConnectButton.tsx</a><span class="file-tag tag-upd">upd</span><span class="file-desc">Mounts <code>&lt;ProfileBadge&gt;</code> in place of the inline shortened-address span</span></li>
+    <li><a class="file-path" href="https://github.com/oslinin/chaingammon/blob/master/frontend/app/AgentCard.tsx" target="_blank">frontend/app/AgentCard.tsx</a><span class="file-tag tag-upd">upd</span><span class="file-desc">Reformats agent metadata as <code>&lt;label&gt;.chaingammon.eth</code> for visual parity with player names</span></li>
+  </ul>
+
+  <h3>Smoke Test</h3>
+  <p><code>pnpm exec next build</code> — clean. SSR DOM contains "Chaingammon", "Connect wallet", "Available agents", and "chaingammon.eth" on first paint. Live mint flow needs a browser + wallet; not automated.</p>
+</div>
+
+<!-- ─────────────────────────────── PHASE 20 ─────── -->
+<div class="page" id="page-p20">
+  <div class="phase-header">
+    <span class="phase-badge">Phase 20</span>
+    <div>
+      <h2>Match Replay from 0G Storage</h2>
+      <p class="subtitle"><code>/match/&lt;matchId&gt;</code> reads on-chain <code>gameRecordHash</code>, fetches the archive from 0G Storage, decodes per-move board states.</p>
+      <div class="sponsor-tags">
+        <span class="badge badge-0g">0G Storage</span>
+        <span class="badge badge-0g">0G Chain</span>
+      </div>
+    </div>
+    <span class="phase-status status-done">Done ✓</span>
+  </div>
+
+  <p class="phase-desc">First phase where the match archive becomes user-visible. Until now the on-chain <code>gameRecordHash</code> was an opaque commitment — anyone could verify the archive existed but only the server reading directly off 0G Storage could see what was inside. This phase exposes a full move-by-move replay: read <code>MatchRegistry.getMatch(matchId)</code> on-chain via wagmi, fetch the JSON blob through a new server endpoint that decodes each gnubg <code>position_id_after</code> into a 24-point board array, then step through the moves with the existing <code>&lt;Board&gt;</code> from Phase 14.</p>
+  <p class="phase-note">CORS middleware was added to FastAPI at the same time — the Next dev server at <code>:3000</code> calls FastAPI at <code>:8000</code>, so cross-origin <code>fetch()</code> needs an <code>Access-Control-Allow-Origin</code> header. Wide-open in dev; production should restrict to the deployed frontend host.</p>
+
+  <h3>Replay Flow <code class="diagram-file">match/[matchId]/page.tsx</code></h3>
+  <div class="diagram-section">
+    <div class="mermaid-wrap">
+      <pre class="mermaid">
+sequenceDiagram
+    participant U as User
+    participant FE as Replay page
+    participant MR as MatchRegistry
+    participant API as Server
+    participant OGS as 0G Storage
+
+    U->>FE: navigate /match/N
+    FE->>MR: getMatch(N) via wagmi
+    MR-->>FE: gameRecordHash
+    FE->>API: GET /game-records/{hash}
+    API->>OGS: get_blob(hash)
+    OGS-->>API: GameRecord JSON
+    API->>API: decode_position_id() per move
+    API-->>FE: {record, states[]}
+    FE->>FE: render Board(states[moveIndex])
+    U->>FE: click Next
+    FE->>FE: moveIndex++; re-render Board
+      </pre>
+    </div>
+  </div>
+
+  <h3 class="layer">Server</h3>
+  <ul class="file-list">
+    <li><a class="file-path" href="https://github.com/oslinin/chaingammon/blob/master/server/app/main.py" target="_blank">server/app/main.py</a><span class="file-tag tag-upd">upd</span><span class="file-desc"><code>CORSMiddleware</code> at startup; <code>GET /game-records/{root_hash}</code> fetches 0G blob, decodes each <code>position_id_after</code> via the existing pure-Python <code>decode_position_id</code></span></li>
+  </ul>
+
+  <h3 class="layer">Frontend</h3>
+  <ul class="file-list">
+    <li><a class="file-path" href="https://github.com/oslinin/chaingammon/blob/master/frontend/app/match/%5BmatchId%5D/page.tsx" target="_blank">frontend/app/match/[matchId]/page.tsx</a><span class="file-tag tag-new">new</span><span class="file-desc">Dynamic route. wagmi <code>getMatch</code> → react-query <code>/game-records</code> → step through moves rendering <code>&lt;Board&gt;</code> + <code>&lt;DiceRoll&gt;</code></span></li>
+  </ul>
+
+  <h3>Smoke Test</h3>
+  <p><code>pnpm exec next build</code> — clean. Routes: <code>/</code>, <code>/_not-found</code>, <code>/match</code>, <code>ƒ /match/[matchId]</code> (dynamic, server-rendered on demand). Replay tested manually against finalized matches on 0G testnet.</p>
+</div>
+
+<!-- ─────────────────────────────── PHASE 23 ─────── -->
+<div class="page" id="page-p23">
+  <div class="phase-header">
+    <span class="phase-badge">Phase 23</span>
+    <div>
+      <h2>ROADMAP.md + Architecture Pointers</h2>
+      <p class="subtitle">Forward-looking doc with shipped-vs-next breakdown, near/medium/long-term work, and a "won't do" section.</p>
+    </div>
+    <span class="phase-status status-done">Done ✓</span>
+  </div>
+
+  <p class="phase-desc"><a class="file-path" href="https://github.com/oslinin/chaingammon/blob/master/ARCHITECTURE.md" target="_blank">ARCHITECTURE.md</a> already shipped as a Phase 10 carry-over (component diagrams, sequence flows, smart-contract layout, v1 trust model). What was missing was the forward-looking counterpart: an honest list of what's deliberately deferred vs. what's actually planned. This phase adds <a class="file-path" href="https://github.com/oslinin/chaingammon/blob/master/ROADMAP.md" target="_blank">ROADMAP.md</a> with shipped-v1 capability table cross-referenced to phases + files, then near-term (commit-reveal dice, agent-vs-agent, KeeperHub-orchestrated settlement), medium-term (ZK move proofs, betting + cube doubling, ELO derivatives, server replaced by 0G Compute), and long-term (full ENS on real-ENS chain, tournament protocol, cross-platform reputation imports, gnubg PR certification). Plus a "won't do" section to keep future contributors from rediscovering scope decisions.</p>
+
+  <h3 class="layer">Docs</h3>
+  <ul class="file-list">
+    <li><a class="file-path" href="https://github.com/oslinin/chaingammon/blob/master/ROADMAP.md" target="_blank">ROADMAP.md</a><span class="file-tag tag-new">new</span><span class="file-desc">Shipped-vs-next; near / medium / long-term sections; "won't do" list (closed-source agents, mandatory subs, rating manipulation knobs)</span></li>
+    <li><a class="file-path" href="https://github.com/oslinin/chaingammon/blob/master/README.md" target="_blank">README.md</a><span class="file-tag tag-upd">upd</span><span class="file-desc">One-line pointer at top of Roadmap section linking to <code>ROADMAP.md</code> + <code>ARCHITECTURE.md</code></span></li>
+  </ul>
+</div>
+
+</main>
+</div><!-- .layout -->
+
+<script>
+  // ── Navigation ──────────────────────────────────────────────────────────
+  function show(pageId) {
+    // Swap active class on nav items
+    document.querySelectorAll('.nav-item').forEach(function(n) {
+      if (n.dataset.page === pageId) {
+        n.classList.add('active');
+      } else {
+        n.classList.remove('active');
+      }
+    });
+
+    // Swap active class on pages
+    document.querySelectorAll('.page').forEach(function(p) {
+      if (p.id === 'page-' + pageId) {
+        p.classList.add('active');
+      } else {
+        p.classList.remove('active');
+      }
+    });
+
+    // Reset scroll to top of content
+    var main = document.getElementById('main');
+    if (main) main.scrollTop = 0;
+
+    // Lazy-render mermaid diagrams in the newly-visible page
+    var target = document.getElementById('page-' + pageId);
+    if (target && typeof mermaid !== 'undefined') {
+      target.querySelectorAll('.mermaid').forEach(function(el) {
+        if (!el.dataset.rendered) {
+          el.dataset.rendered = '1';
+          try { mermaid.run({ nodes: [el] }); } catch(e) { /* diagram error — non-fatal */ }
+        }
+      });
+    }
+  }
+
+  // Attach click handlers
+  document.querySelectorAll('.nav-item').forEach(function(item) {
+    item.addEventListener('click', function() { show(item.dataset.page); });
+  });
+
+  // ── Mermaid init ─────────────────────────────────────────────────────────
+  if (typeof mermaid !== 'undefined') {
+    mermaid.initialize({
+      startOnLoad: false,
+      theme: 'dark',
+      themeVariables: {
+        darkMode: true,
+        background: '#141428',
+        mainBkg: '#1e1e3a',
+        nodeBorder: '#6c63ff',
+        clusterBkg: '#1e1e3a',
+        titleColor: '#e2e2f0',
+        edgeLabelBackground: '#141428',
+        lineColor: '#7070a0',
+        textColor: '#e2e2f0',
+        primaryColor: '#1e1e3a',
+        primaryTextColor: '#e2e2f0',
+        primaryBorderColor: '#6c63ff',
+        secondaryColor: '#0a0a18',
+        tertiaryColor: '#141428',
+        fontFamily: 'ui-monospace, monospace',
+      },
+      flowchart: { htmlLabels: true, curve: 'basis' },
+      sequence:  { mirrorActors: false },
+      gantt:     { fontSize: 12 },
+    });
+  }
+
+  // Show the overview page on load
+  show('overview');
+</script>
+</body>
+</html>

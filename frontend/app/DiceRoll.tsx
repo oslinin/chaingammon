@@ -46,7 +46,7 @@ function Die({ value }: { value: number }) {
   return (
     <svg
       viewBox="0 0 100 100"
-      className="h-10 w-10 rounded-lg bg-white shadow-md dark:bg-zinc-800"
+      className="h-6 w-6 rounded-md bg-white shadow-md dark:bg-zinc-800"
       aria-label={`Die showing ${value}`}
     >
       <rect

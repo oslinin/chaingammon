@@ -1,7 +1,9 @@
 from datetime import datetime, timezone
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Dict, Optional
+import json
 import os
 import uuid
 
@@ -20,6 +22,16 @@ from .gnubg_client import GnubgClient
 from .og_storage_client import OgStorageError, get_blob, put_blob
 
 app = FastAPI()
+# Phase 20: the Next.js frontend at :3000 calls these endpoints cross-origin
+# (live match flow, subname mint, replay fetch). Open CORS so browser fetches
+# succeed in dev. Production should restrict `allow_origins` to the deployed
+# frontend host.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 gnubg = GnubgClient()
 
 # In-memory game store
@@ -52,14 +64,26 @@ class MoveRequest(BaseModel):
     move: str
 
 def _build_game_state(game_id: str, pos_id: str, match_id: str) -> GameState:
-    board, bar, off = decode_position_id(pos_id)
+    # Phase 24 External Player protocol: ask gnubg for its
+    # authoritative structured board (rawboard format) instead of
+    # decoding position_id ourselves. gnubg's `decode_board` runs in a
+    # hermetic subprocess with all auto-behaviour disabled (auto-roll,
+    # auto-game, auto-move) so it returns the exact state at this
+    # position — no extra moves, no perspective flips.
+    decoded = gnubg.decode_board(pos_id, match_id)
+    board = list(decoded["points"])    # 24 signed counts: + = human, - = agent
+    bar = list(decoded["bar"])         # [human_bar, agent_bar]
+    p0_total = sum(c for c in board if c > 0) + bar[0]
+    p1_total = -sum(c for c in board if c < 0) + bar[1]
+    off = [15 - p0_total, 15 - p1_total]
+
     match_info = decode_match_id(match_id)
-    
-    # Determine winner if game is over
+
+    # Determine winner if game is over.
     winner = None
     if match_info["game_over"]:
         winner = 1 if match_info["score"][1] > match_info["score"][0] else 0
-        
+
     return GameState(
         game_id=game_id,
         match_id=match_id,
@@ -227,6 +251,57 @@ def resign(game_id: str):
     state = _build_game_state(game_id, res["position_id"], res["match_id"])
     games[game_id] = state
     return state
+
+
+# ---------------------------------------------------------------------------
+# Phase 20 — match replay: fetch GameRecord from 0G Storage, decode positions
+# ---------------------------------------------------------------------------
+
+
+@app.get("/game-records/{root_hash}")
+def get_game_record(root_hash: str):
+    """Return the archived GameRecord for a 0G Storage Merkle root, decoded
+    into per-move board states for the frontend replay UI.
+
+    `root_hash` is the same value that landed in
+    `MatchRegistry.MatchInfo.gameRecordHash` when the match was finalized
+    (Phase 7); the frontend reads it via `getMatch(matchId)` and passes it
+    here. Position IDs in the record (gnubg-native, base64) are decoded
+    into 24-point board arrays + bar + off counts so the frontend can
+    render each step without running gnubg.
+    """
+    if not root_hash.startswith("0x") or len(root_hash) != 66:
+        raise HTTPException(status_code=400, detail="root_hash must be 0x + 64 hex chars")
+    try:
+        blob = get_blob(root_hash)
+    except OgStorageError as e:
+        raise HTTPException(status_code=502, detail=f"0G Storage fetch failed: {e}") from e
+    try:
+        record = json.loads(blob)
+    except json.JSONDecodeError as e:
+        raise HTTPException(status_code=502, detail=f"could not decode record: {e}") from e
+
+    states = []
+    for move in record.get("moves", []) or []:
+        pos = move.get("position_id_after", "")
+        try:
+            board, bar, off = decode_position_id(pos)
+        except Exception:
+            # A corrupted move entry shouldn't fail the whole replay; render
+            # an empty board so the user can still step through.
+            board, bar, off = [0] * 24, [0, 0], [0, 0]
+        states.append(
+            {
+                "turn": move.get("turn", 0),
+                "dice": move.get("dice", []),
+                "move": move.get("move", ""),
+                "board": board,
+                "bar": bar,
+                "off": off,
+            }
+        )
+
+    return {"record": record, "states": states}
 
 
 # ---------------------------------------------------------------------------

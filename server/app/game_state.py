@@ -44,11 +44,16 @@ def decode_position_id(pos_id: str):
     
     board = [0] * 24
     for i in range(24):
-        # player 0's points are 1..24, which map to index 0..23
+        # player 0's point (i+1) lives at board index `i`.
         if player0[i] > 0:
             board[i] = player0[i]
-        # player 1's points are 1..24, which map to index 23..0 from player 0's perspective
-        elif player1[i] > 0:
+        # player 1's point (i+1) is mirrored: it lives at board index
+        # `23 - i` from player 0's perspective. This must be a separate
+        # `if` (not `elif`) — player0[i] and player1[i] describe two
+        # different physical points, so a checker at one doesn't preclude
+        # a checker at the other. Using `elif` here was the cause of
+        # player 1's checkers vanishing in the UI (Phase 24 regression).
+        if player1[i] > 0:
             board[23 - i] = -player1[i]
             
     bar = [player0[24], player1[24]]
@@ -92,21 +97,31 @@ def decode_match_id(match_id: str):
 
     log_cube = get_int(0, 4)
     cube_owner_raw = get_int(4, 2)
-    player_on_roll = get_int(6, 1)
+    raw_player_on_roll = get_int(6, 1)
     game_state = get_int(8, 3)
-    turn = get_int(11, 1)
+    raw_turn = get_int(11, 1)
     dice1 = get_int(15, 3)
     dice2 = get_int(18, 3)
     match_length = get_int(21, 15)
     p0_score = get_int(36, 15)
     p1_score = get_int(51, 15)
-    
+
+    # gnubg's match-id encodes the turn bit as 0=O / 1=X. In our app
+    # convention X is the user (the human, displayed in blue) and O is
+    # gnubg (the agent, red), and we want turn=0=human / turn=1=agent —
+    # the opposite. Invert before exposing. Symptom of leaving this raw:
+    # every Move/Roll was applied to the wrong side in gnubg, so the
+    # user's pieces ended up "in the wrong place" after each agent
+    # reply (Phase 24 regression).
+    turn = 1 - raw_turn
+    player_on_roll = 1 - raw_player_on_roll
+
     dice = None
     if dice1 > 0 and dice2 > 0:
         dice = [dice1, dice2]
-        
+
     game_over = game_state > 1
-        
+
     return {
         "cube": 1 << log_cube if log_cube > 0 else 1,
         "cube_owner": cube_owner_raw if cube_owner_raw < 3 else -1,

@@ -7,20 +7,30 @@
 // subnameOwner)` event log filtered by `subnameOwner = address`. The
 // label sits in the unindexed event data so we get it back from the
 // log directly.
+//
+// The lookup happens against whichever chain the wallet is currently
+// on (Phase 24); the registrar address comes from `chains.ts`.
 "use client";
 
 import { useEffect, useState } from "react";
 import { parseAbiItem } from "viem";
 import { usePublicClient } from "wagmi";
 
-import { PLAYER_SUBNAME_REGISTRAR_ADDRESS } from "./contracts";
+import { useActiveChainId } from "./chains";
+import { useChainContracts } from "./contracts";
 
 const SUBNAME_MINTED_EVENT = parseAbiItem(
   "event SubnameMinted(string indexed labelHashed, string label, bytes32 indexed node, address indexed subnameOwner)",
 );
 
 export function useChaingammonName(address: `0x${string}` | undefined) {
-  const client = usePublicClient();
+  const chainId = useActiveChainId();
+  // Pin the public client to the active chain so log scans hit the
+  // registrar where it actually lives, not whichever chain the wallet
+  // is currently on at the wagmi level (in case those drift).
+  const client = usePublicClient({ chainId });
+  const { playerSubnameRegistrar } = useChainContracts();
+
   const [label, setLabel] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
@@ -28,8 +38,8 @@ export function useChaingammonName(address: `0x${string}` | undefined) {
     if (
       !address ||
       !client ||
-      !PLAYER_SUBNAME_REGISTRAR_ADDRESS ||
-      PLAYER_SUBNAME_REGISTRAR_ADDRESS.length < 4
+      !playerSubnameRegistrar ||
+      playerSubnameRegistrar.length < 4
     ) {
       setLabel(null);
       return;
@@ -38,7 +48,7 @@ export function useChaingammonName(address: `0x${string}` | undefined) {
     setIsLoading(true);
     client
       .getLogs({
-        address: PLAYER_SUBNAME_REGISTRAR_ADDRESS,
+        address: playerSubnameRegistrar,
         event: SUBNAME_MINTED_EVENT,
         args: { subnameOwner: address },
         fromBlock: "earliest",
@@ -63,7 +73,7 @@ export function useChaingammonName(address: `0x${string}` | undefined) {
     return () => {
       cancelled = true;
     };
-  }, [address, client]);
+  }, [address, client, playerSubnameRegistrar]);
 
   const name = label ? `${label}.chaingammon.eth` : null;
   return { label, name, isLoading };

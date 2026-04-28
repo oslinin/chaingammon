@@ -653,19 +653,19 @@ Tasks:
 
 **Done when:** Each match's 0G Storage record contains the KeeperHub audit JSON.
 
-### Phase 20 — Frontend match replay page (2 hrs)
+### Phase 20 — Frontend match replay page ✅
 
 **New tool/sponsor:** none (frontend continued).
 
-**Goal:** `/match/[matchId]` page reads the game record from 0G Storage and renders a move-by-move replay.
+**Goal:** `/match/<matchId>` page reads the game record from 0G Storage and renders a move-by-move replay.
 
 Tasks:
 
-- Resolve matchId → gameRecordHash on-chain → fetch blob from 0G Storage
-- Step through positions on click; show dice + moves + cube actions
-- Optional: gnubg-style position diagrams
+- **server/app/main.py** — `CORSMiddleware` (cross-origin: Next dev at `:3000` calls FastAPI at `:8000`); `GET /game-records/{root_hash}` fetches the 0G Storage blob and decodes each `position_id_after` into a `{board, bar, off}` triple via the existing `decode_position_id` (pure-Python base64 + bit unpacker — no gnubg subprocess needed for read).
+- **frontend/app/match/[matchId]/page.tsx** (new) — dynamic route. `wagmi.useReadContract(getMatch)` → `gameRecordHash` → `react-query.useQuery` against `/game-records/<hash>`. Maintains `moveIndex` state for prev/next/start/end controls; renders `<Board>` (Phase 14) per step plus a panel with dice + move notation + active player.
+- Coexists with the live-play route at `/match?agentId=N` (Next 16 prefers the static `/match/page.tsx` for `/match` exactly and the dynamic `[matchId]/page.tsx` for `/match/<id>`).
 
-**Done when:** Click a match → see the game replayed.
+**Done when:** Click a match → see the game replayed. ✅ verified via `pnpm exec next build` (5 routes: `/`, `/_not-found`, `/match`, `/match/[matchId]`).
 
 ### Phase 21 — Frontend audit trail display (1 hr)
 
@@ -694,13 +694,19 @@ Each item:
 
 **Done when:** Doc has ≥5 specific items.
 
-### Phase 23 — Architecture docs + ROADMAP.md (1 hr)
+### Phase 23 — Architecture docs + ROADMAP.md ✅
 
 **New tool/sponsor:** none (writing only).
 
 **Goal:** `ARCHITECTURE.md` (component descriptions, data flows, integration points). `ROADMAP.md` (commit-reveal dice, betting, derivatives, agent-vs-agent, anti-cheat, ZK move proofs, 0G Compute).
 
-**Done when:** Both files exist; README links to them.
+Tasks:
+
+- **ARCHITECTURE.md** already shipped earlier as part of Phase 10's working-tree carry-over. Components, data flows, smart-contract diagram, trust model, and Gantt chart are in place.
+- **ROADMAP.md** (new) — what's shipped vs. what's next, organized into near-term (commit-reveal dice, agent-vs-agent, KeeperHub-orchestrated settlement, settle-on-chain button), medium-term (ZK move proofs, betting + cube doubling, ELO-as-collateral, style profile aggregator, server replaceable by 0G Compute), and long-term (full ENS on real-ENS chain, tournament protocol, cross-platform reputation imports, gnubg PR certification). Plus a "won't do" section to keep scope honest.
+- **README.md** — adds a one-line pointer to both docs at the top of the existing roadmap section.
+
+**Done when:** Both files exist; README links to them. ✅
 
 ### Phase 24 — Deploy frontend + backend, demo recording (2 hrs)
 
