@@ -22,6 +22,7 @@ import { useChainId } from "wagmi";
 
 import localhostDeployment from "../../contracts/deployments/localhost.json";
 import ogTestnetDeployment from "../../contracts/deployments/0g-testnet.json";
+import sepoliaDeployment from "../../contracts/deployments/sepolia.json";
 
 interface ChainDef {
   name: string;
@@ -49,6 +50,16 @@ const CHAIN_DEFS: Record<number, ChainDef> = {
     rpcUrl: "http://127.0.0.1:8545",
     testnet: true,
   },
+  11155111: {
+    name: "Sepolia",
+    nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+    // Public RPC; replace via NEXT_PUBLIC_SEPOLIA_RPC_URL for an Alchemy
+    // / Infura key if the public endpoint is rate-limiting the demo.
+    rpcUrl:
+      process.env.NEXT_PUBLIC_SEPOLIA_RPC_URL ?? "https://rpc.sepolia.org",
+    explorerUrl: "https://sepolia.etherscan.io",
+    testnet: true,
+  },
 };
 
 interface DeploymentRecord {
@@ -64,6 +75,7 @@ interface DeploymentRecord {
 const ALL_DEPLOYMENTS: DeploymentRecord[] = [
   ogTestnetDeployment as DeploymentRecord,
   localhostDeployment as DeploymentRecord,
+  sepoliaDeployment as DeploymentRecord,
 ];
 
 export interface ChainEntry {
@@ -141,4 +153,33 @@ export function useActiveChain(): ChainEntry | undefined {
 
 export function useActiveChainId(): number {
   return useChainId();
+}
+
+// Chain IDs the user can pick from in the network dropdown.
+// Order matters — this is the order they render in the menu.
+//   - 0G Galileo Testnet (16602) — primary chain, listed first.
+//   - Sepolia (11155111) — secondary, listed second.
+//   - Hardhat Localhost (31337) — dev only, listed last.
+const SELECTABLE_CHAIN_IDS_PROD = [16602, 11155111] as const;
+const SELECTABLE_CHAIN_IDS_DEV = [16602, 11155111, 31337] as const;
+
+/**
+ * The chains the user can pick from in the network dropdown.
+ *
+ * Always includes the primary chains (0G Galileo Testnet, Sepolia).
+ * Includes Hardhat Localhost only when `process.env.NODE_ENV !== "production"`,
+ * so the demo build does not surface a chain that won't reach a node.
+ *
+ * Each entry is the same `ChainEntry` shape served from `CHAIN_REGISTRY`,
+ * so a chain absent from the registry (e.g. its deployment JSON is missing)
+ * is silently skipped.
+ */
+export function useSelectableChains(): ChainEntry[] {
+  const ids =
+    process.env.NODE_ENV === "production"
+      ? SELECTABLE_CHAIN_IDS_PROD
+      : SELECTABLE_CHAIN_IDS_DEV;
+  return ids
+    .map((id) => CHAIN_REGISTRY[id])
+    .filter((entry): entry is ChainEntry => entry !== undefined);
 }
