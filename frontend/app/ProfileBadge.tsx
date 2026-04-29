@@ -31,7 +31,10 @@ export function ProfileBadge({ address }: { address: `0x${string}` }) {
 
   if (nameLoading) {
     return (
-      <span className="font-mono text-sm text-zinc-500 dark:text-zinc-400">
+      <span
+        data-testid="profile-badge"
+        className="font-mono text-sm text-zinc-500 dark:text-zinc-400"
+      >
         {shorten(address)}
       </span>
     );
@@ -39,7 +42,10 @@ export function ProfileBadge({ address }: { address: `0x${string}` }) {
 
   if (label) {
     return (
-      <span className="font-mono text-sm text-zinc-700 dark:text-zinc-300">
+      <span
+        data-testid="profile-badge"
+        className="font-mono text-sm text-zinc-700 dark:text-zinc-300"
+      >
         {name}
         {elo ? (
           <span className="ml-1 text-zinc-500 dark:text-zinc-400">({elo})</span>
@@ -74,7 +80,7 @@ export function ProfileBadge({ address }: { address: `0x${string}` }) {
       }
     };
     return (
-      <div className="flex flex-col items-end gap-1">
+      <div data-testid="profile-badge" className="flex flex-col items-end gap-1">
         <div className="flex items-center gap-1.5">
           <input
             value={claimInput}
@@ -109,7 +115,7 @@ export function ProfileBadge({ address }: { address: `0x${string}` }) {
   }
 
   return (
-    <div className="flex items-center gap-2">
+    <div data-testid="profile-badge" className="flex items-center gap-2">
       <span className="font-mono text-sm text-zinc-700 dark:text-zinc-300">
         {shorten(address)}
       </span>
