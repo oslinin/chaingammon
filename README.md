@@ -490,3 +490,5 @@ For the full version: see [ROADMAP.md](ROADMAP.md). Architecture overview: [ARCH
 **Main track:**
 
 - [ ] Open-protocol thesis written up — anyone can read another player's ENS profile and reconstruct their reputation
+
+Claude Code is enabled on this repo.
