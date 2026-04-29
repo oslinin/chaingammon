@@ -8,6 +8,13 @@ module.exports = {
     settings: {
       evmVersion: "cancun",
       optimizer: { enabled: true, runs: 200 },
+      // Enable Yul-IR codegen so the new settleWithSessionKeys function
+      // in MatchRegistry compiles. Without it the function trips
+      // "Stack too deep" — it keeps too many locals live across the
+      // inline keccak256(abi.encodePacked(...)) blocks for solc's
+      // legacy stack scheduler. viaIR's IR-based codegen handles
+      // deeper stacks at the cost of slightly slower compile times.
+      viaIR: true,
     },
   },
   paths: {
