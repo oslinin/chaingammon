@@ -5,7 +5,13 @@ from pydantic import BaseModel
 from typing import Dict, Optional
 import json
 import os
+import re
 import uuid
+
+# ENS label rules: lowercase alphanumeric + hyphens, must start and end with
+# an alphanumeric char, 1–63 characters.  Mirrors the validation in the
+# frontend's ProfileBadge so both layers agree on what is acceptable.
+_LABEL_RE = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$")
 
 from .agent_overlay import Overlay, OverlayError, apply_overlay, update_overlay
 from .chain_client import ChainClient, ChainError
@@ -332,18 +338,36 @@ class MintSubnameResponse(BaseModel):
 
 @app.post("/subname/mint", response_model=MintSubnameResponse)
 def mint_subname(req: MintSubnameRequest):
-    if not req.label.strip():
+    # Phase 21: validate label against ENS rules before hitting the chain.
+    label = req.label.strip().lower()
+    if not label:
         raise HTTPException(status_code=400, detail="label cannot be empty")
+    if len(label) > 63:
+        raise HTTPException(status_code=400, detail="label must be 63 characters or fewer")
+    if not _LABEL_RE.match(label):
+        raise HTTPException(
+            status_code=400,
+            detail="label must contain only lowercase letters, numbers, and hyphens, "
+            "and cannot start or end with a hyphen",
+        )
     try:
         ens = EnsClient.from_env()
     except EnsError as e:
         raise HTTPException(status_code=500, detail=f"ens client misconfigured: {e}") from e
+    # Pre-check: ownerOf returns the zero address for unclaimed subnames.
     try:
-        tx_hash = ens.mint_subname(req.label, req.owner_address)
-        node = ens.subname_node(req.label)
+        node = ens.subname_node(label)
+        owner = ens.owner_of(node)
+    except EnsError as e:
+        raise HTTPException(status_code=502, detail=f"availability check failed: {e}") from e
+    _ZERO_ADDRESS = "0x0000000000000000000000000000000000000000"
+    if owner and owner.lower() != _ZERO_ADDRESS:
+        raise HTTPException(status_code=409, detail="label already taken")
+    try:
+        tx_hash = ens.mint_subname(label, req.owner_address)
     except EnsError as e:
         raise HTTPException(status_code=502, detail=f"mintSubname failed: {e}") from e
-    return MintSubnameResponse(label=req.label, node=node, tx_hash=tx_hash)
+    return MintSubnameResponse(label=label, node=node, tx_hash=tx_hash)
 
 
 class FinalizeRequest(BaseModel):
