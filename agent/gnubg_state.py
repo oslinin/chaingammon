@@ -188,13 +188,19 @@ def snapshot_state(stdout: str) -> MatchStateDict:
     position_id = pos_matches[-1]
     match_id = mid_matches[-1]
 
-    # Parse the last rawboard line for canonical points + bar.
+    # Parse the last rawboard line for canonical points + bar + score.
+    # The captured tail (after `board:NAME0:NAME1:matchlength:`) is:
+    #   values[0]   = score X (human)
+    #   values[1]   = score O (agent)
+    #   values[2]   = -bar_O   (negative count of agent's bar)
+    #   values[3..26] = 24 signed point counts (human-perspective)
+    #   values[27]  = bar_X    (positive count of human's bar)
     values = [int(x) for x in raw_matches[-1].split(":")]
     if len(values) < 28:
         raise ValueError("rawboard line too short")
     board = values[3:27]
-    # values[27] = X (human) bar count (positive); values[2] = -O_bar.
     bar = [values[27], -values[2]]
+    score = [values[0], values[1]]  # canonical [human, agent]
 
     # off is derived: each side started with 15 checkers; off = 15 -
     # (on-board + on-bar). Counting on-board separately for each side.
@@ -204,9 +210,29 @@ def snapshot_state(stdout: str) -> MatchStateDict:
 
     info = decode_match_id(match_id)
 
+    # Game-over detection: gnubg's match_id encodes game state, but the
+    # bit position is perspective-relative like everything else in the
+    # match_id. Use a robust check that doesn't depend on perspective:
+    # a game ends when one side has borne off all 15 checkers OR has
+    # accumulated enough points to clinch the match.
+    game_over = info["game_over"] or off[0] >= 15 or off[1] >= 15
+
+    # Winner is whoever has the higher SCORE (rawboard's canonical score
+    # in human-perspective). Tie at game_over is treated as no winner —
+    # but in normal backgammon the winning side has score increased,
+    # so a tie at game_over means the game-over flag fired before
+    # gnubg finished crediting the point. Fall back to who's borne off
+    # 15 checkers if score is tied.
     winner: int | None = None
-    if info["game_over"]:
-        winner = 1 if info["score"][1] > info["score"][0] else 0
+    if game_over:
+        if score[0] > score[1]:
+            winner = 0
+        elif score[1] > score[0]:
+            winner = 1
+        elif off[0] >= 15:
+            winner = 0
+        elif off[1] >= 15:
+            winner = 1
 
     return MatchStateDict(
         position_id=position_id,
@@ -216,8 +242,8 @@ def snapshot_state(stdout: str) -> MatchStateDict:
         off=off,
         turn=info["turn"],
         dice=info["dice"],
-        score=info["score"],
+        score=score,
         match_length=info["match_length"],
-        game_over=info["game_over"],
+        game_over=game_over,
         winner=winner,
     )
