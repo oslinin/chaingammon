@@ -54,7 +54,7 @@ function PointCell({ point, count, flip = false }: PointProps) {
   );
 
   return (
-    <div className="flex flex-col items-center gap-0.5" style={{ width: 24 }}>
+    <div className="flex flex-col items-center gap-0.5" style={{ width: 24 }} data-point={point} data-count={count}>
       {/* Point label */}
       {!flip && (
         <span className="text-[9px] font-mono text-zinc-400 dark:text-zinc-500">
