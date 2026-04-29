@@ -17,6 +17,48 @@ A decentralized, verifiable ELO rating ledger for backgammon — for humans and 
 
 ---
 
+## Innovations
+
+Two design choices that move the project past "demo" into a credible v1. They sit underneath the project's two pillars — *agentic power* (the AI is doing real coaching, not narrating telemetry) and *full decentralization* (no operator key in the trust path, anywhere).
+
+### 1. Agentic power — the LLM is the coach, not a narrator
+
+The LLM (Qwen 2.5 7B on **0G Compute**) does things gnubg's equity numbers can't:
+
+- **Pre-move advice without spoilers.** "Two reasonable options here — defensive (hold the 5-point) or aggressive (hit and run); the race is close so it depends on your style." Coaches without giving away the answer.
+- **Mistake explanation.** Translates "lost 0.05 equity" into the actual reason — over-aggressive blot, broken anchor, lost timing — not just the magnitude.
+- **Post-game summary.** Reviews the three biggest equity drops and names the common theme.
+- **Free-text Q&A.** The player can ask the coach anything mid-match ("why didn't I move 13/8?", "what's a prime?", "how do I beat a back-game?"). Stateful conversation kept browser-side.
+- **Opponent-aware advice.** The coach reads the *opponent's* style — for humans, the style profile blob on 0G Storage; for AI agents, the experience overlay on the iNFT (`dataHashes[1]`). Advice is tailored to who's across the board, not just to the current position.
+- **Personality-driven agent play.** Each agent's overlay maps (via the LLM) to a personality paragraph that re-ranks gnubg's top candidates. Two same-tier agents play measurably differently and trash-talk in character.
+
+This is what makes the agent in *Open Agents* an actual agent. gnubg is a deterministic 2000s neural net; the LLM is the entity holding the plan, reading the opponent, and explaining the play. Inference runs on **0G Compute** (verifiable execution); the coach docs RAG context lives on **0G Storage**; the agent's personality is encoded in the iNFT on **0G Chain**; the player's identity is on **ENS**. Every protocol primitive participates.
+
+### 2. Full decentralization — no operator anywhere in the path
+
+The pivot to **Gensyn AXL** removed the central game server: each player runs their own gnubg + coach nodes locally and the browser talks to them over a permissionless P2P mesh. Settlement is the last centralization point, and a naïve two-sig design has a known DoS — the loser refuses to sign. So the design uses a **session-key state channel with cooperative close**:
+
+- At game start, the player's wallet authorizes an ephemeral in-browser session key — *one* MetaMask popup.
+- Per-move signing during play uses the session key directly — **no MetaMask popups during play**.
+- At game end, *one* MetaMask popup submits `MatchRegistry.settleWithSessionKeys(humanAuth, humanResult, agentId, ...)`. The contract verifies both the game-start authorization (the player's wallet sig) AND the final result (the session key's sig). A nonce per player blocks replay.
+- The loser cannot DoS by going offline — they pre-signed the channel at game start, and the latest session-key-signed state is enough to finalize. Either side can submit unilaterally.
+
+Combined, these two pivots remove every "trust the operator" assumption from the live flow:
+
+| Layer | Pre-pivot | Post-pivot |
+| --- | --- | --- |
+| Game state | Server's RAM | Browser state machine |
+| Move evaluation | Server's gnubg | Player's local gnubg over AXL |
+| Coach inference | Hosted LLM (someone's API key) | Verifiable inference on 0G Compute |
+| Dice rolling | Server PRNG | `crypto.getRandomValues` (player's machine; commit-reveal in v2) |
+| Settlement | `onlyOwner recordMatch` (deployer key) | `settleWithSessionKeys` — pre-authorized state channel, anyone submits |
+| Match archive | Centralised storage | 0G Storage (content-addressed, permanent) |
+| Identity | Platform DB row | ENS subname (`<name>.chaingammon.eth`) |
+
+The win isn't any single primitive — it's that all seven layers are sponsor-protocol-native, and none of them require trusting a Chaingammon operator key.
+
+---
+
 ## Mission
 
 Your backgammon rating is not yours. When you spend years climbing the ladder on any platform, that rating lives in their database — locked behind their login wall and gone if they shut down. Switch platforms and you start at zero.
@@ -351,7 +393,7 @@ The AXL node generates a public key on first run. Copy it to the `gnubg_axl_pubk
 
 ### Mode B — local dev (fast iteration)
 
-Three terminals.
+Four terminals.
 
 ```bash
 # terminal 1: local chain

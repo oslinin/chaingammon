@@ -10,8 +10,16 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for component descriptions and data flows
 
 ### Match-flow polish
 
-- [ ] Coach narration in match page — sub-project B (calls `coach_service` `/hint` after each turn, renders the LLM's blurb under the dice).
-- [ ] Settlement story — sub-project C (two-sig settlement OR a deferred decision; design TBD; see the "two-sig vs state channel" discussion in the brainstorm log).
+- [ ] AI coach on **0G Compute** (Qwen 2.5 7B) — sub-project B. Goes well past per-turn narration:
+    - **Pre-move advice without spoilers** — discusses tradeoffs without revealing gnubg's pick.
+    - **Mistake explanation** — translates equity drops into the actual reason (over-aggressive blot, broken anchor, lost timing).
+    - **Post-game summary** — names the three biggest equity drops and the common theme.
+    - **Free-text Q&A** — players can ask the coach anything mid-match ("why didn't I move 13/8?", "what's a prime?"). Stateful conversation history kept browser-side.
+    - **Opponent-aware coaching** — coach knows the opponent's biases. For humans, reads the style profile blob on 0G Storage (KV per player). For AI agents, reads the experience overlay (iNFT `dataHashes[1]`). Advice is tailored to who's across the board.
+    - **Personality-driven AI agents** — each agent's overlay is mapped (by the LLM) to a personality paragraph that biases gnubg's move re-rank. Two same-tier agents play measurably differently and trash-talk in character.
+    - Endpoints: `POST /plan` (game start), `POST /advise` (pre-move), `POST /summary` (game end), `POST /ask` (Q&A), `POST /personality` (agent overlay → character paragraph; used internally).
+    - Wraps `@0glabs/0g-serving-broker` via a Node bridge (mirrors the existing `og-bridge` pattern); `agent/coach_service.py` shells out to it for headers + `/chat/completions` URL.
+- [ ] Settlement story — sub-project C: **session-key state channel, cooperative close**. Design chosen: MetaMask touched exactly twice (authorize session key at game start, submit tx at game end). Per-move signing uses an ephemeral in-browser keypair — no MetaMask popups during play. Contract: `settleWithSessionKeys(humanAuth, humanResult, agentId, ...)` added alongside existing `onlyOwner recordMatch`; nonce per player prevents replay. Encoding: `abi.encode` (not `encodePacked`) on both sides; raw-bytes personal-sign prefix matches `MessageHashUtils.toEthSignedMessageHash`. Files: `contracts/src/MatchRegistry.sol` (new function + nonce storage), `contracts/src/PlayerSubnameRegistrar.sol` (`setTextBatch`), `frontend/app/settlement.ts` (new), `frontend/app/match/page.tsx` (session init effect + settle button states: idle / signing / submitting / done / error).
 - [ ] Match replay page — verify post-pivot. The page renders from a 0G Storage `gameRecordHash`; confirm the game record format produced by the new browser-driven match flow round-trips correctly.
 - [ ] Audit trail display — was framed for KeeperHub (now dropped). Reframe as a settlement-receipt view (showing the on-chain tx + signed match record) or drop entirely.
 
