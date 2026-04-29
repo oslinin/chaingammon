@@ -54,7 +54,15 @@ function PointCell({ point, count, flip = false }: PointProps) {
   );
 
   return (
-    <div className="flex flex-col items-center gap-0.5" style={{ width: 24 }} data-point={point} data-count={count}>
+    <div
+      // data-testid is keyed by zero-based index so Playwright can read
+      // a point cell directly: `[data-testid="point-0"]` for point 1,
+      // `[data-testid="point-23"]` for point 24. Keeps the test
+      // selector stable across renders.
+      data-testid={`point-${point - 1}`}
+      className="flex flex-col items-center gap-0.5"
+      style={{ width: 24 }}
+    >
       {/* Point label */}
       {!flip && (
         <span className="text-[9px] font-mono text-zinc-400 dark:text-zinc-500">

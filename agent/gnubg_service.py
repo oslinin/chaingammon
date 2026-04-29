@@ -26,11 +26,24 @@ import subprocess
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from gnubg_state import MatchStateDict, snapshot_state
 
 app = FastAPI(title="Chaingammon gnubg Agent")
+
+# The browser at http://localhost:3000 calls these endpoints from a
+# different origin than this service (port 8001), so without CORS the
+# preflight OPTIONS returns 405 and the browser refuses the POST. Open
+# CORS in dev — production deployments should restrict `allow_origins`
+# to the deployed frontend host.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # ─── gnubg subprocess helpers ────────────────────────────────────────────────
 
@@ -74,16 +87,31 @@ def _run_gnubg(commands: str) -> str:
 
 
 def _snapshot(commands: str) -> MatchStateDict:
-    """Run gnubg with `commands`, append `show board` to print the
-    final state, and parse the result. gnubg's `show board` output
-    contains BOTH `Position ID:` and `Match ID:` lines, so one
-    command suffices.
+    """Run gnubg with `commands`, then `show board` twice — once with
+    rawboard on (canonical human-perspective points + bar) and once
+    with rawboard off (Position ID / Match ID strings, suppressed under
+    rawboard mode). `snapshot_state` parses both formats from the
+    combined output. Mirrors the legacy `gnubg_client._snapshot` in
+    server/app/.
 
-    @raises ValueError when gnubg's output is missing either id (e.g.
-            the engine refused the command sequence). Callers turn this
-            into HTTPException(422 or 500) as appropriate.
+    Why both: pure-Python `decode_position_id` is perspective-relative
+    and produces wrong board values mid-game (after a `set board`
+    round-trip). gnubg's rawboard output is always human-perspective
+    so we use it for the board; we still need the standard format for
+    the position_id / match_id strings to round-trip into the next
+    /apply call.
+
+    @raises ValueError when gnubg's output is missing the expected
+            lines (e.g. the engine refused the command sequence).
+            Callers turn this into HTTPException(422 or 500) as
+            appropriate.
     """
-    full = commands + "show board\n"
+    full = commands + (
+        "set output rawboard on\n"
+        "show board\n"
+        "set output rawboard off\n"
+        "show board\n"
+    )
     stdout = _run_gnubg(full)
     return snapshot_state(stdout)
 
@@ -261,6 +289,12 @@ def apply_move(req: ApplyRequest) -> MatchStateDict:
         f"set board {req.position_id}\n"
         f"set dice {d1} {d2}\n"
         f"{req.move}\n"
+        # Emit BOTH rawboard and standard `show board` so snapshot_state
+        # can pull canonical board values from rawboard AND the
+        # position_id / match_id strings from the standard output.
+        "set output rawboard on\n"
+        "show board\n"
+        "set output rawboard off\n"
         "show board\n"
     )
     stdout = _run_gnubg(commands)
