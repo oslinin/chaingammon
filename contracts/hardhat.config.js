@@ -22,6 +22,13 @@ module.exports = {
       chainId: 16602,
       accounts: process.env.DEPLOYER_PRIVATE_KEY ? [process.env.DEPLOYER_PRIVATE_KEY] : [],
     },
+    // Underscore alias — used by deploy_tournament.js and the issue spec.
+    // Reads OG_RPC_URL (falling back to RPC_URL) and DEPLOYER_PRIVATE_KEY.
+    "0g_testnet": {
+      url: process.env.OG_RPC_URL || process.env.RPC_URL || "https://evmrpc-testnet.0g.ai",
+      chainId: 16602,
+      accounts: process.env.DEPLOYER_PRIVATE_KEY ? [process.env.DEPLOYER_PRIVATE_KEY] : [],
+    },
     sepolia: {
       url: process.env.SEPOLIA_RPC_URL || "https://rpc.sepolia.org",
       chainId: 11155111,
