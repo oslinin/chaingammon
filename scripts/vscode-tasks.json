@@ -1,0 +1,93 @@
+{
+  // Drop-in for .vscode/tasks.json. Mirrors README.md "Mode B — local dev".
+  // Each task pins a dedicated terminal panel so the four panes stay
+  // side-by-side (`presentation.panel: "dedicated"`).
+  //
+  // Run via Cmd/Ctrl+Shift+P → "Tasks: Run Task" → pick one,
+  // or pick "Localhost: launch all" to start every terminal in parallel.
+  //
+  // The deploy task polls port 8545 until the hardhat node is up, so the
+  // compound task can fire everything in parallel without races.
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Localhost: hardhat node",
+      "detail": "Terminal 1 — local EVM chain on http://127.0.0.1:8545 (chainId 31337). Long-running.",
+      "type": "shell",
+      "command": "pnpm exec hardhat node",
+      "options": { "cwd": "${workspaceFolder}/contracts" },
+      "isBackground": true,
+      "presentation": {
+        "panel": "dedicated",
+        "group": "localhost",
+        "reveal": "never",
+        "focus": false,
+        "clear": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Localhost: deploy contracts",
+      "detail": "Terminal 2 — waits for the hardhat node, then deploys MatchRegistry + AgentRegistry + PlayerSubnameRegistrar. Writes addresses to contracts/deployments/localhost.json.",
+      "type": "shell",
+      "command": "bash",
+      "args": [
+        "-lc",
+        "until (echo > /dev/tcp/127.0.0.1/8545) >/dev/null 2>&1; do echo 'waiting for hardhat node on :8545...'; sleep 1; done; echo 'node is up — deploying'; pnpm exec hardhat run script/deploy.js --network localhost"
+      ],
+      "options": { "cwd": "${workspaceFolder}/contracts" },
+      "presentation": {
+        "panel": "dedicated",
+        "group": "localhost",
+        "reveal": "never",
+        "focus": false,
+        "clear": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Localhost: agent node",
+      "detail": "Terminal 3 — gnubg_service (port 8001) + coach_service (port 8002) + AXL relay. Long-running.",
+      "type": "shell",
+      "command": "./start.sh",
+      "options": { "cwd": "${workspaceFolder}/agent" },
+      "isBackground": true,
+      "presentation": {
+        "panel": "dedicated",
+        "group": "localhost",
+        "reveal": "never",
+        "focus": false,
+        "clear": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Localhost: frontend",
+      "detail": "Terminal 4 — Next.js dev server on http://localhost:3000. Long-running.",
+      "type": "shell",
+      "command": "pnpm frontend:dev",
+      "options": { "cwd": "${workspaceFolder}" },
+      "isBackground": true,
+      "presentation": {
+        "panel": "dedicated",
+        "group": "localhost",
+        "reveal": "never",
+        "focus": false,
+        "clear": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Localhost: launch all",
+      "detail": "Compound task — starts hardhat node, deploys contracts (waits for node), starts agent node, starts frontend. Each runs in its own terminal pane.",
+      "dependsOrder": "parallel",
+      "dependsOn": [
+        "Localhost: hardhat node",
+        "Localhost: deploy contracts",
+        "Localhost: agent node",
+        "Localhost: frontend"
+      ],
+      "problemMatcher": []
+    }
+  ]
+}
