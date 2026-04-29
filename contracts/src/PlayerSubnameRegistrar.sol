@@ -61,7 +61,7 @@ contract PlayerSubnameRegistrar is Ownable {
         return keccak256(abi.encodePacked(parentNode, keccak256(bytes(label))));
     }
 
-    /// @notice Mint a new subname. Owner-only in v1; v2 may open this up.
+    /// @notice Mint a new subname. Owner-only; kept for admin use (e.g. migrating records).
     function mintSubname(string calldata label, address subnameOwner_) external onlyOwner returns (bytes32 node) {
         if (bytes(label).length == 0) revert EmptyLabel();
         if (subnameOwner_ == address(0)) revert ZeroAddressOwner();
@@ -70,6 +70,19 @@ contract PlayerSubnameRegistrar is Ownable {
         _subnames[node] = Subname({subnameOwner: subnameOwner_, exists: true});
         subnameCount += 1;
         emit SubnameMinted(label, label, node, subnameOwner_);
+    }
+
+    /// @notice Open self-registration: anyone can claim a subname for their own
+    ///         wallet address. `msg.sender` becomes the subname owner — no owner
+    ///         permission required. This is the decentralised path; `mintSubname`
+    ///         (owner-only) is kept for admin operations.
+    function selfMintSubname(string calldata label) external returns (bytes32 node) {
+        if (bytes(label).length == 0) revert EmptyLabel();
+        node = subnameNode(label);
+        if (_subnames[node].exists) revert SubnameAlreadyExists();
+        _subnames[node] = Subname({subnameOwner: msg.sender, exists: true});
+        subnameCount += 1;
+        emit SubnameMinted(label, label, node, msg.sender);
     }
 
     /// @notice ENS resolver-style owner lookup by namehash.

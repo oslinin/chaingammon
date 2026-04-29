@@ -1145,3 +1145,44 @@ Tests (**contracts/test/phase_MockOgStorage.test.js**, new, 8 tests):
 - `put("0x")` reverts `"MockOgStorage: empty data"`.
 
 8 new Hardhat tests pass (45 prior + 8 new).
+
+### Phase 22: GitHub Pages static deployment — remove replay route, decentralise ENS minting, add `output: 'export'`
+
+Configures the frontend for static deployment on GitHub Pages. Next.js `output: 'export'` produces an `out/` directory any static file host can serve directly — no Node.js server required. Two remaining server dependencies are resolved: the match replay page (`/match/[matchId]`) is removed at the project owner's request, and ENS subname registration is migrated from a centralized server call to a direct wagmi `writeContract` call against the `PlayerSubnameRegistrar`. A new open `selfMintSubname` function lets any wallet register its own subname without the contract owner's signature.
+
+**[contracts/src/PlayerSubnameRegistrar.sol](contracts/src/PlayerSubnameRegistrar.sol)** (updated):
+- `selfMintSubname(string calldata label) external` — open self-registration; `msg.sender` becomes the owner; no `onlyOwner` guard. Same `EmptyLabel` + `SubnameAlreadyExists` guards as `mintSubname`. Emits `SubnameMinted` with `msg.sender`.
+- `mintSubname` (owner-only) preserved for admin use.
+- **Requires contract redeploy** to take effect on-chain: `pnpm contracts:deploy` then update `contracts/deployments/0g-testnet.json`.
+
+**[frontend/app/ProfileBadge.tsx](frontend/app/ProfileBadge.tsx)** (updated):
+- `ClaimForm` now calls `selfMintSubname` on-chain via `useWriteContract` + `useWaitForTransactionReceipt` — no HTTP call to the retired FastAPI server.
+- Inline ABI fragment `SELF_MINT_ABI` avoids requiring compiled artifacts at build time.
+- `signing` / `confirming` states shown on the Claim button; `SubnameAlreadyExists` revert parsed to show the fallback suggestion.
+
+**[frontend/next.config.ts](frontend/next.config.ts)** (updated):
+- `output: "export"` — static `out/` build instead of a Node.js server.
+- `trailingSlash: true` — GitHub Pages serves `/match/` from `match/index.html`; prevents 404 on direct navigation.
+- `images: { unoptimized: true }` — required for static export (image optimisation needs a server).
+- `basePath: process.env.BASE_PATH ?? ""` — set `BASE_PATH=/chaingammon` at build time for the GitHub Pages subdirectory URL; empty by default for local dev or a custom domain.
+
+**[frontend/next.config.js](frontend/next.config.js)** (deleted): duplicate removed; Next.js 16 prefers `next.config.ts`.
+
+**[frontend/app/match/[matchId]/page.tsx](frontend/app/match/[matchId]/page.tsx)** (deleted): replay route removed at owner's request; was the last consumer of `NEXT_PUBLIC_API_URL` / the retired server.
+
+**[frontend/public/.nojekyll](frontend/public/.nojekyll)** (new): empty file tells GitHub Pages not to run Jekyll, which would otherwise strip `_next/` asset directories.
+
+**[frontend/.env.example](frontend/.env.example)** (updated): `NEXT_PUBLIC_API_URL` removed; `BASE_PATH=` added with explanation.
+
+Note — GitHub Pages GitHub Actions workflow not included here because the GitHub App that drives Claude Code lacks `workflows` write permission. See the PR description for the exact YAML to add as `.github/workflows/deploy-pages.yml`.
+
+Tests (**[contracts/test/phase22_selfMintSubname.test.js](contracts/test/phase22_selfMintSubname.test.js)**, new, 8 tests):
+- Any wallet can self-mint a subname and becomes its owner.
+- `SubnameMinted` emitted with `msg.sender` as `subnameOwner`.
+- `subnameCount` increments correctly across multiple self-mints.
+- Duplicate label rejected (self-mint vs self-mint; self-mint vs owner-mint).
+- Empty label rejected.
+- Subname owner can update their own text record after self-mint.
+- Two wallets can each claim their own subname independently.
+
+8 new contract tests pass (prior count + 8 new).
