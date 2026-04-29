@@ -330,10 +330,20 @@ def resign(req: ResignRequest) -> MatchStateDict:
          "human forfeits." Sub-project C (two-sig settlement) will
          broaden this to either side resigning.
     """
+    # gnubg's `resign normal` + `accept` semantics: the player on roll
+    # is OFFERING to resign; the opponent ACCEPTS the offer and is the
+    # one who gains the point. So to make the HUMAN forfeit (agent
+    # wins), force the human to be on roll first via `set turn oleg`.
+    # NOTE: `set turn O` / `set turn X` are silently rejected
+    # ("Unknown player `O'") — gnubg only accepts player NAMES. The
+    # game session sets X="oleg" (human) and O="gnubg" (agent) at
+    # startup, so we use those literal names. Without explicitly
+    # setting the turn, resign+accept's outcome depends on whoever
+    # won the random opening dice roll, which made the test flaky.
     commands = (
         f"set matchid {req.match_id}\n"
         f"set board {req.position_id}\n"
-        "set turn O\n"
+        "set turn oleg\n"
         "resign normal\n"
         "accept\n"
     )

@@ -110,3 +110,59 @@ def test_snapshot_state_raises_when_rawboard_missing():
     )
     with pytest.raises(ValueError, match="rawboard"):
         snapshot_state(fake_stdout)
+
+
+def test_snapshot_state_winner_human_when_human_bore_off_15():
+    """Regression for the "Agent wins despite human bearing off 15"
+    bug: gnubg encodes match_id score from the on-roll player's
+    perspective, so after a turn flip our [p0_score, p1_score] read
+    is rotated. Rawboard's score fields (values[0], values[1]) are
+    canonical [score_X, score_O] = [human, agent]. snapshot_state must
+    use those, AND must determine winner from the canonical score (or
+    fall back to off counts at score-tie game-over).
+    """
+    # Synthesised post-game-end state: human bore off all 15, agent
+    # has 7 still on the board (8 borne off). Score: human 1, agent 0.
+    # 15-point match (so the match continues; we're testing single-
+    # game winner determination).
+    rawboard_line = (
+        "board:oleg:gnubg:3:1:0:0"  # matchlength 3, score X=1, score O=0
+        ":-3:-2:-2:0:0:0:0:0:0:0:0:0:0:0:0:0:0:0:0:0:0:0:0:0"  # 24 pts: agent's stragglers near home
+        ":0:1:0:0:0:0:1:1:1:0:1:-1:0:25:0:0:0:0:0:0:0:1"
+    )
+    fake_stdout = (
+        "Position ID: somepostgameposid\n"
+        "Match ID  : somepostgamemid\n"
+        f"{rawboard_line}\n"
+    )
+    state = snapshot_state(fake_stdout)
+    # Score is parsed from rawboard, NOT from match_id.
+    assert state["score"] == [1, 0]
+    # Human bore off 15, agent bore off 8. off field is derived.
+    assert state["off"][0] == 15
+    assert state["off"][1] == 8
+    # Game is over (one side bore off 15) and human is the winner.
+    assert state["game_over"] is True
+    assert state["winner"] == 0  # 0 = human
+
+
+def test_snapshot_state_winner_agent_when_agent_bore_off_15():
+    """Mirror of the human-wins case — agent bore off 15, human had
+    7 still on the board. Score from rawboard says agent 1, human 0;
+    winner returned is 1 (agent)."""
+    rawboard_line = (
+        "board:oleg:gnubg:3:0:1:0"  # matchlength 3, score X=0, score O=1
+        ":3:2:2:0:0:0:0:0:0:0:0:0:0:0:0:0:0:0:0:0:0:0:0:0"
+        ":0:0:0:0:0:0:1:1:1:0:1:-1:0:25:0:0:0:0:0:0:0:1"
+    )
+    fake_stdout = (
+        "Position ID: agentwinposid\n"
+        "Match ID  : agentwinmid\n"
+        f"{rawboard_line}\n"
+    )
+    state = snapshot_state(fake_stdout)
+    assert state["score"] == [0, 1]
+    assert state["off"][0] == 8
+    assert state["off"][1] == 15
+    assert state["game_over"] is True
+    assert state["winner"] == 1  # 1 = agent
