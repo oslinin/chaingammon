@@ -899,4 +899,60 @@ Also in this commit:
 - **[docs/superpowers/specs/2026-04-28-decentralized-server-design.md](docs/superpowers/specs/2026-04-28-decentralized-server-design.md)** (new) — full architectural spec
 - **[docs/superpowers/plans/2026-04-28-decentralized-server.md](docs/superpowers/plans/2026-04-28-decentralized-server.md)** (new) — 10-task implementation plan
 
-### Phase 21 onward — pending
+### Phase 17: AXL agent nodes — gnubg + coach services, match-flow endpoints, uv-managed
+
+AXL (Gensyn Agent eXchange Layer) is a P2P encrypted mesh where nodes register named services; peers reach each other via a local AXL node at localhost:9002. Two FastAPI services replace the removed FastAPI server: `gnubg_service.py` evaluates positions, picks moves, and advances state on the browser's behalf; `coach_service.py` runs flan-t5-base inference to produce coaching hints. Both services register with a local AXL node and are reachable by the browser without a centralised relay. The Python project under `agent/` is `uv`-managed.
+
+gnubg agent service (**[agent/gnubg_service.py](agent/gnubg_service.py)**, new):
+- POST /move — sets match_id + board + dice in a fresh gnubg subprocess, calls `hint`, parses ranked candidates, returns best move + top-3 list
+  - `set dice D1 D2` is required before `hint`; without it gnubg shows cube analysis instead of move candidates
+  - Returns `{"move": None, "candidates": []}` on no legal moves
+- POST /evaluate — same as /move but returns candidates without picking (used by coach_service to format the LLM prompt)
+- POST /new — starts a new match (`new match N`) and returns the opening MatchState (full position + match-state decoded)
+- POST /apply — applies a move with given dice; 422 with gnubg's error text on illegal input. The move string is sent literally (no `move` prefix, which gnubg interprets as "let the AI pick"). Sequence: `set matchid` / `set board` / `set dice` / `<move>` / `show board`
+- POST /resign — human forfeit. gnubg's `resign normal` + `accept` makes the player on roll the WINNER of the offered point (counter-intuitive: the on-roll player offers the opponent a 1-point loss; opponent accepts), so the endpoint forces the agent to be on roll first via `set turn O` so the agent always wins on forfeit
+- `_run_gnubg(commands)` spawns a hermetic gnubg subprocess with auto-behaviour disabled. **Merges stderr into stdout** (`subprocess.STDOUT`) so /apply's illegal-move detection works regardless of which stream gnubg used — gnubg writes "Illegal or unparsable move." to stderr
+- `_snapshot(commands)` runs gnubg, appends `show board`, parses the output via `gnubg_state.snapshot_state` into the unified MatchState shape
+
+gnubg state decoders (**[agent/gnubg_state.py](agent/gnubg_state.py)**, new):
+- Pure bit-unpacking decoders ported from `server/app/game_state.py`: `decode_position_id` (24 signed checker counts + bar + off) and `decode_match_id` (turn / dice / score / cube / game-over). Same human=0 / agent=1 convention applied (gnubg's raw turn bit is 0=O / 1=X — we invert)
+- `snapshot_state(stdout)` parses gnubg `show board` output into a `MatchStateDict` (the unified shape consumed by both the agent's HTTP responses and the frontend's TypeScript `MatchState`). Takes the LAST occurrence of each id since gnubg auto-prints the board on `set board` AND `show board`
+- No FastAPI, no gnubg subprocess — easy to unit-test, called from `gnubg_service.py`'s `_snapshot` helper
+
+LLM coach agent service (**[agent/coach_service.py](agent/coach_service.py)**, new):
+- POST /hint — fetches gnubg strategy docs from 0G Storage via `docs_hash`, builds a flan-t5-base prompt (context + dice + moves), returns a 1-2 sentence coaching explanation
+- `_load_model()` lazy-loads flan-t5-base (google/flan-t5-base, Apache-2.0) on first request; ~250 MB download, cached in ~/.cache/huggingface
+- `_fetch_docs(hash)` falls back to a built-in brief when the hash is empty or 0G Storage is unreachable
+
+AXL configuration (**[agent/axl-config.json](agent/axl-config.json)** + **[agent/start.sh](agent/start.sh)**, new):
+- axl-config.json registers "gnubg" (port 8001) and "coach" (port 8002) as named services on the local AXL node
+- start.sh starts both uvicorn servers via `uv run uvicorn` (so deps come from the agent's uv venv) then calls `axl start --config axl-config.json`
+
+uv migration for the agent (**[agent/pyproject.toml](agent/pyproject.toml)** + **[agent/uv.lock](agent/uv.lock)**, new):
+- Dependencies (anyio, fastapi, httpx, pytest, pytest-anyio, torch, transformers, uvicorn) ported from the original `requirements.txt`. `[tool.pytest.ini_options]` testpaths=`["tests"]` so `uv run pytest` finds the suite without arguments
+- `agent/requirements.txt` removed; `pyproject.toml` is now the source of truth
+
+gnubg docs upload script (**[scripts/upload_gnubg_docs.py](scripts/upload_gnubg_docs.py)**, new):
+- One-time script: `cd server && uv run python ../scripts/upload_gnubg_docs.py`
+- Loads `server/.env` via `python-dotenv` so OG_STORAGE_{RPC,INDEXER,PRIVATE_KEY} are visible without a manual `set -a; source` step
+- Uploads a ~1 KB gnubg strategy reference (opening, equity, bear-off, cube) to 0G Storage via the server's existing `put_blob` helper
+- Prints `GNUBG_DOCS_HASH=0x<hash>` for copying to agent/.env and frontend/.env.local
+
+Tests (**[agent/tests/](agent/tests/)**):
+- **[agent/tests/test_gnubg_service.py](agent/tests/test_gnubg_service.py)** (new, 6 tests):
+  - /move returns candidates with move + equity for the opening position + dice [3,1]
+  - /move with missing required field returns 422
+  - /new returns sane initial state (24-element board, 30 checkers total, score [0,0], match_length 3)
+  - /apply advances state for a legal opening move (position id changes, turn flips)
+  - /apply returns 422 for an illegal move (e.g. moving from an empty point)
+  - /resign ends the game with `winner=1` (agent always wins on human forfeit)
+- **[agent/tests/test_gnubg_state.py](agent/tests/test_gnubg_state.py)** (new, 4 tests):
+  - decode_position_id returns 24 signed counts + correct totals (15 checkers per side)
+  - decode_match_id parses opening match length / score / game_over from a real `new match 3` fixture
+  - snapshot_state extracts ids from gnubg-style stdout
+  - snapshot_state raises ValueError when ids are missing
+- **[agent/tests/test_coach_service.py](agent/tests/test_coach_service.py)** (new, 2 tests):
+  - /hint returns non-empty string (mocks _load_model and _generate)
+  - /hint with missing required field returns 422
+
+12 agent tests pass (0 prior + 12 new).
