@@ -1,123 +1,140 @@
-// Regression test: the match flow's `apiFetch` helper must POST every
-// game endpoint, never GET.
+// Match flow regression — drives /match?agentId=1 against mocked
+// gnubg_service endpoints and asserts a complete game can be played
+// without any request to the retired FastAPI server (port 8000).
 //
-// History: a previous version of `apiFetch` in `frontend/app/match/page.tsx`
-// defaulted to GET when no body was provided. The match endpoints
-// (/games, /games/:id/move, /games/:id/roll, /games/:id/agent-move,
-// /games/:id/finalize) are all POST-only on FastAPI, so calls without
-// a body — `/roll` and `/agent-move` — silently 405 with
-// `{"detail":"Method Not Allowed"}` and the auto-drive stalled
-// immediately after the first human Move.
-//
-// This spec drives the live-play page (`/match?agentId=1`), intercepts
-// every game fetch with `page.route`, and asserts every recorded HTTP
-// method is POST. If apiFetch ever regresses to GET on no-body calls,
-// the assertions on /roll and /agent-move fail with a clear diff.
+// Phase 26 (post-pivot): the match page calls gnubg_service on
+// localhost:8001 directly. /new on mount, /apply for every move,
+// /move + /apply for the agent's turn, /resign for forfeit.
 
 import { test, expect, type Route } from "@playwright/test";
 
-const GAME_ID = "test-game-id";
+const OPENING_POSITION_ID = "4HPwATDgc/ABMA";
+const OPENING_MATCH_ID = "cAllAAAAAAAE";
 
-// Opening position with both players visible (the Phase 24 decode_position_id
-// fix). The frontend never inspects these values for routing — it only
-// uses game.game_id and game.turn — but realistic mock data keeps the UI
-// from rendering a degenerate empty board.
-const INITIAL_STATE = {
-  game_id: GAME_ID,
-  match_id: "MAEAAAAAAAAE",
-  position_id: "4HPwATDgc/ABMA",
+// Canned MatchState fixtures. Position/match ids are realistic but the
+// browser only inspects turn / game_over / winner / dice for routing,
+// so the rest can be coarse.
+const OPENING = {
+  position_id: OPENING_POSITION_ID,
+  match_id: OPENING_MATCH_ID,
   board: [-2, 0, 0, 0, 0, 5, 0, 3, 0, 0, 0, -5, 5, 0, 0, 0, -3, 0, -5, 0, 0, 0, 0, 2],
   bar: [0, 0],
   off: [0, 0],
-  turn: 0,                   // human's turn
-  dice: [3, 1],              // dice already rolled (server auto-rolls on /games)
-  cube: 1,
-  cube_owner: -1,
-  match_length: 1,
+  turn: 0,
+  dice: null,
   score: [0, 0],
+  match_length: 3,
   game_over: false,
   winner: null,
 };
 
-const AFTER_HUMAN_MOVE = {
-  ...INITIAL_STATE,
-  turn: 1,                   // agent's turn — triggers auto-drive
-  dice: null,                // no dice yet → frontend will call /roll first
-};
-
-const AFTER_AGENT_ROLL = {
-  ...AFTER_HUMAN_MOVE,
-  dice: [5, 5],
-};
-
-const AFTER_AGENT_MOVE = {
-  ...AFTER_AGENT_ROLL,
-  turn: 0,                   // back to human
+const AFTER_HUMAN_MOVE = { ...OPENING, position_id: "humanmoved", turn: 1, dice: null };
+const AFTER_AGENT_MOVE = { ...OPENING, position_id: "agentmoved", turn: 0, dice: null };
+const GAME_OVER = {
+  ...OPENING,
+  position_id: "gameover",
+  turn: 0,
   dice: null,
+  game_over: true,
+  winner: 0,
+  score: [3, 0],
 };
 
-test("match flow POSTs every game endpoint (no GET regression)", async ({ page }) => {
-  const methods: Record<string, string[]> = {
-    create: [],
+const fulfill = (route: Route, body: unknown) =>
+  route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify(body),
+  });
+
+test("match flow walks /new → /apply → /move → /apply through to game over", async ({ page }) => {
+  const seen: Record<string, string[]> = {
+    new: [],
+    apply: [],
     move: [],
-    roll: [],
-    agentMove: [],
+    resign: [],
   };
 
-  const fulfill = (route: Route, body: unknown) =>
-    route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify(body),
-    });
+  let applyCount = 0;
 
-  // POST /games — create new game
-  await page.route("**/games", async (route) => {
-    methods.create.push(route.request().method());
-    await fulfill(route, INITIAL_STATE);
+  // POST /new — start match.
+  await page.route("**/new", async (route) => {
+    seen.new.push(route.request().method());
+    await fulfill(route, OPENING);
   });
 
-  // POST /games/<id>/move — submit human move
-  await page.route(`**/games/${GAME_ID}/move`, async (route) => {
-    methods.move.push(route.request().method());
-    await fulfill(route, AFTER_HUMAN_MOVE);
+  // POST /apply — three calls: human move, agent move, then game-over.
+  await page.route("**/apply", async (route) => {
+    seen.apply.push(route.request().method());
+    applyCount += 1;
+    if (applyCount === 1) await fulfill(route, AFTER_HUMAN_MOVE);
+    else if (applyCount === 2) await fulfill(route, AFTER_AGENT_MOVE);
+    else await fulfill(route, GAME_OVER);
   });
 
-  // POST /games/<id>/roll — agent's roll (auto-drive, no body)
-  await page.route(`**/games/${GAME_ID}/roll`, async (route) => {
-    methods.roll.push(route.request().method());
-    await fulfill(route, AFTER_AGENT_ROLL);
+  // POST /move — agent picks a move once.
+  await page.route("**/move", async (route) => {
+    seen.move.push(route.request().method());
+    await fulfill(route, { move: "13/10 6/3", candidates: [] });
   });
 
-  // POST /games/<id>/agent-move — agent's checker move (auto-drive, no body)
-  await page.route(`**/games/${GAME_ID}/agent-move`, async (route) => {
-    methods.agentMove.push(route.request().method());
-    await fulfill(route, AFTER_AGENT_MOVE);
+  // POST /resign — exercised by a separate test below; route must exist
+  // so a stray call doesn't escape and 404 to a real server.
+  await page.route("**/resign", async (route) => {
+    seen.resign.push(route.request().method());
+    await fulfill(route, GAME_OVER);
   });
 
   await page.goto("/match?agentId=1");
 
-  // Wait for the initial POST /games to land.
-  await expect.poll(() => methods.create.length, { timeout: 10_000 }).toBe(1);
+  // /new fires on mount.
+  await expect.poll(() => seen.new.length, { timeout: 10_000 }).toBe(1);
 
-  // The page should now show the human-controls row with a move input
-  // and the Move button. Submit any move notation — the mock returns a
-  // canned response regardless.
+  // Submit a human move — drives /apply, then auto-cascades agent /move + /apply.
   const moveInput = page.getByPlaceholder('e.g. "8/5 6/5" or "off"');
-  await moveInput.fill("13/10 8/5");
+  await moveInput.fill("8/5 6/5");
   await page.getByRole("button", { name: "Move" }).click();
 
-  // After submission, the auto-drive cascade should fire:
-  //   /move → state.turn=1, dice=null → /roll → /agent-move
-  // All three must be POST.
-  await expect.poll(() => methods.move.length, { timeout: 5_000 }).toBe(1);
-  await expect.poll(() => methods.roll.length, { timeout: 5_000 }).toBe(1);
-  await expect.poll(() => methods.agentMove.length, { timeout: 5_000 }).toBe(1);
+  await expect.poll(() => seen.apply.length, { timeout: 5_000 }).toBeGreaterThanOrEqual(2);
+  await expect.poll(() => seen.move.length, { timeout: 5_000 }).toBe(1);
 
-  expect(methods.create).toEqual(["POST"]);
-  expect(methods.move).toEqual(["POST"]);
-  // These two are the regression — they fire with no body, so an apiFetch
-  // that defaults to GET-on-no-body would record "GET" here and fail.
-  expect(methods.roll).toEqual(["POST"]);
-  expect(methods.agentMove).toEqual(["POST"]);
+  // Submit the next human move; this one returns game_over.
+  await moveInput.fill("24/22 24/23");
+  await page.getByRole("button", { name: "Move" }).click();
+
+  await expect(page.getByText("You win!")).toBeVisible({ timeout: 5_000 });
+
+  // Method assertions: every gnubg_service call is POST.
+  expect(seen.new).toEqual(["POST"]);
+  for (const m of seen.apply) expect(m).toBe("POST");
+  for (const m of seen.move) expect(m).toBe("POST");
+});
+
+test("forfeit posts /resign and shows the game-over banner", async ({ page }) => {
+  await page.route("**/new", async (route) => {
+    await fulfill(route, OPENING);
+  });
+  // Apply / move routes shouldn't fire in this test, but leave routes in
+  // place so a stray call doesn't escape.
+  await page.route("**/apply", async (route) => {
+    await fulfill(route, OPENING);
+  });
+  await page.route("**/move", async (route) => {
+    await fulfill(route, { move: null, candidates: [] });
+  });
+
+  let resignCalled = false;
+  await page.route("**/resign", async (route) => {
+    resignCalled = true;
+    await fulfill(route, { ...GAME_OVER, winner: 1 });
+  });
+
+  await page.goto("/match?agentId=1");
+
+  // Auto-accept the confirm dialog, then click Forfeit.
+  page.on("dialog", (d) => d.accept());
+  await page.getByRole("button", { name: "Forfeit match" }).click();
+
+  await expect(page.getByText("Agent wins.")).toBeVisible({ timeout: 5_000 });
+  expect(resignCalled).toBe(true);
 });
