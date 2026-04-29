@@ -1100,3 +1100,39 @@ Tests (**agent/tests/test_coach_service.py**, updated, +1 test):
 27 agent tests pass (17 prior + 10 new). Frontend type-checks clean (`pnpm exec tsc --noEmit`). Smoke-tested both legs of the toggle on a live coach service: `backend: "local"` request returns a hint with zero 0G markers in the log; `backend: "compute"` request attempts the 0G path and falls back to local when the wallet/env is unavailable.
 
 Live 0G Compute path (Qwen 2.5 7B at provider `0xa48f01287233509FD694a22Bf840225062E67836`) is reachable from the bridge but requires the wallet at `0xa2219C4f48bC9e6806Bce3B391aB9e23f55FEbb5` to be funded above the testnet ledger's minimum (`addLedger(0.05 OG)` reverts at the current 0.099 OG balance). Once topped up via the 0G faucet, no code changes are needed — the next `/hint` with `backend: "compute"` mints the ledger and routes to Qwen.
+
+---
+
+### Phase 21 — ENS name selection UX ✅
+
+Phase 21: ENS name chooser — auto-shown claim form, label validation, fallback suggestion
+
+The `ClaimForm` in `ProfileBadge` previously required a "Claim name" button click before the name-entry field appeared. This phase surfaces the form immediately on wallet connect (no extra click), enforces ENS label rules client- and server-side, and suggests a fallback name when the chosen name is already taken.
+
+ClaimForm (**frontend/app/ProfileBadge.tsx**, updated):
+- `ClaimForm` is now a named export so the Playwright fixture page can render it without wallet hooks.
+- `isValidLabel(s)` — returns true when `s` matches `^[a-z0-9]([a-z0-9-]*[a-z0-9])?$` and is ≤ 63 chars; mirrors the server-side `_LABEL_RE`.
+- `labelValidationMessage(s)` — returns a human-readable problem string (start/end with hyphen, bad chars, too long) or `null` when the label is valid; shown as an amber inline hint below the input.
+- `randomSuffix()` — generates a 3-digit numeric string for fallback suggestions.
+- Input auto-lowercases via `onChange` so users never need to think about casing.
+- On a 409 response or a "already taken" server message, `suggestion` state is set to `<label><suffix>`; a "Try … instead" button appears that sets the input and re-submits in one click.
+- `data-testid` attributes added to input, suffix span, Claim button, validation-error span, and suggestion button so Playwright can locate them without fragile CSS selectors.
+- `ProfileBadge` no longer has a `showClaim` state; it renders `<ClaimForm address={address} />` directly when no subname label is found.
+
+Server (**server/app/main.py**, updated):
+- `import re` added; `_LABEL_RE` pattern defined at module level.
+- `mint_subname` now lowercases the incoming label, validates length (≤ 63) and `_LABEL_RE` before touching the chain, returning HTTP 400 with a descriptive message on violation.
+- Pre-availability check: calls `ens.owner_of(node)` before minting; returns HTTP 409 `"label already taken"` when the node is already owned. This avoids a wasted on-chain transaction and gives the frontend a clean status code to branch on for the fallback UX.
+
+Test fixture (**frontend/app/test-ens-claim/page.tsx**, new):
+- Renders `ClaimForm` with a hard-coded test address so Playwright can exercise validation without a wallet or live chain.
+
+Tests (**frontend/tests/ens-name-claim.spec.ts**, new, 7 tests):
+- Claim button disabled when input is empty.
+- Input + `.chaingammon.eth` suffix + Claim button all visible.
+- Validation error shown and button disabled for labels starting with hyphen, ending with hyphen, or containing underscores.
+- Input auto-lowercases uppercase characters.
+- Claim button enabled for a valid lowercase label.
+- Claim button enabled for a label containing a hyphen.
+
+27 agent tests unchanged. Frontend type-check clean.
