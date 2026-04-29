@@ -2,7 +2,7 @@
 
 > **An open protocol for portable backgammon reputation.** Your wallet (or your AI agent) is your player profile. Your ENS subname is your portable identity. Your full match archive lives on 0G Storage, owned by you forever.
 
-Built for ETHGlobal Open Agents. Uses **ENS** for portable player identity, **0G** for agent iNFTs and the match archive, and **KeeperHub** for orchestrated, auditable settlement.
+Built for ETHGlobal Open Agents. Uses **ENS** for portable player identity, **0G** for agent iNFTs and the match archive, and **Gensyn AXL** (Agent eXchange Layer — a permissionless P2P mesh for agent-to-agent communication) for game relay, move evaluation, and the LLM coach that narrates each turn.
 
 ---
 
@@ -12,7 +12,8 @@ A decentralized, verifiable ELO rating ledger for backgammon — for humans and 
 
 - **Verifiable.** Every match settles to a MatchRegistry contract. Result, ELO delta, and a hash of the full game record (archived on 0G Storage) are all public and cryptographically tied together — anyone can audit any rating change end-to-end.
 - **Portable.** Each player's rating lives in their wallet via an ENS subname (`<name>.chaingammon.eth`) whose text records hold current ELO, match count, and a link to the full archive. Switch frontends, switch clients — reputation comes with you.
-- **Living, learning agents.** Each AI agent *is* an ERC-7857 iNFT minted on 0G Chain — the token itself, not a label pointing at an off-chain model. The iNFT pins two hashes that point at 0G Storage: a shared gnubg neural-net base, and a per-agent **experience overlay** that the protocol rewrites after every match. The iNFT learns. Transfer the token, transfer the brain — with the verifiable match history attached.
+- **Living, learning agents.** Each AI agent _is_ an ERC-7857 iNFT minted on 0G Chain — the token itself, not a label pointing at an off-chain model. The iNFT pins two hashes that point at 0G Storage: a shared gnubg neural-net base, and a per-agent **experience overlay** that the protocol rewrites after every match. The iNFT learns. Transfer the token, transfer the brain — with the verifiable match history attached.
+- **Decentralised play layer.** There is no central game server. Instead, each player runs a pair of **Gensyn AXL** agent nodes locally — a gnubg node that evaluates moves and an LLM coach node that narrates each turn. The browser talks to those local nodes over AXL (Agent eXchange Layer), a permissionless P2P mesh. Current v1 supports human-vs-agent only; human-vs-human requires peer discovery on top of AXL, which is a roadmap item.
 
 ---
 
@@ -20,7 +21,7 @@ A decentralized, verifiable ELO rating ledger for backgammon — for humans and 
 
 Your backgammon rating is not yours. When you spend years climbing the ladder on any platform, that rating lives in their database — locked behind their login wall and gone if they shut down. Switch platforms and you start at zero.
 
-Chaingammon is the open protocol that fixes this. Every player gets `<name>.chaingammon.eth` (an ENS subname) whose text records hold their ELO and a link to their full match archive on 0G Storage. AI agents are first-class players too — minted as ERC-7857 iNFTs with embedded gnubg intelligence (encrypted weights stored on 0G Storage, hash committed to the iNFT). Match settlement runs as a KeeperHub workflow that produces a verifiable audit trail.
+Chaingammon is the open protocol that fixes this. Every player gets `<name>.chaingammon.eth` (an ENS subname) whose text records hold their ELO and a link to their full match archive on 0G Storage. AI agents are first-class players too — minted as ERC-7857 iNFTs with embedded gnubg intelligence (encrypted weights stored on 0G Storage, hash committed to the iNFT). Match settlement is trustless: both players sign the result off-chain; `MatchRegistry.recordMatch(sig1, sig2)` verifies two ECDSA signatures on-chain — no trusted intermediary needed.
 
 Any front-end can read another player's ENS subname and reconstruct their full reputation: ELO, games played, playing style. Competition history becomes a public good — like DNS, but for skill.
 
@@ -30,8 +31,8 @@ Any front-end can read another player's ENS subname and reconstruct their full r
 
 1. Connect a wallet → frontend resolves (or auto-mints) your `<name>.chaingammon.eth` subname
 2. Pick an opponent — another human's subname or an AI agent (e.g. `gnubg-classic.chaingammon.eth`)
-3. Play a game — for AI opponents, gnubg's encrypted weights are pulled from 0G Storage and run server-side
-4. Game ends → KeeperHub workflow fires → match recorded on-chain, ENS text records updated for both players, full game record archived on 0G Storage, audit trail captured
+3. Play a game — move requests go from the browser to your local gnubg AXL node (no central server); the LLM coach AXL node narrates each turn in plain English
+4. Game ends → both players sign the result → `MatchRegistry.recordMatch(sig1, sig2)` verifies signatures on-chain → ENS text records updated, full game record archived on 0G Storage
 5. Any other tool can read your subname and import your full backgammon DNA
 
 ---
@@ -46,7 +47,7 @@ gnubg is a battle-tested open-source backgammon engine whose neural network has 
 
 ### Layer 2 — per-agent experience overlay (private, learned)
 
-On top of the shared gnubg base, each agent carries a small **experience overlay** — a ~50-float preference vector representing playing tendencies (opening style, cube aggressiveness, bear-off timing, risk profile). It starts at all zeros (no bias). After every match the server computes a small update from the agent's exposure to each tendency category × match outcome × a damping factor that decays as `matchCount` grows, then uploads the new overlay to 0G Storage and writes its hash to `dataHashes[1]` of the iNFT via a KeeperHub workflow step. Two iNFTs minted at the same `tier` will play identically _out of the box_, then drift into measurably different styles as their match histories diverge.
+On top of the shared gnubg base, each agent carries a small **experience overlay** — a ~50-float preference vector representing playing tendencies (opening style, cube aggressiveness, bear-off timing, risk profile). It starts at all zeros (no bias). After every match the server computes a small update from the agent's exposure to each tendency category × match outcome × a damping factor that decays as `matchCount` grows, then uploads the new overlay to 0G Storage and writes its hash to `dataHashes[1]` of the iNFT via a settlement transaction. Two iNFTs minted at the same `tier` will play identically _out of the box_, then drift into measurably different styles as their match histories diverge.
 
 ### Why not fine-tune the gnubg nets directly?
 
@@ -69,7 +70,7 @@ ELO without games is just a number. The games themselves are the substance — t
 
 ### What gets stored
 
-Each match produces a `GameRecord` envelope (defined in **server/app/game_record.py**) — JSON, sorted keys, UTF-8, deterministic so the bytes always hash the same way:
+Each match produces a `GameRecord` envelope — JSON, sorted keys, UTF-8, deterministic so the bytes always hash the same way:
 
 | Field                                 | What it carries                                                                                           |
 | ------------------------------------- | --------------------------------------------------------------------------------------------------------- |
@@ -85,15 +86,107 @@ Sized at ~2–10 KB compressed per match. A player with 1,000 lifetime matches h
 
 ### The on-chain ↔ off-chain link
 
-When a match ends, the server runs three actions in one flow:
+When a match ends, the frontend runs three actions:
 
 1. **Build** the `GameRecord` from the final state and the move history captured during play.
 2. **Upload** the JSON bytes to 0G Storage. The indexer returns a 32-byte Merkle `rootHash` — a content-addressed identifier that names this exact archive.
-3. **Record on-chain.** The server calls `MatchRegistry.recordMatch(...)` with that `rootHash` as the `gameRecordHash` field. The `MatchInfo` struct now permanently links match metadata to the archive.
+3. **Record on-chain.** Both players sign `keccak256(winner, loser, winner, gameRecordHash)` off-chain; the frontend calls `MatchRegistry.recordMatch(sig1, sig2, ...)` which verifies both ECDSA signatures. The `MatchInfo` struct permanently links match metadata to the archive.
 
 Anyone can later resolve a match by id, read `MatchInfo.gameRecordHash`, fetch the bytes from 0G Storage, and replay the game move-by-move. No login, no API key, no platform — the archive is content-addressed and replicated across 0G's network.
 
-In v1 the server signs `recordMatch` directly via web3.py. In Phase 17/18 the same flow becomes a KeeperHub workflow with retries, gas optimization, and a verifiable audit trail.
+---
+
+## Gensyn AXL — the Play Layer
+
+Pre-pivot, all game logic ran on a central FastAPI server: the browser sent moves to it, it ran gnubg, it rolled dice, it signed settlement transactions. That server was a single point of trust and failure.
+
+Post-pivot, there is no central server. The browser talks to **local AXL agent nodes** over the Gensyn AXL (Agent eXchange Layer) — a permissionless, encrypted P2P mesh. Each player runs the nodes themselves; the mesh routes traffic between them without a coordinator.
+
+### The two agent nodes
+
+Each player's local stack exposes two services through AXL:
+
+| Node                                       | Port | What it does                                                                                                                                               |
+| ------------------------------------------ | ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **gnubg agent** (`agent/gnubg_service.py`) | 8001 | Wraps the gnubg subprocess via its External Player interface. Accepts a `position_id` + dice and returns the best legal move and equity-ranked candidates. |
+| **LLM coach** (`agent/coach_service.py`)   | 8002 | Narrates each turn in plain English. Uses flan-t5-base with gnubg strategy docs (uploaded to 0G Storage) as RAG context.                                   |
+
+AXL (`agent/axl-config.json`) proxies the browser's HTTP requests to whichever service is registered under those names, and routes requests destined for the opponent's node over the encrypted Yggdrasil mesh.
+
+### Why AXL and not a server?
+
+A central server is a trust assumption: it can cheat on dice, misreport moves, or go down. AXL removes it from the critical path entirely. Both nodes run locally — the player can audit them. Settlement is still on-chain (two ECDSA signatures on `MatchRegistry`) so the result is verifiable even if one player disputes it.
+
+### Current limitations
+
+v1 supports **human-vs-agent** only. The agent's gnubg node evaluates the AI's moves; the human moves in the browser. Human-vs-human would require a peer discovery / matchmaking layer so two players' AXL nodes can find each other — this is a roadmap item (the transport already works; the discovery doesn't exist yet).
+
+### Match flow — browser-driven game state
+
+In the post-pivot architecture the browser holds the entire game state. There is no server-side game store. The browser keeps a single `MatchState` object and round-trips every move through `gnubg_service` for validation and state advancement.
+
+**`MatchState` shape:**
+
+```ts
+interface MatchState {
+  position_id: string;     // gnubg base64 board
+  match_id: string;        // gnubg base64 turn / score / cube
+  board: number[];         // 24 signed checker counts (decoded for rendering)
+  bar: [number, number];
+  off: [number, number];
+  turn: 0 | 1;             // 0 = human, 1 = agent
+  dice: [number, number] | null;
+  score: [number, number];
+  match_length: number;
+  game_over: boolean;
+  winner: 0 | 1 | null;
+}
+```
+
+**`gnubg_service` endpoints** (port 8001, served via AXL):
+
+| Endpoint     | Request                                      | Response                                                              |
+| ------------ | -------------------------------------------- | --------------------------------------------------------------------- |
+| `POST /new`  | `{match_length}`                             | full `MatchState` for the starting position                           |
+| `POST /apply`| `{position_id, match_id, dice, move}`        | full `MatchState` after applying the move, or `422` if move is illegal |
+| `POST /resign` | `{position_id, match_id}`                  | full `MatchState` with `game_over=true` and current side as the loser  |
+| `POST /move` | `{position_id, match_id, dice}`              | `{move, candidates}` — gnubg picks the best legal move (no state change) |
+| `POST /evaluate` | `{position_id, match_id, dice}`          | `{candidates}` — ranked moves only, no pick (used by `coach_service`)  |
+
+`/new`, `/apply`, and `/resign` all return the same `MatchState` shape so the browser has a single decoder. `/move` and `/evaluate` are unchanged from the original design and don't touch state.
+
+**Browser flow** (per turn, human-vs-agent):
+
+```
+on mount
+  ├─ POST /new {match_length}                 → full state
+  ├─ if turn === 0: roll dice client-side     (state.dice = [d1, d2])
+  └─ if turn === 1: trigger agent loop
+
+human turn (turn === 0, dice set)
+  ├─ render board + dice + move input
+  ├─ user submits move string ("8/5 6/5")
+  ├─ POST /apply {position_id, match_id, dice, move}
+  │    ├─ on 422: surface the error, leave state unchanged
+  │    └─ on 200: replace state
+  └─ if not game_over and new turn === 1: trigger agent loop
+
+agent turn (turn === 1)
+  ├─ roll dice client-side                    (state.dice = [d1, d2])
+  ├─ POST /move {position_id, match_id, dice} → best move string
+  ├─ POST /apply {position_id, match_id, dice, move: best}
+  ├─ replace state
+  └─ if not game_over and new turn === 0: roll dice for human, hand control back
+
+forfeit
+  └─ POST /resign → game_over response
+```
+
+Dice are rolled client-side using `crypto.getRandomValues`. For v1 (human-vs-agent) the human is rolling for themselves; trust is local. Human-vs-human commit-reveal is a roadmap item.
+
+**Why this shape?** gnubg already encodes every backgammon rule (move legality, dice consumption, hits, bear-off, game-over) inside `submit_move`. Re-implementing those rules in TypeScript would either duplicate years of work or quietly diverge from the engine the agent uses. Putting `/apply` on the agent node keeps gnubg authoritative on rules while letting the browser own state.
+
+**Out of scope at this layer:** coach narration (delivered by `coach_service`), two-signature on-chain settlement (driven by the wallet from the post-game banner), cube doubling, and human-vs-human peer discovery.
 
 ---
 
@@ -102,33 +195,41 @@ In v1 the server signs `recordMatch` directly via web3.py. In Phase 17/18 the sa
 ```
                        ┌──────────────────────────┐
                        │    Frontend (Next.js)    │
-                       │    matchmaking, profile, │
-                       │    replay, audit trail   │
+                       │  matchmaking, profile,   │
+                       │  replay, live game,      │
+                       │  LLM coach panel         │
                        └────────────┬─────────────┘
-                                    │
-            ┌───────────────────────┼───────────────────────┐
-            ▼                       ▼                       ▼
-   ┌───────────────┐       ┌───────────────┐       ┌───────────────┐
-   │  Game Server  │       │  ENS resolver │       │  0G Storage   │
-   │  (FastAPI)    │       │  text records │       │  (read game   │
-   │  + gnubg      │       │  per player   │       │   records and │
-   │               │       │               │       │   styles)     │
-   └──────┬────────┘       └───────────────┘       └───────────────┘
-          │ on game-end
-          ▼
-   ┌─────────────────────────────────────┐
-   │  KeeperHub workflow                 │
-   │   recordMatch + ENS texts +         │
-   │   gameRecordHash + audit            │
-   └────┬────────────────┬───────────────┘
-        ▼                ▼
- ┌──────────────┐ ┌──────────────────────────────┐
- │   0G Chain   │ │       0G Storage             │
- │ AgentRegistry│ │  Log: per-match game records │
- │ MatchRegistry│ │  Log: per-match audit data   │
- │ EloMath      │ │  KV:  per-player styles      │
- │ ENS registrar│ │  Blob: encrypted gnubg nets  │
- └──────────────┘ └──────────────────────────────┘
+                                    │ localhost:9002
+                                    ▼
+                       ┌──────────────────────────┐
+                       │   AXL node (local)       │
+                       │  Gensyn Agent eXchange   │
+                       │  Layer — P2P encrypted   │
+                       │  mesh on Yggdrasil       │
+                       └────────┬─────────────────┘
+                                │ AXL mesh
+              ┌─────────────────┼─────────────────┐
+              ▼                 ▼                  ▼
+   ┌─────────────────┐  ┌──────────────┐  ┌──────────────┐
+   │  gnubg agent    │  │ coach agent  │  │  opponent    │
+   │  (agent/)       │  │  (agent/)    │  │  AXL node    │
+   │  FastAPI+gnubg  │  │  flan-t5-    │  │  (H vs H)    │
+   │  POST /move     │  │  base LLM    │  │              │
+   └────────┬────────┘  └──────────────┘  └──────────────┘
+            │ browser signs result
+            ▼
+   ┌──────────────────────────────────────────────┐
+   │  MatchRegistry.recordMatch(sig1, sig2)       │
+   │  + PlayerSubnameRegistrar.setTextBatch x2    │
+   └────┬──────────────────┬──────────────────────┘
+        ▼                  ▼
+ ┌──────────────┐  ┌──────────────────────────────┐
+ │   0G Chain   │  │       0G Storage             │
+ │ AgentRegistry│  │  Log: per-match game records │
+ │ MatchRegistry│  │  Blob: encrypted gnubg nets  │
+ │ EloMath      │  │  Blob: gnubg strategy docs   │
+ │ ENS registrar│  │        (coach RAG context)   │
+ └──────────────┘  └──────────────────────────────┘
 ```
 
 ---
@@ -139,23 +240,23 @@ In v1 the server signs `recordMatch` directly via web3.py. In Phase 17/18 the sa
 | --------------------- | -------------------------------------------------------------- |
 | Frontend              | Next.js 16, React 19, TypeScript, Tailwind CSS 4               |
 | Wallet / chain        | wagmi 3, viem 2, @tanstack/react-query 5                       |
-| Game server           | Python 3.12, FastAPI, uvicorn, pydantic, web3.py               |
+| AXL agent nodes       | Python 3.12, FastAPI, uvicorn, flan-t5-base (coach LLM)        |
+| P2P relay             | Gensyn AXL (Agent eXchange Layer) — Yggdrasil mesh             |
 | Backgammon engine     | GNU Backgammon (gnubg) via External Player interface           |
 | Smart contracts       | Solidity 0.8.24, Hardhat 2, evmVersion cancun, OpenZeppelin v5 |
 | Blockchain            | 0G Chain testnet (EVM, chainId 16602)                          |
 | Identity              | ENS subnames + text records                                    |
 | Decentralized storage | 0G Storage (Log + KV + Blob)                                   |
-| Tx execution + audit  | KeeperHub workflows                                            |
 | Package management    | uv (Python), pnpm workspace (Node)                             |
 
 ### Where each protocol fits
 
-| Protocol       | Role                                                                                                                                                                           | Where it lives                                                                        |
-| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------- |
-| **ENS**        | Portable player identity. `<name>.chaingammon.eth` subnames per player; text records (`elo`, `match_count`, `last_match_id`, `style_uri`, `archive_uri`) carry the reputation. | `contracts/src/PlayerSubnameRegistrar.sol`, `server/app/ens_client.py`                |
-| **0G Chain**   | Hosts AgentRegistry, MatchRegistry, EloMath, and the subname registrar.                                                                                                        | `contracts/src/`, `contracts/deployments/0g-testnet.json`                             |
-| **0G Storage** | Per-match game record archive (Log); per-player style profile (KV); per-agent encrypted gnubg weights (Blob); audit trail mirror so it's publicly viewable.                    | `server/app/og_storage_client.py`, `server/app/game_record.py`, `server/app/style.py` |
-| **KeeperHub**  | Match settlement is a multi-step orchestration (recordMatch + ENS text record updates + agent overlay refresh). KeeperHub's workflow primitive handles retry, gas, and audit.  | `server/app/keeperhub_client.py`, `docs/keeperhub-feedback.md`                        |
+| Protocol       | Role                                                                                                                                                                           | Where it lives                                            |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------- |
+| **ENS**        | Portable player identity. `<name>.chaingammon.eth` subnames per player; text records (`elo`, `match_count`, `last_match_id`, `style_uri`, `archive_uri`) carry the reputation. | `contracts/src/PlayerSubnameRegistrar.sol`                |
+| **0G Chain**   | Hosts AgentRegistry, MatchRegistry, EloMath, and the subname registrar.                                                                                                        | `contracts/src/`, `contracts/deployments/0g-testnet.json` |
+| **0G Storage** | Per-match game record archive (Log); per-player style profile (KV); per-agent encrypted gnubg weights (Blob); gnubg strategy docs blob (coach RAG context).                    | `agent/coach_service.py`, `scripts/upload_gnubg_docs.py`  |
+| **Gensyn AXL** | P2P encrypted mesh (Yggdrasil) that routes browser requests to the local gnubg and coach agent services without a central server.                                              | `agent/axl-config.json`, `agent/start.sh`                 |
 
 ### Claude Skills Used
 
@@ -172,14 +273,14 @@ This project was built with [Claude Code](https://claude.ai/code).
 
 ### Prerequisites
 
-- Python 3.12+, [uv](https://github.com/astral-sh/uv)
+- Python 3.12+, [uv](https://github.com/astral-sh/uv) or plain `pip`
 - Node 20+, [pnpm](https://pnpm.io)
-- `gnubg` — `sudo apt install gnubg`
-- KeeperHub CLI — `brew install keeperhub/tap/kh` (only needed Phase 16+)
+- `gnubg` — `sudo apt install gnubg` (Ubuntu/Debian) or `brew install gnubg` (macOS)
+- Gensyn AXL binary — `axl` must be in PATH (see Gensyn docs for install)
 
 ### Mental model
 
-Contracts live on a chain and are deployed once. Two long-running processes: **game server** (FastAPI + gnubg) and **frontend** (Next.js). KeeperHub workflows run on KeeperHub's infrastructure and are triggered by the server.
+Contracts live on a chain and are deployed once. Two long-running local processes: **AXL agent node** (gnubg + coach FastAPI services + AXL relay) and **frontend** (Next.js). Settlement is trustless — both player wallets sign the result in-browser; no backend server needed.
 
 You can run against either chain:
 
@@ -192,15 +293,23 @@ You can run against either chain:
 
 ```bash
 git clone <repo> && cd chaingammon
-pnpm install                # installs frontend + contracts (workspace)
-cd server && uv sync && cd ..
+pnpm install                    # installs frontend + contracts (workspace)
+cd agent && uv sync && cd ..    # installs agent Python deps via uv (pyproject.toml)
+cd server && uv sync && cd ..   # installs server Python deps via uv
 
-cp server/.env.example server/.env
 cp contracts/.env.example contracts/.env
 cp frontend/.env.example frontend/.env.local
 ```
 
 Add `DEPLOYER_PRIVATE_KEY=0x...` to `contracts/.env`. Fund the wallet with testnet 0G tokens via https://build.0g.ai. The `.env` files are gitignored.
+
+**One-time: upload gnubg strategy docs to 0G Storage** (needed for the coach agent's RAG context):
+
+```bash
+cd server && uv run python ../scripts/upload_gnubg_docs.py
+# prints: GNUBG_DOCS_HASH=0x<hash>
+# add GNUBG_DOCS_HASH to agent/.env and frontend/.env.local
+```
 
 ### Mode A — testnet (real demo)
 
@@ -216,36 +325,29 @@ It runs:
 
 1. `pnpm contracts:test` — fail fast if any contract test is red.
 2. `pnpm contracts:deploy` — deploy MatchRegistry + AgentRegistry to 0G testnet, mint seed agent #1, write addresses to **contracts/deployments/0g-testnet.json**.
-3. `cd server && uv run python scripts/upload_base_weights.py` — encrypt **/usr/lib/gnubg/gnubg.wd**, upload to 0G Storage, pin the resulting Merkle rootHash on AgentRegistry via `setBaseWeightsHash`. (The bootstrap reads the freshly-deployed AgentRegistry address from the deployments JSON, so it doesn't matter if **server/.env** is still pointing at an old deploy.)
-4. `pnpm contracts:verify` — verify both contracts on chainscan-galileo.
+3. `pnpm contracts:verify` — verify both contracts on chainscan-galileo.
 
-When the script finishes it prints the new addresses; copy them into **server/.env** and **frontend/.env.local** (the script doesn't touch those files because they're user state).
+When the script finishes it prints the new addresses; copy them into **frontend/.env.local**.
 
-Prereqs:
-
-- gnubg installed locally (`sudo apt install gnubg` on Ubuntu/Debian, `brew install gnubg` on macOS). The bootstrap reads `/usr/lib/gnubg/gnubg.wd` to encrypt and upload, and the running server shells out to the gnubg binary at inference time. There's no separate download URL for just the weights file — gnubg only ships them inside its own package.
-- **server/.env** (gitignored) populated with:
-  - `DEPLOYER_PRIVATE_KEY` (mirrored from **contracts/.env**)
-  - `OG_STORAGE_PRIVATE_KEY` (same wallet is fine on testnet)
-  - `BASE_WEIGHTS_ENCRYPTION_KEY` — generate once with `cd server && uv run python scripts/upload_base_weights.py --print-fresh-key`
-
-#### Then run server + frontend
+#### Then run agent node + frontend
 
 Two terminals.
 
 ```bash
-# terminal 1: game server
-cd server && uv run uvicorn app.main:app --reload
+# terminal 1: AXL agent node (gnubg + coach + AXL relay)
+cd agent && ./start.sh
 
 # terminal 2: frontend
 pnpm frontend:dev
 ```
 
-#### Sub-flows (when you don't need the full bootstrap)
+The AXL node generates a public key on first run. Copy it to the `gnubg_axl_pubkey` ENS text record on `chaingammon.eth` so the frontend can discover the node without a server.
 
-- **Just redeploy contracts (re-use the existing weights blob):** `pnpm contracts:deploy`. The default `INITIAL_BASE_WEIGHTS_HASH` baked into **contracts/script/deploy.js** points at the project's pinned blob, so freshly minted agents inherit it.
-- **Just re-upload weights (without redeploying):** `cd server && uv run python scripts/upload_base_weights.py`. Idempotent — replaces the on-chain hash. Useful if you change the source weights file or rotate `BASE_WEIGHTS_ENCRYPTION_KEY`.
-- **Just verify after a deploy:** `pnpm contracts:verify`.
+#### Sub-flows
+
+- **Just redeploy contracts:** `pnpm contracts:deploy`
+- **Just verify after a deploy:** `pnpm contracts:verify`
+- **Run agent tests:** `cd agent && uv run pytest tests/ -v`
 
 ### Mode B — local dev (fast iteration)
 
@@ -255,23 +357,37 @@ Three terminals.
 # terminal 1: local chain
 cd contracts && pnpm exec hardhat node
 
-# terminal 2: deploy locally + run server
-cd contracts && pnpm exec hardhat run script/deploy.js --network localhost
-# copy resulting addresses from contracts/deployments/localhost.json
-# into server/.env and frontend/.env.local
-cd server && uv run uvicorn app.main:app --reload
+# terminal 2: deploy locally
+cd contracts
+pnpm exec hardhat run script/deploy.js --network localhost
+# copy resulting addresses from contracts/deployments/localhost.json into frontend/.env.local
 
-# terminal 3: frontend
+# terminal 3: AXL agent node
+cd agent
+./start.sh
+
+# terminal 4: frontend
 pnpm frontend:dev
 ```
+
+Upload gnubg strategy docs to 0G Storage (one-time — sets the coach RAG context blob):
+
+```bash
+cd server && uv run python ../scripts/upload_gnubg_docs.py
+```
+
+Run from `server/` because the script imports `app.og_storage_client` from the server's `uv`-managed venv. Copy the printed `GNUBG_DOCS_HASH` into `agent/.env` and `frontend/.env.local`.
+
+---
 
 ### Test commands
 
 ```bash
-pnpm test                  # all tests: server (pytest) + contracts (hardhat) + frontend (build)
+pnpm test                  # all tests: agent (pytest) + contracts (hardhat) + frontend (build)
 pnpm contracts:test        # hardhat tests
-pnpm server:test           # pytest scaffold + phase tests
+pnpm agent:test            # pytest — gnubg + coach service tests
 pnpm frontend:test         # next build (production correctness check)
+cd agent && uv run pytest tests/ -v      # same as agent:test, run directly
 ```
 
 ---
@@ -293,7 +409,7 @@ After deploy, contract addresses live in `contracts/deployments/0g-testnet.json`
 
 For the full version: see [ROADMAP.md](ROADMAP.md). Architecture overview: [ARCHITECTURE.md](ARCHITECTURE.md).
 
-- **v1 (this submission):** Human-vs-human and human-vs-agent gameplay; on-chain ELO; ENS subnames as identity; agent iNFTs with encrypted gnubg weights; full match archive on 0G Storage; KeeperHub-driven settlement with audit trail
+- **v1 (this submission):** Human-vs-human and human-vs-agent gameplay; on-chain ELO; ENS subnames as identity; agent iNFTs with encrypted gnubg weights; full match archive on 0G Storage; two-signature trustless settlement via Gensyn AXL
 - **v2:** Commit-reveal dice (trustless randomness); per-player anti-cheat heuristics; agent style overlay that learns from each match; subnames moved to L2 ENS for cheap onboarding
 - **v3:** Agent-vs-agent autonomous tournaments; ZK proofs of agent inference (zkML); 0G Compute for verifiable inference; betting markets; ELO derivative tokens
 - **v4:** Open agent marketplace — bring your own engine, stake your iNFT
@@ -323,11 +439,11 @@ For the full version: see [ROADMAP.md](ROADMAP.md). Architecture overview: [ARCH
 - [ ] Match game records visible on 0G Storage
 - [ ] Write-up: which 0G features used (Chain, Storage)
 
-**KeeperHub:**
+**Gensyn AXL:**
 
-- [ ] Working KeeperHub workflow handling settlement
-- [ ] `docs/keeperhub-feedback.md` with ≥5 specific actionable items
-- [ ] Write-up: workflow architecture and what the audit trail captures
+- [ ] AXL agent node running gnubg + coach services
+- [ ] Two-signature settlement: both wallets sign result off-chain, `MatchRegistry.recordMatch(sig1, sig2)` verifies on-chain
+- [ ] Write-up: AXL mesh architecture and trustless settlement flow
 
 **Main track:**
 

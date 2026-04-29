@@ -89,26 +89,29 @@ pnpm contracts:deploy-and-verify   # both in one shot
 pnpm frontend:dev                  # Next.js dev server
 pnpm frontend:build      # production build
 pnpm frontend:test       # frontend build check
-pnpm server:test         # run pytest suite
-pnpm test                # run all tests (server + contracts + frontend)
+pnpm agent:test          # run pytest suite (gnubg + coach service tests)
+pnpm test                # run all tests (agent + contracts + frontend)
 ```
 
 Or run sub-project commands directly from within each directory:
 
-### server/ (Python 3.12, uv)
+### agent/ (Python 3.12, uv)
 
 ```bash
-# Run dev server
-uv run uvicorn app.main:app --reload
+# Start gnubg agent node (port 8001)
+uv run uvicorn gnubg_service:app --port 8001
+
+# Start coach agent node (port 8002)
+uv run uvicorn coach_service:app --port 8002
+
+# Start both via AXL (recommended)
+bash start.sh
 
 # Run all tests
 uv run pytest
 
 # Run a single test file
-uv run pytest tests/test_phase{N}_*.py -v
-
-# Run a single test by name
-uv run pytest tests/test_phase{N}_*.py::test_specific -v
+uv run pytest tests/test_gnubg_service.py -v
 
 # Add a dependency
 uv add <package>
@@ -143,15 +146,12 @@ pnpm test:e2e     # Playwright suite — required before any frontend commit
 
 See `## Frontend Policies` below for the three rules every frontend change must follow (chain registry, Playwright, no Turbopack).
 
-### KeeperHub CLI (`kh`)
+### AXL (Gensyn Agent eXchange Layer)
 
 ```bash
-brew install keeperhub/tap/kh    # install
-kh auth login                    # browser OAuth (or set KH_API_KEY)
-kh execute contract-call ...     # one-shot tx submission
-kh run status <run-id> --json    # workflow run status
-kh run logs <run-id> --json      # workflow logs
-kh billing usage                 # check free-tier limits
+axl start --config agent/axl-config.json   # start the local AXL node
+axl peers                                   # list connected peers
+axl status                                  # node health + registered services
 ```
 
 ## Key Files
@@ -161,21 +161,12 @@ kh billing usage                 # check free-tier limits
 | `plan.md` | Incremental phased build plan — authoritative scope |
 | `log.md` | Strategic decision log + per-phase progress |
 | `MISSION.md` | Product vision and principles |
-| `server/app/gnubg_client.py` | gnubg subprocess wrapper (External Player protocol) |
-| `server/app/game_state.py` | Typed GameState model |
-| `server/app/game_record.py` | Match game-record serializer (uploaded to 0G Storage) |
-| `server/app/chain_client.py` | web3.py wrapper for on-chain reads |
-| `server/app/og_storage_client.py` | Python wrapper around the og-bridge Node CLI for 0G Storage put/get |
-| `server/app/game_record.py` | GameRecord pydantic schema + serializer for 0G Storage uploads (Phase 7) |
-| `server/app/chain_client.py` | web3.py client for MatchRegistry + AgentRegistry — recordMatch, setBaseWeightsHash, and read-only views; embedded minimal ABIs |
-| `server/app/weights.py` | AES-256-GCM helper for encrypting gnubg's base weights file (Phase 8) |
-| `server/scripts/upload_base_weights.py` | One-time script: encrypt **/usr/lib/gnubg/gnubg.wd**, upload to 0G Storage, pin the hash on AgentRegistry |
-| `server/app/agent_overlay.py` | Per-agent experience overlay (Phase 9): `Overlay` dataclass, `classify_move`, `apply_overlay`, `update_overlay`. Uploaded to 0G Storage; hash committed to `dataHashes[1]` on the agent iNFT. |
-| `contracts/src/PlayerSubnameRegistrar.sol` | ENS-shaped subname registrar (Phase 10). Issues `<label>.chaingammon.eth` subnames with text records (`elo`, `match_count`, `last_match_id`, `style_uri`, `archive_uri`). v1 is self-contained on 0G testnet; v2 mirrors to real ENS on Sepolia/Linea. |
-| `og-bridge/src/upload.mjs` | Node CLI: bytes via stdin → 0G Storage upload → JSON {rootHash, txHash} on stdout |
-| `og-bridge/src/download.mjs` | Node CLI: rootHash arg → bytes on stdout via 0G Storage |
-| `server/app/ens_client.py` | web3.py wrapper for `PlayerSubnameRegistrar` (Phase 11): `subname_node` (client-side namehash), `set_text`, `mint_subname`, `text`, `owner_of`. `/finalize` calls `set_text` with `elo` + `last_match_id` for each labelled side. |
-| `server/app/keeperhub_client.py` | KeeperHub workflow trigger + audit pull |
+| `agent/gnubg_service.py` | AXL agent node: gnubg move evaluation via External Player interface |
+| `agent/coach_service.py` | AXL agent node: flan-t5-base LLM coaching hints with 0G Storage RAG context |
+| `agent/axl-config.json` | AXL node config: service registrations for gnubg (8001) and coach (8002) |
+| `agent/start.sh` | Start script: launches AXL node + both agent services |
+| `scripts/upload_gnubg_docs.py` | One-time script: upload gnubg strategy docs to 0G Storage for coach RAG |
+| `contracts/src/PlayerSubnameRegistrar.sol` | ENS-shaped subname registrar. Issues `<label>.chaingammon.eth` subnames with text records (`elo`, `match_count`, `last_match_id`, `style_uri`, `archive_uri`). |
 | `contracts/src/EloMath.sol` | Fixed-point ELO formula — test extensively |
 | `contracts/src/MatchRegistry.sol` | Records matches with `gameRecordHash`, updates ELO |
 | `contracts/src/AgentRegistry.sol` | ERC-7857 iNFT registry (or ERC-721 fallback) |
