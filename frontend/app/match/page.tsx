@@ -175,6 +175,10 @@ function MatchInner() {
   const [loading, setLoading] = useState(false);
   const [moveInput, setMoveInput] = useState("");
 
+  // Phase 27: click-to-move state.
+  // null = no checker selected, 1-24 = board point, 25 = bar (player 0).
+  const [selectedSource, setSelectedSource] = useState<number | null>(null);
+
   // Coach state — best-effort; failures leave hint null.
   const [coachHint, setCoachHint] = useState<string | null>(null);
   const [coachLoading, setCoachLoading] = useState(false);
@@ -312,10 +316,59 @@ function MatchInner() {
 
   // ── Human actions ──────────────────────────────────────────────────────
 
+  // Clear click selection whenever it is no longer the human's turn.
+  useEffect(() => {
+    if (!game || game.turn !== 0) setSelectedSource(null);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [game?.turn]);
+
+  /**
+   * Handle a click on a board point (Phase 27 click-to-move).
+   *
+   * First click: selects the point as the move source (only valid if the point
+   * has a player-0 checker and player-0 has no checkers on the bar).
+   * Second click on the same point: deselects.
+   * Second click on a different point: appends "from/to" to the move input and
+   * clears the selection so the user can start the next checker move.
+   */
+  const handlePointClick = (point: number) => {
+    // needsMove = !!game.dice && game.turn === 0
+    if (!game || !game.dice || game.turn !== 0) return;
+
+    if (selectedSource === null) {
+      // Player 0 must clear the bar before moving board checkers.
+      if (game.bar[0] > 0) return;
+      if (game.board[point - 1] > 0) setSelectedSource(point);
+    } else if (selectedSource === point) {
+      setSelectedSource(null); // deselect
+    } else {
+      const from = selectedSource === 25 ? "bar" : String(selectedSource);
+      const seg = `${from}/${point}`;
+      setMoveInput((prev) => (prev.trim() ? `${prev.trim()} ${seg}` : seg));
+      setSelectedSource(null);
+    }
+  };
+
+  /** Click the bar zone to select it as the move source (enter from bar). */
+  const handleBarClick = () => {
+    if (!game || !game.dice || game.turn !== 0 || game.bar[0] === 0) return;
+    setSelectedSource(25);
+  };
+
+  /** Click the bear-off zone when a source is already selected. */
+  const handleOffClick = () => {
+    if (!game || !game.dice || game.turn !== 0 || selectedSource === null) return;
+    const from = selectedSource === 25 ? "bar" : String(selectedSource);
+    const seg = `${from}/off`;
+    setMoveInput((prev) => (prev.trim() ? `${prev.trim()} ${seg}` : seg));
+    setSelectedSource(null);
+  };
+
   const doMove = async () => {
     if (!game || !moveInput.trim() || !game.dice) return;
     setLoading(true);
     setError(null);
+    setSelectedSource(null);
     try {
       const next = await gnubgPost<MatchState>("/apply", {
         position_id: game.position_id,
@@ -452,6 +505,10 @@ function MatchInner() {
           bar={game.bar}
           off={game.off}
           turn={game.turn}
+          onPointClick={needsMove ? handlePointClick : undefined}
+          onBarClick={needsMove ? handleBarClick : undefined}
+          onOffClick={needsMove && selectedSource !== null ? handleOffClick : undefined}
+          selectedPoint={selectedSource}
         />
 
         {game.dice && (
@@ -471,6 +528,14 @@ function MatchInner() {
 
         {!game.game_over && isHumanTurn && needsMove && (
           <div className="flex flex-col gap-3">
+            {/* Click-to-move instruction */}
+            <p className="text-xs text-zinc-500 dark:text-zinc-400">
+              <span className="font-medium text-zinc-700 dark:text-zinc-300">Click</span>{" "}
+              a blue checker to select it (amber highlight), then click a destination
+              point. Repeat for each checker. Use the{" "}
+              <span className="font-medium text-zinc-700 dark:text-zinc-300">Bear off →</span>{" "}
+              button when bearing off. Or type the notation directly below.
+            </p>
             <div className="flex gap-2">
               <input
                 value={moveInput}
@@ -479,6 +544,19 @@ function MatchInner() {
                 placeholder='e.g. "8/5 6/5" or "off"'
                 className="flex-1 rounded-md border border-zinc-300 bg-white px-3 py-2 font-mono text-sm text-zinc-900 placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50"
               />
+              {/* Reset clears both the typed/built notation and any click selection */}
+              {(moveInput.trim() || selectedSource !== null) && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMoveInput("");
+                    setSelectedSource(null);
+                  }}
+                  className="rounded-md border border-zinc-300 px-3 py-2 text-sm text-zinc-500 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800"
+                >
+                  Reset
+                </button>
+              )}
               <button
                 onClick={doMove}
                 disabled={loading || !moveInput.trim()}
@@ -487,11 +565,6 @@ function MatchInner() {
                 {loading ? "…" : "Move"}
               </button>
             </div>
-            <p className="text-xs text-zinc-400 dark:text-zinc-500">
-              Notation: <code className="font-mono">from/to</code> per checker,
-              space-separated. Bar: <code className="font-mono">bar/N</code>.
-              Bear-off: <code className="font-mono">N/off</code>.
-            </p>
           </div>
         )}
 
