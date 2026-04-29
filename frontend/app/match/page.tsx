@@ -1,74 +1,90 @@
-// Phase 14: match flow page — start, roll, move, end.
+// Phase 26: match flow over the AXL gnubg agent node.
 //
 // URL: /match?agentId=<N>
 //
-// State machine:
-//   idle          → call POST /games, transition to playing
-//   playing       → human turn (turn=0) or agent turn (turn=1)
-//     human, no dice  → show Roll button → POST /games/:id/roll
-//     human, dice     → show move input  → POST /games/:id/move
-//     agent           → auto-POST /games/:id/roll (if no dice), then /games/:id/agent-move
-//   over          → show result + placeholder "Settle on-chain" button
+// State machine (browser-owned game state — no central server):
+//   on mount         → POST /new {match_length} → opening MatchState
+//                       → roll dice client-side for whichever side starts
+//   if turn === 0    → render board + dice + move input, wait for human
+//   human submits    → POST /apply {position_id, match_id, dice, move}
+//                       on 200 → replace state, roll next side's dice
+//                       on 422 → surface error, leave state unchanged
+//   agent loop (turn === 1)
+//                    → POST /move → best move
+//                    → POST /apply with that move
+//                    → replace state, roll next side's dice
+//   forfeit          → POST /resign → game_over response
 //
-// Move notation is gnubg's standard: "8/5 6/5" (from-point/to-point, space-
-// separated for multiple checker movements). See docs/gnubg-notation.md or
-// the server test suite for examples.
+// Move notation is gnubg's standard: "8/5 6/5" (from-point/to-point,
+// space-separated for multiple checker movements). See
+// agent/gnubg_service.py or the agent test suite for examples.
 "use client";
 
 import { Suspense, useEffect, useRef, useState } from "react";
-import { useSearchParams } from "next/navigation";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
+
 import { Board } from "../Board";
 import { ConnectButton } from "../ConnectButton";
 import { DiceRoll } from "../DiceRoll";
+import { rollDice } from "../dice";
 
-// ── Types matching server/app/game_state.py ────────────────────────────────
+// ── Types matching agent/gnubg_state.py:MatchStateDict ────────────────────
 
-interface GameState {
-  game_id: string;
-  match_id: string;
+interface MatchState {
   position_id: string;
+  match_id: string;
   board: number[];
-  bar: number[];
-  off: number[];
-  turn: number;
-  dice: number[] | null;
-  cube: number;
-  cube_owner: number;
+  bar: [number, number];
+  off: [number, number];
+  turn: 0 | 1;
+  dice: [number, number] | null;
+  score: [number, number];
   match_length: number;
-  score: number[];
   game_over: boolean;
-  winner: number | null;
+  winner: 0 | 1 | null;
 }
 
-// ── API helpers ────────────────────────────────────────────────────────────
+// ── API helpers ───────────────────────────────────────────────────────────
 
-const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+const GNUBG = process.env.NEXT_PUBLIC_GNUBG_URL ?? "http://localhost:8001";
 
-// Every game endpoint is POST on the server (FastAPI), even the
-// no-body ones (`/roll`, `/agent-move`). A previous version of this
-// helper sent GET when no body was provided, which made roll +
-// agent-move 405 with `{"detail":"Method Not Allowed"}` and stalled
-// the auto-drive after the first human move. POST always; body is
-// optional and goes empty if absent. Regression locked in by
-// `frontend/tests/match-flow-methods.spec.ts`.
-async function apiFetch(path: string, body?: object): Promise<GameState> {
-  const res = await fetch(`${API}${path}`, {
+/**
+ * POST helper for gnubg_service. All endpoints use POST with a JSON
+ * body. 422 responses surface as Error with the `detail` string so
+ * the page can render gnubg's complaint to the user.
+ */
+async function gnubgPost<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(`${GNUBG}${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body ?? {}),
   });
   if (!res.ok) {
-    const detail = await res.text().catch(() => res.statusText);
+    const text = await res.text().catch(() => res.statusText);
+    let detail = text;
+    try {
+      const parsed = JSON.parse(text);
+      if (parsed && typeof parsed.detail === "string") detail = parsed.detail;
+    } catch {
+      // text wasn't JSON — keep raw.
+    }
     throw new Error(`${res.status}: ${detail}`);
   }
-  return res.json() as Promise<GameState>;
+  return (await res.json()) as T;
 }
 
-// ── Component ──────────────────────────────────────────────────────────────
+/**
+ * Roll dice for the side that's about to play and return a new
+ * MatchState. Pure helper so the match-end branch (where we want the
+ * dice to stay null) is a one-liner: skip this call.
+ */
+function withFreshDice(state: MatchState): MatchState {
+  return { ...state, dice: rollDice() };
+}
 
-// Suspense boundary is required by Next.js when useSearchParams is used inside
-// a page — without it, static prerendering bails out at build time.
+// ── Component ─────────────────────────────────────────────────────────────
+
 export default function MatchPage() {
   return (
     <Suspense
@@ -87,13 +103,13 @@ function MatchInner() {
   const params = useSearchParams();
   const agentId = Number(params.get("agentId") ?? "1");
 
-  const [game, setGame] = useState<GameState | null>(null);
+  const [game, setGame] = useState<MatchState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [moveInput, setMoveInput] = useState("");
 
-  // Guard against triggering the agent move multiple times while a request
-  // is already in flight.
+  // Concurrency guard — prevents duplicate /move + /apply cascades when
+  // React re-renders while an agent step is mid-flight.
   const agentMoving = useRef(false);
 
   // ── Start a new game on mount ──────────────────────────────────────────
@@ -101,9 +117,10 @@ function MatchInner() {
     let cancelled = false;
     setLoading(true);
     setError(null);
-    apiFetch("/games", { match_length: 3, agent_id: agentId })
+    gnubgPost<MatchState>("/new", { match_length: 3 })
       .then((state) => {
-        if (!cancelled) setGame(state);
+        if (cancelled) return;
+        setGame(withFreshDice(state));
       })
       .catch((e: unknown) => {
         if (!cancelled) setError(String(e));
@@ -114,30 +131,38 @@ function MatchInner() {
     return () => {
       cancelled = true;
     };
-    // agentId is intentionally fixed for the lifetime of this page.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ── Auto-drive agent turn ──────────────────────────────────────────────
+  // ── Auto-drive the agent when it's their turn ──────────────────────────
   useEffect(() => {
     if (!game || game.game_over || game.turn !== 1 || agentMoving.current) {
       return;
     }
+    if (!game.dice) return; // dice are seeded by withFreshDice on the previous step
     agentMoving.current = true;
 
     const step = async () => {
       try {
-        // Roll first if dice haven't been rolled yet.
-        let state = game;
-        if (!state.dice) {
-          state = await apiFetch(`/games/${state.game_id}/roll`);
-          setGame(state);
+        const { move: best } = await gnubgPost<{ move: string | null }>(
+          "/move",
+          {
+            position_id: game.position_id,
+            match_id: game.match_id,
+            dice: game.dice,
+          },
+        );
+        if (!best) {
+          // No legal moves — typically a bar dance. Not handled in v1;
+          // surface the situation rather than silently looping.
+          throw new Error("Agent has no legal move (bar dance) — not yet handled");
         }
-        if (state.game_over) return;
-
-        // Agent picks and applies its move.
-        state = await apiFetch(`/games/${state.game_id}/agent-move`);
-        setGame(state);
+        const next = await gnubgPost<MatchState>("/apply", {
+          position_id: game.position_id,
+          match_id: game.match_id,
+          dice: game.dice,
+          move: best,
+        });
+        setGame(next.game_over ? next : withFreshDice(next));
       } catch (e: unknown) {
         setError(String(e));
       } finally {
@@ -145,36 +170,25 @@ function MatchInner() {
       }
     };
 
-    // Small delay so the board flash is visible before the agent moves.
+    // Small delay so the human sees the agent's dice land before its move.
     const timer = setTimeout(step, 400);
     return () => clearTimeout(timer);
   }, [game]);
 
   // ── Human actions ──────────────────────────────────────────────────────
 
-  const doRoll = async () => {
-    if (!game) return;
-    setLoading(true);
-    setError(null);
-    try {
-      const state = await apiFetch(`/games/${game.game_id}/roll`);
-      setGame(state);
-    } catch (e: unknown) {
-      setError(String(e));
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const doMove = async () => {
-    if (!game || !moveInput.trim()) return;
+    if (!game || !moveInput.trim() || !game.dice) return;
     setLoading(true);
     setError(null);
     try {
-      const state = await apiFetch(`/games/${game.game_id}/move`, {
+      const next = await gnubgPost<MatchState>("/apply", {
+        position_id: game.position_id,
+        match_id: game.match_id,
+        dice: game.dice,
         move: moveInput.trim(),
       });
-      setGame(state);
+      setGame(next.game_over ? next : withFreshDice(next));
       setMoveInput("");
     } catch (e: unknown) {
       setError(String(e));
@@ -191,10 +205,11 @@ function MatchInner() {
     setLoading(true);
     setError(null);
     try {
-      // Server's /resign endpoint resigns + accepts (single normal-game
-      // resignation), which ends the game with the current player as loser.
-      const state = await apiFetch(`/games/${game.game_id}/resign`);
-      setGame(state);
+      const next = await gnubgPost<MatchState>("/resign", {
+        position_id: game.position_id,
+        match_id: game.match_id,
+      });
+      setGame(next);
     } catch (e: unknown) {
       setError(String(e));
     } finally {
@@ -219,8 +234,8 @@ function MatchInner() {
           Could not start game: {error}
         </p>
         <p className="text-sm text-zinc-500 dark:text-zinc-400">
-          Make sure the game server is running at{" "}
-          <code className="font-mono">{API}</code>.
+          Make sure the AXL gnubg agent node is running at{" "}
+          <code className="font-mono">{GNUBG}</code>.
         </p>
         <Link
           href="/"
@@ -236,7 +251,6 @@ function MatchInner() {
 
   const isHumanTurn = game.turn === 0;
   const isAgentTurn = game.turn === 1;
-  const needsRoll = !game.dice;
   const needsMove = !!game.dice && isHumanTurn;
 
   const winnerLabel =
@@ -244,7 +258,7 @@ function MatchInner() {
 
   return (
     <div className="flex min-h-screen flex-col bg-zinc-50 dark:bg-black">
-      {/* Header — back link, match meta + score, connect/network controls. */}
+      {/* Header */}
       <header className="flex items-center justify-between gap-4 border-b border-zinc-200 px-8 py-4 dark:border-zinc-800">
         <Link
           href="/"
@@ -265,7 +279,6 @@ function MatchInner() {
 
       {/* Main */}
       <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-6 px-4 py-8 sm:px-8">
-        {/* Game-over banner */}
         {game.game_over && (
           <div
             className={`rounded-lg border p-4 ${
@@ -286,18 +299,17 @@ function MatchInner() {
             <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
               Final score: {game.score[0]} – {game.score[1]}
             </p>
-            {/* Phase 17 will wire this to the KeeperHub settlement workflow. */}
+            {/* Sub-project C will replace this with the two-sig settlement flow. */}
             <button
               disabled
               className="mt-3 cursor-not-allowed rounded-md bg-zinc-200 px-4 py-2 text-sm font-semibold text-zinc-400 dark:bg-zinc-800 dark:text-zinc-600"
-              title="Settlement wired in Phase 17"
+              title="Settlement wired in sub-project C"
             >
-              Settle on-chain (coming Phase 17)
+              Settle on-chain (coming soon)
             </button>
           </div>
         )}
 
-        {/* Board */}
         <Board
           board={game.board}
           bar={game.bar}
@@ -305,7 +317,6 @@ function MatchInner() {
           turn={game.turn}
         />
 
-        {/* Dice */}
         {game.dice && (
           <div className="flex items-center gap-3">
             <span className="text-sm text-zinc-500 dark:text-zinc-400">
@@ -315,43 +326,30 @@ function MatchInner() {
           </div>
         )}
 
-        {/* Error */}
         {error && (
           <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-600 dark:bg-red-900/20 dark:text-red-400">
             {error}
           </p>
         )}
 
-        {/* Human controls — hidden when it's agent's turn or game over */}
-        {!game.game_over && isHumanTurn && (
+        {!game.game_over && isHumanTurn && needsMove && (
           <div className="flex flex-col gap-3">
-            {needsRoll && (
+            <div className="flex gap-2">
+              <input
+                value={moveInput}
+                onChange={(e) => setMoveInput(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && doMove()}
+                placeholder='e.g. "8/5 6/5" or "off"'
+                className="flex-1 rounded-md border border-zinc-300 bg-white px-3 py-2 font-mono text-sm text-zinc-900 placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50"
+              />
               <button
-                onClick={doRoll}
-                disabled={loading}
-                className="w-fit rounded-md bg-indigo-600 px-6 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
+                onClick={doMove}
+                disabled={loading || !moveInput.trim()}
+                className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
               >
-                {loading ? "Rolling…" : "Roll dice"}
+                {loading ? "…" : "Move"}
               </button>
-            )}
-            {needsMove && (
-              <div className="flex gap-2">
-                <input
-                  value={moveInput}
-                  onChange={(e) => setMoveInput(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && doMove()}
-                  placeholder='e.g. "8/5 6/5" or "off"'
-                  className="flex-1 rounded-md border border-zinc-300 bg-white px-3 py-2 font-mono text-sm text-zinc-900 placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50"
-                />
-                <button
-                  onClick={doMove}
-                  disabled={loading || !moveInput.trim()}
-                  className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
-                >
-                  {loading ? "…" : "Move"}
-                </button>
-              </div>
-            )}
+            </div>
             <p className="text-xs text-zinc-400 dark:text-zinc-500">
               Notation: <code className="font-mono">from/to</code> per checker,
               space-separated. Bar: <code className="font-mono">bar/N</code>.
@@ -360,15 +358,12 @@ function MatchInner() {
           </div>
         )}
 
-        {/* Agent thinking indicator */}
         {!game.game_over && isAgentTurn && (
           <p className="text-sm text-zinc-500 dark:text-zinc-400 animate-pulse">
             Agent is thinking…
           </p>
         )}
 
-        {/* Forfeit — available any time the game isn't over. Resigns the
-            current side, ends the match with that side as the loser. */}
         {!game.game_over && (
           <div className="mt-2 flex justify-end">
             <button

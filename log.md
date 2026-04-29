@@ -956,3 +956,31 @@ Tests (**[agent/tests/](agent/tests/)**):
   - /hint with missing required field returns 422
 
 12 agent tests pass (0 prior + 12 new).
+
+### Phase 18: match page over AXL gnubg agent node (no central server)
+
+Migrates the match page from the retired FastAPI server (port 8000) to the AXL `gnubg_service` agent node (port 8001, added in Phase 17). The browser now owns the entire game state — a single `MatchState` object held in React — and round-trips every move through `gnubg_service` for validation and state advancement. Dice are rolled in the browser via `crypto.getRandomValues`. This is sub-project A of the post-pivot match flow; coach narration (sub-project B) and two-sig on-chain settlement (sub-project C) remain out of scope.
+
+dice helper (**[frontend/app/dice.ts](frontend/app/dice.ts)**, new):
+- `rollDice(): [number, number]` — uniform 1..6 via `crypto.getRandomValues`. Single swap-out point for VRF / commit-reveal in v2.
+
+Match page (**[frontend/app/match/page.tsx](frontend/app/match/page.tsx)**, rewritten):
+- New `MatchState` type drops `game_id`, `cube`, `cube_owner` from the old `GameState`. Keys: `position_id`, `match_id`, `board`, `bar`, `off`, `turn`, `dice`, `score`, `match_length`, `game_over`, `winner` — matches `agent/gnubg_state.py:MatchStateDict` exactly so the JSON wire format is consumed without renaming.
+- `gnubgPost` helper points at `NEXT_PUBLIC_GNUBG_URL` (default `http://localhost:8001`) and unwraps 422 `detail` strings into thrown `Error` messages.
+- State machine: `/new` on mount → roll opening dice → human or agent loop → `/apply` (or `/move` + `/apply` for agent) → roll next dice → loop. Forfeit calls `/resign`.
+- `withFreshDice(state)` helper centralises "post-move, roll for whichever side is now on roll" so the human/agent branches don't drift.
+- Error UI now points the user at the `gnubg_service` URL instead of port 8000.
+
+frontend/.env.example: added `NEXT_PUBLIC_GNUBG_URL=http://localhost:8001`. The legacy `NEXT_PUBLIC_API_URL` is retained as a comment for any pre-pivot tooling that still references it.
+
+Tests (**[frontend/tests/match-flow-methods.spec.ts](frontend/tests/match-flow-methods.spec.ts)**, rewritten, 2 tests):
+- Full game cascade `/new` → `/apply` (human) → `/move` → `/apply` (agent) → ... → `game_over=true` → "You win!" banner.
+- Forfeit dialog: clicking the Forfeit button calls `/resign` and shows the "Agent wins." banner.
+
+10 frontend Playwright tests pass.
+
+Also in this commit:
+- **[docs/superpowers/specs/2026-04-28-axl-match-flow-design.md](docs/superpowers/specs/2026-04-28-axl-match-flow-design.md)** (new) — design spec for sub-project A (this phase). Points at the `README.md` § "Match flow" section as the user-facing design source.
+- **[docs/superpowers/plans/2026-04-28-axl-match-flow.md](docs/superpowers/plans/2026-04-28-axl-match-flow.md)** (new) — 10-task implementation plan executed for this phase.
+
+Note: web_readme.html updates for this phase are pending.
