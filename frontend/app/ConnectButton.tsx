@@ -8,9 +8,17 @@
 //   3. Connected                                   → network dropdown
 //      (replaces the old amber "Switch to X" nudge), profile badge,
 //      disconnect button.
+//
+// SSR note: wagmi is configured with ssr:true, which means the server has no
+// access to window.ethereum and renders connectors as []. Without a mounted
+// guard the server emits "Install MetaMask" while the client wants "Connect
+// wallet" — a structural mismatch that causes React hydration to silently
+// drop the click handler. The `mounted` state defers the real render until
+// after hydration so both trees agree.
 
 import { useAccount, useConnect, useDisconnect } from "wagmi";
 import type { Connector } from "wagmi";
+import { useState, useEffect } from "react";
 
 import { NetworkDropdown } from "./NetworkDropdown";
 import { ProfileBadge } from "./ProfileBadge";
@@ -19,8 +27,14 @@ export function ConnectButton() {
   const { address, isConnected } = useAccount();
   const { connectors, connect, isPending: connectPending, error: connectError } = useConnect();
   const { disconnect } = useDisconnect();
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
 
   const injectedConnector = connectors.find((c: Connector) => c.type === "injected");
+
+  // Render nothing until hydration is complete — avoids a structural mismatch
+  // between the SSR output (no window.ethereum) and the client tree.
+  if (!mounted) return null;
 
   if (!isConnected) {
     if (!injectedConnector) {
