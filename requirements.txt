@@ -1,0 +1,13 @@
+# Core training (commit 1)
+torch==2.3.1          # Neural network, autograd, checkpoints
+numpy==1.26.4         # Random number generation, feature arrays
+
+# AXL coordination (commit 2)
+flask==3.0.3          # Lightweight HTTP server for AXL message handler
+requests==2.32.3      # Outbound HTTP calls to AXL send API and peers
+
+# 0G Chain integration (commit 3)
+web3==6.20.3          # EVM JSON-RPC client for Tournament contract
+
+# Testing
+pytest==8.2.2         # Test runner
