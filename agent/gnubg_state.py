@@ -136,21 +136,44 @@ def decode_match_id(match_id: str) -> dict:
 # `                 Match ID   : <base64>` — there's an arbitrary
 # leading prefix and variable whitespace before the colon. Match
 # anywhere on the line (no ^ anchor) so the leading prefix is ignored.
-_POSITION_ID_RE = re.compile(r"Position ID\s*:\s*(\S+)")
-_MATCH_ID_RE = re.compile(r"Match ID\s*:\s*(\S+)")
+_POSITION_ID_RE = re.compile(r"Position ID\s*:\s*([A-Za-z0-9+/]+={0,2})")
+_MATCH_ID_RE = re.compile(r"Match ID\s*:\s*([A-Za-z0-9+/]+={0,2})")
+
+# rawboard format (emitted by gnubg under `set output rawboard on`):
+#   board:NAME_X:NAME_O:matchlength:score_X:score_O:bar_O_neg:p1..p24:bar_X:turn:...
+# Layout of the captured tail (split on ":"):
+#   values[0] = score_X
+#   values[1] = score_O
+#   values[2] = O (agent) bar count, NEGATED (so always <= 0)
+#   values[3..26] = 24 signed point counts in human-perspective
+#                  (positive = X / human; negative = O / agent)
+#   values[27] = X (human) bar count, positive
+# After that come dice, cube, crawford, and other metadata which we
+# decode from match_id instead.
+#
+# The pure-Python decode_position_id() works for opening states but is
+# perspective-relative — gnubg encodes position_id from whichever side
+# is on roll at the time, so a round-trip through `set board` rotates
+# the board by ~180° in some states. The rawboard output is always
+# human-perspective, so we use it for the canonical board view.
+_RAWBOARD_RE = re.compile(r"^board:[^:]+:[^:]+:[^:]+:(.+)$", re.MULTILINE)
 
 
 def snapshot_state(stdout: str) -> MatchStateDict:
     """Parse gnubg subprocess stdout into a MatchStateDict.
 
-    `stdout` is expected to contain at least one `Position ID:` and
-    `Match ID:` line. gnubg auto-prints the board after `set board`
-    AND again after `show board`, so the same stdout often contains
-    multiple Position ID lines — we take the LAST occurrence, which
-    reflects the post-command state. Raises ValueError if either id
-    is missing — that's a gnubg subprocess failure and the caller
-    should surface it as an HTTP 500 (or 422 for /apply, where missing
-    ids signal an illegal move that gnubg silently rejected).
+    Expects `stdout` to contain BOTH a `Position ID:` / `Match ID:`
+    pair (from a `show board` call with rawboard OFF) and a `board:…`
+    rawboard line (from a `show board` call with rawboard ON).
+    `_snapshot` in `gnubg_service.py` always emits both. We take the
+    LAST occurrence of each — gnubg auto-prints the board after every
+    state-changing command, so the most recent set is the post-command
+    state.
+
+    Raises ValueError if any of the expected lines is missing — that's
+    a gnubg subprocess failure (or an illegal move that gnubg refused,
+    in which case `set board` outputs the prior state's IDs but no
+    `board:` rawboard line appears for the post-move state).
     """
     pos_matches = _POSITION_ID_RE.findall(stdout)
     if not pos_matches:
@@ -158,11 +181,27 @@ def snapshot_state(stdout: str) -> MatchStateDict:
     mid_matches = _MATCH_ID_RE.findall(stdout)
     if not mid_matches:
         raise ValueError("gnubg output missing match id")
+    raw_matches = _RAWBOARD_RE.findall(stdout)
+    if not raw_matches:
+        raise ValueError("gnubg output missing rawboard line")
 
     position_id = pos_matches[-1]
     match_id = mid_matches[-1]
 
-    board, bar, off = decode_position_id(position_id)
+    # Parse the last rawboard line for canonical points + bar.
+    values = [int(x) for x in raw_matches[-1].split(":")]
+    if len(values) < 28:
+        raise ValueError("rawboard line too short")
+    board = values[3:27]
+    # values[27] = X (human) bar count (positive); values[2] = -O_bar.
+    bar = [values[27], -values[2]]
+
+    # off is derived: each side started with 15 checkers; off = 15 -
+    # (on-board + on-bar). Counting on-board separately for each side.
+    p0_on_board = sum(c for c in board if c > 0)
+    p1_on_board = -sum(c for c in board if c < 0)
+    off = [15 - p0_on_board - bar[0], 15 - p1_on_board - bar[1]]
+
     info = decode_match_id(match_id)
 
     winner: int | None = None
