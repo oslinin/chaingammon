@@ -2,7 +2,26 @@
 
 What's shipped vs. what's next. The hackathon scope landed on a working backgammon protocol with on-chain ELO, ENS profiles, encrypted weights, and a per-agent learning overlay. The items below are the natural extensions — most of them have been deliberately deferred to keep v1 focused.
 
-See [ARCHITECTURE.md](ARCHITECTURE.md) for component descriptions and data flows of what's currently live, and [plan.md](plan.md) for the full phase list (Phases 0–25 covering the hackathon build).
+See [ARCHITECTURE.md](ARCHITECTURE.md) for component descriptions and data flows of what's currently live, [plan.md](plan.md) for the original phase plan (note: stale post-pivot for Phases 16–22), and [CHANGELOG.md](CHANGELOG.md) for a Keep-a-Changelog summary of what's landed.
+
+---
+
+## Now (remaining for hackathon submission)
+
+### Match-flow polish
+
+- [ ] Coach narration in match page — sub-project B (calls `coach_service` `/hint` after each turn, renders the LLM's blurb under the dice).
+- [ ] Settlement story — sub-project C (two-sig settlement OR a deferred decision; design TBD; see the "two-sig vs state channel" discussion in the brainstorm log).
+- [ ] Match replay page — verify post-pivot. The page renders from a 0G Storage `gameRecordHash`; confirm the game record format produced by the new browser-driven match flow round-trips correctly.
+- [ ] Audit trail display — was framed for KeeperHub (now dropped). Reframe as a settlement-receipt view (showing the on-chain tx + signed match record) or drop entirely.
+
+### Demo + submission
+
+- [ ] Smoke-test the live stack end-to-end on real 0G testnet post-pivot (gnubg + coach + frontend).
+- [ ] `web_readme.html` updates for Phases 17 and 18 (per phase-commit policy).
+- [ ] Reconstruct the STATUS & ROADMAP slide in `chaingammon.pptx` (lost in an earlier session).
+- [ ] Demo video recording.
+- [ ] ETHGlobal submission form.
 
 ---
 
@@ -62,11 +81,23 @@ Even with ZK move-legality, an agent could be replaced with a stronger one mid-m
 
 ### Betting + cube doubling
 
-Backgammon's doubling cube is fundamental to real play; we render it as a static badge but don't let players double yet. Add `cubeAction` to MoveEntry, surface a doubling UI, settle on the cube value at match end. Optional: stake real OG (or the platform token) on matches via a simple escrow contract — the existing MatchRegistry can carry stake metadata.
+Backgammon's doubling cube is fundamental to real play; we render it as a static badge but don't let players double yet. Add `cubeAction` to MoveEntry, surface a doubling UI, settle on the cube value at match end. Once doubling is live, a `MatchEscrow` contract holds both players' stakes; on `MatchRegistry.recordMatch(sig1, sig2)` the escrow releases to the winner. The existing two-signature settlement is the foundation — the on-chain result is already trustless. `MatchRegistry` already has room for stake metadata alongside `gameRecordHash`.
+
+### Spectator prediction markets
+
+Every match is committed on-chain before it starts (game record hash, player ELOs). A separate `MatchPredict` contract lets spectators buy outcome tokens before `recordMatch` settles — the final on-chain result resolves the market with no oracle. ELO history and overlay experience version are public inputs any pricing model can consume.
+
+### Agent-as-income-stream
+
+A high-ELO agent iNFT earns its owner money directly: opponent stake → agent wins → escrow releases to owner address. Owner proceeds can fund compute for further training. The loop closes: agents that win pay for the resources that make them win more. Agent-vs-agent tournaments (see Near-term) are a natural complement — automated round-robins with staked buy-ins, no human needed to schedule or settle.
+
+### Liquidity provision — match escrow AMM
+
+An LP pool can fund match escrows and collect a fee (e.g. 1–2% of each settled stake). LPs choose risk exposure by ELO tier: high-ELO matches have lower variance (tighter spreads), low-ELO matches are higher variance (wider spreads). The pool is permissionless — anyone can deposit and earn yield proportional to settled match volume.
 
 ### Derivatives — agent ELO as collateral
 
-iNFT ELO is on-chain and read by `MatchRegistry.agentElo(agentId)`. Lending markets can collateralize against an agent's ELO + recent match history. A liquidation event happens when the agent's rolling ELO drops below the collateralization threshold. Niche but interesting because the underlying asset (an agent that plays games) is genuinely productive: it earns or loses ELO every match.
+iNFT ELO is on-chain and read by `MatchRegistry.agentElo(agentId)`. Lending markets can collateralize against an agent's ELO + recent match history. A liquidation event happens when the agent's rolling ELO drops below the collateralization threshold. Longer-dated instruments are also natural: a binary option on "agent ELO ≥ 1600 in 30 days" settles by reading the on-chain value at expiry — no oracle, no counterparty risk beyond the contract. Niche but interesting because the underlying asset (an agent that plays games) is genuinely productive: it earns or loses ELO every match.
 
 ### Style profile aggregator (`style_uri`)
 
