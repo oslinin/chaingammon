@@ -81,17 +81,34 @@ async function gnubgPost<T>(path: string, body: unknown): Promise<T> {
   return (await res.json()) as T;
 }
 
+// Coach backend choices the user can pick in the toggle. "compute" is the
+// paid 0G Compute path (Qwen 2.5 7B Instruct via @0glabs/0g-serving-broker);
+// "local" is the free flan-t5-base running inside coach_service. The server
+// also accepts "compute-only" but we don't expose that to the UI — the
+// frontend always wants graceful degradation.
+type CoachBackend = "compute" | "local";
+
+interface HintResult {
+  hint: string;
+  // What actually served the request. May differ from the user's pick when
+  // the server falls back from "compute" → "local" because 0G Compute is
+  // unreachable. The UI surfaces this so the choice isn't silently ignored.
+  backend: CoachBackend;
+}
+
 /**
  * Request a coaching hint from coach_service (port 8002 / COACH env var).
- * Returns the hint string, or null on any failure. Non-blocking: callers
- * should fire-and-forget and update state only if still mounted.
+ * Returns the hint + which backend served it, or null on any failure.
+ * Non-blocking: callers should fire-and-forget and update state only if
+ * still mounted.
  */
 async function fetchHint(
   positionId: string,
   matchId: string,
   dice: [number, number],
   docsHash: string,
-): Promise<string | null> {
+  backend: CoachBackend,
+): Promise<HintResult | null> {
   try {
     // Step 1: get ranked candidates from gnubg_service.
     const { candidates } = await gnubgPost<{ candidates: { move: string; equity: number }[] }>(
@@ -110,11 +127,14 @@ async function fetchHint(
         dice,
         candidates,
         docs_hash: docsHash,
+        backend,
       }),
     });
     if (!res.ok) return null;
-    const data = await res.json() as { hint?: string };
-    return data.hint ?? null;
+    const data = (await res.json()) as { hint?: string; backend?: string };
+    if (!data.hint) return null;
+    const served: CoachBackend = data.backend === "compute" ? "compute" : "local";
+    return { hint: data.hint, backend: served };
   } catch {
     // Coach offline or unreachable — game continues without hint.
     return null;
@@ -158,6 +178,32 @@ function MatchInner() {
   // Coach state — best-effort; failures leave hint null.
   const [coachHint, setCoachHint] = useState<string | null>(null);
   const [coachLoading, setCoachLoading] = useState(false);
+  // Which backend actually served the last hint. Distinct from the user's
+  // pick because the server may fall back from "compute" to "local" when
+  // 0G Compute is unreachable.
+  const [coachServedBy, setCoachServedBy] = useState<CoachBackend | null>(null);
+
+  // User's coach-backend pick. Default to the paid 0G Compute path so the
+  // sponsor-aligned demo runs without explicit toggling, with localStorage
+  // persistence so a user who picks "free" doesn't get billed on reload.
+  // SSR-safe: `useEffect` reads localStorage after mount; before then the
+  // server-rendered HTML matches the initial client render ("compute").
+  const [coachBackend, setCoachBackend] = useState<CoachBackend>("compute");
+  useEffect(() => {
+    const saved = window.localStorage.getItem("coachBackend");
+    if (saved === "local" || saved === "compute") setCoachBackend(saved);
+  }, []);
+  useEffect(() => {
+    window.localStorage.setItem("coachBackend", coachBackend);
+  }, [coachBackend]);
+
+  // Always carry the latest pick into fire-and-forget callbacks without
+  // re-creating closures (which would force every move handler to depend
+  // on `coachBackend` and re-render).
+  const coachBackendRef = useRef<CoachBackend>(coachBackend);
+  useEffect(() => {
+    coachBackendRef.current = coachBackend;
+  }, [coachBackend]);
 
   // Docs hash for the coach RAG context (uploaded once to 0G Storage).
   const docsHash = process.env.NEXT_PUBLIC_GNUBG_DOCS_HASH ?? "";
@@ -176,10 +222,19 @@ function MatchInner() {
   const requestCoachHint = (state: MatchState) => {
     if (state.game_over || !state.dice) return;
     setCoachHint(null);
+    setCoachServedBy(null);
     setCoachLoading(true);
-    fetchHint(state.position_id, state.match_id, state.dice, docsHash)
-      .then((hint) => {
-        setCoachHint(hint);
+    fetchHint(
+      state.position_id,
+      state.match_id,
+      state.dice,
+      docsHash,
+      coachBackendRef.current,
+    )
+      .then((result) => {
+        if (!result) return;
+        setCoachHint(result.hint);
+        setCoachServedBy(result.backend);
       })
       .finally(() => {
         setCoachLoading(false);
@@ -449,15 +504,62 @@ function MatchInner() {
         {/* ── Coach panel ───────────────────────────────────────────────── */}
         {!game.game_over && (
           <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 dark:border-amber-700/40 dark:bg-amber-900/10">
-            <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-400">
-              Coach
-            </p>
+            <div className="mb-1 flex items-center justify-between gap-3">
+              <p className="text-xs font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-400">
+                Coach
+              </p>
+              <div
+                className="inline-flex overflow-hidden rounded-md border border-amber-300 text-[11px] font-medium dark:border-amber-700/60"
+                role="group"
+                aria-label="Coach backend"
+              >
+                <button
+                  type="button"
+                  aria-pressed={coachBackend === "compute"}
+                  onClick={() => setCoachBackend("compute")}
+                  className={
+                    coachBackend === "compute"
+                      ? "bg-amber-600 px-2 py-0.5 text-white"
+                      : "bg-transparent px-2 py-0.5 text-amber-700 hover:bg-amber-100 dark:text-amber-300 dark:hover:bg-amber-900/30"
+                  }
+                  title="0G Compute · Qwen 2.5 7B (paid, verifiable inference)"
+                >
+                  Paid · 0G
+                </button>
+                <button
+                  type="button"
+                  aria-pressed={coachBackend === "local"}
+                  onClick={() => setCoachBackend("local")}
+                  className={
+                    coachBackend === "local"
+                      ? "bg-amber-600 px-2 py-0.5 text-white"
+                      : "bg-transparent px-2 py-0.5 text-amber-700 hover:bg-amber-100 dark:text-amber-300 dark:hover:bg-amber-900/30"
+                  }
+                  title="Local flan-t5-base (free, runs in coach_service)"
+                >
+                  Free · Local
+                </button>
+              </div>
+            </div>
             {coachLoading ? (
               <p className="text-sm text-amber-600 dark:text-amber-400 animate-pulse">
                 Thinking…
               </p>
             ) : coachHint ? (
-              <p className="text-sm text-amber-900 dark:text-amber-200">{coachHint}</p>
+              <>
+                <p className="text-sm text-amber-900 dark:text-amber-200">{coachHint}</p>
+                {coachServedBy && (
+                  <p className="mt-1 text-[10px] uppercase tracking-wide text-amber-600/80 dark:text-amber-400/70">
+                    Served by{" "}
+                    {coachServedBy === "compute"
+                      ? "0G Compute · Qwen 2.5 7B"
+                      : "local flan-t5-base"}
+                    {coachBackend === "compute" && coachServedBy === "local" && (
+                      <span> (0G Compute unreachable — fell back)</span>
+                    )}
+                  </p>
+                )}
+              </>
             ) : (
               <p className="text-sm text-amber-500 dark:text-amber-600">
                 Start the coach node to get per-turn hints:{" "}

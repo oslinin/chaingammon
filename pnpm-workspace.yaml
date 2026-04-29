@@ -2,3 +2,4 @@ packages:
   - contracts
   - frontend
   - og-bridge
+  - og-compute-bridge
