@@ -1,7 +1,7 @@
 {
   "name": "chaingammon",
   "private": true,
-  "description": "Monorepo for the Chaingammon project, including server, contracts, and frontend components.",
+  "description": "Monorepo for the Chaingammon project, including AXL agent nodes, contracts, and frontend.",
   "scripts": {
     "contracts:compile": "pnpm --filter contracts exec hardhat compile",
     "contracts:test": "pnpm --filter contracts exec hardhat test",
@@ -11,8 +11,8 @@
     "frontend:dev": "pnpm --filter frontend dev",
     "frontend:build": "pnpm --filter frontend build",
     "frontend:test": "pnpm --filter frontend test",
-    "server:test": "cd server && uv run pytest tests/",
-    "test": "pnpm server:test && pnpm --filter contracts test && pnpm --filter frontend test"
+    "agent:test": "cd agent && uv run pytest tests/",
+    "test": "pnpm agent:test && pnpm --filter contracts test && pnpm --filter frontend test"
   },
   "devDependencies": {}
 }

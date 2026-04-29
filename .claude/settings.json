@@ -1,4 +1,13 @@
 {
+  "permissions": {
+    "allow": [
+      "Bash(which *)",
+      "Bash(lsb_release *)",
+      "Bash(apt-cache show *)",
+      "Bash(gnubg --version)",
+      "Bash(~/.local/bin/uv run pytest *)"
+    ]
+  },
   "hooks": {
     "PostToolUse": [
       {
@@ -13,15 +22,6 @@
       }
     ]
   },
-  "permissions": {
-    "allow": [
-      "Bash(which *)",
-      "Bash(lsb_release *)",
-      "Bash(apt-cache show *)",
-      "Bash(gnubg --version)",
-      "Bash(~/.local/bin/uv run pytest *)"
-    ]
-  },
   "enabledPlugins": {
     "superpowers@claude-plugins-official": true,
     "code-review@claude-plugins-official": true,
@@ -29,6 +29,7 @@
     "code-simplifier@claude-plugins-official": true,
     "frontend-design@claude-plugins-official": true,
     "skill-creator@claude-plugins-official": true,
-    "coderabbit@claude-plugins-official": true
+    "coderabbit@claude-plugins-official": true,
+    "discord@claude-plugins-official": true
   }
 }
