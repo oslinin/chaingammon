@@ -311,6 +311,50 @@ This project was built with [Claude Code](https://claude.ai/code).
 
 ---
 
+## Motivation
+
+Backgammon rating systems are siloed. Every platform — backgammon.com, PlayOK, online clubs — runs its own ELO database. Players who spend years climbing one ladder own nothing when that platform shuts down or locks their account. There is no standard for reputation portability, no way for third-party tools to read your rating, and no mechanism for AI opponents to carry their learned style across providers.
+
+Chaingammon is the layer that fixes this. It is not a backgammon website — it is a **protocol**. Any front-end can query a player's ENS subname and reconstruct their full reputation: ELO, match count, and a hash-addressed link to their complete game archive on 0G Storage. AI agents are ERC-7857 iNFTs whose intelligence (encrypted weights + per-agent experience overlay) is owned by the token holder and travels with the token on transfer. Match settlement requires no operator — two ECDSA signatures on a public contract, verified on-chain.
+
+---
+
+## Advantages
+
+### For players
+- **You own your rating.** It lives in your ENS subname (`<name>.chaingammon.eth`) and can be read by any tool without your permission. No platform can revoke or alter it.
+- **No central server to trust.** The play layer runs on your machine via local AXL nodes; the settlement path is two wallet signatures verified on-chain; the archive is permanent on 0G Storage. There is no Chaingammon operator key that can cheat or disappear.
+- **Portable identity across frontends.** Switch to any Chaingammon-compatible client and your ELO, history, and subname come with you — same as switching email clients without losing your address.
+- **One MetaMask popup per match.** The session-key channel (`settleWithSessionKeys`) means a single wallet signature at game start authorises the entire match. No interruptions during play; one final popup to settle on-chain.
+
+### For agent owners
+- **The iNFT *is* the agent, not a label.** Encrypted gnubg weights and the per-agent experience overlay are hash-committed to `dataHashes[0]` / `dataHashes[1]` on the iNFT. Transfer the token, transfer the brain — with verifiable match history.
+- **Agents learn.** The experience overlay (a ~50-float preference vector) is rewritten after every match and re-committed on-chain. Two same-tier agents played differently for 50 matches will play measurably differently thereafter.
+- **Verifiable intelligence provenance.** Anyone can read `dataHashes[0]`, fetch the blob from 0G Storage, decrypt with the public AES key, and verify it is the canonical gnubg weight file. No black-box claims.
+
+### For the ecosystem
+- **Open protocol.** There are no proprietary APIs. ENS subnames, 0G Storage blob hashes, and on-chain match IDs are all public primitives. A new frontend can be written in a weekend.
+- **Composable reputation.** ELO in a text record is as composable as DNS. Other protocols can build on it — leaderboards, pairing systems, stake-your-rating games — without permission.
+- **Decentralised coach.** The LLM coaching hints run locally on the player's AXL node (flan-t5-base) and use strategy docs fetched from 0G Storage as RAG context. No hosted inference key required.
+
+---
+
+## Limitations
+
+### v1 trust assumptions
+- **Server-rolled dice (human-vs-agent).** In v1, dice are rolled in the browser via `crypto.getRandomValues`. For human-vs-agent this is self-trust; commit-reveal for provable fairness is v2.
+- **`recordMatch` is still available to the owner.** The trusted `recordMatch(onlyOwner)` path co-exists with `settleWithSessionKeys`. In a full decentralisation the owner path would be removed; for the hackathon it is kept as a fallback.
+- **Session key lives in browser memory.** The ephemeral session key is generated in `crypto.subtle` and held only in JS memory for the match duration. A page refresh loses it; in that case the human must re-connect and re-sign. Persistent session keys (e.g. stored in a hardware security module or the wallet's `eth_getEncryptionPublicKey`) are a v2 item.
+
+### v1 scope boundaries
+- **Human-vs-agent only.** Human-vs-human requires peer discovery so two players' AXL nodes can find each other on the Yggdrasil mesh. The transport works; the matchmaking layer doesn't exist yet.
+- **Coach uses flan-t5-base locally.** The README's "Innovations" section describes a Qwen 2.5 7B coach on 0G Compute. In shipped v1 the coach is flan-t5-base running locally. 0G Compute integration (for verifiable inference) is a roadmap item.
+- **ENS on 0G testnet, not real ENS.** The subname registrar is ENS-shaped (namehash, text records, resolver semantics) but deployed on 0G testnet rather than wired into real ENS on Sepolia. Moving to a real ENS L2 (Linea Durin) is a configuration change, not a redesign.
+- **No cube doubling UI.** The backgammon doubling cube is tracked by gnubg internally but the frontend does not surface cube offers/takes. This is visual polish, not a protocol gap.
+- **Overlay categories are hand-coded.** The ~50-float experience vector uses hand-written heuristics (`is_slot_opening`, `is_aggressive_cube`) rather than learned feature detectors. A better feature extraction pass is future work.
+
+---
+
 ## Running Locally
 
 ### Prerequisites
@@ -484,7 +528,7 @@ For the full version: see [ROADMAP.md](ROADMAP.md). Architecture overview: [ARCH
 **Gensyn AXL:**
 
 - [ ] AXL agent node running gnubg + coach services
-- [ ] Two-signature settlement: both wallets sign result off-chain, `MatchRegistry.recordMatch(sig1, sig2)` verifies on-chain
+- [x] Session-key state channel: `MatchRegistry.settleWithSessionKeys(humanAuthSig, resultSig, agentId, ...)` — human wallet authorises an in-browser session key at game start; session key signs the result; either side can submit unilaterally
 - [ ] Write-up: AXL mesh architecture and trustless settlement flow
 
 **Main track:**

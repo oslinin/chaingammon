@@ -1,0 +1,466 @@
+<!DOCTYPE html>
+<!--
+  Chaingammon — post-pivot presentation (April 2026)
+  Self-contained HTML slide deck. Open in any browser; use ← → arrow keys
+  or click Next / Prev to navigate. No build step required.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Chaingammon — ETHGlobal Open Agents 2026</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    background: #09090b;
+    color: #fafafa;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* slide container */
+  #deck {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .slide {
+    display: none;
+    width: 900px;
+    max-width: 96vw;
+    padding: 56px 64px;
+    animation: fadein 0.25s ease;
+  }
+  .slide.active { display: flex; flex-direction: column; gap: 20px; }
+
+  @keyframes fadein { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+
+  /* typography */
+  h1 { font-size: 2.4rem; font-weight: 800; line-height: 1.15; }
+  h2 { font-size: 1.75rem; font-weight: 700; line-height: 1.2; }
+  h3 { font-size: 1.2rem; font-weight: 600; }
+  p, li { font-size: 1.05rem; line-height: 1.65; color: #a1a1aa; }
+  strong { color: #fafafa; font-weight: 600; }
+  code { font-family: "SF Mono", "Fira Code", monospace; font-size: 0.9em;
+         background: #27272a; padding: 2px 6px; border-radius: 4px; color: #d4d4d8; }
+  ul { padding-left: 1.4em; display: flex; flex-direction: column; gap: 8px; }
+  li::marker { color: #6366f1; }
+
+  /* accent colours */
+  .tag {
+    display: inline-block;
+    padding: 3px 10px; border-radius: 99px;
+    font-size: 0.75rem; font-weight: 600; letter-spacing: 0.05em;
+    text-transform: uppercase;
+  }
+  .tag-ens    { background: #3b3bff22; color: #818cf8; border: 1px solid #4f46e5; }
+  .tag-0g     { background: #10b98122; color: #34d399; border: 1px solid #059669; }
+  .tag-axl    { background: #f59e0b22; color: #fbbf24; border: 1px solid #d97706; }
+  .tag-chain  { background: #6366f122; color: #a5b4fc; border: 1px solid #818cf8; }
+
+  /* cards */
+  .grid { display: grid; gap: 16px; }
+  .grid-2 { grid-template-columns: 1fr 1fr; }
+  .grid-3 { grid-template-columns: 1fr 1fr 1fr; }
+  .card {
+    background: #18181b; border: 1px solid #27272a;
+    border-radius: 12px; padding: 20px 24px;
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  .card h3 { color: #fafafa; }
+  .card p  { font-size: 0.93rem; }
+
+  /* table */
+  table { border-collapse: collapse; width: 100%; font-size: 0.9rem; }
+  th { text-align: left; padding: 8px 12px; color: #71717a;
+       border-bottom: 1px solid #27272a; font-weight: 500; }
+  td { padding: 8px 12px; color: #a1a1aa; border-bottom: 1px solid #18181b; }
+  tr:last-child td { border-bottom: none; }
+  td:first-child { color: #fafafa; font-weight: 500; }
+
+  /* highlight box */
+  .callout {
+    background: #18181b; border-left: 3px solid #6366f1;
+    border-radius: 0 8px 8px 0; padding: 14px 20px;
+    font-size: 1rem; color: #a1a1aa; line-height: 1.6;
+  }
+  .callout strong { color: #a5b4fc; }
+
+  /* change table */
+  .change-before { color: #f87171; }
+  .change-after  { color: #4ade80; }
+
+  /* nav bar */
+  #nav {
+    display: flex; align-items: center; justify-content: center; gap: 24px;
+    padding: 16px;
+    border-top: 1px solid #27272a;
+  }
+  #nav button {
+    background: #18181b; border: 1px solid #27272a; color: #a1a1aa;
+    padding: 8px 20px; border-radius: 8px; font-size: 0.9rem; cursor: pointer;
+  }
+  #nav button:hover { background: #27272a; color: #fafafa; }
+  #nav button:disabled { opacity: 0.3; cursor: default; }
+  #counter { font-size: 0.85rem; color: #52525b; min-width: 60px; text-align: center; }
+
+  /* title slide */
+  .hero-label { font-size: 0.8rem; letter-spacing: 0.1em; text-transform: uppercase;
+                color: #52525b; font-weight: 500; }
+  .hero-sub   { font-size: 1.15rem; color: #71717a; }
+  .hero-tags  { display: flex; gap: 8px; flex-wrap: wrap; }
+
+  /* quote */
+  blockquote {
+    border-left: 3px solid #6366f1; padding-left: 20px; margin: 0;
+    font-size: 1.1rem; font-style: italic; color: #a1a1aa; line-height: 1.7;
+  }
+</style>
+</head>
+<body>
+
+<div id="deck">
+
+  <!-- ── Slide 1 — Title ──────────────────────────────────────────────── -->
+  <div class="slide active">
+    <p class="hero-label">ETHGlobal Open Agents · April 2026</p>
+    <h1>Chaingammon</h1>
+    <p class="hero-sub">An open protocol for <strong>portable backgammon reputation</strong>.<br>
+    Your rating. Your agent. Your archive. Forever.</p>
+    <div class="hero-tags">
+      <span class="tag tag-ens">ENS</span>
+      <span class="tag tag-0g">0G Storage</span>
+      <span class="tag tag-0g">0G Chain</span>
+      <span class="tag tag-axl">Gensyn AXL</span>
+      <span class="tag tag-chain">ERC-7857</span>
+    </div>
+  </div>
+
+  <!-- ── Slide 2 — The Problem ────────────────────────────────────────── -->
+  <div class="slide">
+    <h2>The Problem</h2>
+    <blockquote>
+      Your backgammon rating is not yours. Spend years climbing the ladder on any platform
+      and that rating lives in their database — locked behind their login wall, gone if they
+      shut down. Switch platforms and you start at zero.
+    </blockquote>
+    <ul>
+      <li><strong>Siloed ELO.</strong> backgammon.com, PlayOK, and every online club run separate databases with no portability.</li>
+      <li><strong>Opaque AI opponents.</strong> No verifiable proof of an AI's intelligence tier, history, or learning.</li>
+      <li><strong>Trusted operators everywhere.</strong> Server rolls dice. Server records results. Server can cheat or disappear.</li>
+      <li><strong>No composable reputation.</strong> Other tools can't read your rating without a platform-specific API key.</li>
+    </ul>
+  </div>
+
+  <!-- ── Slide 3 — The Solution ───────────────────────────────────────── -->
+  <div class="slide">
+    <h2>The Solution — an open protocol</h2>
+    <div class="callout">
+      Every player — human or AI agent — has an ENS subname (<code>&lt;name&gt;.chaingammon.eth</code>) whose text records hold their ELO and a link to their full match archive on 0G Storage. Any tool can read it without permission.
+    </div>
+    <div class="grid grid-3">
+      <div class="card">
+        <h3>Verifiable</h3>
+        <p>Every match settles to <code>MatchRegistry</code>. ELO delta + game record hash are on-chain and auditable by anyone.</p>
+      </div>
+      <div class="card">
+        <h3>Portable</h3>
+        <p>ENS subname = identity. Switch frontends, switch clients — reputation travels with your wallet.</p>
+      </div>
+      <div class="card">
+        <h3>Decentralised</h3>
+        <p>No central game server. Local AXL nodes handle move evaluation and coaching. Settlement needs no operator key.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Slide 4 — Two Pivots ─────────────────────────────────────────── -->
+  <div class="slide">
+    <h2>Two Pivots That Changed Everything</h2>
+    <p>Original plan: FastAPI server rolls dice, records matches, runs gnubg. Two design pivots turned every layer trustless.</p>
+    <table>
+      <tr><th>Layer</th><th class="change-before">Pre-pivot</th><th class="change-after">Post-pivot</th></tr>
+      <tr><td>Game state</td><td class="change-before">Server RAM</td><td class="change-after">Browser state machine</td></tr>
+      <tr><td>Move evaluation</td><td class="change-before">Server gnubg</td><td class="change-after">Player's local gnubg over AXL</td></tr>
+      <tr><td>Coach inference</td><td class="change-before">Hosted LLM (API key)</td><td class="change-after">flan-t5-base locally over AXL</td></tr>
+      <tr><td>Dice rolling</td><td class="change-before">Server PRNG</td><td class="change-after">Browser <code>crypto.getRandomValues</code></td></tr>
+      <tr><td>Settlement</td><td class="change-before"><code>onlyOwner recordMatch</code></td><td class="change-after"><code>settleWithSessionKeys</code> — pre-authorised, anyone submits</td></tr>
+      <tr><td>Match archive</td><td class="change-before">Centralised storage</td><td class="change-after">0G Storage (content-addressed, permanent)</td></tr>
+      <tr><td>Identity</td><td class="change-before">Platform DB row</td><td class="change-after">ENS subname (<code>&lt;name&gt;.chaingammon.eth</code>)</td></tr>
+    </table>
+  </div>
+
+  <!-- ── Slide 5 — Gensyn AXL ─────────────────────────────────────────── -->
+  <div class="slide">
+    <h2>Pivot 1 — Gensyn AXL removes the central server</h2>
+    <p>Each player runs <strong>two local AXL agent nodes</strong>. The browser talks to them over Gensyn's permissionless Yggdrasil P2P mesh.</p>
+    <div class="grid grid-2">
+      <div class="card">
+        <span class="tag tag-axl">gnubg agent · port 8001</span>
+        <h3>Move evaluation</h3>
+        <p>Wraps gnubg via its External Player interface. POST <code>/move</code> → best legal move. POST <code>/apply</code> → validated state transition. POST <code>/evaluate</code> → ranked candidates for the coach.</p>
+      </div>
+      <div class="card">
+        <span class="tag tag-axl">coach agent · port 8002</span>
+        <h3>LLM narration</h3>
+        <p>flan-t5-base + gnubg strategy docs on 0G Storage as RAG context. POST <code>/hint</code> → plain-English coaching hint rendered in the match UI after every move.</p>
+      </div>
+    </div>
+    <p>AXL routes browser HTTP to whichever service is registered under those names. The player can audit the code. No operator is in the critical path for move evaluation or coaching.</p>
+  </div>
+
+  <!-- ── Slide 6 — Session Key Settlement ─────────────────────────────── -->
+  <div class="slide">
+    <h2>Pivot 2 — <code>settleWithSessionKeys</code></h2>
+    <p>Trustless settlement without MetaMask interruptions during play and without a DoS vector.</p>
+    <ul>
+      <li><strong>Game start</strong> — one MetaMask popup. Wallet signs <code>"Chaingammon:open" + nonce + agentId + sessionKey</code>. The ephemeral session key is generated in-browser and lives only in JS memory for this match.</li>
+      <li><strong>During play</strong> — no popups. The session key signs per-turn state updates silently.</li>
+      <li><strong>Game end</strong> — one MetaMask popup. Browser calls <code>settleWithSessionKeys(humanAuthSig, resultSig, agentId, ...)</code>.</li>
+    </ul>
+    <div class="callout">
+      The contract recovers the human wallet address from <code>humanAuthSig</code>, verifies that <code>resultSig</code> came from the declared <code>sessionKey</code>, and consumes the nonce. <strong>The loser cannot DoS by going offline</strong> — they pre-signed at game start, and either side (or any relayer) can submit the result.
+    </div>
+  </div>
+
+  <!-- ── Slide 7 — Agent iNFT ──────────────────────────────────────────── -->
+  <div class="slide">
+    <h2>AI Agents as ERC-7857 iNFTs on 0G Chain</h2>
+    <p>Each agent <em>is</em> the token — not a label pointing at an off-chain model. Transfer the token, transfer the brain.</p>
+    <div class="grid grid-2">
+      <div class="card">
+        <span class="tag tag-0g">dataHashes[0]</span>
+        <h3>Shared gnubg weights</h3>
+        <p>The same encrypted gnubg neural-net file (≈ 400 KB) lives on 0G Storage as a shared blob. All agents reference the same hash. Verifiable: anyone can decrypt and confirm it's the real gnubg weights.</p>
+      </div>
+      <div class="card">
+        <span class="tag tag-0g">dataHashes[1]</span>
+        <h3>Per-agent experience overlay</h3>
+        <p>A ~50-float preference vector (slot tendency, cube aggressiveness, bear-off timing, …). Starts at zero. Rewritten after every match via damped-reinforcement update. Two same-tier agents diverge in measurable style after 50 matches.</p>
+      </div>
+    </div>
+    <p>The <code>tier</code> field (0 = beginner … 3 = world-class) maps to gnubg search depth. Tier + overlay hash = the agent's unique intelligence fingerprint, permanently committed on-chain.</p>
+  </div>
+
+  <!-- ── Slide 8 — ENS Identity ───────────────────────────────────────── -->
+  <div class="slide">
+    <h2>ENS — Portable Player Identity</h2>
+    <p><code>PlayerSubnameRegistrar.sol</code> issues <code>&lt;label&gt;.chaingammon.eth</code> subnames with ENS-shaped text records.</p>
+    <table>
+      <tr><th>Text record key</th><th>Value</th></tr>
+      <tr><td><code>elo</code></td><td>Current ELO as a decimal string (e.g. <code>"1547"</code>). Updated on-chain after every match.</td></tr>
+      <tr><td><code>match_count</code></td><td>Total matches played.</td></tr>
+      <tr><td><code>last_match_id</code></td><td>Most recent on-chain match ID.</td></tr>
+      <tr><td><code>style_uri</code></td><td><code>0g://&lt;blob-hash&gt;</code> — link to the player's style profile on 0G Storage.</td></tr>
+      <tr><td><code>archive_uri</code></td><td><code>0g://&lt;blob-hash&gt;</code> — link to the player's full match archive.</td></tr>
+    </table>
+    <p>Any third-party tool that knows a player's ENS name can reconstruct their full reputation from public on-chain data — no API key, no Chaingammon account, no platform lock-in.</p>
+  </div>
+
+  <!-- ── Slide 9 — 0G Storage ─────────────────────────────────────────── -->
+  <div class="slide">
+    <h2>0G Storage — the Match Archive</h2>
+    <p>Every completed match is preserved as a canonical, content-addressed entry on 0G Storage. The on-chain <code>MatchRegistry</code> carries only the Merkle root hash as a cryptographic pointer.</p>
+    <div class="grid grid-2">
+      <div class="card">
+        <h3>Per-match Log entry</h3>
+        <p><code>GameRecord</code> envelope: every move, dice roll, position ID, timestamp. JSON, sorted keys, deterministic bytes. ~2–10 KB compressed per match.</p>
+      </div>
+      <div class="card">
+        <h3>Per-agent Blob</h3>
+        <p>Encrypted gnubg weights (shared base, uploaded once) and the per-agent experience overlay. Hash committed to the iNFT's <code>dataHashes</code> array.</p>
+      </div>
+      <div class="card">
+        <h3>Coach RAG context</h3>
+        <p>gnubg strategy documentation uploaded once by <code>scripts/upload_gnubg_docs.py</code>. The coach fetches it by hash as prompt context.</p>
+      </div>
+      <div class="card">
+        <h3>Per-player KV</h3>
+        <p>Style profile blob: opening tendencies, cube aggressiveness, bear-off speed. Read by the coach for opponent-aware advice.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Slide 10 — Coach ─────────────────────────────────────────────── -->
+  <div class="slide">
+    <h2>The LLM Coach</h2>
+    <p><code>agent/coach_service.py</code> — FastAPI on port 8002, served through AXL. After every move the frontend requests a coaching hint.</p>
+    <div class="callout">
+      <strong>How it works:</strong> browser calls <code>POST /evaluate</code> on gnubg_service to get ranked candidates, then <code>POST /hint</code> on coach_service with those candidates. flan-t5-base generates a 1–2 sentence plain-English explanation of the best move, grounded in the gnubg strategy docs blob from 0G Storage.
+    </div>
+    <ul>
+      <li><strong>RAG context.</strong> Strategy doc blob uploaded once to 0G Storage; fetched by its hash for every hint. Keeps the LLM grounded in real backgammon theory.</li>
+      <li><strong>Best-effort delivery.</strong> The coach panel shows "Thinking…" while the hint is loading and "Start the coach node" when the service is offline. The game continues regardless.</li>
+      <li><strong>No hosted inference key.</strong> flan-t5-base (~250 MB) runs locally on the player's machine. First run downloads and caches it via HuggingFace.</li>
+    </ul>
+  </div>
+
+  <!-- ── Slide 11 — Advantages ────────────────────────────────────────── -->
+  <div class="slide">
+    <h2>Advantages</h2>
+    <div class="grid grid-2">
+      <div class="card">
+        <h3>For players</h3>
+        <ul>
+          <li>Own your rating — ENS subname, not a platform row</li>
+          <li>No central server to trust or lose</li>
+          <li>One MetaMask popup per match (session key)</li>
+          <li>Portable across any Chaingammon-compatible frontend</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>For agent owners</h3>
+        <ul>
+          <li>Token = intelligence, not a label</li>
+          <li>Agents learn match by match via experience overlay</li>
+          <li>Verifiable provenance: anyone can confirm gnubg weights</li>
+          <li>Transfer token → transfer brain + history</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>For the ecosystem</h3>
+        <ul>
+          <li>Open protocol — build a frontend in a weekend</li>
+          <li>ELO as a composable primitive (DNS for skill)</li>
+          <li>Public game archive on 0G Storage — no login required</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>Security</h3>
+        <ul>
+          <li>DoS-resistant settlement: loser can't refuse</li>
+          <li>Per-address nonce blocks settlement replay</li>
+          <li>Chain ID + contract address in signed messages blocks cross-chain replay</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Slide 12 — Limitations ───────────────────────────────────────── -->
+  <div class="slide">
+    <h2>Limitations (v1)</h2>
+    <div class="grid grid-2">
+      <div class="card">
+        <h3>Trust assumptions still present</h3>
+        <ul>
+          <li>Dice rolled in browser — honest but not provably fair (commit-reveal = v2)</li>
+          <li><code>onlyOwner recordMatch</code> co-exists with <code>settleWithSessionKeys</code> as a fallback</li>
+          <li>Session key in browser memory — page refresh loses it</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>Scope not yet implemented</h3>
+        <ul>
+          <li>Human-vs-human requires AXL peer discovery (mesh exists; matchmaking doesn't)</li>
+          <li>Coach uses flan-t5-base locally; 0G Compute (verifiable inference) is roadmap</li>
+          <li>ENS on 0G testnet, not wired into real ENS on Sepolia</li>
+          <li>No cube doubling UI</li>
+          <li>Overlay categories are hand-coded heuristics, not learned features</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Slide 13 — Roadmap ───────────────────────────────────────────── -->
+  <div class="slide">
+    <h2>Roadmap</h2>
+    <table>
+      <tr><th>Version</th><th>What ships</th></tr>
+      <tr><td><strong>v1 (now)</strong></td><td>Human-vs-agent; on-chain ELO; ENS subnames; agent iNFTs with gnubg weights on 0G Storage; full archive on 0G Storage; <code>settleWithSessionKeys</code>; LLM coach over AXL</td></tr>
+      <tr><td><strong>v2</strong></td><td>Commit-reveal dice; per-player anti-cheat heuristics; style overlay learning; L2 ENS (Linea Durin) for cheap subnames; persistent session keys</td></tr>
+      <tr><td><strong>v3</strong></td><td>Agent-vs-agent autonomous tournaments; ZK proofs of gnubg inference (zkML); 0G Compute for verifiable coach inference; betting markets; ELO derivative tokens</td></tr>
+      <tr><td><strong>v4</strong></td><td>Open agent marketplace — bring your own engine, stake your iNFT, tournament protocol</td></tr>
+    </table>
+    <p>For full detail: <code>ROADMAP.md</code> · Architecture: <code>ARCHITECTURE.md</code></p>
+  </div>
+
+  <!-- ── Slide 14 — Deployed Contracts ───────────────────────────────── -->
+  <div class="slide">
+    <h2>Deployed on 0G Testnet (chainId 16602)</h2>
+    <table>
+      <tr><th>Contract</th><th>Address</th></tr>
+      <tr><td>MatchRegistry</td><td><code>0x905856d067B84E3B51E12DaF95e68B3D525216E6</code></td></tr>
+      <tr><td>AgentRegistry</td><td><code>0x025a51F5ea78291B303F1416FC05FC0B051393e2</code></td></tr>
+      <tr><td>EloMath (library)</td><td>linked into MatchRegistry</td></tr>
+      <tr><td>PlayerSubnameRegistrar</td><td>deploy pending next bootstrap</td></tr>
+    </table>
+    <p>Explorer: <code>https://chainscan-galileo.0g.ai</code> · Faucet: <code>https://build.0g.ai</code></p>
+    <p>Encrypted gnubg weights blob on 0G Storage:<br>
+    <code>0x989ba07766cc35aa0011cf3f764831d9d1a7e11495db78c310d764b4478409ad</code></p>
+  </div>
+
+  <!-- ── Slide 15 — Demo Flow ─────────────────────────────────────────── -->
+  <div class="slide">
+    <h2>3-Minute Demo Script</h2>
+    <ul>
+      <li><strong>00:00</strong> — Open web app. Connect MetaMask. ENS subname auto-issued: <code>alice.chaingammon.eth</code>.</li>
+      <li><strong>00:30</strong> — Pick <code>gnubg-advanced-1.chaingammon.eth</code>. Show the iNFT on 0G explorer: tier, base weights hash, experience overlay hash, match count.</li>
+      <li><strong>01:00</strong> — Start a match. One MetaMask popup authorises the session key. No more popups during play.</li>
+      <li><strong>01:30</strong> — Play a few moves. Coach panel shows LLM hints after each move. Agent auto-plays its turn.</li>
+      <li><strong>02:00</strong> — Game ends. Click "Settle on-chain" — one MetaMask popup calls <code>settleWithSessionKeys</code>. Transaction confirms.</li>
+      <li><strong>02:30</strong> — Show updated ENS profile: ELO changed. Agent iNFT: <code>experienceVersion</code> bumped. Match replay rendered from 0G Storage.</li>
+    </ul>
+  </div>
+
+  <!-- ── Slide 16 — Thank you ─────────────────────────────────────────── -->
+  <div class="slide">
+    <h1>Thank you</h1>
+    <p class="hero-sub">Chaingammon — open protocol for portable backgammon reputation</p>
+    <div class="hero-tags">
+      <span class="tag tag-ens">ENS subnames</span>
+      <span class="tag tag-0g">0G Storage + Chain</span>
+      <span class="tag tag-axl">Gensyn AXL</span>
+      <span class="tag tag-chain">ERC-7857 iNFTs</span>
+    </div>
+    <table style="margin-top: 16px;">
+      <tr><th>Resource</th><th>Link</th></tr>
+      <tr><td>GitHub</td><td><code>github.com/oslinin/chaingammon</code></td></tr>
+      <tr><td>Explorer</td><td><code>https://chainscan-galileo.0g.ai</code></td></tr>
+      <tr><td>Architecture</td><td><code>ARCHITECTURE.md</code></td></tr>
+      <tr><td>Roadmap</td><td><code>ROADMAP.md</code></td></tr>
+    </table>
+    <p style="margin-top: 16px; font-size: 0.9rem; color: #52525b;">Built with Claude Code · ETHGlobal Open Agents April 2026</p>
+  </div>
+
+</div><!-- /deck -->
+
+<div id="nav">
+  <button id="prev" disabled>← Prev</button>
+  <span id="counter">1 / 16</span>
+  <button id="next">Next →</button>
+</div>
+
+<script>
+  const slides = document.querySelectorAll(".slide");
+  const total = slides.length;
+  let current = 0;
+
+  const prev = document.getElementById("prev");
+  const next = document.getElementById("next");
+  const counter = document.getElementById("counter");
+
+  function show(n) {
+    slides[current].classList.remove("active");
+    current = Math.max(0, Math.min(total - 1, n));
+    slides[current].classList.add("active");
+    counter.textContent = `${current + 1} / ${total}`;
+    prev.disabled = current === 0;
+    next.disabled = current === total - 1;
+  }
+
+  prev.addEventListener("click", () => show(current - 1));
+  next.addEventListener("click", () => show(current + 1));
+
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowRight" || e.key === "ArrowDown") show(current + 1);
+    if (e.key === "ArrowLeft"  || e.key === "ArrowUp")   show(current - 1);
+  });
+</script>
+</body>
+</html>
