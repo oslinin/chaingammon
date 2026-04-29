@@ -106,16 +106,28 @@ contract MatchRegistry is Ownable {
     /// @notice Trustless settlement via session-key state channel.
     ///
     /// @dev Verification flow:
-    ///   1. Recover human wallet address from `humanAuthSig` over `humanAuthHash`
-    ///      (the "channel open" message the wallet signed at game start).
-    ///   2. Verify `resultSig` was produced by `sessionKey` over `resultHash`
-    ///      (the game result signed by the session key at game end).
-    ///   3. Consume the nonce for the recovered human address.
+    ///   1. Reconstruct `humanAuthHash` from caller-supplied params and verify
+    ///      `humanAuthSig` recovers to the CLAIMED `human` address. (Without
+    ///      binding the auth recovery to a claimed address, a tampered auth
+    ///      sig recovers to a random address whose nonce defaults to zero —
+    ///      passes the require, records a match for a garbage address.)
+    ///   2. Verify `resultSig` recovers to `sessionKey` over `resultHash`.
+    ///      `resultHash` includes the SAME `human` and `agentId` as the auth,
+    ///      so a result signed for a different opponent fails.
+    ///   3. Consume the nonce stored under `human`.
     ///   4. Record the match — human as winner or loser vs the specified agent.
     ///
     /// Either player (or any relayer) can submit — the result is binding once
-    /// both signatures are valid.
+    /// both signatures are valid for the claimed `human`.
     ///
+    /// Encoding: both messages use `abi.encode` (NOT `abi.encodePacked`) so
+    /// hashes are unambiguous across types and dynamic data; ECDSA recovery
+    /// uses `MessageHashUtils.toEthSignedMessageHash` to match raw-bytes
+    /// `personal_sign` from EIP-191.
+    ///
+    /// @param human         Address whose wallet signed `humanAuthSig`. The
+    ///                       recovered signer is checked against this value;
+    ///                       a mismatch reverts.
     /// @param agentId       ERC-7857 token ID of the opponent agent (> 0).
     /// @param matchLength   Match-point target (e.g. 3).
     /// @param humanWins     True when the human wallet is the winner.
@@ -125,6 +137,7 @@ contract MatchRegistry is Ownable {
     /// @param humanAuthSig  EIP-191 personal_sign over `humanAuthHash` by the human wallet.
     /// @param resultSig     EIP-191 personal_sign over `resultHash` by the session key.
     function settleWithSessionKeys(
+        address human,
         uint256 agentId,
         uint16 matchLength,
         bool humanWins,
@@ -134,37 +147,44 @@ contract MatchRegistry is Ownable {
         bytes calldata humanAuthSig,
         bytes calldata resultSig
     ) external returns (uint256 matchId) {
+        require(human != address(0), "human must not be zero");
         require(agentId != 0, "agentId must be non-zero");
 
-        // ── 1. Verify human wallet authorised this session key ────────────────
+        // ── 1. Verify the claimed `human` signed the auth ─────────────────────
         bytes32 authHash = MessageHashUtils.toEthSignedMessageHash(
-            keccak256(abi.encodePacked(
+            keccak256(abi.encode(
                 "Chaingammon:open",
                 block.chainid,
                 address(this),
+                human,
                 nonce,
                 agentId,
                 matchLength,
                 sessionKey
             ))
         );
-        address human = ECDSA.recover(authHash, humanAuthSig);
-        require(human != address(0), "invalid humanAuthSig");
+        require(
+            ECDSA.recover(authHash, humanAuthSig) == human,
+            "humanAuthSig not from human"
+        );
 
-        // ── 2. Verify session key signed this result ──────────────────────────
+        // ── 2. Verify session key signed this result for the same human + agent
         bytes32 resultHash = MessageHashUtils.toEthSignedMessageHash(
-            keccak256(abi.encodePacked(
+            keccak256(abi.encode(
                 "Chaingammon:result",
                 block.chainid,
                 address(this),
+                human,
                 nonce,
                 agentId,
-                humanWins ? uint8(1) : uint8(0),
+                humanWins,
                 gameRecordHash
             ))
         );
-        address resultSigner = ECDSA.recover(resultHash, resultSig);
-        require(resultSigner == sessionKey, "resultSig not from sessionKey");
+        require(
+            ECDSA.recover(resultHash, resultSig) == sessionKey,
+            "resultSig not from sessionKey"
+        );
 
         // ── 3. Consume nonce (replay protection) ─────────────────────────────
         require(nonces[human] == nonce, "nonce mismatch");
