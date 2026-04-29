@@ -1,0 +1,14 @@
+{
+  "name": "chaingammon-agent",
+  "peers": [],
+  "services": [
+    {
+      "name": "gnubg",
+      "upstream": "http://localhost:8001"
+    },
+    {
+      "name": "coach",
+      "upstream": "http://localhost:8002"
+    }
+  ]
+}
