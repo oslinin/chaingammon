@@ -355,6 +355,101 @@ Chaingammon is the layer that fixes this. It is not a backgammon website — it 
 
 ---
 
+## GitHub Pages Deployment
+
+The frontend is a fully static Next.js app (`output: 'export'`). No server is needed at runtime — the browser talks directly to the player's local AXL agent nodes and to public RPC endpoints for on-chain reads.
+
+### One-time contract redeploy (for `selfMintSubname`)
+
+Phase 22 adds `selfMintSubname` to `PlayerSubnameRegistrar` so wallets can register ENS subnames directly from the browser without a backend. The deployed contract on 0G testnet does not have this function yet — redeploy once:
+
+```bash
+cd contracts && pnpm install
+pnpm exec hardhat run script/deploy.js --network 0g-testnet
+# updates contracts/deployments/0g-testnet.json with new addresses
+```
+
+### GitHub Actions deployment workflow
+
+Create `.github/workflows/deploy-pages.yml` with the following content (Claude Code cannot create workflow files directly due to permission constraints):
+
+```yaml
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install workspace dependencies
+        run: pnpm install
+
+      - name: Compile contracts (generates ABI artifacts the frontend imports)
+        run: pnpm contracts:compile
+
+      - name: Build static frontend
+        working-directory: frontend
+        env:
+          BASE_PATH: /chaingammon
+        run: pnpm build
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: frontend/out
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+```
+
+Then in your GitHub repo → **Settings → Pages**, set **Source** to **GitHub Actions**.
+
+### Local static build
+
+```bash
+pnpm install
+pnpm contracts:compile          # required — frontend imports ABI artifacts
+cd frontend
+BASE_PATH=/chaingammon pnpm build   # outputs to frontend/out/
+# serve with: npx serve out
+```
+
+Leave `BASE_PATH` unset (or empty) if you're deploying to a custom domain at root (`https://chaingammon.xyz/`).
+
+---
+
 ## Running Locally
 
 ### Prerequisites
