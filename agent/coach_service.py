@@ -52,9 +52,16 @@ def _load_model() -> None:
     """
     global _model, _tokenizer
     if _model is None:
-        from transformers import T5ForConditionalGeneration, T5Tokenizer
-        _tokenizer = T5Tokenizer.from_pretrained("google/flan-t5-base")
-        _model = T5ForConditionalGeneration.from_pretrained("google/flan-t5-base")
+        # Newer transformers (>= 4.40) removed `T5ForConditionalGeneration`
+        # and `T5Tokenizer` from the top-level namespace. Use the
+        # Auto* wrappers, which resolve to the same classes at load time
+        # and are forward-compatible. Without this, `_load_model`
+        # raises ImportError, /hint returns a degenerate one-word
+        # response, and the match page shows the "coach offline"
+        # placeholder despite the service being up.
+        from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
+        _tokenizer = AutoTokenizer.from_pretrained("google/flan-t5-base")
+        _model = AutoModelForSeq2SeqLM.from_pretrained("google/flan-t5-base")
 
 
 def _fetch_docs(docs_hash: str) -> str:
