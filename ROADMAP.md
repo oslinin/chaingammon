@@ -18,7 +18,6 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for component descriptions and data flows
 ### Demo + submission
 
 - [ ] Smoke-test the live stack end-to-end on real 0G testnet post-pivot (gnubg + coach + frontend).
-- [ ] `web_readme.html` updates for Phases 17 and 18 (per phase-commit policy).
 - [ ] Reconstruct the STATUS & ROADMAP slide in `chaingammon.pptx` (lost in an earlier session).
 - [ ] Demo video recording.
 - [ ] ETHGlobal submission form.
