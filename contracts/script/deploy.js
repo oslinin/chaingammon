@@ -57,6 +57,17 @@ async function main() {
   const matchAddr = await matchRegistry.getAddress();
   console.log(`MatchRegistry deployed: ${matchAddr}`);
 
+  // Deploy MockOgStorage on localhost/hardhat only — stands in for 0G Storage so a
+  // dev can iterate without making any 0G testnet calls (see og-bridge OG_STORAGE_MODE=localhost).
+  let mockOgStorageAddr;
+  if (network.name === "localhost" || network.name === "hardhat") {
+    const MockOgStorage = await ethers.getContractFactory("MockOgStorage");
+    const mock = await MockOgStorage.deploy();
+    await mock.waitForDeployment();
+    mockOgStorageAddr = await mock.getAddress();
+    console.log(`MockOgStorage deployed: ${mockOgStorageAddr} (localhost only)`);
+  }
+
   const AgentRegistry = await ethers.getContractFactory("AgentRegistry");
   const agentRegistry = await AgentRegistry.deploy(matchAddr, INITIAL_BASE_WEIGHTS_HASH);
   await agentRegistry.waitForDeployment();
@@ -83,6 +94,7 @@ async function main() {
       MatchRegistry: matchAddr,
       AgentRegistry: agentAddr,
       PlayerSubnameRegistrar: registrarAddr,
+      ...(mockOgStorageAddr ? { MockOgStorage: mockOgStorageAddr } : {}),
     },
     agentRegistryConstructorArgs: {
       matchRegistry: matchAddr,

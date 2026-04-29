@@ -1101,38 +1101,47 @@ Tests (**agent/tests/test_coach_service.py**, updated, +1 test):
 
 Live 0G Compute path (Qwen 2.5 7B at provider `0xa48f01287233509FD694a22Bf840225062E67836`) is reachable from the bridge but requires the wallet at `0xa2219C4f48bC9e6806Bce3B391aB9e23f55FEbb5` to be funded above the testnet ledger's minimum (`addLedger(0.05 OG)` reverts at the current 0.099 OG balance). Once topped up via the 0G faucet, no code changes are needed — the next `/hint` with `backend: "compute"` mints the ledger and routes to Qwen.
 
----
+### localhost dev mode: MockOgStorage contract and og-bridge localhost routing
 
-### Phase 21 — ENS name selection UX ✅
+Adds a fully self-contained Hardhat localhost dev mode so engineers can iterate with `pnpm exec hardhat node` plus a localhost deploy and make zero 0G testnet calls. A new MockOgStorage Solidity contract (MIT, `^0.8.24`) stands in for 0G Storage (0G's distributed blob-store network), using `keccak256` as the content address rather than 0G's Merkle root. The on-chain consumers — `gameRecordHash` on MatchRegistry and `dataHashes[*]` on AgentRegistry — treat the hash as an opaque `bytes32`, so the swap is safe within a single network; hashes produced on localhost have no meaning on testnet and vice versa.
 
-Phase 21: ENS name chooser — auto-shown claim form, label validation, fallback suggestion
+MockOgStorage (**contracts/src/MockOgStorage.sol**, new):
+- `mapping(bytes32 => bytes) private blobs` plus `mapping(bytes32 => bool) private stored` so an absent key and a stored zero-length blob (rejected at `put` time) can never be confused.
+- `put(bytes calldata data) external returns (bytes32 rootHash)` — reverts `"MockOgStorage: empty data"` on empty input; otherwise computes `rootHash = keccak256(data)`, stores bytes, emits `Stored(rootHash, length)`. Idempotent on identical content.
+- `get(bytes32 rootHash) external view returns (bytes memory)` — reverts `"MockOgStorage: blob not found"` when `!stored[rootHash]`.
+- `exists(bytes32 rootHash) external view returns (bool)` — reads the existence flag.
+- `event Stored(bytes32 indexed rootHash, uint256 length)`.
+- NatSpec header explains localhost-only scope, keccak256 vs 0G Merkle-root distinction, and cross-network hash incompatibility.
 
-The `ClaimForm` in `ProfileBadge` previously required a "Claim name" button click before the name-entry field appeared. This phase surfaces the form immediately on wallet connect (no extra click), enforces ENS label rules client- and server-side, and suggests a fallback name when the chosen name is already taken.
+deploy.js (**contracts/script/deploy.js**, updated):
+- Localhost/hardhat-only block inserted between MatchRegistry and AgentRegistry deploys — deploys MockOgStorage, logs address, stores it under `contracts.MockOgStorage` in the output JSON.
+- Testnet deploys are unaffected (block is guarded by `network.name === "localhost" || network.name === "hardhat"`).
 
-ClaimForm (**frontend/app/ProfileBadge.tsx**, updated):
-- `ClaimForm` is now a named export so the Playwright fixture page can render it without wallet hooks.
-- `isValidLabel(s)` — returns true when `s` matches `^[a-z0-9]([a-z0-9-]*[a-z0-9])?$` and is ≤ 63 chars; mirrors the server-side `_LABEL_RE`.
-- `labelValidationMessage(s)` — returns a human-readable problem string (start/end with hyphen, bad chars, too long) or `null` when the label is valid; shown as an amber inline hint below the input.
-- `randomSuffix()` — generates a 3-digit numeric string for fallback suggestions.
-- Input auto-lowercases via `onChange` so users never need to think about casing.
-- On a 409 response or a "already taken" server message, `suggestion` state is set to `<label><suffix>`; a "Try … instead" button appears that sets the input and re-submits in one click.
-- `data-testid` attributes added to input, suffix span, Claim button, validation-error span, and suggestion button so Playwright can locate them without fragile CSS selectors.
-- `ProfileBadge` no longer has a `showClaim` state; it renders `<ClaimForm address={address} />` directly when no subname label is found.
+og-bridge upload (**og-bridge/src/upload.mjs**, updated):
+- New `OG_STORAGE_MODE=localhost` branch at the top of `main()`.
+  - Reads `LOCALHOST_RPC` (default `http://127.0.0.1:8545`) and MockOgStorage address from `LOCALHOST_MOCK_OG_STORAGE` or falls back to `contracts/deployments/localhost.json → contracts.MockOgStorage` with a clear error on missing file.
+  - Reads `LOCALHOST_PRIVATE_KEY` (default: Hardhat's first well-known test key `0xac0974...`; comment notes not to reuse on a real network).
+  - Computes `rootHash = ethers.keccak256(bytes)` locally (deterministic, avoids a `staticCall` round-trip), calls `mock.put(bytes)`, waits for receipt, emits `{rootHash, txHash}` JSON on stdout.
+  - ABI constructed inline (6-line array — no artifact import).
+- Testnet path (`OG_STORAGE_MODE` unset or `"testnet"`) is unchanged; env checks moved inside `main()` after the localhost branch.
 
-Server (**server/app/main.py**, updated):
-- `import re` added; `_LABEL_RE` pattern defined at module level.
-- `mint_subname` now lowercases the incoming label, validates length (≤ 63) and `_LABEL_RE` before touching the chain, returning HTTP 400 with a descriptive message on violation.
-- Pre-availability check: calls `ens.owner_of(node)` before minting; returns HTTP 409 `"label already taken"` when the node is already owned. This avoids a wasted on-chain transaction and gives the frontend a clean status code to branch on for the fallback UX.
+og-bridge download (**og-bridge/src/download.mjs**, updated):
+- New `OG_STORAGE_MODE=localhost` branch mirrors the upload change: resolves MockOgStorage address the same way, calls `mock.get(rootHash)` on a read-only provider, converts the returned hex string to raw bytes, writes to stdout.
+- Testnet path unchanged; `OG_STORAGE_INDEXER` check moved inside `main()` after the localhost branch.
 
-Test fixture (**frontend/app/test-ens-claim/page.tsx**, new):
-- Renders `ClaimForm` with a hard-coded test address so Playwright can exercise validation without a wallet or live chain.
+round-trip test (**og-bridge/test/round_trip.mjs**, new):
+- Standalone Node script (no test runner required); takes `--mock-address 0x...` plus optional `--rpc` and `--private-key` flags.
+- Uploads three payloads (two text strings; one five-byte binary edge case with `0x00`/`0xff` values) via the localhost branch of upload.mjs and downloads each by the returned `rootHash`.
+- Asserts byte-for-byte equality with `Buffer.equals`; prints `Payload N: OK` per case plus `OK` on success; exits 1 with a hex diff on mismatch.
 
-Tests (**frontend/tests/ens-name-claim.spec.ts**, new, 7 tests):
-- Claim button disabled when input is empty.
-- Input + `.chaingammon.eth` suffix + Claim button all visible.
-- Validation error shown and button disabled for labels starting with hyphen, ending with hyphen, or containing underscores.
-- Input auto-lowercases uppercase characters.
-- Claim button enabled for a valid lowercase label.
-- Claim button enabled for a label containing a hyphen.
+Tests (**contracts/test/phase_MockOgStorage.test.js**, new, 8 tests):
+- `put` returns `keccak256(data)` via `staticCall` (return value observable without state side-effects).
+- `get(rootHash)` returns the bytes stored by `put` (compared with `ethers.hexlify`).
+- `put` emits `Stored(rootHash, length)` verified with `to.emit(...).withArgs(...)`.
+- `exists` flips `false → true` after a `put`.
+- Identical-content puts are idempotent: second `put` does not revert and `get` still returns the bytes.
+- Distinct content yields distinct hashes and distinct bytes on retrieval.
+- `get` reverts `"MockOgStorage: blob not found"` for an unknown hash.
+- `put("0x")` reverts `"MockOgStorage: empty data"`.
 
-27 agent tests unchanged. Frontend type-check clean.
+8 new Hardhat tests pass (45 prior + 8 new).
