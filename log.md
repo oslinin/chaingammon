@@ -1037,3 +1037,66 @@ Presentation (**[docs/slides.html](docs/slides.html)**, new):
 73 hardhat tests pass (prior count; new tests bring this to 82 when all pass).
 12 agent tests pass.
 Playwright frontend tests unaffected.
+
+---
+
+## Phase 20: 0G Compute coach (Qwen 2.5 7B) with agent-bias awareness and free/paid toggle
+
+Replaces the local-only flan-t5-base coach with verifiable inference on the **0G Compute Network** (a decentralized GPU-inference market with on-chain ledgers and signed request headers) running **Qwen 2.5 7B Instruct** (Alibaba's Apache-2.0 instruct-tuned 7B model, the only chatbot service currently published on 0G Galileo testnet). Adds an agent-profile abstraction so the coach can reference the *specific* agent's playing biases — pulled from the iNFT's experience overlay (the Phase 9 hand-coded category vector) on **0G Storage** (a decentralized object store keyed by Merkle root). The abstraction is forward-compatible with the `learn` branch's PyTorch value network: a future `ModelProfile` adds one branch to the dispatch and the coach prompt continues to work unchanged. A per-request backend toggle in the match page lets the human choose between the paid 0G path and the free local model, with the server falling back gracefully when 0G is unreachable so the demo never breaks.
+
+`og-compute-bridge` (**og-compute-bridge/package.json**, **og-compute-bridge/src/chat.mjs**, new):
+
+- New pnpm workspace package mirroring `og-bridge`'s shell-out pattern, since `@0glabs/0g-serving-broker` (the 0G Compute SDK) is JS-only.
+- `chat.mjs` — Node CLI: reads a JSON `{messages, system}` chat-completion request on stdin, returns `{content, model, providerAddress}` JSON on stdout. All progress logging redirected to stderr so stdout stays a clean JSON channel for the Python caller.
+- Pins the SDK to `1.0.0-beta.8` (the testnet build; SDK 2.0+ hardcodes mainnet contract addresses, breaking testnet discovery).
+- Bootstraps the broker ledger with `addLedger(DEPOSIT_OG)` on first run and tops up the per-provider sub-account via `transferFund(provider, "inference", amount_in_neuron)` (1 OG = 10⁹ neuron). Defaults sized for 0G testnet faucet drips (deposit 0.05 OG, sub-account 0.01 OG); override via `OG_COMPUTE_DEPOSIT` / `OG_COMPUTE_MIN_BALANCE` on mainnet.
+- Selects the chat-capable provider via `broker.inference.listService()` (or pin via `OG_COMPUTE_PROVIDER`); fetches the provider's endpoint + signed headers; POSTs an OpenAI-compatible `/chat/completions` request.
+- Reuses the storage-bridge wallet (`OG_STORAGE_RPC` / `OG_STORAGE_PRIVATE_KEY`) so a single funded account drives both 0G Storage and 0G Compute flows.
+
+`coach_compute_client.py` (**agent/coach_compute_client.py**, new):
+
+- Thin Python wrapper around the Node CLI — mirrors `server/app/og_storage_client.py`. `chat(messages, system=None)` returns `ChatResult(content, model, provider_address)`; raises `OgComputeError` on missing env vars, non-zero exit, or malformed bridge output.
+
+`agent_profile.py` (**agent/agent_profile.py**, new):
+
+- Abstract `AgentProfile` interface — every implementation exposes `summarize() -> str` (≤ 240-char English description for the coach prompt) and `metrics() -> Mapping` (structured data for logs).
+- `NullProfile` — cold-start agents (empty hash or unreachable blob) return *"no measurable style yet"* so the coach knows not to over-claim.
+- `OverlayProfile` — parses the Phase 9 overlay JSON envelope, picks the top three biases by absolute value, threshold-filters categories below 0.05 (the LR=0.05/N=20 update rule's noise floor), and renders them as e.g. *"After 12 matches this agent's tendencies are: favors building the 5-point; avoids running back checkers."*
+- `ModelProfile` — documented stub for the `learn` branch's PyTorch BackgammonNet checkpoints. Returns a placeholder summary today; a future commit fills in checkpoint metadata parsing without changing any caller.
+- `load_profile(hash, fetch=...)` — content-sniffing factory: returns `NullProfile` on empty hash or fetch error; tries `OverlayProfile.from_bytes` when the blob looks like JSON; falls through to `NullProfile` for unrecognised shapes (so future model checkpoints don't crash older coaches). Optional `fetch` injection keeps the module decoupled from `og_storage_client` for tests.
+
+`coach_service.py` (**agent/coach_service.py**, updated):
+
+- Backend selection via `COACH_BACKEND` env (`compute` default | `local` | `compute-only`), with per-request override via the new `backend` field on `HintRequest`.
+- New `_build_messages` produces an OpenAI-format chat payload (system + user) used by both the 0G Compute path (Qwen) and the local fallback (collapsed back into a single seq2seq prompt for flan-t5).
+- `_generate_compute` routes through `coach_compute_client.chat`; `_generate_local` keeps the `AutoTokenizer` / `AutoModelForSeq2SeqLM` path. `_generate` orchestrates: `local` short-circuits straight to flan-t5; `compute` tries 0G first and falls back on any exception; `compute-only` re-raises so CI can verify the live path. The frontend never sees a 500 — fallback is invisible to game flow.
+- New `agent_weights_hash` field on `HintRequest` is passed to `load_profile`; the resulting summary is injected into the user prompt as *"Opponent agent profile: …"*.
+- Response shape is now `{hint, backend}` so the frontend can surface which path served the hint and warn when a paid pick fell back to local.
+
+Coach toggle UI (**frontend/app/match/page.tsx**, updated):
+
+- New `CoachBackend = "compute" | "local"` state, defaulting to `compute`, persisted in `localStorage["coachBackend"]` so a user who picks "free" doesn't get billed on reload. SSR-safe: the persisted value is read inside `useEffect` after mount.
+- `coachBackendRef` mirrors the state into a ref so fire-and-forget hint callbacks pick up the latest choice without re-creating closures.
+- Coach panel header now contains a 2-button segmented control labelled **Paid · 0G** / **Free · Local** with `aria-pressed` and tooltips naming the model. The hint card shows a *"Served by … "* footnote and an explicit *"(0G Compute unreachable — fell back)"* warning when the user picked Paid but the server returned `local`.
+- `fetchHint` updated signature: takes the chosen backend, sends it in the request body, and returns `{hint, backend} | null` so the panel can surface the served path.
+
+Tests (**agent/tests/test_agent_profile.py**, new, 10 tests):
+
+- `NullProfile` produces a neutral summary with `kind = "null"` metric.
+- `OverlayProfile` returns a neutral summary at `match_count = 0` even with non-zero values.
+- `OverlayProfile` picks the top three biases by absolute value and skips noise below 0.05.
+- All-zero overlay after matches returns *"no strong style yet"*.
+- `OverlayProfile.from_bytes` round-trips a canonical envelope and rejects malformed JSON with `AgentProfileError`.
+- `load_profile("")` → `NullProfile` (cold-start).
+- `load_profile(hash, fetch=…)` → `OverlayProfile` when the fetcher returns valid overlay JSON.
+- `load_profile` falls back to `NullProfile` on fetch errors and on non-JSON binary blobs (forward-compat: future model checkpoints don't crash today's coach).
+
+Tests (**agent/tests/test_coach_service.py**, updated, +1 test):
+
+- `test_hint_returns_string` updated for the new `(hint, backend)` tuple from `_generate` and the new response shape `{hint, backend}`.
+- New `test_hint_falls_back_when_compute_fails` — patches `_generate_compute` to raise, asserts the response surfaces `backend: "local"` so the frontend can warn the user.
+- Existing 422-on-missing-field test unchanged.
+
+27 agent tests pass (17 prior + 10 new). Frontend type-checks clean (`pnpm exec tsc --noEmit`). Smoke-tested both legs of the toggle on a live coach service: `backend: "local"` request returns a hint with zero 0G markers in the log; `backend: "compute"` request attempts the 0G path and falls back to local when the wallet/env is unavailable.
+
+Live 0G Compute path (Qwen 2.5 7B at provider `0xa48f01287233509FD694a22Bf840225062E67836`) is reachable from the bridge but requires the wallet at `0xa2219C4f48bC9e6806Bce3B391aB9e23f55FEbb5` to be funded above the testnet ledger's minimum (`addLedger(0.05 OG)` reverts at the current 0.099 OG balance). Once topped up via the 0G faucet, no code changes are needed — the next `/hint` with `backend: "compute"` mints the ledger and routes to Qwen.

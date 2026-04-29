@@ -10,22 +10,39 @@ coach_service.py — AXL agent node: LLM coaching hints.
           POST /hint — generate a plain-English coaching hint for the current
                        turn, given the ranked candidates from gnubg_service.
 
+        Inference backend (priority):
+          1. 0G Compute Network — Qwen 2.5 7B Instruct via
+             @0glabs/0g-serving-broker. Sponsor-aligned (verifiable inference,
+             pay-per-token from a 0G ledger). Routed through the Node bridge
+             at og-compute-bridge/ so this Python service does not need to
+             port the JS SDK.
+          2. Local flan-t5-base — fallback when 0G Compute is unreachable
+             (testnet down, wallet unfunded, network outage). Lower quality
+             but keeps the demo alive. Forced via COACH_BACKEND=local.
+
         docs_hash:  0G Storage root hash of the gnubg strategy doc uploaded by
                     scripts/upload_gnubg_docs.py. Used as RAG context. Falls
                     back to a built-in brief if the hash is empty or the blob
                     is unavailable.
 
-        Model: flan-t5-base (Google, Apache-2.0). Loaded lazily on the first
-        /hint request so the service starts fast. ~250 MB download on first
-        run; cached by the transformers library in ~/.cache/huggingface.
+        agent_weights_hash:  0G Storage root hash of the agent's experience
+                             overlay (or future model checkpoint). The coach
+                             reads it via agent_profile.load_profile() to
+                             ground the hint in this specific agent's
+                             tendencies — see agent_profile.py for the
+                             forward-compatible interface.
 """
 
 from __future__ import annotations
+
+import os
 from typing import Optional
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+
+from agent_profile import AgentProfile, NullProfile, load_profile
 
 app = FastAPI(title="Chaingammon Coach Agent")
 
@@ -39,29 +56,30 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-_model = None
-_tokenizer = None
+# COACH_BACKEND: "compute" (default — try 0G first, fall back on error),
+# "local" (force flan-t5-base), or "compute-only" (raise on compute failure;
+# useful in CI when we want to guarantee the live path works).
+_BACKEND = os.environ.get("COACH_BACKEND", "compute").lower()
+
+_local_model = None
+_local_tokenizer = None
 
 
-def _load_model() -> None:
-    """Lazy-load flan-t5-base. Called once per process on first /hint request.
+def _load_local_model() -> None:
+    """Lazy-load flan-t5-base for the local fallback path. Called on first
+    fallback only — the import alone costs >1s and ~250 MB RAM, so we defer
+    it until we actually need it.
 
-    @dev Uses module-level globals so the ~250 MB model is loaded only once and
-         reused across requests. Import is deferred here (not at module top) to
-         avoid paying the transformers import cost when the service is not used.
+    @dev Newer transformers (>= 4.40) removed `T5ForConditionalGeneration`
+         and `T5Tokenizer` from the top-level namespace. Use the Auto*
+         wrappers, which resolve to the same classes and are forward-
+         compatible.
     """
-    global _model, _tokenizer
-    if _model is None:
-        # Newer transformers (>= 4.40) removed `T5ForConditionalGeneration`
-        # and `T5Tokenizer` from the top-level namespace. Use the
-        # Auto* wrappers, which resolve to the same classes at load time
-        # and are forward-compatible. Without this, `_load_model`
-        # raises ImportError, /hint returns a degenerate one-word
-        # response, and the match page shows the "coach offline"
-        # placeholder despite the service being up.
+    global _local_model, _local_tokenizer
+    if _local_model is None:
         from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
-        _tokenizer = AutoTokenizer.from_pretrained("google/flan-t5-base")
-        _model = AutoModelForSeq2SeqLM.from_pretrained("google/flan-t5-base")
+        _local_tokenizer = AutoTokenizer.from_pretrained("google/flan-t5-base")
+        _local_model = AutoModelForSeq2SeqLM.from_pretrained("google/flan-t5-base")
 
 
 def _fetch_docs(docs_hash: str) -> str:
@@ -74,51 +92,115 @@ def _fetch_docs(docs_hash: str) -> str:
             is unreachable (network down, SDK unavailable). The fallback covers
             the most important opening principles so the coach is always at
             least plausible even offline.
-    @param  docs_hash  0G Storage Merkle root hash (32-byte hex) of the gnubg
-                       strategy document blob. Empty string triggers fallback.
-    @return            UTF-8 strategy text to inject into the LLM prompt, or
-                       the hardcoded fallback on any error.
     """
-    _FALLBACK = "Backgammon: build primes, anchor on the 5-point, avoid blots."
+    _FALLBACK = (
+        "Backgammon strategy: build primes (especially the 5-point and bar "
+        "point), make anchors when behind in the race, hit blots when it "
+        "doesn't leave too much exposure, and bear off efficiently when "
+        "ahead. Avoid leaving direct shots after a hit."
+    )
     if not docs_hash:
         return _FALLBACK
     try:
-        # 0G Storage Python SDK — verify import path against current SDK docs.
-        from zg_storage import download  # type: ignore[import]
-        return download(docs_hash).decode("utf-8", errors="replace")
+        from server.app.og_storage_client import get_blob  # type: ignore[import]
+        return get_blob(docs_hash).decode("utf-8", errors="replace")
     except Exception:
         return _FALLBACK
 
 
-def _generate(dice: list[int], candidates: list[dict], docs_context: str) -> str:
-    """Run flan-t5-base inference to produce a one-to-two-sentence coaching hint.
+def _build_messages(
+    dice: list[int],
+    candidates: list[dict],
+    docs_context: str,
+    profile: AgentProfile,
+) -> tuple[str, list[dict]]:
+    """Assemble the system prompt + chat messages for the LLM.
 
-    @notice The hint explains why the top-ranked move is good in plain English,
-            grounded in the strategy doc fetched from 0G Storage.
-    @dev    Prompt structure: strategy context + dice roll + ranked moves with
-            equity values. max_new_tokens is capped at 80 to keep hints concise
-            and within the model's generation comfort zone.
-    @param  dice          Two-element list [d1, d2] for the current roll.
-    @param  candidates    Top-ranked moves from gnubg_service /evaluate, each
-                          {"move": str, "equity": float}.
-    @param  docs_context  Strategy text from 0G Storage (or fallback) to use
-                          as prompt context.
-    @return               Plain-English coaching hint string.
+    Returned in chat-completion shape so the same payload feeds either the
+    0G Compute path (Qwen) or the local flan-t5-base path (after we collapse
+    it back into a single prompt string).
+
+    @return (system_prompt, [{"role": "user", "content": ...}])
     """
-    _load_model()
     top3 = candidates[:3]
     moves_text = "; ".join(
         f"{c['move']} (equity {c['equity']:+.3f})" for c in top3
+    ) or "no legal moves"
+    system = (
+        "You are a backgammon coach watching a human play against an AI agent. "
+        "Speak directly to the human in 1–2 sentences. Reference the agent's "
+        "playing tendencies when relevant. Do not list options — explain "
+        "why the top move is good. Use plain English; no jargon beyond "
+        "standard backgammon terms."
     )
-    prompt = (
-        f"You are a backgammon coach. Context: {docs_context} "
-        f"The player rolled {dice[0]} and {dice[1]}. "
-        f"gnubg ranked these moves: {moves_text}. "
-        f"In 1-2 sentences, explain why the best move is good."
+    user = (
+        f"Reference strategy notes: {docs_context}\n\n"
+        f"Opponent agent profile: {profile.summarize()}\n\n"
+        f"The human rolled {dice[0]} and {dice[1]}.\n"
+        f"gnubg ranked these moves (best first): {moves_text}.\n\n"
+        f"In 1–2 sentences, tell the human why the best move is the right "
+        f"choice against this specific agent."
     )
-    inputs = _tokenizer(prompt, return_tensors="pt", max_length=512, truncation=True)
-    outputs = _model.generate(**inputs, max_new_tokens=80)
-    return _tokenizer.decode(outputs[0], skip_special_tokens=True)
+    return system, [{"role": "user", "content": user}]
+
+
+def _generate_compute(
+    dice: list[int],
+    candidates: list[dict],
+    docs_context: str,
+    profile: AgentProfile,
+) -> str:
+    """0G Compute path — Qwen 2.5 7B Instruct via the Node bridge."""
+    from coach_compute_client import chat
+    system, messages = _build_messages(dice, candidates, docs_context, profile)
+    result = chat(messages, system=system)
+    return result.content.strip()
+
+
+def _generate_local(
+    dice: list[int],
+    candidates: list[dict],
+    docs_context: str,
+    profile: AgentProfile,
+) -> str:
+    """Local fallback — flan-t5-base seq2seq generation."""
+    _load_local_model()
+    system, messages = _build_messages(dice, candidates, docs_context, profile)
+    # flan-t5 is a single-prompt seq2seq model — concatenate.
+    prompt = system + "\n\n" + messages[0]["content"]
+    inputs = _local_tokenizer(prompt, return_tensors="pt", max_length=512, truncation=True)
+    outputs = _local_model.generate(**inputs, max_new_tokens=120)
+    return _local_tokenizer.decode(outputs[0], skip_special_tokens=True).strip()
+
+
+def _generate(
+    dice: list[int],
+    candidates: list[dict],
+    docs_context: str,
+    profile: AgentProfile,
+    backend: Optional[str] = None,
+) -> tuple[str, str]:
+    """Run inference with the requested backend (or the server default).
+
+    @param backend  Per-request override. None → use COACH_BACKEND env.
+    @return (hint_text, backend_used) — backend_used is "compute" or "local"
+            so the response can surface which path served the request.
+    """
+    chosen = (backend or _BACKEND).lower()
+    if chosen == "local":
+        return _generate_local(dice, candidates, docs_context, profile), "local"
+    try:
+        return _generate_compute(dice, candidates, docs_context, profile), "compute"
+    except Exception as e:
+        if chosen == "compute-only":
+            raise
+        # Fall back to the local model and keep going. The frontend never
+        # sees the compute error — the demo stays online.
+        import logging
+        logging.getLogger(__name__).warning(
+            "0G Compute coach failed (%s); falling back to local flan-t5.", e
+        )
+        return _generate_local(dice, candidates, docs_context, profile), "local"
 
 
 # ─── request / response models ───────────────────────────────────────────────
@@ -126,14 +208,22 @@ def _generate(dice: list[int], candidates: list[dict], docs_context: str) -> str
 class HintRequest(BaseModel):
     """Request body for POST /hint.
 
-    @param position_id  gnubg base64 position identifier (passed through for
-                        context; not used directly by the LLM).
-    @param match_id     gnubg base64 match-state identifier (passed through).
-    @param dice         Two-element list [d1, d2] for the current roll.
-    @param candidates   Ranked move list from gnubg_service /evaluate, each
-                        {"move": str, "equity": float}. Top 3 are used.
-    @param docs_hash    0G Storage root hash of the gnubg strategy doc; empty
-                        string triggers the built-in fallback context.
+    @param position_id         gnubg base64 position identifier (passed through
+                               for context; not used directly by the LLM).
+    @param match_id            gnubg base64 match-state identifier (passed through).
+    @param dice                Two-element list [d1, d2] for the current roll.
+    @param candidates          Ranked move list from gnubg_service /evaluate,
+                               each {"move": str, "equity": float}. Top 3 used.
+    @param docs_hash           0G Storage root hash of the gnubg strategy doc;
+                               empty string triggers the built-in fallback.
+    @param agent_weights_hash  0G Storage root hash of the agent's overlay or
+                               future model checkpoint. Empty triggers the
+                               NullProfile (cold-start agent).
+    @param backend             Optional per-request override of COACH_BACKEND.
+                               One of "compute" (paid 0G inference, falls back
+                               to local on failure), "local" (free flan-t5),
+                               or "compute-only" (paid; raise on failure).
+                               Empty/None = use the server default.
     """
 
     position_id: str
@@ -141,6 +231,8 @@ class HintRequest(BaseModel):
     dice: list[int]
     candidates: list[dict]
     docs_hash: str = ""
+    agent_weights_hash: str = ""
+    backend: Optional[str] = None
 
 
 # ─── endpoint ────────────────────────────────────────────────────────────────
@@ -153,13 +245,16 @@ def get_hint(req: HintRequest) -> dict:
             frontend shows a "Thinking…" placeholder until the hint arrives;
             this endpoint is intentionally non-blocking from the game's
             perspective.
-    @dev    Fetches gnubg strategy docs from 0G Storage (or falls back to
-            built-in), then runs flan-t5-base to produce a human-readable
-            explanation of the best move.
-    @param  req  HintRequest with position, match state, dice, candidates,
-                 and optional 0G Storage docs hash.
-    @return      {"hint": str} — one to two plain-English sentences.
+    @dev    Pipeline:
+              1. Fetch strategy docs from 0G Storage (or fallback).
+              2. Load the agent profile from 0G Storage (or NullProfile).
+              3. Run inference on 0G Compute (Qwen 2.5 7B) — fall back to
+                 local flan-t5-base if compute is unreachable.
+    @return {"hint": str, "backend": "compute"|"local"}
     """
     docs_context = _fetch_docs(req.docs_hash)
-    hint = _generate(req.dice, req.candidates, docs_context)
-    return {"hint": hint}
+    profile = load_profile(req.agent_weights_hash)
+    hint, backend = _generate(
+        req.dice, req.candidates, docs_context, profile, backend=req.backend
+    )
+    return {"hint": hint, "backend": backend}

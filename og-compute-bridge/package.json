@@ -1,0 +1,17 @@
+{
+  "name": "og-compute-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Thin Node.js wrapper around 0G's @0glabs/0g-serving-broker SDK so the Python coach service can request Qwen 2.5 7B inference via subprocess. Mirrors og-bridge's stdin/stdout JSON contract.",
+  "type": "module",
+  "bin": {
+    "og-chat": "src/chat.mjs"
+  },
+  "scripts": {
+    "chat": "node src/chat.mjs"
+  },
+  "dependencies": {
+    "@0glabs/0g-serving-broker": "1.0.0-beta.8",
+    "ethers": "^6.15.0"
+  }
+}

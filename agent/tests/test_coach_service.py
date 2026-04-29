@@ -6,17 +6,17 @@ from httpx import AsyncClient, ASGITransport
 
 @pytest.fixture
 def app():
-    """Import coach_service.app inside the fixture so collection works before the module exists."""
+    """Import coach_service.app inside the fixture so collection works before
+    the module's runtime deps (transformers etc.) are necessarily importable."""
     from coach_service import app as _app
     return _app
 
 
 @pytest.mark.anyio
 async def test_hint_returns_string(app):
-    """/hint must return a non-empty hint string."""
-    with patch("coach_service._load_model"), \
-         patch("coach_service._generate") as mock_gen:
-        mock_gen.return_value = "Build your prime on the 5-point."
+    """/hint must return a non-empty hint string and surface the backend used."""
+    with patch("coach_service._generate") as mock_gen:
+        mock_gen.return_value = ("Build your prime on the 5-point.", "compute")
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             resp = await client.post("/hint", json={
                 "position_id": "4HPwATDgc/ABMA",
@@ -24,10 +24,39 @@ async def test_hint_returns_string(app):
                 "dice": [3, 1],
                 "candidates": [{"move": "13/10 24/23", "equity": -0.050}],
                 "docs_hash": "",
+                "agent_weights_hash": "",
             })
     assert resp.status_code == 200
-    assert "hint" in resp.json()
-    assert len(resp.json()["hint"]) > 5
+    body = resp.json()
+    assert body["hint"].startswith("Build")
+    assert body["backend"] == "compute"
+
+
+@pytest.mark.anyio
+async def test_hint_falls_back_when_compute_fails(app, monkeypatch):
+    """If 0G Compute raises, /hint must fall back to the local model."""
+    from coach_service import _BACKEND  # capture default
+    assert _BACKEND in ("compute", "local", "compute-only")
+
+    def boom(*_a, **_kw):
+        raise RuntimeError("0G testnet unreachable")
+
+    with patch("coach_service._generate_compute", side_effect=boom), \
+         patch("coach_service._generate_local") as local:
+        local.return_value = "Local fallback hint."
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post("/hint", json={
+                "position_id": "4HPwATDgc/ABMA",
+                "match_id": "cAkAAAAAAAAA",
+                "dice": [3, 1],
+                "candidates": [{"move": "13/10 24/23", "equity": -0.05}],
+                "docs_hash": "",
+                "agent_weights_hash": "",
+            })
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["backend"] == "local"
+    assert "fallback" in body["hint"].lower()
 
 
 @pytest.mark.anyio
