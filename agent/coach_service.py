@@ -24,9 +24,20 @@ from __future__ import annotations
 from typing import Optional
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 app = FastAPI(title="Chaingammon Coach Agent")
+
+# The browser calls /hint cross-origin from http://localhost:3000.
+# Without CORS the preflight OPTIONS returns 405 and the POST is
+# blocked. Open CORS in dev; production should pin `allow_origins`.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 _model = None
 _tokenizer = None
