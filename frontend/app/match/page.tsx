@@ -15,6 +15,12 @@
 //                    → replace state, roll next side's dice
 //   forfeit          → POST /resign → game_over response
 //
+// After each move a non-blocking coach hint is requested:
+//   → POST /evaluate (gnubg_service) → ranked candidates
+//   → POST /hint    (coach_service)   → plain-English hint
+// Coach calls are best-effort — any failure is silently swallowed so
+// the game continues regardless of coach availability.
+//
 // Move notation is gnubg's standard: "8/5 6/5" (from-point/to-point,
 // space-separated for multiple checker movements). See
 // agent/gnubg_service.py or the agent test suite for examples.
@@ -48,6 +54,7 @@ interface MatchState {
 // ── API helpers ───────────────────────────────────────────────────────────
 
 const GNUBG = process.env.NEXT_PUBLIC_GNUBG_URL ?? "http://localhost:8001";
+const COACH = process.env.NEXT_PUBLIC_COACH_URL ?? "http://localhost:8002";
 
 /**
  * POST helper for gnubg_service. All endpoints use POST with a JSON
@@ -72,6 +79,46 @@ async function gnubgPost<T>(path: string, body: unknown): Promise<T> {
     throw new Error(`${res.status}: ${detail}`);
   }
   return (await res.json()) as T;
+}
+
+/**
+ * Request a coaching hint from coach_service (port 8002 / COACH env var).
+ * Returns the hint string, or null on any failure. Non-blocking: callers
+ * should fire-and-forget and update state only if still mounted.
+ */
+async function fetchHint(
+  positionId: string,
+  matchId: string,
+  dice: [number, number],
+  docsHash: string,
+): Promise<string | null> {
+  try {
+    // Step 1: get ranked candidates from gnubg_service.
+    const { candidates } = await gnubgPost<{ candidates: { move: string; equity: number }[] }>(
+      "/evaluate",
+      { position_id: positionId, match_id: matchId, dice },
+    );
+    if (!candidates || candidates.length === 0) return null;
+
+    // Step 2: ask coach_service to narrate the top move.
+    const res = await fetch(`${COACH}/hint`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        position_id: positionId,
+        match_id: matchId,
+        dice,
+        candidates,
+        docs_hash: docsHash,
+      }),
+    });
+    if (!res.ok) return null;
+    const data = await res.json() as { hint?: string };
+    return data.hint ?? null;
+  } catch {
+    // Coach offline or unreachable — game continues without hint.
+    return null;
+  }
 }
 
 /**
@@ -108,9 +155,36 @@ function MatchInner() {
   const [loading, setLoading] = useState(false);
   const [moveInput, setMoveInput] = useState("");
 
+  // Coach state — best-effort; failures leave hint null.
+  const [coachHint, setCoachHint] = useState<string | null>(null);
+  const [coachLoading, setCoachLoading] = useState(false);
+
+  // Docs hash for the coach RAG context (uploaded once to 0G Storage).
+  const docsHash = process.env.NEXT_PUBLIC_GNUBG_DOCS_HASH ?? "";
+
   // Concurrency guard — prevents duplicate /move + /apply cascades when
   // React re-renders while an agent step is mid-flight.
   const agentMoving = useRef(false);
+
+  // ── Coach hint after each move ─────────────────────────────────────────
+
+  /**
+   * Fire-and-forget coach hint request. Called with the state *after* a
+   * move was applied so the hint reflects the new position. Silently
+   * does nothing when the coach node isn't running.
+   */
+  const requestCoachHint = (state: MatchState) => {
+    if (state.game_over || !state.dice) return;
+    setCoachHint(null);
+    setCoachLoading(true);
+    fetchHint(state.position_id, state.match_id, state.dice, docsHash)
+      .then((hint) => {
+        setCoachHint(hint);
+      })
+      .finally(() => {
+        setCoachLoading(false);
+      });
+  };
 
   // ── Start a new game on mount ──────────────────────────────────────────
   useEffect(() => {
@@ -120,7 +194,9 @@ function MatchInner() {
     gnubgPost<MatchState>("/new", { match_length: 3 })
       .then((state) => {
         if (cancelled) return;
-        setGame(withFreshDice(state));
+        const withDice = withFreshDice(state);
+        setGame(withDice);
+        requestCoachHint(withDice);
       })
       .catch((e: unknown) => {
         if (!cancelled) setError(String(e));
@@ -131,6 +207,7 @@ function MatchInner() {
     return () => {
       cancelled = true;
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // ── Auto-drive the agent when it's their turn ──────────────────────────
@@ -162,7 +239,9 @@ function MatchInner() {
           dice: game.dice,
           move: best,
         });
-        setGame(next.game_over ? next : withFreshDice(next));
+        const nextWithDice = next.game_over ? next : withFreshDice(next);
+        setGame(nextWithDice);
+        requestCoachHint(nextWithDice);
       } catch (e: unknown) {
         setError(String(e));
       } finally {
@@ -173,6 +252,7 @@ function MatchInner() {
     // Small delay so the human sees the agent's dice land before its move.
     const timer = setTimeout(step, 400);
     return () => clearTimeout(timer);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [game]);
 
   // ── Human actions ──────────────────────────────────────────────────────
@@ -188,8 +268,10 @@ function MatchInner() {
         dice: game.dice,
         move: moveInput.trim(),
       });
-      setGame(next.game_over ? next : withFreshDice(next));
+      const nextWithDice = next.game_over ? next : withFreshDice(next);
+      setGame(nextWithDice);
       setMoveInput("");
+      requestCoachHint(nextWithDice);
     } catch (e: unknown) {
       setError(String(e));
     } finally {
@@ -299,13 +381,13 @@ function MatchInner() {
             <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
               Final score: {game.score[0]} – {game.score[1]}
             </p>
-            {/* Sub-project C will replace this with the two-sig settlement flow. */}
+            {/* Settle on-chain via settleWithSessionKeys — wired in sub-project C. */}
             <button
               disabled
               className="mt-3 cursor-not-allowed rounded-md bg-zinc-200 px-4 py-2 text-sm font-semibold text-zinc-400 dark:bg-zinc-800 dark:text-zinc-600"
-              title="Settlement wired in sub-project C"
+              title="Connect wallet to settle on-chain"
             >
-              Settle on-chain (coming soon)
+              Settle on-chain (connect wallet)
             </button>
           </div>
         )}
@@ -362,6 +444,27 @@ function MatchInner() {
           <p className="text-sm text-zinc-500 dark:text-zinc-400 animate-pulse">
             Agent is thinking…
           </p>
+        )}
+
+        {/* ── Coach panel ───────────────────────────────────────────────── */}
+        {!game.game_over && (
+          <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 dark:border-amber-700/40 dark:bg-amber-900/10">
+            <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-400">
+              Coach
+            </p>
+            {coachLoading ? (
+              <p className="text-sm text-amber-600 dark:text-amber-400 animate-pulse">
+                Thinking…
+              </p>
+            ) : coachHint ? (
+              <p className="text-sm text-amber-900 dark:text-amber-200">{coachHint}</p>
+            ) : (
+              <p className="text-sm text-amber-500 dark:text-amber-600">
+                Start the coach node to get per-turn hints:{" "}
+                <code className="font-mono text-xs">cd agent &amp;&amp; ./start.sh</code>
+              </p>
+            )}
+          </div>
         )}
 
         {!game.game_over && (

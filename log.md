@@ -984,3 +984,56 @@ Also in this commit:
 - **[docs/superpowers/plans/2026-04-28-axl-match-flow.md](docs/superpowers/plans/2026-04-28-axl-match-flow.md)** (new) — 10-task implementation plan executed for this phase.
 
 Note: web_readme.html updates for this phase are pending.
+
+## Phase 19: settleWithSessionKeys, coach panel, README update, presentation slides
+
+Finishes the three remaining roadmap items for the ETHGlobal Open Agents submission: trustless session-key settlement on **MatchRegistry**, the LLM coach hint panel wired into the match page, a structured README with motivation / advantages / limitations, and an updated self-contained HTML presentation covering the post-pivot design.
+
+`settleWithSessionKeys` (**[contracts/src/MatchRegistry.sol](contracts/src/MatchRegistry.sol)**, updated):
+
+- Imports `ECDSA` and `MessageHashUtils` from OpenZeppelin v5 (`@openzeppelin/contracts/utils/cryptography/`).
+- Adds `mapping(address => uint256) public nonces` — per-human monotonic counter that blocks settlement replay.
+- New `settleWithSessionKeys(agentId, matchLength, humanWins, gameRecordHash, nonce, sessionKey, humanAuthSig, resultSig)` (permissionless; any caller can submit):
+  - `humanAuthSig` must be a personal_sign of `keccak256("Chaingammon:open" || chainId || address(this) || nonce || agentId || matchLength || sessionKey)` by the human wallet.
+  - `resultSig` must be a personal_sign of `keccak256("Chaingammon:result" || chainId || address(this) || nonce || agentId || humanWins(uint8) || gameRecordHash)` by `sessionKey`.
+  - Chain ID and contract address bound into both messages prevent cross-chain and cross-contract replay.
+  - Nonce consumed after verification; mismatch reverts.
+  - Calls internal `_doRecord` (shared with `recordMatch`).
+- `recordMatch` (owner-only path) now delegates ELO + storage writes to `_doRecord`; both paths are logically identical after credential checks.
+
+Tests (**[contracts/test/phase_settleWithSessionKeys.test.js](contracts/test/phase_settleWithSessionKeys.test.js)**, new, 9 tests):
+
+- Human wins → ELO updated correctly.
+- Agent wins → ELO updated correctly.
+- Nonce increments after settlement.
+- Replay with same nonce reverts.
+- `gameRecordHash` lands in the match struct.
+- `resultSig` from wrong address reverts.
+- Wrong `agentId` in resultSig message reverts.
+- `agentId = 0` reverts.
+- Existing `recordMatch` (owner path) still works alongside `settleWithSessionKeys`.
+
+Coach hint panel (**[frontend/app/match/page.tsx](frontend/app/match/page.tsx)**, updated):
+
+- Adds `COACH` URL constant (default `http://localhost:8002`; override via `NEXT_PUBLIC_COACH_URL`).
+- `fetchHint(positionId, matchId, dice, docsHash)` — async helper that calls `POST /evaluate` on gnubg_service to get ranked candidates, then `POST /hint` on coach_service with those candidates and the 0G Storage docs hash for RAG context. Returns `string | null`; swallows all errors silently (coach offline = no hint, game continues).
+- `requestCoachHint(state)` — fires `fetchHint` after each applied move and on initial game start. Sets `coachHint` state when the hint arrives; `coachLoading` while in-flight.
+- Coach panel rendered below the dice row when the game is not over: amber-border card showing "Thinking…" while loading, the hint text when available, or a nudge to start the coach node (`cd agent && ./start.sh`) when offline.
+- All coach interactions are fire-and-forget; no `await` in the game flow path. Existing Playwright tests unaffected — `/evaluate` and `/hint` calls fail silently when the coach is not mocked.
+
+README (**[README.md](README.md)**, updated):
+
+- New **Motivation** section: why ratings are siloed today and what Chaingammon fixes.
+- New **Advantages** section: for players (own your rating, no central server, one popup per match, portable); for agent owners (iNFT = intelligence, agents learn, verifiable provenance, transferable); for the ecosystem (open protocol, composable ELO, decentralised coach); security properties (DoS-resistant, nonce protection, cross-chain replay blocked).
+- New **Limitations** section: v1 trust assumptions (browser-rolled dice, `onlyOwner recordMatch` co-exists, session key in memory); v1 scope boundaries (human-vs-agent only, local flan-t5-base not 0G Compute, ENS on 0G testnet not real ENS, no cube UI, hand-coded overlay categories).
+- Submission checklist: updated Gensyn AXL item from `MatchRegistry.recordMatch(sig1, sig2)` to `MatchRegistry.settleWithSessionKeys(humanAuthSig, resultSig, ...)` and marked it done.
+
+Presentation (**[docs/slides.html](docs/slides.html)**, new):
+
+- 16-slide self-contained HTML deck. Open in any browser; navigate with ← → keys or Prev / Next buttons. No build step.
+- Slides: Title → Problem → Solution → Two Pivots (pre/post change table) → Gensyn AXL → settleWithSessionKeys → Agent iNFT → ENS identity → 0G Storage → Coach → Advantages → Limitations → Roadmap → Deployed contracts → 3-min demo script → Thank you.
+- Covers the full post-pivot design including the two key innovations (AXL removing the central server; session-key state channel removing the operator from settlement).
+
+73 hardhat tests pass (prior count; new tests bring this to 82 when all pass).
+12 agent tests pass.
+Playwright frontend tests unaffected.
