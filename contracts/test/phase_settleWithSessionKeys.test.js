@@ -19,36 +19,42 @@ const ZERO_HASH = ethers.ZeroHash;
 /**
  * Build and sign the "Chaingammon:open" authorisation message.
  *
+ * Uses `abi.encode` to mirror the contract's hash construction. The
+ * payload now includes the claimed `human` address — the contract
+ * recovers from the sig and checks it equals `human`.
+ *
  * @param {Wallet} signer      Human wallet — signs the open message.
  * @param {string} contractAddress  Deployed MatchRegistry address.
  * @param {bigint} chainId
- * @param {object} params      {nonce, agentId, matchLength, sessionKey}
+ * @param {object} params      {human, nonce, agentId, matchLength, sessionKey}
  * @returns {string} hex signature
  */
-async function signOpen(signer, contractAddress, chainId, { nonce, agentId, matchLength, sessionKey }) {
+async function signOpen(signer, contractAddress, chainId, { human, nonce, agentId, matchLength, sessionKey }) {
   const inner = ethers.keccak256(
-    ethers.solidityPacked(
-      ["string", "uint256", "address", "uint256", "uint256", "uint16", "address"],
-      ["Chaingammon:open", chainId, contractAddress, nonce, agentId, matchLength, sessionKey]
+    ethers.AbiCoder.defaultAbiCoder().encode(
+      ["string", "uint256", "address", "address", "uint256", "uint256", "uint16", "address"],
+      ["Chaingammon:open", chainId, contractAddress, human, nonce, agentId, matchLength, sessionKey]
     )
   );
   return signer.signMessage(ethers.getBytes(inner));
 }
 
 /**
- * Build and sign the "Chaingammon:result" message.
+ * Build and sign the "Chaingammon:result" message. Uses `abi.encode`.
+ * Includes `human` so a result signed for a different opponent address
+ * fails recovery against the auth-bound human.
  *
  * @param {Wallet} sessionKeySigner  Session key — signs the result.
  * @param {string} contractAddress
  * @param {bigint} chainId
- * @param {object} params  {nonce, agentId, humanWins, gameRecordHash}
+ * @param {object} params  {human, nonce, agentId, humanWins, gameRecordHash}
  * @returns {string} hex signature
  */
-async function signResult(sessionKeySigner, contractAddress, chainId, { nonce, agentId, humanWins, gameRecordHash }) {
+async function signResult(sessionKeySigner, contractAddress, chainId, { human, nonce, agentId, humanWins, gameRecordHash }) {
   const inner = ethers.keccak256(
-    ethers.solidityPacked(
-      ["string", "uint256", "address", "uint256", "uint256", "uint8", "bytes32"],
-      ["Chaingammon:result", chainId, contractAddress, nonce, agentId, humanWins ? 1 : 0, gameRecordHash]
+    ethers.AbiCoder.defaultAbiCoder().encode(
+      ["string", "uint256", "address", "address", "uint256", "uint256", "bool", "bytes32"],
+      ["Chaingammon:result", chainId, contractAddress, human, nonce, agentId, humanWins, gameRecordHash]
     )
   );
   return sessionKeySigner.signMessage(ethers.getBytes(inner));
@@ -75,14 +81,14 @@ describe("Phase 26 — MatchRegistry.settleWithSessionKeys", function () {
     const humanWins = true;
 
     const humanAuthSig = await signOpen(human, await registry.getAddress(), chainId, {
-      nonce, agentId, matchLength, sessionKey: sessionKey.address,
+      human: human.address, nonce, agentId, matchLength, sessionKey: sessionKey.address,
     });
     const resultSig = await signResult(sessionKey, await registry.getAddress(), chainId, {
-      nonce, agentId, humanWins, gameRecordHash: ZERO_HASH,
+      human: human.address, nonce, agentId, humanWins, gameRecordHash: ZERO_HASH,
     });
 
     await registry.connect(relayer).settleWithSessionKeys(
-      agentId, matchLength, humanWins, ZERO_HASH, nonce, sessionKey.address, humanAuthSig, resultSig
+      human.address, agentId, matchLength, humanWins, ZERO_HASH, nonce, sessionKey.address, humanAuthSig, resultSig
     );
 
     expect(Number(await registry.humanElo(human.address))).to.be.greaterThan(1500);
@@ -96,14 +102,14 @@ describe("Phase 26 — MatchRegistry.settleWithSessionKeys", function () {
     const humanWins = false;
 
     const humanAuthSig = await signOpen(human, await registry.getAddress(), chainId, {
-      nonce, agentId, matchLength, sessionKey: sessionKey.address,
+      human: human.address, nonce, agentId, matchLength, sessionKey: sessionKey.address,
     });
     const resultSig = await signResult(sessionKey, await registry.getAddress(), chainId, {
-      nonce, agentId, humanWins, gameRecordHash: ZERO_HASH,
+      human: human.address, nonce, agentId, humanWins, gameRecordHash: ZERO_HASH,
     });
 
     await registry.connect(relayer).settleWithSessionKeys(
-      agentId, matchLength, humanWins, ZERO_HASH, nonce, sessionKey.address, humanAuthSig, resultSig
+      human.address, agentId, matchLength, humanWins, ZERO_HASH, nonce, sessionKey.address, humanAuthSig, resultSig
     );
 
     expect(Number(await registry.humanElo(human.address))).to.be.lessThan(1500);
@@ -117,14 +123,14 @@ describe("Phase 26 — MatchRegistry.settleWithSessionKeys", function () {
     expect(await registry.nonces(human.address)).to.equal(0n);
 
     const humanAuthSig = await signOpen(human, await registry.getAddress(), chainId, {
-      nonce, agentId, matchLength, sessionKey: sessionKey.address,
+      human: human.address, nonce, agentId, matchLength, sessionKey: sessionKey.address,
     });
     const resultSig = await signResult(sessionKey, await registry.getAddress(), chainId, {
-      nonce, agentId, humanWins: true, gameRecordHash: ZERO_HASH,
+      human: human.address, nonce, agentId, humanWins: true, gameRecordHash: ZERO_HASH,
     });
 
     await registry.connect(relayer).settleWithSessionKeys(
-      agentId, matchLength, true, ZERO_HASH, nonce, sessionKey.address, humanAuthSig, resultSig
+      human.address, agentId, matchLength, true, ZERO_HASH, nonce, sessionKey.address, humanAuthSig, resultSig
     );
 
     expect(await registry.nonces(human.address)).to.equal(1n);
@@ -133,21 +139,21 @@ describe("Phase 26 — MatchRegistry.settleWithSessionKeys", function () {
   it("rejects replay of the same nonce", async function () {
     const nonce = 0n;
     const humanAuthSig = await signOpen(human, await registry.getAddress(), chainId, {
-      nonce, agentId, matchLength, sessionKey: sessionKey.address,
+      human: human.address, nonce, agentId, matchLength, sessionKey: sessionKey.address,
     });
     const resultSig = await signResult(sessionKey, await registry.getAddress(), chainId, {
-      nonce, agentId, humanWins: true, gameRecordHash: ZERO_HASH,
+      human: human.address, nonce, agentId, humanWins: true, gameRecordHash: ZERO_HASH,
     });
 
     await registry.connect(relayer).settleWithSessionKeys(
-      agentId, matchLength, true, ZERO_HASH, nonce, sessionKey.address, humanAuthSig, resultSig
+      human.address, agentId, matchLength, true, ZERO_HASH, nonce, sessionKey.address, humanAuthSig, resultSig
     );
 
     // Replay with the same nonce must fail.
     let reverted = false;
     try {
       await registry.connect(relayer).settleWithSessionKeys(
-        agentId, matchLength, true, ZERO_HASH, nonce, sessionKey.address, humanAuthSig, resultSig
+        human.address, agentId, matchLength, true, ZERO_HASH, nonce, sessionKey.address, humanAuthSig, resultSig
       );
     } catch {
       reverted = true;
@@ -162,14 +168,14 @@ describe("Phase 26 — MatchRegistry.settleWithSessionKeys", function () {
     const nonce = 0n;
 
     const humanAuthSig = await signOpen(human, await registry.getAddress(), chainId, {
-      nonce, agentId, matchLength, sessionKey: sessionKey.address,
+      human: human.address, nonce, agentId, matchLength, sessionKey: sessionKey.address,
     });
     const resultSig = await signResult(sessionKey, await registry.getAddress(), chainId, {
-      nonce, agentId, humanWins: true, gameRecordHash: hash,
+      human: human.address, nonce, agentId, humanWins: true, gameRecordHash: hash,
     });
 
     const tx = await registry.connect(relayer).settleWithSessionKeys(
-      agentId, matchLength, true, hash, nonce, sessionKey.address, humanAuthSig, resultSig
+      human.address, agentId, matchLength, true, hash, nonce, sessionKey.address, humanAuthSig, resultSig
     );
     const receipt = await tx.wait();
     const evt = receipt.logs.find((l) => l.fragment?.name === "MatchRecorded");
@@ -185,17 +191,17 @@ describe("Phase 26 — MatchRegistry.settleWithSessionKeys", function () {
     const imposter = relayer; // signs the result but isn't the declared session key
 
     const humanAuthSig = await signOpen(human, await registry.getAddress(), chainId, {
-      nonce, agentId, matchLength, sessionKey: sessionKey.address,
+      human: human.address, nonce, agentId, matchLength, sessionKey: sessionKey.address,
     });
     // resultSig produced by `imposter`, not `sessionKey`
     const resultSig = await signResult(imposter, await registry.getAddress(), chainId, {
-      nonce, agentId, humanWins: true, gameRecordHash: ZERO_HASH,
+      human: human.address, nonce, agentId, humanWins: true, gameRecordHash: ZERO_HASH,
     });
 
     let reverted = false;
     try {
       await registry.connect(relayer).settleWithSessionKeys(
-        agentId, matchLength, true, ZERO_HASH, nonce, sessionKey.address, humanAuthSig, resultSig
+        human.address, agentId, matchLength, true, ZERO_HASH, nonce, sessionKey.address, humanAuthSig, resultSig
       );
     } catch {
       reverted = true;
@@ -209,16 +215,16 @@ describe("Phase 26 — MatchRegistry.settleWithSessionKeys", function () {
 
     // human signed for agentId=1 but we submit agentId=999
     const humanAuthSig = await signOpen(human, await registry.getAddress(), chainId, {
-      nonce, agentId, matchLength, sessionKey: sessionKey.address,
+      human: human.address, nonce, agentId, matchLength, sessionKey: sessionKey.address,
     });
     const resultSig = await signResult(sessionKey, await registry.getAddress(), chainId, {
-      nonce, agentId: wrongAgentId, humanWins: true, gameRecordHash: ZERO_HASH,
+      human: human.address, nonce, agentId: wrongAgentId, humanWins: true, gameRecordHash: ZERO_HASH,
     });
 
     let reverted = false;
     try {
       await registry.connect(relayer).settleWithSessionKeys(
-        wrongAgentId, matchLength, true, ZERO_HASH, nonce, sessionKey.address, humanAuthSig, resultSig
+        human.address, wrongAgentId, matchLength, true, ZERO_HASH, nonce, sessionKey.address, humanAuthSig, resultSig
       );
     } catch {
       reverted = true;
@@ -229,16 +235,16 @@ describe("Phase 26 — MatchRegistry.settleWithSessionKeys", function () {
   it("rejects agentId = 0", async function () {
     const nonce = 0n;
     const humanAuthSig = await signOpen(human, await registry.getAddress(), chainId, {
-      nonce, agentId: 0n, matchLength, sessionKey: sessionKey.address,
+      human: human.address, nonce, agentId: 0n, matchLength, sessionKey: sessionKey.address,
     });
     const resultSig = await signResult(sessionKey, await registry.getAddress(), chainId, {
-      nonce, agentId: 0n, humanWins: true, gameRecordHash: ZERO_HASH,
+      human: human.address, nonce, agentId: 0n, humanWins: true, gameRecordHash: ZERO_HASH,
     });
 
     let reverted = false;
     try {
       await registry.connect(relayer).settleWithSessionKeys(
-        0n, matchLength, true, ZERO_HASH, nonce, sessionKey.address, humanAuthSig, resultSig
+        human.address, 0n, matchLength, true, ZERO_HASH, nonce, sessionKey.address, humanAuthSig, resultSig
       );
     } catch {
       reverted = true;
@@ -251,14 +257,14 @@ describe("Phase 26 — MatchRegistry.settleWithSessionKeys", function () {
   it("emits MatchRecorded event", async function () {
     const nonce = 0n;
     const humanAuthSig = await signOpen(human, await registry.getAddress(), chainId, {
-      nonce, agentId, matchLength, sessionKey: sessionKey.address,
+      human: human.address, nonce, agentId, matchLength, sessionKey: sessionKey.address,
     });
     const resultSig = await signResult(sessionKey, await registry.getAddress(), chainId, {
-      nonce, agentId, humanWins: true, gameRecordHash: ZERO_HASH,
+      human: human.address, nonce, agentId, humanWins: true, gameRecordHash: ZERO_HASH,
     });
 
     const tx = await registry.connect(relayer).settleWithSessionKeys(
-      agentId, matchLength, true, ZERO_HASH, nonce, sessionKey.address, humanAuthSig, resultSig
+      human.address, agentId, matchLength, true, ZERO_HASH, nonce, sessionKey.address, humanAuthSig, resultSig
     );
     const receipt = await tx.wait();
     const evt = receipt.logs.find((l) => l.fragment?.name === "MatchRecorded");
