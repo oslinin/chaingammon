@@ -170,6 +170,12 @@ function MatchInner() {
   const params = useSearchParams();
   const agentId = Number(params.get("agentId") ?? "1");
 
+  // Phase 28: persist the most-recently-played agentId so the sidebar can
+  // link back to this agent on subsequent visits.
+  useEffect(() => {
+    window.localStorage.setItem("lastAgentId", String(agentId));
+  }, [agentId]);
+
   const [game, setGame] = useState<MatchState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
