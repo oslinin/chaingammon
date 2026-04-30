@@ -47,6 +47,11 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for component descriptions and data flows
 | Server-side text record updates (`elo`, `last_match_id`) | 11 | `server/app/ens_client.py`, `server/app/main.py` |
 | Frontend wallet connect + agents list + match flow + replay | 12–14, 20 | `frontend/app/` |
 | Frontend ENS name resolution + Claim Name flow | 15 | `frontend/app/{ProfileBadge,useChaingammonName,useChaingammonProfile}.{tsx,ts}` |
+| ENS reserved keys (elo, match_count, last_match_id, kind, inft_id) — protocol-only writes | 31 | `contracts/src/PlayerSubnameRegistrar.sol` |
+| Authorized minter system + atomic agent subname on mintAgent | 31 | `contracts/src/{PlayerSubnameRegistrar,AgentRegistry}.sol` |
+| Enumerable subname index (`subnameAt`) | 31 | `contracts/src/PlayerSubnameRegistrar.sol` |
+| ENS schema spec | 31 | `docs/ENS_SCHEMA.md` |
+| Unified discovery list (humans + agents) | 31 | `frontend/app/DiscoveryList.tsx` |
 
 ---
 
