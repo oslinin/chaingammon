@@ -222,6 +222,9 @@ function MatchInner() {
   // React re-renders while an agent step is mid-flight.
   const agentMoving = useRef(false);
 
+  // Whether the human has handed off to the gnubg agent to finish the game.
+  const [fastForward, setFastForward] = useState(false);
+
   // ── Coach hint after each move ─────────────────────────────────────────
 
   /**
@@ -275,11 +278,13 @@ function MatchInner() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ── Auto-drive the agent when it's their turn ──────────────────────────
+  // ── Auto-drive the agent when it's their turn OR fast-forward is active ──
   useEffect(() => {
-    if (!game || game.game_over || game.turn !== 1 || agentMoving.current) {
-      return;
-    }
+    // Fire when it's the agent's turn (turn === 1), or when the human has
+    // activated fast-forward and it's still their turn (turn === 0). In fast-
+    // forward mode the gnubg agent plays both sides until game_over.
+    if (!game || game.game_over || agentMoving.current) return;
+    if (game.turn !== 1 && !fastForward) return;
     if (!game.dice) return; // dice are seeded by withFreshDice on the previous step
     agentMoving.current = true;
 
@@ -318,7 +323,7 @@ function MatchInner() {
     const timer = setTimeout(step, 400);
     return () => clearTimeout(timer);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [game]);
+  }, [game, fastForward]);
 
   // ── Human actions ──────────────────────────────────────────────────────
 
@@ -532,7 +537,7 @@ function MatchInner() {
           </p>
         )}
 
-        {!game.game_over && isHumanTurn && needsMove && (
+        {!game.game_over && isHumanTurn && needsMove && !fastForward && (
           <div className="flex flex-col gap-3">
             {/* Click-to-move instruction */}
             <p className="text-xs text-zinc-500 dark:text-zinc-400">
@@ -574,9 +579,9 @@ function MatchInner() {
           </div>
         )}
 
-        {!game.game_over && isAgentTurn && (
+        {!game.game_over && (isAgentTurn || fastForward) && (
           <p className="text-sm text-zinc-500 dark:text-zinc-400 animate-pulse">
-            Agent is thinking…
+            {fastForward ? "Fast forwarding…" : "Agent is thinking…"}
           </p>
         )}
 
@@ -649,11 +654,19 @@ function MatchInner() {
         )}
 
         {!game.game_over && (
-          <div className="mt-2 flex justify-end">
+          <div className="mt-2 flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setFastForward(true)}
+              disabled={loading || fastForward}
+              className="rounded-md border border-zinc-300 px-3 py-1 text-xs font-medium text-zinc-600 hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-700/60 dark:text-zinc-400 dark:hover:bg-zinc-800"
+            >
+              {fastForward ? "Fast forwarding…" : "⏩ Fast forward"}
+            </button>
             <button
               type="button"
               onClick={doForfeit}
-              disabled={loading}
+              disabled={loading || fastForward}
               className="rounded-md border border-red-300 px-3 py-1 text-xs font-medium text-red-700 hover:bg-red-50 disabled:opacity-50 dark:border-red-700/60 dark:text-red-400 dark:hover:bg-red-900/20"
             >
               Forfeit match

@@ -110,6 +110,46 @@ test("match flow walks /new → /apply → /move → /apply through to game over
   for (const m of seen.move) expect(m).toBe("POST");
 });
 
+test("fast forward lets the gnubg agent play both sides to game over", async ({ page }) => {
+  let moveCount = 0;
+  let applyCount = 0;
+  let resignCount = 0;
+
+  await page.route("**/new", async (route) => {
+    await fulfill(route, OPENING);
+  });
+
+  // Every /move returns a valid move string.
+  await page.route("**/move", async (route) => {
+    moveCount += 1;
+    await fulfill(route, { move: "13/10", candidates: [] });
+  });
+
+  // /apply: first call gives the agent the next turn; second ends the game.
+  await page.route("**/apply", async (route) => {
+    applyCount += 1;
+    if (applyCount === 1) {
+      await fulfill(route, { ...OPENING, position_id: "step1", turn: 1, dice: null });
+    } else {
+      await fulfill(route, GAME_OVER);
+    }
+  });
+
+  await page.route("**/resign", async (route) => {
+    resignCount += 1;
+    await fulfill(route, GAME_OVER);
+  });
+
+  await page.goto("/match?agentId=1");
+
+  // Click the fast-forward button — the agent should play both sides to completion.
+  await page.getByRole("button", { name: /fast forward/i }).click();
+
+  await expect(page.getByText("You win!")).toBeVisible({ timeout: 10_000 });
+  expect(resignCount).toBe(0); // forfeit was not called
+  expect(moveCount).toBeGreaterThanOrEqual(1);
+});
+
 test("forfeit posts /resign and shows the game-over banner", async ({ page }) => {
   await page.route("**/new", async (route) => {
     await fulfill(route, OPENING);
