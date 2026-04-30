@@ -1,0 +1,167 @@
+name: chaingammon-match-settle
+description: >
+  End-to-end match settlement workflow: drand VRF dice delivery, forfeit
+  detection, gnubg move-replay validation, keeper-signed settlement, and
+  relayer broadcast to 0G testnet.
+
+# Trigger: fires when the on-deposit step detects both players have deposited
+trigger:
+  type: evm-log
+  network: og-testnet
+  rpc: "{{ secret.OG_RPC_URL }}"
+  address: "{{ secret.MATCH_ESCROW_ADDRESS }}"
+  event: "Deposited(bytes32 indexed matchId, address indexed player, uint256 amount)"
+  filter:
+    # The workflow starts when the SECOND Deposited event for a matchId arrives.
+    # KeeperHub deduplicates by matchId across two firings before proceeding.
+    count: 2
+    group_by: matchId
+
+steps:
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Step 1 – on-deposit
+  # Confirm both deposits arrived and log the matchId.
+  # ─────────────────────────────────────────────────────────────────────────────
+  - id: on-deposit
+    name: Confirm both deposits
+    action: log
+    params:
+      message: "Both deposits received for match {{ trigger.matchId }}. Starting settlement workflow."
+    outputs:
+      match_id: "{{ trigger.matchId }}"
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Step 2 – per-turn-drand
+  # Poll the server every 5 s to deliver the next drand round's dice.
+  # Runs until the game ends (on-game-end) or forfeit is triggered.
+  # ─────────────────────────────────────────────────────────────────────────────
+  - id: per-turn-drand
+    name: Deliver drand dice each turn
+    action: http-poll
+    params:
+      method: GET
+      url: "{{ secret.SERVER_URL }}/games/{{ steps.on-deposit.match_id }}/dice"
+      interval_seconds: 5
+      # Stop polling when the game has ended or a forfeit is detected.
+      stop_condition: "{{ steps.on-game-end.done || steps.forfeit-poll.forfeited }}"
+      headers:
+        Content-Type: application/json
+    outputs:
+      last_dice_round: "{{ response.body.round }}"
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Step 3 – forfeit-poll
+  # Check every 30 s whether a player has exceeded the move clock.
+  # ─────────────────────────────────────────────────────────────────────────────
+  - id: forfeit-poll
+    name: Poll for move-clock expiry
+    action: http-poll
+    params:
+      method: POST
+      url: "{{ secret.SERVER_URL }}/matches/{{ steps.on-deposit.match_id }}/forfeit-check"
+      interval_seconds: 30
+      stop_condition: "{{ response.body.forfeit == true || steps.on-game-end.done }}"
+      headers:
+        Content-Type: application/json
+    outputs:
+      forfeited: "{{ response.body.forfeit }}"
+      expired_player: "{{ response.body.expired_player }}"
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Step 4 – on-game-end
+  # Wait for the server to POST a game-end webhook (match result + archive_uri).
+  # ─────────────────────────────────────────────────────────────────────────────
+  - id: on-game-end
+    name: Wait for game-end webhook
+    action: webhook
+    params:
+      path: "/webhooks/match/{{ steps.on-deposit.match_id }}/end"
+      timeout_seconds: 7200  # 2-hour hard cap; forfeit-poll handles earlier exits
+    outputs:
+      done: true
+      winner: "{{ request.body.winner }}"
+      archive_uri: "{{ request.body.archive_uri }}"
+      elo_delta: "{{ request.body.elo_delta }}"
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Step 5 – fetch-and-replay
+  # Pull the match record from 0G Storage and replay every move through gnubg.
+  # If any move is illegal the step fails → workflow halts → escrow stays locked.
+  # ─────────────────────────────────────────────────────────────────────────────
+  - id: fetch-and-replay
+    name: Fetch match record and replay via gnubg
+    action: http
+    params:
+      method: POST
+      url: "{{ secret.GNUBG_REPLAY_URL }}/replay"
+      headers:
+        Content-Type: application/json
+      body:
+        archive_uri: >-
+          {{
+            steps.forfeit-poll.forfeited
+              ? null
+              : steps.on-game-end.archive_uri
+          }}
+        match_id: "{{ steps.on-deposit.match_id }}"
+        storage_indexer: "{{ secret.OG_STORAGE_INDEXER }}"
+    # Halt the workflow if gnubg reports any invalid move.
+    assert: "{{ response.body.valid == true }}"
+    outputs:
+      confirmed_winner: >-
+        {{
+          steps.forfeit-poll.forfeited
+            ? (steps.forfeit-poll.expired_player == steps.on-game-end.winner
+                ? 'opponent'
+                : steps.on-game-end.winner)
+            : response.body.winner
+        }}
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Step 6 – sign-settlement
+  # Build and ECDSA-sign the settlement payload with the keeper private key.
+  # ─────────────────────────────────────────────────────────────────────────────
+  - id: sign-settlement
+    name: Sign settlement payload
+    action: ecdsa-sign
+    params:
+      private_key: "{{ secret.KEEPER_PRIVKEY }}"
+      payload:
+        matchId: "{{ steps.on-deposit.match_id }}"
+        winner: >-
+          {{
+            steps.forfeit-poll.forfeited
+              ? steps.fetch-and-replay.confirmed_winner
+              : steps.on-game-end.winner
+          }}
+        forfeit: "{{ steps.forfeit-poll.forfeited }}"
+        forfeitingPlayer: "{{ steps.forfeit-poll.expired_player }}"
+        eloDelta: "{{ steps.on-game-end.elo_delta }}"
+        archiveUri: "{{ steps.on-game-end.archive_uri }}"
+    outputs:
+      signature: "{{ signature }}"
+      payload: "{{ payload }}"
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Step 7 – relay-settlement
+  # POST the signed payload to the relayer service, which broadcasts to 0G.
+  # ─────────────────────────────────────────────────────────────────────────────
+  - id: relay-settlement
+    name: Broadcast settlement via relayer
+    action: http
+    params:
+      method: POST
+      url: "{{ secret.RELAYER_URL }}/settle"
+      headers:
+        Content-Type: application/json
+      body:
+        matchId: "{{ steps.sign-settlement.payload.matchId }}"
+        winner: "{{ steps.sign-settlement.payload.winner }}"
+        forfeit: "{{ steps.sign-settlement.payload.forfeit }}"
+        forfeitingPlayer: "{{ steps.sign-settlement.payload.forfeitingPlayer }}"
+        eloDelta: "{{ steps.sign-settlement.payload.eloDelta }}"
+        archiveUri: "{{ steps.sign-settlement.payload.archiveUri }}"
+        keeperSig: "{{ steps.sign-settlement.signature }}"
+    assert: "{{ response.status == 200 }}"
+    outputs:
+      tx_hash: "{{ response.body.tx_hash }}"
