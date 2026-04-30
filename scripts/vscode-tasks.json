@@ -1,44 +1,65 @@
 {
-  // Drop-in for .vscode/tasks.json. Mirrors README.md "Mode B — local dev".
-  // Each task pins a dedicated terminal panel so the four panes stay
-  // side-by-side (`presentation.panel: "dedicated"`).
+  // VS Code Tasks for Chaingammon localhost dev (README "Mode B").
   //
-  // Run via Cmd/Ctrl+Shift+P → "Tasks: Run Task" → pick one,
-  // or pick "Localhost: launch all" to start every terminal in parallel.
+  // Drop-in for .vscode/tasks.json. Each task pins a dedicated terminal
+  // tab (`presentation.panel: "dedicated"`) and stays in the background
+  // (`reveal: "never"`) so launching them does not surface any panels.
   //
-  // The deploy task polls port 8545 until the hardhat node is up, so the
-  // compound task can fire everything in parallel without races.
+  // Run via Cmd/Ctrl+Shift+P → "Tasks: Run Task" → pick one.
+  // Use "Localhost: launch all" to start everything in the right order.
+  //
+  // Sequencing: the compound task runs children with
+  // `dependsOrder: "sequence"`. The hardhat node task is a *background*
+  // task whose problemMatcher.background.endsPattern matches Hardhat's
+  // "Started HTTP and WebSocket JSON-RPC server" log line — VS Code
+  // then considers the node ready and releases the deploy task. This
+  // replaces the earlier `bash /dev/tcp` poll, which broke under VS
+  // Code's nested-quote handling.
   "version": "2.0.0",
   "tasks": [
     {
       "label": "Localhost: hardhat node",
       "detail": "Terminal 1 — local EVM chain on http://127.0.0.1:8545 (chainId 31337). Long-running.",
       "type": "shell",
-      "command": "pnpm exec hardhat node",
+      // After the node exits (Ctrl+C, crash) drop into an interactive
+      // shell in the same pane so you can re-run commands without
+      // killing the terminal. Same trick on every task below.
+      "command": "pnpm exec hardhat node; exec $SHELL",
       "options": { "cwd": "${workspaceFolder}/contracts" },
       "isBackground": true,
       "presentation": {
         "panel": "dedicated",
-        "group": "localhost",
         "reveal": "never",
         "focus": false,
         "clear": true
       },
-      "problemMatcher": []
+      // The pattern entry is required by VS Code's task schema even
+      // when we are not parsing problems. `regexp: "."` matches any
+      // line; we only care about the background begin/end signals.
+      "problemMatcher": {
+        "owner": "hardhat-node",
+        "pattern": [
+          { "regexp": ".", "file": 1, "location": 2, "message": 0 }
+        ],
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": "Hardhat Network",
+          "endsPattern": "Started HTTP and WebSocket JSON-RPC server"
+        }
+      }
     },
     {
       "label": "Localhost: deploy contracts",
-      "detail": "Terminal 2 — waits for the hardhat node, then deploys MatchRegistry + AgentRegistry + PlayerSubnameRegistrar. Writes addresses to contracts/deployments/localhost.json.",
+      "detail": "Terminal 2 — deploys MatchRegistry + AgentRegistry + PlayerSubnameRegistrar to localhost. Writes addresses to contracts/deployments/localhost.json. Runs once after the hardhat node is ready (one-shot).",
       "type": "shell",
-      "command": "bash",
-      "args": [
-        "-lc",
-        "until (echo > /dev/tcp/127.0.0.1/8545) >/dev/null 2>&1; do echo 'waiting for hardhat node on :8545...'; sleep 1; done; echo 'node is up — deploying'; pnpm exec hardhat run script/deploy.js --network localhost"
-      ],
+      // Deliberately NOT chaining `; exec $SHELL` here. The deploy task is
+      // one-shot and its exit is the signal that releases the next task in
+      // the compound sequence (agent → frontend). If we dropped into a
+      // shell the process would never exit and the sequence would stall.
+      "command": "pnpm exec hardhat run script/deploy.js --network localhost",
       "options": { "cwd": "${workspaceFolder}/contracts" },
       "presentation": {
         "panel": "dedicated",
-        "group": "localhost",
         "reveal": "never",
         "focus": false,
         "clear": true
@@ -47,40 +68,65 @@
     },
     {
       "label": "Localhost: agent node",
-      "detail": "Terminal 3 — gnubg_service (port 8001) + coach_service (port 8002) + AXL relay. Long-running.",
+      "detail": "Terminal 3 — gnubg_service (port 8001) + coach_service (port 8002) + AXL relay if installed. Long-running.",
       "type": "shell",
-      "command": "./start.sh",
+      "command": "./start.sh; exec $SHELL",
       "options": { "cwd": "${workspaceFolder}/agent" },
       "isBackground": true,
       "presentation": {
         "panel": "dedicated",
-        "group": "localhost",
         "reveal": "never",
         "focus": false,
         "clear": true
       },
-      "problemMatcher": []
+      // Background task — release the next sequential task as soon as
+      // uvicorn signals at least one FastAPI service is up. Both
+      // gnubg_service and coach_service emit "Application startup
+      // complete." on success; matching once is enough to advance.
+      "problemMatcher": {
+        "owner": "agent-services",
+        "pattern": [
+          { "regexp": ".", "file": 1, "location": 2, "message": 0 }
+        ],
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": "Started server process",
+          "endsPattern": "Application startup complete"
+        }
+      }
     },
     {
       "label": "Localhost: frontend",
       "detail": "Terminal 4 — Next.js dev server on http://localhost:3000. Long-running.",
       "type": "shell",
-      "command": "pnpm frontend:dev",
+      "command": "pnpm frontend:dev; exec $SHELL",
       "options": { "cwd": "${workspaceFolder}" },
       "isBackground": true,
       "presentation": {
         "panel": "dedicated",
-        "group": "localhost",
         "reveal": "never",
         "focus": false,
         "clear": true
       },
-      "problemMatcher": []
+      // Background task — Next.js prints "Ready in <ms>ms" once the dev
+      // server is listening. Matching this releases the compound task
+      // (currently the last child, but kept consistent for the future).
+      "problemMatcher": {
+        "owner": "next-dev",
+        "pattern": [
+          { "regexp": ".", "file": 1, "location": 2, "message": 0 }
+        ],
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": "Next\\.js",
+          "endsPattern": "Ready in"
+        }
+      }
     },
     {
       "label": "Localhost: launch all",
-      "detail": "Compound task — starts hardhat node, deploys contracts (waits for node), starts agent node, starts frontend. Each runs in its own terminal pane.",
-      "dependsOrder": "parallel",
+      "detail": "Compound task — runs children sequentially: hardhat node → (waits until ready) → deploy contracts → agent node → frontend. Each task lives in its own dedicated terminal tab.",
+      "dependsOrder": "sequence",
       "dependsOn": [
         "Localhost: hardhat node",
         "Localhost: deploy contracts",
