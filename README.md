@@ -620,6 +620,60 @@ cd agent && uv run pytest tests/ -v      # same as agent:test, run directly
 
 ---
 
+## Frontend Routes
+
+The Next.js app is a fully static export. All routes are client-side; the sidebar provides navigation between them.
+
+| Route | Page | Data source |
+| --- | --- | --- |
+| `/` | Agent discovery + matchmaking | On-chain reads via wagmi |
+| `/match?agentId=N` | Live match against agent N | AXL gnubg service (`:8001`) |
+| `/expenses` | 0G token spending ledger | localStorage |
+| `/log/[matchId]` | 0G Storage log for the current match | FastAPI server `/game-records/{rootHash}` (live) |
+| `/ens/[matchId]` | ENS text records before/after keeper settlement | `PlayerSubnameRegistrar.text()` on-chain (live) |
+| `/keeper/[matchId]` | KeeperHub workflow step view | FastAPI server `/keeper-workflow/{matchId}` (mock in Phase 36) |
+
+**`matchId` deep-linking:** the match page writes a UUID to `localStorage.currentMatchId` on game start. The sidebar reads this UUID and links the three new routes to the current match. If no match has been started, all three links use the `/no-match` sentinel, which renders "No active match — start one from Play with agent."
+
+### KeeperHub mock endpoint (Phase 36)
+
+`GET /keeper-workflow/{matchId}` on the FastAPI server (`server/app/main.py`) returns a deterministic mock of the KeeperHub workflow run for the given matchId. The response shape is the real API contract for Phase 37.
+
+```bash
+# Start the server (port 8000 by default)
+cd server && uv run uvicorn app.main:app --port 8000
+
+# Fetch workflow status for a match
+curl http://localhost:8000/keeper-workflow/my-match-id
+```
+
+Response shape:
+```json
+{
+  "matchId": "my-match-id",
+  "status": "pending",
+  "steps": [
+    {
+      "id": "escrow_deposit",
+      "name": "Escrow deposit confirmation",
+      "status": "ok",
+      "duration_ms": 1842,
+      "retry_count": 0,
+      "tx_hash": "0x...",
+      "error": null,
+      "detail": "Both players' deposits confirmed on 0G testnet."
+    }
+    // ... 7 more steps
+  ]
+}
+```
+
+The eight canonical step IDs: `escrow_deposit`, `vrf_rolls`, `og_storage_fetch`, `gnubg_replay`, `settlement_signed`, `relay_tx`, `ens_update`, `audit_append`.
+
+Set `NEXT_PUBLIC_SERVER_URL=http://localhost:8000` in `frontend/.env.local` so the `/keeper/[matchId]` and `/log/[matchId]` pages reach the FastAPI server.
+
+---
+
 ## 0G Testnet
 
 |          |                                 |
