@@ -104,6 +104,30 @@ _AGENT_REGISTRY_ABI = [
 _MATCH_REGISTRY_ABI = [
     {
         "type": "function",
+        "name": "nonces",
+        "stateMutability": "view",
+        "inputs": [{"name": "human", "type": "address"}],
+        "outputs": [{"name": "", "type": "uint256"}],
+    },
+    {
+        "type": "function",
+        "name": "settleWithSessionKeys",
+        "stateMutability": "nonpayable",
+        "inputs": [
+            {"name": "human", "type": "address"},
+            {"name": "agentId", "type": "uint256"},
+            {"name": "matchLength", "type": "uint16"},
+            {"name": "humanWins", "type": "bool"},
+            {"name": "gameRecordHash", "type": "bytes32"},
+            {"name": "nonce", "type": "uint256"},
+            {"name": "sessionKey", "type": "address"},
+            {"name": "humanAuthSig", "type": "bytes"},
+            {"name": "resultSig", "type": "bytes"},
+        ],
+        "outputs": [{"name": "matchId", "type": "uint256"}],
+    },
+    {
+        "type": "function",
         "name": "recordMatch",
         "stateMutability": "nonpayable",
         "inputs": [
@@ -332,6 +356,10 @@ class ChainClient:
 
     def human_elo(self, human: str) -> int:
         return int(self.match_registry.functions.humanElo(Web3.to_checksum_address(human)).call())
+
+    def get_nonce(self, human: str) -> int:
+        """Read the current settleWithSessionKeys nonce for a human address."""
+        return int(self.match_registry.functions.nonces(Web3.to_checksum_address(human)).call())
 
     # --- AgentRegistry views + setters (Phase 8) ----------------------------
 
