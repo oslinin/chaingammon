@@ -1257,3 +1257,16 @@ Tests (**[frontend/tests/match-flow-methods.spec.ts](frontend/tests/match-flow-m
 - "fast forward lets the gnubg agent play both sides to game over": mocks `/new`, `/move`, and `/apply`; clicks the fast-forward button; asserts "You win!" appears and `/resign` was never called.
 
 4 match-flow-methods Playwright tests pass (3 prior + 1 new).
+
+### Fix: disable coach during fast-forward
+
+The coach panel and its hint requests are suppressed when fast-forward is active. During fast-forward the human is not choosing moves, so coach hints have no audience and the extra `/evaluate` + `/hint` round-trips to coach_service only slow down the auto-play loop.
+
+**[frontend/app/match/page.tsx](frontend/app/match/page.tsx)** (updated):
+- `requestCoachHint` returns early when `fastForward` is `true`, skipping both the `/evaluate` call to gnubg_service and the `/hint` call to coach_service.
+- Coach panel JSX gains a `!fastForward` guard so the amber hint box is hidden while the agent is running both sides.
+
+Tests (**[frontend/tests/match-flow-methods.spec.ts](frontend/tests/match-flow-methods.spec.ts)**, updated):
+- Fast-forward test now routes `**/hint` and asserts `hintCount === 0` after the game ends, confirming coach_service is never contacted during auto-play.
+
+4 match-flow-methods Playwright tests pass (3 prior + 1 new).
