@@ -3,6 +3,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Dict, Optional
+import hashlib
 import json
 import os
 import re
@@ -257,6 +258,47 @@ def resign(game_id: str):
     state = _build_game_state(game_id, res["position_id"], res["match_id"])
     games[game_id] = state
     return state
+
+
+# ---------------------------------------------------------------------------
+# Phase 36 — ENS text records read endpoint
+#
+# Thin wrapper around EnsClient so the frontend can read live text records
+# without needing a wagmi connection or on-chain RPC key in the browser.
+# Returns the five text record keys for a given subname label. Returns empty
+# strings for unset keys rather than errors so the UI renders cleanly.
+# ---------------------------------------------------------------------------
+
+
+@app.get("/ens-records/{label}")
+def ens_records(label: str):
+    """Return all five reputation text records for `<label>.chaingammon.eth`.
+
+    The five keys (elo, match_count, last_match_id, style_uri, archive_uri)
+    are the canonical set written by the protocol. Unset keys return "".
+
+    Requires RPC_URL, PLAYER_SUBNAME_REGISTRAR_ADDRESS, and DEPLOYER_PRIVATE_KEY
+    in the server environment. Returns a 503 when those are missing or the RPC
+    is unreachable, so the /ens/[matchId] frontend page can show a graceful
+    error rather than a crash.
+    """
+    TEXT_KEYS = ["elo", "match_count", "last_match_id", "style_uri", "archive_uri"]
+    try:
+        ens = EnsClient.from_env()
+    except EnsError as e:
+        raise HTTPException(
+            status_code=503,
+            detail=f"ENS client not configured: {e} — set RPC_URL, "
+            "PLAYER_SUBNAME_REGISTRAR_ADDRESS, and DEPLOYER_PRIVATE_KEY",
+        ) from e
+    node = ens.subname_node(label)
+    records: dict[str, str] = {}
+    for key in TEXT_KEYS:
+        try:
+            records[key] = ens.text(node=node, key=key)
+        except EnsError:
+            records[key] = ""
+    return {"label": label, "records": records}
 
 
 # ---------------------------------------------------------------------------
@@ -604,3 +646,146 @@ def finalize_game(game_id: str, req: FinalizeRequest):
         overlay_updates=overlay_updates,
         ens_updates=ens_updates,
     )
+
+
+# ---------------------------------------------------------------------------
+# Phase 36 — KeeperHub workflow status mock
+#
+# TODO(phase-37): Replace this endpoint's body with a real `kh run status --json`
+# call once the KeeperHub workflow is wired. The response shape below is the
+# canonical contract the frontend develops against — field names, step IDs, and
+# status values must remain stable when the real implementation lands.
+#
+# The eight steps correspond 1-to-1 with the workflow stages described in
+# docs/keeperhub-feedback.md and the Phase 36 issue specification.
+# ---------------------------------------------------------------------------
+
+
+def _keeper_step_statuses(seed: int) -> list[str]:
+    """Return a deterministic list of 8 step statuses based on a numeric seed.
+
+    The first `n` steps are "ok" and the remainder are "pending", where n is
+    seed % 9 (range 0–8). This gives different matchIds visually distinct
+    progress states without requiring any real workflow state.
+    """
+    n_ok = seed % 9
+    return ["ok"] * n_ok + ["pending"] * (8 - n_ok)
+
+
+@app.get("/keeper-workflow/{match_id}")
+def keeper_workflow_status(match_id: str):
+    """Return a deterministic mock of the KeeperHub workflow run for matchId.
+
+    Shape mirrors what `kh run status --json` will return in Phase 37. Each
+    of the eight steps is populated with realistic placeholder data so the
+    frontend can develop the full UI without a live KeeperHub connection.
+
+    The step statuses are seeded by sha256(matchId) so the same matchId always
+    returns the same response — useful for Playwright snapshot tests and demos.
+    """
+    seed = int(hashlib.sha256(match_id.encode()).hexdigest(), 16)
+    statuses = _keeper_step_statuses(seed)
+
+    # Placeholder tx hashes derived from the matchId seed for display purposes.
+    def _tx(index: int) -> Optional[str]:
+        if statuses[index] != "ok":
+            return None
+        h = hashlib.sha256(f"{match_id}-step-{index}".encode()).hexdigest()
+        return "0x" + h
+
+    steps = [
+        {
+            "id": "escrow_deposit",
+            "name": "Escrow deposit confirmation",
+            "status": statuses[0],
+            "duration_ms": 1842 if statuses[0] == "ok" else None,
+            "retry_count": 0,
+            "tx_hash": _tx(0),
+            "error": None,
+            "detail": "Both players' deposits confirmed on 0G testnet." if statuses[0] == "ok" else None,
+        },
+        {
+            "id": "vrf_rolls",
+            "name": "VRF rolls (drand)",
+            "status": statuses[1],
+            "duration_ms": 312 if statuses[1] == "ok" else None,
+            "retry_count": 0,
+            "tx_hash": None,
+            "error": None,
+            "detail": "Drand rounds fetched and signed for each turn." if statuses[1] == "ok" else None,
+        },
+        {
+            "id": "og_storage_fetch",
+            "name": "Game-record fetch from 0G Storage",
+            "status": statuses[2],
+            "duration_ms": 780 if statuses[2] == "ok" else None,
+            "retry_count": 0,
+            "tx_hash": None,
+            "error": None,
+            "detail": "archive_uri resolved; game record downloaded." if statuses[2] == "ok" else None,
+        },
+        {
+            "id": "gnubg_replay",
+            "name": "gnubg replay validation",
+            "status": statuses[3],
+            "duration_ms": 2341 if statuses[3] == "ok" else None,
+            "retry_count": 0,
+            "tx_hash": None,
+            "error": None,
+            "detail": "All moves legal given their drand-signed dice." if statuses[3] == "ok" else None,
+        },
+        {
+            "id": "settlement_signed",
+            "name": "Settlement payload signed",
+            "status": statuses[4],
+            "duration_ms": 54 if statuses[4] == "ok" else None,
+            "retry_count": 0,
+            "tx_hash": None,
+            "error": None,
+            "detail": "Keeper signed result payload for on-chain relay." if statuses[4] == "ok" else None,
+        },
+        {
+            "id": "relay_tx",
+            "name": "Relay tx submitted to 0G testnet",
+            "status": statuses[5],
+            "duration_ms": 3200 if statuses[5] == "ok" else None,
+            "retry_count": 0,
+            "tx_hash": _tx(5),
+            "error": None,
+            "detail": "settleWithSessionKeys confirmed on-chain." if statuses[5] == "ok" else None,
+        },
+        {
+            "id": "ens_update",
+            "name": "ENS text records updated",
+            "status": statuses[6],
+            "duration_ms": 2100 if statuses[6] == "ok" else None,
+            "retry_count": 0,
+            "tx_hash": _tx(6),
+            "error": None,
+            "detail": "elo, last_match_id, archive_uri written for both players." if statuses[6] == "ok" else None,
+        },
+        {
+            "id": "audit_append",
+            "name": "Audit JSON appended to 0G Storage",
+            "status": statuses[7],
+            "duration_ms": 950 if statuses[7] == "ok" else None,
+            "retry_count": 0,
+            "tx_hash": _tx(7),
+            "error": None,
+            "detail": "Full audit trail written to the match's 0G Storage log." if statuses[7] == "ok" else None,
+        },
+    ]
+
+    # Overall run status: "ok" if all steps done, "failed" if any failed,
+    # "running" if any are running, otherwise "pending".
+    all_statuses = {s["status"] for s in steps}
+    if "failed" in all_statuses:
+        run_status = "failed"
+    elif "running" in all_statuses:
+        run_status = "running"
+    elif all(s == "ok" for s in statuses):
+        run_status = "ok"
+    else:
+        run_status = "pending"
+
+    return {"matchId": match_id, "status": run_status, "steps": steps}
