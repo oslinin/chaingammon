@@ -6,6 +6,17 @@ import type { NextConfig } from "next";
 const basePath = process.env.BASE_PATH ?? "";
 
 const nextConfig: NextConfig = {
+  // `accounts` is an optional peer dep of @wagmi/core and @wagmi/connectors that
+  // is not published to npm. @wagmi/core/tempo references it but the feature is
+  // unused. Without this alias Webpack chokes trying to resolve the import.
+  webpack: (config) => {
+    config.resolve.alias = {
+      ...config.resolve.alias,
+      accounts: false,
+    };
+    return config;
+  },
+
   // Static export — produces the `out/` directory which can be hosted on
   // GitHub Pages or any static file server. No Node.js server required.
   output: "export",
