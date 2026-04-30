@@ -1,0 +1,198 @@
+// Phase 28: global sidebar navigation.
+//
+// Two entries:
+//   1. "Play with agent" — links to /match with the most recently played
+//      agentId (read from localStorage, set by the match page on mount).
+//      Falls back to agentId=1 when no prior game exists.
+//   2. "Create new agent" — reveals an inline form that calls
+//      AgentRegistry.mintAgent via the connected wallet (onlyOwner on the
+//      contract). On success the page redirects to "/" so the new agent
+//      appears immediately in AgentsList.
+//
+// The component is SSR-safe: localStorage is read inside useEffect after
+// hydration so the server-rendered HTML never diverges from the initial
+// client render.
+"use client";
+
+import { useEffect, useState } from "react";
+import Link from "next/link";
+import { useAccount, useWriteContract, useWaitForTransactionReceipt } from "wagmi";
+
+import { useChainContracts } from "./contracts";
+
+// Inline ABI fragment for mintAgent. Kept here so the sidebar builds
+// independently of the Hardhat compile step (same pattern as ClaimForm
+// using SELF_MINT_ABI). The full artifact ABI covers all other reads.
+const MINT_AGENT_ABI = [
+  {
+    type: "function",
+    name: "mintAgent",
+    inputs: [
+      { name: "to", type: "address", internalType: "address" },
+      { name: "metadataURI", type: "string", internalType: "string" },
+      { name: "tier_", type: "uint8", internalType: "uint8" },
+    ],
+    outputs: [{ name: "agentId", type: "uint256", internalType: "uint256" }],
+    stateMutability: "nonpayable",
+  },
+] as const;
+
+export function Sidebar() {
+  // Defer localStorage access until after hydration to avoid SSR mismatch.
+  const [mounted, setMounted] = useState(false);
+  const [lastAgentId, setLastAgentId] = useState<number | null>(null);
+  const [showCreateForm, setShowCreateForm] = useState(false);
+
+  // Create-agent form state.
+  const [agentLabel, setAgentLabel] = useState("");
+  const [agentTier, setAgentTier] = useState<number>(0);
+
+  const { address } = useAccount();
+  const { agentRegistry } = useChainContracts();
+
+  const {
+    writeContract,
+    data: txHash,
+    error: writeError,
+    isPending: signing,
+    reset,
+  } = useWriteContract();
+
+  const { isLoading: confirming, isSuccess } = useWaitForTransactionReceipt({
+    hash: txHash,
+  });
+
+  // Read last active agentId from localStorage after hydration.
+  useEffect(() => {
+    setMounted(true);
+    const stored = window.localStorage.getItem("lastAgentId");
+    if (stored) setLastAgentId(Number(stored));
+  }, []);
+
+  // Redirect to home after agent creation so the new agent appears in AgentsList.
+  useEffect(() => {
+    if (isSuccess) {
+      window.location.href = "/";
+    }
+  }, [isSuccess]);
+
+  const creating = signing || confirming;
+
+  const submit = () => {
+    if (!address || !agentLabel.trim()) return;
+    reset();
+    writeContract({
+      address: agentRegistry,
+      abi: MINT_AGENT_ABI,
+      functionName: "mintAgent",
+      args: [address, agentLabel.trim(), agentTier],
+    });
+  };
+
+  // Before hydration, render only the structural shell so the server HTML
+  // matches the initial client render.
+  const playHref =
+    mounted && lastAgentId ? `/match?agentId=${lastAgentId}` : "/match?agentId=1";
+
+  const playSubtitle =
+    mounted && lastAgentId ? `Agent #${lastAgentId}` : "Start a match";
+
+  return (
+    <aside
+      data-testid="sidebar"
+      className="flex w-56 shrink-0 flex-col border-r border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950"
+    >
+      <div className="border-b border-zinc-200 px-4 py-4 dark:border-zinc-800">
+        <span className="text-xs font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
+          Navigation
+        </span>
+      </div>
+
+      <nav className="flex flex-col gap-1 p-3">
+        {/* Entry 1: current play with agent */}
+        <Link
+          href={playHref}
+          data-testid="sidebar-play"
+          className="flex flex-col gap-0.5 rounded-md px-3 py-3 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800"
+        >
+          <span className="font-semibold text-zinc-900 dark:text-zinc-50">
+            Play with agent
+          </span>
+          <span className="text-xs text-zinc-500 dark:text-zinc-400">
+            {playSubtitle}
+          </span>
+        </Link>
+
+        {/* Entry 2: create a new agent */}
+        <button
+          type="button"
+          data-testid="sidebar-create-agent"
+          onClick={() => setShowCreateForm((v) => !v)}
+          className="flex flex-col gap-0.5 rounded-md px-3 py-3 text-left text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800"
+        >
+          <span className="font-semibold text-zinc-900 dark:text-zinc-50">
+            Create new agent
+          </span>
+          <span className="text-xs text-zinc-500 dark:text-zinc-400">
+            Mint an iNFT agent
+          </span>
+        </button>
+
+        {/* Inline create-agent form — shown when the entry above is clicked */}
+        {showCreateForm && (
+          <div
+            data-testid="create-agent-form"
+            className="flex flex-col gap-2 rounded-md border border-zinc-200 p-3 dark:border-zinc-700"
+          >
+            <input
+              data-testid="agent-label-input"
+              type="text"
+              value={agentLabel}
+              onChange={(e) => {
+                setAgentLabel(e.target.value);
+                reset();
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") submit();
+              }}
+              placeholder="agent-label"
+              className="h-8 rounded border border-zinc-300 bg-white px-2 font-mono text-xs text-zinc-900 placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50"
+              disabled={creating}
+            />
+            <select
+              data-testid="agent-tier-select"
+              value={agentTier}
+              onChange={(e) => setAgentTier(Number(e.target.value))}
+              className="h-8 rounded border border-zinc-300 bg-white px-2 text-xs text-zinc-900 focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50"
+              disabled={creating}
+            >
+              <option value={0}>Tier 0</option>
+              <option value={1}>Tier 1</option>
+              <option value={2}>Tier 2</option>
+              <option value={3}>Tier 3</option>
+            </select>
+            <button
+              data-testid="create-agent-submit"
+              type="button"
+              onClick={submit}
+              disabled={creating || !agentLabel.trim() || !address}
+              className="rounded bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
+            >
+              {signing ? "Signing…" : confirming ? "Confirming…" : "Create"}
+            </button>
+            {!address && (
+              <p className="text-xs text-amber-600 dark:text-amber-400">
+                Connect wallet to create an agent.
+              </p>
+            )}
+            {writeError && (
+              <p className="text-xs text-red-600 dark:text-red-400">
+                {writeError.message.split("\n")[0]}
+              </p>
+            )}
+          </div>
+        )}
+      </nav>
+    </aside>
+  );
+}

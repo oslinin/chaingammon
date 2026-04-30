@@ -1215,3 +1215,29 @@ Also fixes the previously-failing `piece-stability.spec.ts` suite (5 tests): `Po
 4 new frontend Playwright tests pass.
 
 8 new contract tests pass (prior count + 8 new).
+
+### Phase 28: sidebar — global navigation with play and create-agent entries
+
+Add a persistent sidebar to the Chaingammon frontend so users can navigate to their current match or mint a new AI agent from any page. The sidebar renders on every route via the root layout and uses wagmi hooks for wallet-aware writes, following the same inline-ABI pattern as `ClaimForm` to stay independent of the Hardhat compile step.
+
+**[frontend/app/Sidebar.tsx](frontend/app/Sidebar.tsx)** (new):
+- `Sidebar` — client component, rendered in `layout.tsx`; uses `mounted` guard for SSR safety.
+- Entry 1 — "Play with agent": `<Link>` to `/match?agentId=<last>` where `lastAgentId` is read from `localStorage` (set by the match page on mount). Falls back to `agentId=1` when no prior match exists.
+- Entry 2 — "Create new agent": toggle button that reveals an inline form with a label input, tier `<select>` (0–3), and a Create button that calls `AgentRegistry.mintAgent` via wagmi `useWriteContract`. On tx confirmation (`useWaitForTransactionReceipt`), redirects to `/` so the new agent appears immediately in `AgentsList`.
+- Inline `MINT_AGENT_ABI` fragment (same pattern as `ClaimForm`'s `SELF_MINT_ABI`) avoids a compile dependency.
+- Shows "Connect wallet to create an agent." when no wallet is connected; surfaces the wagmi write error (first line only) when the tx fails (e.g. caller is not the contract owner).
+- `data-testid` attributes on sidebar, both entries, form, inputs, and submit button for Playwright selectors.
+
+**[frontend/app/layout.tsx](frontend/app/layout.tsx)** (updated):
+- Wraps `<Providers>` children in a `flex flex-1` div: `<Sidebar />` on the left (fixed `w-56`) and a `flex flex-1 flex-col min-w-0` div for page content on the right.
+- `<Sidebar>` is inside `<Providers>` so it shares the wagmi + react-query context.
+
+**[frontend/app/match/page.tsx](frontend/app/match/page.tsx)** (updated):
+- `MatchInner` gains a `useEffect([agentId])` that writes `lastAgentId` to `localStorage` on mount and whenever `agentId` changes, so the sidebar's "Play with agent" link always points back to the most-recently-visited agent.
+
+Tests (**[frontend/tests/sidebar.spec.ts](frontend/tests/sidebar.spec.ts)**, new, 3 tests):
+- Sidebar renders on the home page with both navigation entries visible.
+- Clicking "Create new agent" reveals the inline form (label input, tier select, submit button).
+- "Play with agent" `href` matches `/match?agentId=…`.
+
+3 new frontend Playwright tests pass.
