@@ -43,12 +43,17 @@
 import { Suspense, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
+import { useAccount, useChainId, useWalletClient, usePublicClient, useWriteContract } from "wagmi";
+import { encodeAbiParameters, keccak256 } from "viem";
+import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 
 import { Board } from "../Board";
 import { ConnectButton } from "../ConnectButton";
 import { DiceRoll } from "../DiceRoll";
 import { rollDice } from "../dice";
 import { recordExpense } from "../expenses";
+import { useActiveChain } from "../chains";
+import { MatchRegistryABI, useChainContracts } from "../contracts";
 
 // ── Types matching agent/gnubg_state.py:MatchStateDict ────────────────────
 
@@ -289,6 +294,21 @@ function MatchInner() {
 
   // Whether the human has handed off to the gnubg agent to finish the game.
   const [fastForward, setFastForward] = useState(false);
+
+  // ── Settlement via settleWithSessionKeys ──────────────────────────────────
+  // Wallet hooks — used only when a wallet is connected.
+  const { address, isConnected } = useAccount();
+  const { data: walletClient } = useWalletClient();
+  const publicClient = usePublicClient();
+  const chainId = useChainId();
+  const { matchRegistry } = useChainContracts();
+  const { writeContractAsync } = useWriteContract();
+  const activeChain = useActiveChain();
+  const explorerUrl = activeChain?.chain.blockExplorers?.default?.url;
+
+  const [settling, setSettling] = useState(false);
+  const [settleError, setSettleError] = useState<string | null>(null);
+  const [settleTxHash, setSettleTxHash] = useState<`0x${string}` | null>(null);
 
   // ── Phase 31: Derived board display state ─────────────────────────────
 
@@ -664,6 +684,128 @@ function MatchInner() {
     }
   };
 
+  // ── Trustless on-chain settlement ─────────────────────────────────────────
+  //
+  // Flow (two MetaMask interactions, both initiated by the user):
+  //   1. Generate an ephemeral session key (in-browser, no network).
+  //   2. Read the human's current nonce from MatchRegistry.
+  //   3. Human wallet signs "Chaingammon:open" auth (MetaMask popup #1).
+  //   4. Session key signs "Chaingammon:result" instantly (no popup).
+  //   5. Send settleWithSessionKeys tx (MetaMask popup #2 — the actual tx).
+  //
+  // On success the contract updates ELO for both the human and the agent.
+  // gameRecordHash is left as bytes32(0) here; 0G Storage upload is a
+  // follow-up task.
+  const doSettle = async () => {
+    if (!game?.game_over || !address || !walletClient || !publicClient) return;
+
+    setSettleError(null);
+    setSettling(true);
+
+    try {
+      // Step 1 — fresh session key (ephemeral, browser-only).
+      const privKey = generatePrivateKey();
+      const sessAccount = privateKeyToAccount(privKey);
+
+      // Step 2 — read the human's current nonce from MatchRegistry.
+      const nonce = await publicClient.readContract({
+        address: matchRegistry,
+        abi: MatchRegistryABI,
+        functionName: "nonces",
+        args: [address],
+      }) as bigint;
+
+      // Step 3 — human signs "Chaingammon:open" (MetaMask popup #1).
+      // Encoding mirrors the contract's abi.encode call exactly:
+      //   keccak256(abi.encode("Chaingammon:open", chainid, address(this),
+      //                        human, nonce, agentId, matchLength, sessionKey))
+      const humanWins = game.winner === 0;
+      const gameRecordHash = `0x${"00".repeat(32)}` as `0x${string}`;
+
+      const authInner = keccak256(
+        encodeAbiParameters(
+          [
+            { type: "string" },
+            { type: "uint256" },
+            { type: "address" },
+            { type: "address" },
+            { type: "uint256" },
+            { type: "uint256" },
+            { type: "uint16" },
+            { type: "address" },
+          ],
+          [
+            "Chaingammon:open",
+            BigInt(chainId),
+            matchRegistry,
+            address,
+            nonce,
+            BigInt(agentId),
+            game.match_length,
+            sessAccount.address,
+          ],
+        ),
+      );
+      // signMessage with { raw } applies EIP-191 personal_sign prefix,
+      // matching MessageHashUtils.toEthSignedMessageHash in the contract.
+      const humanAuthSig = await walletClient.signMessage({
+        message: { raw: authInner },
+      });
+
+      // Step 4 — session key signs "Chaingammon:result" (instant, no popup).
+      const resultInner = keccak256(
+        encodeAbiParameters(
+          [
+            { type: "string" },
+            { type: "uint256" },
+            { type: "address" },
+            { type: "address" },
+            { type: "uint256" },
+            { type: "uint256" },
+            { type: "bool" },
+            { type: "bytes32" },
+          ],
+          [
+            "Chaingammon:result",
+            BigInt(chainId),
+            matchRegistry,
+            address,
+            nonce,
+            BigInt(agentId),
+            humanWins,
+            gameRecordHash,
+          ],
+        ),
+      );
+      const resultSig = await sessAccount.signMessage({
+        message: { raw: resultInner },
+      });
+
+      // Step 5 — submit the settlement tx (MetaMask popup #2).
+      const txHash = await writeContractAsync({
+        address: matchRegistry,
+        abi: MatchRegistryABI,
+        functionName: "settleWithSessionKeys",
+        args: [
+          address,
+          BigInt(agentId),
+          game.match_length,
+          humanWins,
+          gameRecordHash,
+          nonce,
+          sessAccount.address,
+          humanAuthSig,
+          resultSig,
+        ],
+      });
+      setSettleTxHash(txHash);
+    } catch (e: unknown) {
+      setSettleError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSettling(false);
+    }
+  };
+
   // ── Render ─────────────────────────────────────────────────────────────
 
   if (!game && loading) {
@@ -753,14 +895,49 @@ function MatchInner() {
             <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
               Final score: {game.score[0]} – {game.score[1]}
             </p>
-            {/* Settle on-chain via settleWithSessionKeys — wired in sub-project C. */}
-            <button
-              disabled
-              className="mt-3 cursor-not-allowed rounded-md bg-zinc-200 px-4 py-2 text-sm font-semibold text-zinc-400 dark:bg-zinc-800 dark:text-zinc-600"
-              title="Connect wallet to settle on-chain"
-            >
-              Settle on-chain (connect wallet)
-            </button>
+            {/* Settle on-chain via settleWithSessionKeys */}
+            {isConnected ? (
+              settleTxHash ? (
+                <div className="mt-3">
+                  <p className="text-sm font-semibold text-green-700 dark:text-green-400">
+                    Settled on-chain — ELO updated!
+                  </p>
+                  {explorerUrl && (
+                    <a
+                      href={`${explorerUrl}/tx/${settleTxHash}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="mt-1 block text-xs text-indigo-600 underline dark:text-indigo-400"
+                    >
+                      View transaction ↗
+                    </a>
+                  )}
+                </div>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => void doSettle()}
+                    disabled={settling}
+                    className="mt-3 rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-60"
+                    title="Record result and update ELO on-chain (2 wallet interactions)"
+                  >
+                    {settling ? "Settling…" : "Settle on-chain"}
+                  </button>
+                  {settleError && (
+                    <p className="mt-2 text-xs text-red-600 dark:text-red-400">{settleError}</p>
+                  )}
+                </>
+              )
+            ) : (
+              <button
+                disabled
+                className="mt-3 cursor-not-allowed rounded-md bg-zinc-200 px-4 py-2 text-sm font-semibold text-zinc-400 dark:bg-zinc-800 dark:text-zinc-600"
+                title="Connect wallet to settle on-chain"
+              >
+                Settle on-chain (connect wallet)
+              </button>
+            )}
           </div>
         )}
 
