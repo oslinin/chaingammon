@@ -1241,3 +1241,19 @@ Tests (**[frontend/tests/sidebar.spec.ts](frontend/tests/sidebar.spec.ts)**, new
 - "Play with agent" `href` matches `/match?agentId=…`.
 
 3 new frontend Playwright tests pass.
+
+### Phase 29: fast-forward button — let the gnubg agent finish the game for the human
+
+Add a "⏩ Fast forward" button next to Forfeit on the match page. When clicked, the gnubg agent (the same service that drives the AI opponent) takes over the human's turn and plays both sides of the board to completion. This lets developers skip the remaining moves of a debug session without clicking through every turn manually.
+
+**[frontend/app/match/page.tsx](frontend/app/match/page.tsx)** (updated):
+- New `fastForward` boolean state (default `false`), set to `true` when the button is clicked and never reset — the agent plays to `game_over`.
+- Agent auto-drive `useEffect` extended: the existing `game.turn !== 1` guard gains an `&& !fastForward` clause so the effect also fires on the human's turn when fast-forward is active. Dependency array widens from `[game]` to `[game, fastForward]`.
+- Move input block gains a `!fastForward` guard so the text field and click-to-move UI hide while the agent is running.
+- "Agent is thinking…" paragraph now renders when `fastForward` is true as well; copy switches to "Fast forwarding…" to distinguish the two modes.
+- Fast-forward button rendered to the left of Forfeit; disabled once active. Forfeit is also disabled while fast-forwarding to prevent an ambiguous partial handoff.
+
+Tests (**[frontend/tests/match-flow-methods.spec.ts](frontend/tests/match-flow-methods.spec.ts)**, updated, 1 new test):
+- "fast forward lets the gnubg agent play both sides to game over": mocks `/new`, `/move`, and `/apply`; clicks the fast-forward button; asserts "You win!" appears and `/resign` was never called.
+
+4 match-flow-methods Playwright tests pass (3 prior + 1 new).
