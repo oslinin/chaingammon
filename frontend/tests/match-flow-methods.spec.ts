@@ -114,6 +114,7 @@ test("fast forward lets the gnubg agent play both sides to game over", async ({ 
   let moveCount = 0;
   let applyCount = 0;
   let resignCount = 0;
+  let hintCount = 0;
 
   await page.route("**/new", async (route) => {
     await fulfill(route, OPENING);
@@ -140,6 +141,13 @@ test("fast forward lets the gnubg agent play both sides to game over", async ({ 
     await fulfill(route, GAME_OVER);
   });
 
+  // Coach /hint must NOT be called during fast-forward — the human is not
+  // choosing moves and the extra round-trip only slows the auto-play.
+  await page.route("**/hint", async (route) => {
+    hintCount += 1;
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ hint: "", backend: "local" }) });
+  });
+
   await page.goto("/match?agentId=1");
 
   // Click the fast-forward button — the agent should play both sides to completion.
@@ -148,6 +156,7 @@ test("fast forward lets the gnubg agent play both sides to game over", async ({ 
   await expect(page.getByText("You win!")).toBeVisible({ timeout: 10_000 });
   expect(resignCount).toBe(0); // forfeit was not called
   expect(moveCount).toBeGreaterThanOrEqual(1);
+  expect(hintCount).toBe(0); // coach must be silent during fast-forward
 });
 
 test("forfeit posts /resign and shows the game-over banner", async ({ page }) => {

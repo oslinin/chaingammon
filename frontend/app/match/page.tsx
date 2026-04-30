@@ -15,7 +15,8 @@
 //                    → replace state, roll next side's dice
 //   forfeit          → POST /resign → game_over response
 //
-// After each move a non-blocking coach hint is requested:
+// After each move a non-blocking coach hint is requested (skipped during
+// fast-forward since the human is not choosing moves):
 //   → POST /evaluate (gnubg_service) → ranked candidates
 //   → POST /hint    (coach_service)   → plain-English hint
 // Coach calls are best-effort — any failure is silently swallowed so
@@ -234,6 +235,7 @@ function MatchInner() {
    * does nothing when the coach node isn't running.
    */
   const requestCoachHint = (state: MatchState) => {
+    if (fastForward) return; // human is not choosing moves — coach not needed
     if (state.game_over || !state.dice) return;
     setCoachHint(null);
     setCoachServedBy(null);
@@ -596,7 +598,7 @@ function MatchInner() {
         )}
 
         {/* ── Coach panel ───────────────────────────────────────────────── */}
-        {!game.game_over && (
+        {!game.game_over && !fastForward && (
           <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 dark:border-amber-700/40 dark:bg-amber-900/10">
             <div className="mb-1 flex items-center justify-between gap-3">
               <p className="text-xs font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-400">
