@@ -1,4 +1,5 @@
 // Phase 13: landing page extended with live on-chain agents list.
+// Phase 35: responsive padding for mobile screens.
 // The page shell is a server component; <AgentsList> is a client component
 // that performs the wagmi reads.
 import { ConnectButton } from "./ConnectButton";
@@ -7,14 +8,14 @@ import { AgentsList } from "./AgentsList";
 export default function Home() {
   return (
     <div className="flex flex-1 flex-col bg-zinc-50 dark:bg-black">
-      <header className="flex items-center justify-between border-b border-zinc-200 px-8 py-4 dark:border-zinc-800">
+      <header className="flex items-center justify-between border-b border-zinc-200 px-4 py-4 sm:px-8 dark:border-zinc-800">
         <h1 className="text-lg font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
           Chaingammon
         </h1>
         <ConnectButton />
       </header>
 
-      <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-8 px-8 py-16">
+      <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-8 px-4 py-8 sm:px-8 sm:py-16">
         <div className="flex flex-col gap-3">
           <h2 className="text-3xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
             Open backgammon protocol

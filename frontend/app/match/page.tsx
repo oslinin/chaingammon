@@ -713,18 +713,18 @@ function MatchInner() {
   return (
     <div className="flex min-h-screen flex-col bg-zinc-50 dark:bg-black">
       {/* Header */}
-      <header className="flex items-center justify-between gap-4 border-b border-zinc-200 px-8 py-4 dark:border-zinc-800">
+      <header className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-200 px-4 py-3 sm:gap-4 sm:px-8 sm:py-4 dark:border-zinc-800">
         <Link
           href="/"
-          className="text-sm text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-50"
+          className="shrink-0 text-sm text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-50"
         >
           ← Agents
         </Link>
-        <div className="flex flex-1 items-center justify-center gap-4">
-          <span className="font-mono text-sm text-zinc-500 dark:text-zinc-400">
+        <div className="flex min-w-0 flex-1 items-center justify-center gap-2 sm:gap-4">
+          <span className="truncate font-mono text-xs text-zinc-500 sm:text-sm dark:text-zinc-400">
             Agent #{agentId} · {game.match_length}-pt match
           </span>
-          <span className="font-mono text-sm text-zinc-900 dark:text-zinc-50">
+          <span className="shrink-0 font-mono text-xs text-zinc-900 sm:text-sm dark:text-zinc-50">
             {game.score[0]} – {game.score[1]}
           </span>
         </div>
@@ -732,7 +732,7 @@ function MatchInner() {
       </header>
 
       {/* Main */}
-      <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-6 px-4 py-8 sm:px-8">
+      <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-6 px-3 py-6 sm:px-8 sm:py-8">
         {game.game_over && (
           <div
             className={`rounded-lg border p-4 ${

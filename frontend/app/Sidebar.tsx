@@ -1,4 +1,4 @@
-// Phase 28: global sidebar navigation.
+// Phase 28: global sidebar navigation. Phase 35: hidden on mobile (md:flex).
 //
 // Navigation entries:
 //   1. "Play with agent" — links to /match with the most recently played
@@ -102,7 +102,7 @@ export function Sidebar() {
   return (
     <aside
       data-testid="sidebar"
-      className="flex w-56 shrink-0 flex-col border-r border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950"
+      className="hidden md:flex w-56 shrink-0 flex-col border-r border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950"
     >
       <div className="border-b border-zinc-200 px-4 py-4 dark:border-zinc-800">
         <span className="text-xs font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
