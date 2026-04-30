@@ -1,6 +1,6 @@
 // Phase 28: global sidebar navigation.
 //
-// Two entries:
+// Navigation entries:
 //   1. "Play with agent" — links to /match with the most recently played
 //      agentId (read from localStorage, set by the match page on mount).
 //      Falls back to agentId=1 when no prior game exists.
@@ -8,6 +8,8 @@
 //      AgentRegistry.mintAgent via the connected wallet (onlyOwner on the
 //      contract). On success the page redirects to "/" so the new agent
 //      appears immediately in AgentsList.
+//   3. "Expenses" (Phase 30) — links to /expenses, the 0G token spending
+//      ledger. Shows coach-hint and game-settlement charges.
 //
 // The component is SSR-safe: localStorage is read inside useEffect after
 // hydration so the server-rendered HTML never diverges from the initial
@@ -137,6 +139,20 @@ export function Sidebar() {
             Mint an iNFT agent
           </span>
         </button>
+
+        {/* Entry 3: 0G token expense ledger */}
+        <Link
+          href="/expenses"
+          data-testid="sidebar-expenses"
+          className="flex flex-col gap-0.5 rounded-md px-3 py-3 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800"
+        >
+          <span className="font-semibold text-zinc-900 dark:text-zinc-50">
+            Expenses
+          </span>
+          <span className="text-xs text-zinc-500 dark:text-zinc-400">
+            0G token ledger
+          </span>
+        </Link>
 
         {/* Inline create-agent form — shown when the entry above is clicked */}
         {showCreateForm && (
