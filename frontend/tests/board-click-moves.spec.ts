@@ -1,16 +1,17 @@
 // Phase 27: click-to-move regression coverage.
+// Phase 31: updated for drag-and-drop + optimistic board display + auto-submit + undo.
 //
 // Drives /match?agentId=1 against mocked gnubg_service endpoints and
 // verifies that:
 //   1. Clicking a blue checker selects it (data-selected="true").
-//   2. Clicking a destination point appends the "from/to" segment to the
-//      move input, so the existing Move button can submit the full notation.
-//   3. Clicking the same source twice deselects it.
-//   4. Multiple click pairs accumulate into a space-separated notation
-//      string identical to what a user would type by hand.
+//   2. Clicking the same source twice deselects it.
+//   3. Clicking source then destination moves the checker immediately on
+//      the display board (data-count changes optimistically).
+//   4. Two click pairs auto-submit to /apply when both dice are used.
+//   5. Undo button resets the board to the start-of-turn position.
 //
-// The text input and Move button are left unchanged (backward-compatible)
-// so all pre-existing tests continue to exercise the same paths.
+// The text input and Move button are unchanged — all pre-existing tests
+// that type notation and click Move continue to exercise those paths.
 
 import { test, expect, type Route } from "@playwright/test";
 
@@ -83,6 +84,31 @@ async function setupRoutes(
   });
 }
 
+/**
+ * Override crypto.getRandomValues so rollDice() always returns [3, 2]
+ * (non-doubles → diceCount = 2). Must be called via page.addInitScript
+ * before page.goto so it runs before the module initialises.
+ *
+ * Values: floor(buf / 2^32 * 6) + 1 = die face.
+ *   1431655765 / 2^32 * 6 ≈ 2.000 → face 3
+ *   715827883  / 2^32 * 6 ≈ 1.000 → face 2
+ */
+function deterministicDiceScript() {
+  return `
+    (function() {
+      var _orig = crypto.getRandomValues.bind(crypto);
+      crypto.getRandomValues = function(arr) {
+        if (arr instanceof Uint32Array && arr.length === 2) {
+          arr[0] = 1431655765;
+          arr[1] = 715827883;
+          return arr;
+        }
+        return _orig(arr);
+      };
+    })();
+  `;
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 test("clicking a blue checker selects it (amber highlight via data-selected)", async ({
@@ -119,36 +145,38 @@ test("clicking same point twice deselects it", async ({ page }) => {
   await expect(page.locator("[data-point='8']")).not.toHaveAttribute("data-selected");
 });
 
-test("two click pairs build '8/5 6/5' in the move input", async ({ page }) => {
+test("click pair moves checker to destination on the display board immediately", async ({
+  page,
+}) => {
   await setupRoutes(page);
   await page.goto("/match?agentId=1");
 
   await expect(page.locator("[data-point='8']")).toBeVisible({ timeout: 10_000 });
 
-  // First checker: point 8 → point 5.
+  // Opening: point 8 has 3 blue checkers, point 5 is empty.
+  await expect(page.locator("[data-point='8']")).toHaveAttribute("data-count", "3");
+  await expect(page.locator("[data-point='5']")).toHaveAttribute("data-count", "0");
+
+  // First pair: click source (8) then destination (5).
   await page.locator("[data-point='8']").click();
-  await expect(page.locator("[data-point='8']")).toHaveAttribute("data-selected", "true");
   await page.locator("[data-point='5']").click();
 
-  // After the first pair, input shows "8/5" and nothing is selected.
-  const moveInput = page.getByPlaceholder('e.g. "8/5 6/5" or "off"');
-  await expect(moveInput).toHaveValue("8/5");
+  // After staging 8/5, the board reflects the move immediately.
+  await expect(page.locator("[data-point='8']")).toHaveAttribute("data-count", "2");
+  await expect(page.locator("[data-point='5']")).toHaveAttribute("data-count", "1");
+
+  // Point 8 is no longer selected (selection cleared after staging).
   await expect(page.locator("[data-point='8']")).not.toHaveAttribute("data-selected");
-
-  // Second checker: point 6 → point 5.
-  await page.locator("[data-point='6']").click();
-  await expect(page.locator("[data-point='6']")).toHaveAttribute("data-selected", "true");
-  await page.locator("[data-point='5']").click();
-
-  // Input now accumulates "8/5 6/5".
-  await expect(moveInput).toHaveValue("8/5 6/5");
 });
 
-test("click-built notation is submitted via the Move button to /apply", async ({
+test("two click pairs auto-submit to /apply when both dice are used", async ({
   page,
 }) => {
-  let capturedMove = "";
+  // Force dice to [3, 2] (non-doubles) so diceCount = 2 — exactly two click
+  // pairs trigger auto-submit without any manual Move button press.
+  await page.addInitScript(deterministicDiceScript());
 
+  let capturedMove = "";
   await setupRoutes(page, {
     applyCallback: (body) => {
       capturedMove = String(body.move ?? "");
@@ -159,25 +187,19 @@ test("click-built notation is submitted via the Move button to /apply", async ({
   await page.goto("/match?agentId=1");
   await expect(page.locator("[data-point='8']")).toBeVisible({ timeout: 10_000 });
 
-  // Build "8/5 6/5" by clicking.
+  // Two click pairs: 8 → 5, then 6 → 5.
   await page.locator("[data-point='8']").click();
   await page.locator("[data-point='5']").click();
   await page.locator("[data-point='6']").click();
   await page.locator("[data-point='5']").click();
 
-  const moveInput = page.getByPlaceholder('e.g. "8/5 6/5" or "off"');
-  await expect(moveInput).toHaveValue("8/5 6/5");
-
-  // Submit via the Move button.
-  await page.getByRole("button", { name: "Move" }).click();
-
-  // /apply must receive the click-assembled notation exactly.
+  // Auto-submit fires after the second pair — /apply receives "8/5 6/5".
   await expect
     .poll(() => capturedMove, { timeout: 5_000 })
     .toBe("8/5 6/5");
 });
 
-test("Reset button clears the assembled notation and deselects any source", async ({
+test("Undo button resets the board to start-of-turn position", async ({
   page,
 }) => {
   await setupRoutes(page);
@@ -185,20 +207,18 @@ test("Reset button clears the assembled notation and deselects any source", asyn
 
   await expect(page.locator("[data-point='8']")).toBeVisible({ timeout: 10_000 });
 
-  // Build one segment.
+  // Stage one move: 8 → 5. One staged move is always < diceCount (2 or 4),
+  // so auto-submit does not fire regardless of the dice value.
   await page.locator("[data-point='8']").click();
   await page.locator("[data-point='5']").click();
 
-  const moveInput = page.getByPlaceholder('e.g. "8/5 6/5" or "off"');
-  await expect(moveInput).toHaveValue("8/5");
+  // Optimistic display: point 8 shows 2, point 5 shows 1.
+  await expect(page.locator("[data-point='8']")).toHaveAttribute("data-count", "2");
+  await expect(page.locator("[data-point='5']")).toHaveAttribute("data-count", "1");
 
-  // Select a second source to leave a pending selection.
-  await page.locator("[data-point='6']").click();
-  await expect(page.locator("[data-point='6']")).toHaveAttribute("data-selected", "true");
+  // Click Undo — staged moves discarded and board resets to opening.
+  await page.getByRole("button", { name: "Undo" }).click();
 
-  // Click Reset — both the notation and the selection should clear.
-  await page.getByRole("button", { name: "Reset" }).click();
-
-  await expect(moveInput).toHaveValue("");
-  await expect(page.locator("[data-point='6']")).not.toHaveAttribute("data-selected");
+  await expect(page.locator("[data-point='8']")).toHaveAttribute("data-count", "3");
+  await expect(page.locator("[data-point='5']")).toHaveAttribute("data-count", "0");
 });

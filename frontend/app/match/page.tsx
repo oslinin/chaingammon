@@ -1,4 +1,5 @@
 // Phase 26: match flow over the AXL gnubg agent node.
+// Phase 31: drag-and-drop checker movement with optimistic board display and undo.
 //
 // URL: /match?agentId=<N>
 //
@@ -14,6 +15,18 @@
 //                    → POST /apply with that move
 //                    → replace state, roll next side's dice
 //   forfeit          → POST /resign → game_over response
+//
+// Phase 31 additions:
+//   stagedMoves      — array of "from/to" segments the human has clicked/dragged
+//   displayBoardState — optimistic board/bar/off after applying staged moves locally;
+//                       null when no moves staged (falls back to game.board)
+//   stageMove        — appends a segment, applies it to displayBoardState, and
+//                       auto-submits via doMoveWithNotation when all dice are used
+//   Undo button      — clears staged moves and resets display to start-of-turn
+//   Drag events      — onDragStart/onDrop forwarded to Board so users can drag
+//                       checkers in addition to clicking source then destination
+//   Text input + Move button still present for backward compatibility with tests
+//   and power users who prefer notation.
 //
 // After each move a non-blocking coach hint is requested (skipped during
 // fast-forward since the human is not choosing moves):
@@ -152,6 +165,46 @@ function withFreshDice(state: MatchState): MatchState {
   return { ...state, dice: rollDice() };
 }
 
+// ── Phase 31: Optimistic board helper ────────────────────────────────────
+
+/**
+ * Apply one checker movement to board/bar/off and return the new state.
+ * Player 0 (human) is always the mover. Handles blot hits (single
+ * opponent checker at destination is sent to the bar).
+ */
+function applyMoveSegment(
+  board: number[],
+  bar: [number, number],
+  off: [number, number],
+  from: number | "bar",
+  to: number | "off",
+): { board: number[]; bar: [number, number]; off: [number, number] } {
+  const newBoard = [...board];
+  const newBar: [number, number] = [bar[0], bar[1]];
+  const newOff: [number, number] = [off[0], off[1]];
+
+  // Remove one checker from the source.
+  if (from === "bar") {
+    newBar[0] = Math.max(0, newBar[0] - 1);
+  } else {
+    newBoard[from - 1] -= 1;
+  }
+
+  // Place the checker at the destination (or bear it off).
+  if (to === "off") {
+    newOff[0] += 1;
+  } else {
+    // Hit a blot: if exactly one opponent checker is there, send it to the bar.
+    if (newBoard[to - 1] === -1) {
+      newBoard[to - 1] = 0;
+      newBar[1] += 1;
+    }
+    newBoard[to - 1] += 1;
+  }
+
+  return { board: newBoard, bar: newBar, off: newOff };
+}
+
 // ── Component ─────────────────────────────────────────────────────────────
 
 export default function MatchPage() {
@@ -186,6 +239,16 @@ function MatchInner() {
   // Phase 27: click-to-move state.
   // null = no checker selected, 1-24 = board point, 25 = bar (player 0).
   const [selectedSource, setSelectedSource] = useState<number | null>(null);
+
+  // Phase 31: staged moves and optimistic board display.
+  // Each element is a "from/to" notation segment, e.g. "8/5" or "bar/24".
+  const [stagedMoves, setStagedMoves] = useState<string[]>([]);
+  // Optimistic board state while moves are staged; null = show game.board.
+  const [displayBoardState, setDisplayBoardState] = useState<{
+    board: number[];
+    bar: [number, number];
+    off: [number, number];
+  } | null>(null);
 
   // Coach state — best-effort; failures leave hint null.
   const [coachHint, setCoachHint] = useState<string | null>(null);
@@ -226,6 +289,20 @@ function MatchInner() {
 
   // Whether the human has handed off to the gnubg agent to finish the game.
   const [fastForward, setFastForward] = useState(false);
+
+  // ── Phase 31: Derived board display state ─────────────────────────────
+
+  // Current visual board — optimistic while moves are staged, otherwise
+  // the authoritative server state.
+  const currentBoard = displayBoardState?.board ?? game?.board ?? [];
+  const currentBar = (displayBoardState?.bar ?? game?.bar ?? [0, 0]) as [number, number];
+  const currentOff = (displayBoardState?.off ?? game?.off ?? [0, 0]) as [number, number];
+
+  // How many move segments we expect before auto-submitting.
+  // Doubles → 4 moves; any other roll → 2 moves.
+  const diceCount = game?.dice
+    ? game.dice[0] === game.dice[1] ? 4 : 2
+    : 0;
 
   // ── Coach hint after each move ─────────────────────────────────────────
 
@@ -339,56 +416,23 @@ function MatchInner() {
 
   // ── Human actions ──────────────────────────────────────────────────────
 
-  // Clear click selection whenever it is no longer the human's turn.
+  // Clear click selection and staged moves whenever it is no longer the human's turn.
   useEffect(() => {
-    if (!game || game.turn !== 0) setSelectedSource(null);
+    if (!game || game.turn !== 0) {
+      setSelectedSource(null);
+      setStagedMoves([]);
+      setDisplayBoardState(null);
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [game?.turn]);
 
   /**
-   * Handle a click on a board point (Phase 27 click-to-move).
-   *
-   * First click: selects the point as the move source (only valid if the point
-   * has a player-0 checker and player-0 has no checkers on the bar).
-   * Second click on the same point: deselects.
-   * Second click on a different point: appends "from/to" to the move input and
-   * clears the selection so the user can start the next checker move.
+   * Submit a move notation string to /apply. Shared by the manual Move
+   * button (text input) and the auto-submit path (click/drag staging).
+   * Clears all staged state on success or error.
    */
-  const handlePointClick = (point: number) => {
-    // needsMove = !!game.dice && game.turn === 0
-    if (!game || !game.dice || game.turn !== 0) return;
-
-    if (selectedSource === null) {
-      // Player 0 must clear the bar before moving board checkers.
-      if (game.bar[0] > 0) return;
-      if (game.board[point - 1] > 0) setSelectedSource(point);
-    } else if (selectedSource === point) {
-      setSelectedSource(null); // deselect
-    } else {
-      const from = selectedSource === 25 ? "bar" : String(selectedSource);
-      const seg = `${from}/${point}`;
-      setMoveInput((prev) => (prev.trim() ? `${prev.trim()} ${seg}` : seg));
-      setSelectedSource(null);
-    }
-  };
-
-  /** Click the bar zone to select it as the move source (enter from bar). */
-  const handleBarClick = () => {
-    if (!game || !game.dice || game.turn !== 0 || game.bar[0] === 0) return;
-    setSelectedSource(25);
-  };
-
-  /** Click the bear-off zone when a source is already selected. */
-  const handleOffClick = () => {
-    if (!game || !game.dice || game.turn !== 0 || selectedSource === null) return;
-    const from = selectedSource === 25 ? "bar" : String(selectedSource);
-    const seg = `${from}/off`;
-    setMoveInput((prev) => (prev.trim() ? `${prev.trim()} ${seg}` : seg));
-    setSelectedSource(null);
-  };
-
-  const doMove = async () => {
-    if (!game || !moveInput.trim() || !game.dice) return;
+  const doMoveWithNotation = async (notation: string) => {
+    if (!game || !game.dice) return;
     setLoading(true);
     setError(null);
     setSelectedSource(null);
@@ -397,17 +441,118 @@ function MatchInner() {
         position_id: game.position_id,
         match_id: game.match_id,
         dice: game.dice,
-        move: moveInput.trim(),
+        move: notation,
       });
       const nextWithDice = next.game_over ? next : withFreshDice(next);
       setGame(nextWithDice);
+      setStagedMoves([]);
+      setDisplayBoardState(null);
       setMoveInput("");
       requestCoachHint(nextWithDice);
     } catch (e: unknown) {
       setError(String(e));
+      // On error, reset optimistic state so the board snaps back.
+      setStagedMoves([]);
+      setDisplayBoardState(null);
     } finally {
       setLoading(false);
     }
+  };
+
+  /**
+   * Stage one checker movement (Phase 31 click/drag-to-move).
+   *
+   * Appends the segment to stagedMoves, applies it to displayBoardState
+   * so the checker appears at its destination immediately, then
+   * auto-submits when all dice have been used.
+   */
+  const stageMove = (from: number | "bar", to: number | "off") => {
+    if (!game || !game.dice) return;
+
+    const fromStr = from === "bar" ? "bar" : String(from);
+    const toStr = to === "off" ? "off" : String(to);
+    const seg = `${fromStr}/${toStr}`;
+    const newStaged = [...stagedMoves, seg];
+
+    // Apply the move locally for immediate visual feedback.
+    const curBoard = displayBoardState?.board ?? game.board;
+    const curBar = displayBoardState?.bar ?? game.bar;
+    const curOff = displayBoardState?.off ?? game.off;
+    const newDisplay = applyMoveSegment(curBoard, curBar, curOff, from, to);
+
+    setStagedMoves(newStaged);
+    setDisplayBoardState(newDisplay);
+    setSelectedSource(null);
+
+    // Auto-submit when all dice are consumed.
+    if (newStaged.length >= diceCount) {
+      void doMoveWithNotation(newStaged.join(" "));
+    }
+  };
+
+  /**
+   * Handle a click on a board point (Phase 27 click-to-move, extended in Phase 31).
+   *
+   * First click: selects the point as the move source (only valid if the point
+   * has a player-0 checker and player-0 has no checkers on the bar).
+   * Second click on the same point: deselects.
+   * Second click on a different point: stages the move and updates the display
+   * board optimistically.
+   */
+  const handlePointClick = (point: number) => {
+    if (!game || !game.dice || game.turn !== 0) return;
+
+    // Use the display board (post-staging) for source validation.
+    const curBar = displayBoardState?.bar ?? game.bar;
+    const curBoard = displayBoardState?.board ?? game.board;
+
+    if (selectedSource === null) {
+      // Player 0 must clear the bar before moving board checkers.
+      if (curBar[0] > 0) return;
+      if (curBoard[point - 1] > 0) setSelectedSource(point);
+    } else if (selectedSource === point) {
+      setSelectedSource(null); // deselect
+    } else {
+      const from: number | "bar" = selectedSource === 25 ? "bar" : selectedSource;
+      stageMove(from, point);
+    }
+  };
+
+  /** Click the bar zone to select it as the move source (enter from bar). */
+  const handleBarClick = () => {
+    if (!game || !game.dice || game.turn !== 0) return;
+    const curBar = displayBoardState?.bar ?? game.bar;
+    if (curBar[0] === 0) return;
+    setSelectedSource(25);
+  };
+
+  /** Click the bear-off zone when a source is already selected. */
+  const handleOffClick = () => {
+    if (!game || !game.dice || game.turn !== 0 || selectedSource === null) return;
+    const from: number | "bar" = selectedSource === 25 ? "bar" : selectedSource;
+    stageMove(from, "off");
+  };
+
+  /** Phase 31: drag-start — select the dragged point as the move source. */
+  const handleDragStart = (point: number) => {
+    if (!game || !game.dice || game.turn !== 0) return;
+    const curBar = displayBoardState?.bar ?? game.bar;
+    const curBoard = displayBoardState?.board ?? game.board;
+    if (curBar[0] > 0) return; // must enter from bar first
+    if (curBoard[point - 1] > 0) setSelectedSource(point);
+  };
+
+  /** Phase 31: drop — stage the move from selectedSource to the dropped point. */
+  const handleDrop = (point: number) => {
+    if (selectedSource === null || !game || !game.dice || game.turn !== 0) return;
+    const from: number | "bar" = selectedSource === 25 ? "bar" : selectedSource;
+    stageMove(from, point);
+  };
+
+  /** Manual submit via the text input + Move button (backward compat). */
+  const doMove = async () => {
+    if (!game || !moveInput.trim() || !game.dice) return;
+    await doMoveWithNotation(moveInput.trim());
   };
 
   const doForfeit = async () => {
@@ -466,6 +611,13 @@ function MatchInner() {
   const isAgentTurn = game.turn === 1;
   const needsMove = !!game.dice && isHumanTurn;
 
+  // Show the Undo button whenever there is something to undo.
+  const canUndo = stagedMoves.length > 0 || moveInput.trim() !== "" || selectedSource !== null;
+
+  // Show Apply button when moves are staged but not all dice are used (player
+  // can't use remaining dice — let them submit a partial move for gnubg to validate).
+  const canApplyPartial = stagedMoves.length > 0 && diceCount > 0 && stagedMoves.length < diceCount;
+
   const winnerLabel =
     game.winner === 0 ? "You win!" : game.winner === 1 ? "Agent wins." : "Draw";
 
@@ -523,15 +675,18 @@ function MatchInner() {
           </div>
         )}
 
+        {/* Board renders the optimistic display state during staging, otherwise game.board */}
         <Board
-          board={game.board}
-          bar={game.bar}
-          off={game.off}
+          board={currentBoard}
+          bar={currentBar}
+          off={currentOff}
           turn={game.turn}
           onPointClick={needsMove ? handlePointClick : undefined}
           onBarClick={needsMove ? handleBarClick : undefined}
           onOffClick={needsMove && selectedSource !== null ? handleOffClick : undefined}
           selectedPoint={selectedSource}
+          onDragStart={needsMove ? handleDragStart : undefined}
+          onDrop={needsMove ? handleDrop : undefined}
         />
 
         {game.dice && (
@@ -551,14 +706,24 @@ function MatchInner() {
 
         {!game.game_over && isHumanTurn && needsMove && !fastForward && (
           <div className="flex flex-col gap-3">
-            {/* Click-to-move instruction */}
+            {/* Instruction */}
             <p className="text-xs text-zinc-500 dark:text-zinc-400">
-              <span className="font-medium text-zinc-700 dark:text-zinc-300">Click</span>{" "}
-              a blue checker to select it (amber highlight), then click a destination
-              point. Repeat for each checker. Use the{" "}
+              <span className="font-medium text-zinc-700 dark:text-zinc-300">Drag or click</span>{" "}
+              a blue checker to select it (amber highlight), then drag or click a destination point.
+              The checker moves immediately — after using all dice the move is submitted automatically.
+              Use the{" "}
               <span className="font-medium text-zinc-700 dark:text-zinc-300">Bear off →</span>{" "}
-              button when bearing off. Or type the notation directly below.
+              button to bear off. Or type the notation directly below.
             </p>
+
+            {/* Staged-move status */}
+            {stagedMoves.length > 0 && (
+              <p className="text-xs text-indigo-600 dark:text-indigo-400">
+                {stagedMoves.length}/{diceCount} move{stagedMoves.length !== 1 ? "s" : ""} staged
+                {stagedMoves.length < diceCount && " — click the next checker to continue"}
+              </p>
+            )}
+
             <div className="flex gap-2">
               <input
                 value={moveInput}
@@ -567,17 +732,31 @@ function MatchInner() {
                 placeholder='e.g. "8/5 6/5" or "off"'
                 className="flex-1 rounded-md border border-zinc-300 bg-white px-3 py-2 font-mono text-sm text-zinc-900 placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50"
               />
-              {/* Reset clears both the typed/built notation and any click selection */}
-              {(moveInput.trim() || selectedSource !== null) && (
+              {/* Undo clears staged moves, the text input, and any click selection */}
+              {canUndo && (
                 <button
                   type="button"
                   onClick={() => {
+                    setStagedMoves([]);
+                    setDisplayBoardState(null);
                     setMoveInput("");
                     setSelectedSource(null);
                   }}
                   className="rounded-md border border-zinc-300 px-3 py-2 text-sm text-zinc-500 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800"
                 >
-                  Reset
+                  Undo
+                </button>
+              )}
+              {/* Apply button lets player submit with fewer moves than diceCount
+                  when some dice cannot legally be used. */}
+              {canApplyPartial && (
+                <button
+                  type="button"
+                  onClick={() => void doMoveWithNotation(stagedMoves.join(" "))}
+                  disabled={loading}
+                  className="rounded-md border border-indigo-300 px-3 py-2 text-sm text-indigo-600 hover:bg-indigo-50 disabled:opacity-50 dark:border-indigo-700 dark:text-indigo-400 dark:hover:bg-indigo-900/20"
+                >
+                  Apply ({stagedMoves.length}/{diceCount})
                 </button>
               )}
               <button
