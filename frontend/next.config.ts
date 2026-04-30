@@ -38,6 +38,7 @@ const nextConfig: NextConfig = {
   // host (phone / another laptop on the LAN) causes the JS bundles and
   // HMR to be refused, React never hydrates, and the navbar / agents
   // list show their pre-hydration shell forever.
+  // To test on a phone: add your machine's LAN IP here (e.g. "192.168.1.5").
   allowedDevOrigins: ["192.168.2.9"],
 };
 
