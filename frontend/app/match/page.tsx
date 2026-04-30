@@ -367,13 +367,13 @@ function MatchInner() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ── Auto-drive the agent when it's their turn OR fast-forward is active ──
+  // ── Auto-drive the agent when it's their turn (normal pace) ──────────────
+  // In fast-forward mode this effect is bypassed entirely; the tight loop
+  // below handles all turns without per-render delays or the 400 ms pause.
   useEffect(() => {
-    // Fire when it's the agent's turn (turn === 1), or when the human has
-    // activated fast-forward and it's still their turn (turn === 0). In fast-
-    // forward mode the gnubg agent plays both sides until game_over.
+    if (fastForward) return;
     if (!game || game.game_over || agentMoving.current) return;
-    if (game.turn !== 1 && !fastForward) return;
+    if (game.turn !== 1) return;
     if (!game.dice) return; // dice are seeded by withFreshDice on the previous step
     agentMoving.current = true;
 
@@ -426,6 +426,70 @@ function MatchInner() {
     return () => clearTimeout(timer);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [game, fastForward]);
+
+  // ── Fast-forward tight loop ───────────────────────────────────────────────
+  // When fast-forward is active, run all remaining turns in a single async
+  // loop with no setTimeout and no waiting for React render cycles between
+  // turns. Each /apply response feeds directly into the next /move call.
+  // The board is updated after every turn for UI feedback, but the next
+  // request begins immediately — not on the next effect tick.
+  useEffect(() => {
+    if (!fastForward || !game || game.game_over) return;
+    if (agentMoving.current) return;
+
+    let cancelled = false;
+    agentMoving.current = true;
+
+    const runLoop = async () => {
+      // Seed dice for the first turn if they haven't been rolled yet.
+      let state: MatchState = game.dice ? game : withFreshDice(game);
+
+      try {
+        while (!cancelled && !state.game_over) {
+          const { move: best } = await gnubgPost<{ move: string | null }>("/move", {
+            position_id: state.position_id,
+            match_id: state.match_id,
+            dice: state.dice,
+          });
+
+          let next: MatchState;
+          if (!best) {
+            // No legal moves (bar dance) — skip the turn.
+            const skipped = await gnubgPost<MatchState>("/skip", {
+              position_id: state.position_id,
+              match_id: state.match_id,
+              current_turn: state.turn,
+            });
+            next = skipped.game_over ? skipped : withFreshDice(skipped);
+          } else {
+            const applied = await gnubgPost<MatchState>("/apply", {
+              position_id: state.position_id,
+              match_id: state.match_id,
+              dice: state.dice,
+              move: best,
+            });
+            next = applied.game_over ? applied : withFreshDice(applied);
+          }
+
+          state = next;
+          setGame(next);
+        }
+      } catch (e: unknown) {
+        if (!cancelled) setError(String(e));
+      } finally {
+        agentMoving.current = false;
+      }
+    };
+
+    void runLoop();
+
+    return () => {
+      cancelled = true;
+    };
+  // Intentionally omits `game` from deps — the loop manages state in its own
+  // `state` local variable and must only re-run when fast-forward is toggled.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fastForward]);
 
   // ── Auto-skip the human's turn when they have no legal moves ──────────────
   // Symmetric counterpart to the agent loop above. Runs only on the human's
