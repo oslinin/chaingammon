@@ -1,12 +1,12 @@
 // Phase 28: root layout updated to include global sidebar.
-// The sidebar (client component) appears on every page via the flex
-// wrapper inside <Providers>. Both the sidebar and page content share
-// the wagmi + react-query context provided by <Providers>.
-import type { Metadata } from "next";
+// Phase 35: responsive layout — viewport meta tag, sidebar hidden on mobile,
+// MobileNav fixed bottom bar for small screens.
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { Providers } from "./providers";
 import { Sidebar } from "./Sidebar";
+import { MobileNav } from "./MobileNav";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -23,6 +23,14 @@ export const metadata: Metadata = {
   description: "Open backgammon protocol with portable on-chain reputation",
 };
 
+// Ensures mobile browsers render at device width instead of zooming out
+// to a desktop-width viewport. Without this meta tag the page appears
+// tiny on phones because browsers default to ~980px virtual width.
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+};
+
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -37,8 +45,10 @@ export default function RootLayout({
         <Providers>
           <div className="flex flex-1">
             <Sidebar />
-            <div className="flex flex-1 flex-col min-w-0">{children}</div>
+            {/* pb-16 md:pb-0 reserves space for the fixed mobile bottom nav */}
+            <div className="flex flex-1 flex-col min-w-0 pb-16 md:pb-0">{children}</div>
           </div>
+          <MobileNav />
         </Providers>
       </body>
     </html>
