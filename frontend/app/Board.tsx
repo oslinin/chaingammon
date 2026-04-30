@@ -1,4 +1,4 @@
-// Phase 14: visual backgammon board.
+// Phase 14: visual backgammon board. Phase 27: click-to-move interaction.
 //
 // Layout (from player 0 / human's perspective):
 //   Top row  — points 13..24 left→right (player 0 enters at 24, moves left)
@@ -10,12 +10,24 @@
 //
 // bar[0] = player 0 checkers on bar, bar[1] = player 1 checkers on bar.
 // off[0] = player 0 borne off, off[1] = player 1 borne off.
+//
+// Phase 27 additions:
+//   onPointClick(n) — called when the user clicks a point column (1-24).
+//   onBarClick()    — called when the user clicks the bar zone.
+//   onOffClick()    — called when the user clicks the bear-off button.
+//   selectedPoint   — highlights the currently-selected source (1-24 or 25=bar).
+//   data-point / data-count attributes on every PointCell for Playwright selectors.
 
 interface BoardProps {
   board: number[]; // length 24; index = point - 1
   bar: number[]; // [p0_bar, p1_bar]
   off: number[]; // [p0_off, p1_off]
   turn: number; // 0 = human, 1 = agent
+  // Click-to-move (all optional — Board is a pure visual component when omitted).
+  onPointClick?: (point: number) => void;
+  onBarClick?: () => void;
+  onOffClick?: () => void;
+  selectedPoint?: number | null; // 1-24 = board point, 25 = bar
 }
 
 // Maximum checkers shown as dots before falling back to a "+N" label.
@@ -25,9 +37,11 @@ interface PointProps {
   point: number; // 1-indexed point number
   count: number; // signed: positive = p0, negative = p1
   flip?: boolean; // true for top row (dots grow downward)
+  onClick?: () => void;
+  isSelected?: boolean;
 }
 
-function PointCell({ point, count, flip = false }: PointProps) {
+function PointCell({ point, count, flip = false, onClick, isSelected }: PointProps) {
   const abs = Math.abs(count);
   const isP0 = count > 0;
   const dotsToShow = Math.min(abs, MAX_DOTS);
@@ -53,15 +67,27 @@ function PointCell({ point, count, flip = false }: PointProps) {
     </span>
   );
 
+  const classes = [
+    "flex flex-col items-center gap-0.5",
+    onClick ? "cursor-pointer hover:opacity-75" : "",
+    isSelected
+      ? "rounded bg-amber-100 ring-1 ring-amber-400 dark:bg-amber-900/30"
+      : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+
   return (
     <div
-      // data-testid is keyed by zero-based index so Playwright can read
-      // a point cell directly: `[data-testid="point-0"]` for point 1,
-      // `[data-testid="point-23"]` for point 24. Keeps the test
-      // selector stable across renders.
+      // data-testid keyed by zero-based index for match-board-state.spec.ts.
+      // data-point / data-count are 1-indexed signed attrs for piece-stability.spec.ts.
       data-testid={`point-${point - 1}`}
-      className="flex flex-col items-center gap-0.5"
+      data-point={point}
+      data-count={count}
+      data-selected={isSelected ? "true" : undefined}
+      className={classes}
       style={{ width: 24 }}
+      onClick={onClick}
     >
       {/* Point label */}
       {!flip && (
@@ -90,9 +116,26 @@ function PointCell({ point, count, flip = false }: PointProps) {
   );
 }
 
-function BarCell({ p0Bar, p1Bar }: { p0Bar: number; p1Bar: number }) {
+interface BarCellProps {
+  p0Bar: number;
+  p1Bar: number;
+  onBarClick?: () => void;
+  isBarSelected?: boolean;
+}
+
+function BarCell({ p0Bar, p1Bar, onBarClick, isBarSelected }: BarCellProps) {
+  const classes = [
+    "flex w-8 flex-col items-center justify-center gap-1 border-x border-zinc-300 dark:border-zinc-600",
+    onBarClick ? "cursor-pointer hover:opacity-75" : "",
+    isBarSelected
+      ? "bg-amber-100 ring-1 ring-amber-400 dark:bg-amber-900/30"
+      : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+
   return (
-    <div className="flex w-8 flex-col items-center justify-center gap-1 border-x border-zinc-300 dark:border-zinc-600">
+    <div className={classes} onClick={onBarClick}>
       {p1Bar > 0 && (
         <div className="flex flex-col items-center gap-0.5">
           {Array.from({ length: Math.min(p1Bar, 3) }, (_, i) => (
@@ -130,7 +173,16 @@ function BarCell({ p0Bar, p1Bar }: { p0Bar: number; p1Bar: number }) {
   );
 }
 
-export function Board({ board, bar, off, turn }: BoardProps) {
+export function Board({
+  board,
+  bar,
+  off,
+  turn,
+  onPointClick,
+  onBarClick,
+  onOffClick,
+  selectedPoint,
+}: BoardProps) {
   // Top row: points 13–24 (indices 12–23), displayed left→right.
   const topPoints = Array.from({ length: 12 }, (_, i) => i + 13); // [13..24]
   // Bottom row: points 12–1 (indices 11–0), displayed left→right (12 down to 1).
@@ -157,15 +209,24 @@ export function Board({ board, bar, off, turn }: BoardProps) {
                 point={pt}
                 count={board[pt - 1]}
                 flip={true}
+                onClick={onPointClick ? () => onPointClick(pt) : undefined}
+                isSelected={selectedPoint === pt}
               />
             ))}
-            <BarCell p0Bar={bar[0]} p1Bar={bar[1]} />
+            <BarCell
+              p0Bar={bar[0]}
+              p1Bar={bar[1]}
+              onBarClick={onBarClick}
+              isBarSelected={selectedPoint === 25}
+            />
             {topPoints.slice(6).map((pt) => (
               <PointCell
                 key={pt}
                 point={pt}
                 count={board[pt - 1]}
                 flip={true}
+                onClick={onPointClick ? () => onPointClick(pt) : undefined}
+                isSelected={selectedPoint === pt}
               />
             ))}
           </div>
@@ -181,6 +242,8 @@ export function Board({ board, bar, off, turn }: BoardProps) {
                 point={pt}
                 count={board[pt - 1]}
                 flip={false}
+                onClick={onPointClick ? () => onPointClick(pt) : undefined}
+                isSelected={selectedPoint === pt}
               />
             ))}
             <div className="flex w-8 items-center justify-center">
@@ -192,11 +255,25 @@ export function Board({ board, bar, off, turn }: BoardProps) {
                 point={pt}
                 count={board[pt - 1]}
                 flip={false}
+                onClick={onPointClick ? () => onPointClick(pt) : undefined}
+                isSelected={selectedPoint === pt}
               />
             ))}
           </div>
         </div>
       </div>
+
+      {/* Bear-off button — shown only when a source checker is selected */}
+      {onOffClick && (
+        <button
+          type="button"
+          onClick={onOffClick}
+          aria-label="Bear off selected checker"
+          className="self-start rounded border border-zinc-300 px-2 py-1 text-xs text-zinc-600 hover:bg-zinc-100 dark:border-zinc-600 dark:text-zinc-400 dark:hover:bg-zinc-800"
+        >
+          Bear off →
+        </button>
+      )}
 
       {/* Off-board checkers */}
       <div className="flex gap-6 text-sm text-zinc-600 dark:text-zinc-400">

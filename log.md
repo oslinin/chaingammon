@@ -1185,4 +1185,33 @@ Tests (**[contracts/test/phase22_selfMintSubname.test.js](contracts/test/phase22
 - Subname owner can update their own text record after self-mint.
 - Two wallets can each claim their own subname independently.
 
+### Phase 27: clickable board — click-to-move UI
+
+Replace the text-only move input with a click-to-move interaction on the backgammon board. Instead of typing `8/5 6/5`, the player clicks a blue checker to select it (amber highlight), then clicks a destination point to append the `from/to` segment to the move input automatically. Successive click pairs accumulate into the full notation string; the existing Move button submits whatever is in the input. The text input remains as a power-user fallback — all prior Playwright tests still exercise the same code paths.
+
+**[frontend/app/Board.tsx](frontend/app/Board.tsx)** (updated):
+- `PointCell` gains `onClick`, `isSelected` props; outer `<div>` gets `data-point` (1-indexed), `data-count` (signed), and `data-selected` attributes for Playwright selectors.
+- `BarCell` gains `onBarClick` and `isBarSelected` props for click-to-enter-from-bar.
+- `Board` gains four optional props: `onPointClick`, `onBarClick`, `onOffClick`, `selectedPoint`; all default to `undefined` so pure-visual usages are unchanged.
+- Bear-off button rendered below the board only when `onOffClick` is defined.
+
+**[frontend/app/match/page.tsx](frontend/app/match/page.tsx)** (updated):
+- `selectedSource` state (null | 1-24 | 25=bar) tracks the in-progress click source.
+- `handlePointClick` / `handleBarClick` / `handleOffClick` build `from/to` segments and append them to `moveInput`.
+- `doMove` clears `selectedSource` on submit.
+- `useEffect` clears `selectedSource` when the turn flips to the agent.
+- Reset button appears when `moveInput` is non-empty or a source is selected; clears both.
+- Click-to-move instruction text shown above the input on the human's turn.
+
+Tests (**[frontend/tests/board-click-moves.spec.ts](frontend/tests/board-click-moves.spec.ts)**, new, 4 tests):
+- Clicking a blue checker sets `data-selected="true"` on the PointCell.
+- Clicking the same point twice deselects it (no `data-selected`).
+- Two click pairs build `8/5 6/5` in the move input.
+- The Move button submits the click-assembled notation to `/apply` unchanged.
+- Reset button clears both notation and click selection.
+
+Also fixes the previously-failing `piece-stability.spec.ts` suite (5 tests): `PointCell` now emits `data-point` and `data-count` attributes that `readBoardDOM` requires.
+
+4 new frontend Playwright tests pass.
+
 8 new contract tests pass (prior count + 8 new).
