@@ -427,12 +427,14 @@ function MatchInner() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [game, fastForward]);
 
-  // ── Fast-forward tight loop ───────────────────────────────────────────────
-  // When fast-forward is active, run all remaining turns in a single async
-  // loop with no setTimeout and no waiting for React render cycles between
-  // turns. Each /apply response feeds directly into the next /move call.
-  // The board is updated after every turn for UI feedback, but the next
-  // request begins immediately — not on the next effect tick.
+  // ── Fast-forward (server-side) ────────────────────────────────────────────
+  // Single round-trip: gnubg auto-plays both seats inside one subprocess at
+  // 0-ply evaluation and returns the final match state. The previous client-
+  // side per-turn loop spawned a fresh gnubg subprocess for every /move and
+  // /apply (tens of seconds for a typical match); /play_to_end collapses
+  // that to one call that completes in well under a second. Trade-off: dice
+  // come from gnubg's PRNG instead of the browser's crypto.getRandomValues.
+  // That's acceptable — fast-forward is a UX shortcut, not the rated path.
   useEffect(() => {
     if (!fastForward || !game || game.game_over) return;
     if (agentMoving.current) return;
@@ -440,54 +442,23 @@ function MatchInner() {
     let cancelled = false;
     agentMoving.current = true;
 
-    const runLoop = async () => {
-      // Seed dice for the first turn if they haven't been rolled yet.
-      let state: MatchState = game.dice ? game : withFreshDice(game);
-
+    void (async () => {
       try {
-        while (!cancelled && !state.game_over) {
-          const { move: best } = await gnubgPost<{ move: string | null }>("/move", {
-            position_id: state.position_id,
-            match_id: state.match_id,
-            dice: state.dice,
-          });
-
-          let next: MatchState;
-          if (!best) {
-            // No legal moves (bar dance) — skip the turn.
-            const skipped = await gnubgPost<MatchState>("/skip", {
-              position_id: state.position_id,
-              match_id: state.match_id,
-              current_turn: state.turn,
-            });
-            next = skipped.game_over ? skipped : withFreshDice(skipped);
-          } else {
-            const applied = await gnubgPost<MatchState>("/apply", {
-              position_id: state.position_id,
-              match_id: state.match_id,
-              dice: state.dice,
-              move: best,
-            });
-            next = applied.game_over ? applied : withFreshDice(applied);
-          }
-
-          state = next;
-          setGame(next);
-        }
+        const final = await gnubgPost<MatchState>("/play_to_end", {
+          position_id: game.position_id,
+          match_id: game.match_id,
+        });
+        if (!cancelled) setGame(final);
       } catch (e: unknown) {
         if (!cancelled) setError(String(e));
       } finally {
         agentMoving.current = false;
       }
-    };
-
-    void runLoop();
+    })();
 
     return () => {
       cancelled = true;
     };
-  // Intentionally omits `game` from deps — the loop manages state in its own
-  // `state` local variable and must only re-run when fast-forward is toggled.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fastForward]);
 

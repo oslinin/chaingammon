@@ -194,6 +194,23 @@ class ResignRequest(BaseModel):
     match_id: str
 
 
+class PlayToEndRequest(BaseModel):
+    """Request body for POST /play_to_end — server-side fast-forward.
+
+    @notice Used by the frontend's "Fast forward" button. Runs the entire
+            remaining match in a single gnubg subprocess so the human
+            sees the final state in well under a second instead of
+            waiting on N turns × 2 subprocess spawns.
+
+    @param position_id  Current gnubg base64 board.
+    @param match_id     Current gnubg base64 match state (encodes
+                        turn, scores, cube, match_length).
+    """
+
+    position_id: str
+    match_id: str
+
+
 class SkipRequest(BaseModel):
     """Request body for POST /skip — used when the side on roll has no
     legal moves (a "bar dance": all checkers on the bar against a closed
@@ -328,6 +345,56 @@ def apply_move(req: ApplyRequest) -> MatchStateDict:
         return snapshot_state(stdout)
     except ValueError as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@app.post("/play_to_end")
+def play_to_end(req: PlayToEndRequest) -> MatchStateDict:
+    """Run the rest of the match to completion in a single gnubg session.
+
+    @notice Powers the frontend's fast-forward button. Per-turn /move +
+            /apply round-trips spawn a fresh gnubg subprocess each time
+            (~150ms startup + computation) — for a typical 50-turn
+            match that's tens of seconds of wall-clock latency. This
+            endpoint instead reverses the `_INIT_COMMANDS` defaults
+            (which keep gnubg passive for human-driven play) inside one
+            subprocess: both seats become AI, automatic roll/move/
+            bearoff/game are all turned on, evaluation depth is dropped
+            to 0-ply (no lookahead = near-instant move selection), and
+            `play` runs the whole thing to match-point.
+    @dev    Trade-off vs. the per-turn flow: dice come from gnubg's PRNG
+            instead of the browser's `crypto.getRandomValues`. That's
+            acceptable for fast-forward, which is itself a "let the AI
+            finish" UX shortcut, not the canonical play path. The
+            session is one-shot — auto-play settings do not leak into
+            future requests because each call spawns a fresh process.
+    @return Final MatchState (game_over=true, winner set, score reflects
+            the completed match).
+    """
+    commands = (
+        f"set matchid {req.match_id}\n"
+        f"set board {req.position_id}\n"
+        # 0-ply evaluation: skip lookahead so each move is sub-millisecond.
+        # Tournament-grade play is irrelevant here — fast-forward is a UX
+        # convenience, not the rated path.
+        "set evaluation chequer plies 0\n"
+        "set evaluation cubedecision plies 0\n"
+        # Both seats AI-controlled. Override the human/human pair set in
+        # _INIT_COMMANDS, which makes gnubg wait for explicit moves.
+        "set player 0 gnubg\n"
+        "set player 1 gnubg\n"
+        # Re-enable everything _INIT_COMMANDS turned off so gnubg drives
+        # itself: roll dice, pick moves, bear off, advance between games
+        # in a multi-game match.
+        "set automatic roll on\n"
+        "set automatic move on\n"
+        "set automatic bearoff on\n"
+        "set automatic game on\n"
+        # `play` runs until either match-point or input is needed. With
+        # both seats AI and all auto-* on, input is never needed, so
+        # this returns when the match is over.
+        "play\n"
+    )
+    return _snapshot(commands)
 
 
 @app.post("/skip")

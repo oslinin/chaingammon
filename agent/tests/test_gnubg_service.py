@@ -107,6 +107,34 @@ async def test_apply_returns_422_for_illegal_move(app):
 
 
 @pytest.mark.anyio
+async def test_play_to_end_finishes_the_match(app):
+    """/play_to_end runs to match-point in one gnubg subprocess.
+
+    Sanity-check the server-side fast-forward path: starting from the
+    opening position of a 1-point match (so completion only requires
+    one game), the response is `game_over=true` with a winner set and
+    a non-zero score for the winning side.
+    """
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        # 1-point match keeps the test fast — only one game needs to finish.
+        new_resp = await client.post("/new", json={"match_length": 1})
+        opening = new_resp.json()
+        resp = await client.post(
+            "/play_to_end",
+            json={
+                "position_id": opening["position_id"],
+                "match_id": opening["match_id"],
+            },
+        )
+    assert resp.status_code == 200
+    after = resp.json()
+    assert after["game_over"] is True, "fast-forward should produce a finished match"
+    assert after["winner"] in (0, 1)
+    # Whichever side won should have a non-zero score; the loser stays at 0.
+    assert after["score"][after["winner"]] >= 1
+
+
+@pytest.mark.anyio
 async def test_skip_flips_the_turn(app):
     """/skip on the opening position with current_turn=0 must hand the
     turn over to the agent. Board is unchanged; match_id encodes the
