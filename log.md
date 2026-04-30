@@ -1257,3 +1257,33 @@ Tests (**[frontend/tests/match-flow-methods.spec.ts](frontend/tests/match-flow-m
 - "fast forward lets the gnubg agent play both sides to game over": mocks `/new`, `/move`, and `/apply`; clicks the fast-forward button; asserts "You win!" appears and `/resign` was never called.
 
 4 match-flow-methods Playwright tests pass (3 prior + 1 new).
+
+### Phase 30: free-coach default + 0G expenses ledger
+
+Switch the coach-backend default from `"compute"` (paid 0G Compute) to `"local"` (free flan-t5-base) so no 0G tokens are charged unless the user explicitly opts in. Each coach hint served by 0G Compute is now recorded to localStorage as an expense entry. A new "Expenses" sidebar entry links to `/expenses`, which renders a ledger of every 0G token–spending event: one row per coach-hint or future game-settlement charge.
+
+**[frontend/app/match/page.tsx](frontend/app/match/page.tsx)** (updated):
+- `coachBackend` initial state changed from `"compute"` to `"local"` so new visitors and users who have never toggled the coach are not charged 0G tokens.
+- `requestCoachHint` records an `ExpenseEntry` (type: `"coach_hint"`) to localStorage whenever the hint is served by 0G Compute — i.e. the user explicitly chose the paid backend and the server did not fall back.
+- Import `recordExpense` from the new `expenses.ts` utility.
+
+**[frontend/app/expenses.ts](frontend/app/expenses.ts)** (new):
+- `ExpenseEntry` interface: `id`, `timestamp` (ISO 8601), `type` (`"coach_hint"` | `"game_settlement"`), `description`.
+- `getExpenses()` — reads the `chaingammon_expenses` localStorage key; SSR-safe (returns `[]` on the server).
+- `recordExpense(entry)` — prepends a new entry with a generated timestamp + random id; newest first.
+
+**[frontend/app/Sidebar.tsx](frontend/app/Sidebar.tsx)** (updated):
+- New "Expenses" `<Link>` to `/expenses` with subtitle "0G token ledger" and `data-testid="sidebar-expenses"`.
+
+**[frontend/app/expenses/page.tsx](frontend/app/expenses/page.tsx)** (new):
+- Shows an empty-state card when no entries exist ("No expenses yet. Enable the paid coach or settle a game to see charges here.").
+- Shows a table (time / type badge / description) when entries are present.
+- `TypeBadge` component: amber for `"coach_hint"`, indigo for `"game_settlement"`.
+- `data-testid="expenses-empty"` and `data-testid="expenses-table"` for Playwright selectors.
+
+Tests (**[frontend/tests/expenses.spec.ts](frontend/tests/expenses.spec.ts)**, new, 3 tests):
+- Sidebar Expenses entry is visible and `href` is `/expenses`.
+- Empty-state card shown when `localStorage` has no entries.
+- Table shown and populated when `localStorage` is pre-seeded with a coach-hint entry.
+
+3 new frontend Playwright tests pass.

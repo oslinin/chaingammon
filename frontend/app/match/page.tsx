@@ -34,6 +34,7 @@ import { Board } from "../Board";
 import { ConnectButton } from "../ConnectButton";
 import { DiceRoll } from "../DiceRoll";
 import { rollDice } from "../dice";
+import { recordExpense } from "../expenses";
 
 // ── Types matching agent/gnubg_state.py:MatchStateDict ────────────────────
 
@@ -193,12 +194,12 @@ function MatchInner() {
   // 0G Compute is unreachable.
   const [coachServedBy, setCoachServedBy] = useState<CoachBackend | null>(null);
 
-  // User's coach-backend pick. Default to the paid 0G Compute path so the
-  // sponsor-aligned demo runs without explicit toggling, with localStorage
-  // persistence so a user who picks "free" doesn't get billed on reload.
-  // SSR-safe: `useEffect` reads localStorage after mount; before then the
-  // server-rendered HTML matches the initial client render ("compute").
-  const [coachBackend, setCoachBackend] = useState<CoachBackend>("compute");
+  // User's coach-backend pick. Default to the free local path so no 0G tokens
+  // are charged without the user explicitly opting in. Persisted to
+  // localStorage so a user who switches to "compute" stays on it across
+  // page loads. SSR-safe: `useEffect` reads localStorage after mount; before
+  // then the server-rendered HTML matches the initial client render ("local").
+  const [coachBackend, setCoachBackend] = useState<CoachBackend>("local");
   useEffect(() => {
     const saved = window.localStorage.getItem("coachBackend");
     if (saved === "local" || saved === "compute") setCoachBackend(saved);
@@ -248,6 +249,15 @@ function MatchInner() {
         if (!result) return;
         setCoachHint(result.hint);
         setCoachServedBy(result.backend);
+        // Record an expense entry whenever 0G Compute actually served the
+        // hint (the server may fall back to local even when "compute" is
+        // requested, so we key off the *served* backend, not the user's pick).
+        if (result.backend === "compute") {
+          recordExpense({
+            type: "coach_hint",
+            description: `Coach hint · Agent #${agentId} · Qwen 2.5 7B via 0G Compute`,
+          });
+        }
       })
       .finally(() => {
         setCoachLoading(false);
