@@ -194,6 +194,24 @@ class ResignRequest(BaseModel):
     match_id: str
 
 
+class SkipRequest(BaseModel):
+    """Request body for POST /skip — used when the side on roll has no
+    legal moves (a "bar dance": all checkers on the bar against a closed
+    home board, or any roll where every legal-move check fails).
+
+    @param position_id   Current gnubg base64 board.
+    @param match_id      Current gnubg base64 match state.
+    @param current_turn  Who is on roll right now and being skipped:
+                         0 = human (X), 1 = agent (O). Required because
+                         match_id alone doesn't decode reliably without
+                         a gnubg subprocess and the caller already knows.
+    """
+
+    position_id: str
+    match_id: str
+    current_turn: int
+
+
 class ApplyRequest(BaseModel):
     """Request body for POST /apply.
 
@@ -310,6 +328,31 @@ def apply_move(req: ApplyRequest) -> MatchStateDict:
         return snapshot_state(stdout)
     except ValueError as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@app.post("/skip")
+def skip_turn(req: SkipRequest) -> MatchStateDict:
+    """Pass the turn when the player on roll has no legal moves.
+
+    @notice Backgammon: if every legal move of the current dice is
+            blocked (classic case is a "bar dance" — checker on the
+            bar, opponent's home board fully closed), the player must
+            give up the turn. gnubg's auto-move is disabled in
+            `_INIT_COMMANDS`, so we have to advance the turn explicitly
+            instead of relying on it.
+    @dev    Uses the same `set turn <name>` trick as `/resign`. gnubg's
+            session names X="oleg" (human, turn=0) and O="gnubg"
+            (agent, turn=1) — same naming the resign path depends on.
+            The board is unchanged; match_id will encode the new turn.
+            The frontend rolls fresh dice for the new side itself.
+    """
+    next_player = "gnubg" if req.current_turn == 0 else "oleg"
+    commands = (
+        f"set matchid {req.match_id}\n"
+        f"set board {req.position_id}\n"
+        f"set turn {next_player}\n"
+    )
+    return _snapshot(commands)
 
 
 @app.post("/resign")

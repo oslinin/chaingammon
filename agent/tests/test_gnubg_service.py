@@ -107,6 +107,35 @@ async def test_apply_returns_422_for_illegal_move(app):
 
 
 @pytest.mark.anyio
+async def test_skip_flips_the_turn(app):
+    """/skip on the opening position with current_turn=0 must hand the
+    turn over to the agent. Board is unchanged; match_id encodes the
+    new turn so the next move applies correctly to the right side."""
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        new_resp = await client.post("/new", json={"match_length": 3})
+        opening = new_resp.json()
+        # Force `current_turn` to whichever side the opening seeded so the
+        # skip flips to the OTHER side. The opening dice are decoded from
+        # gnubg and the on-roll side comes from match_id; we rely on
+        # /skip's `current_turn` parameter (which the frontend always
+        # passes from its own state) rather than re-deriving it here.
+        from_turn = opening["turn"]
+        resp = await client.post(
+            "/skip",
+            json={
+                "position_id": opening["position_id"],
+                "match_id": opening["match_id"],
+                "current_turn": from_turn,
+            },
+        )
+    assert resp.status_code == 200
+    after = resp.json()
+    assert after["turn"] != from_turn, "skip should flip the turn"
+    assert after["board"] == opening["board"], "skip must leave the board untouched"
+    assert after["game_over"] is False
+
+
+@pytest.mark.anyio
 async def test_resign_ends_game_with_winner(app):
     """Human forfeit at the opening: game ends with agent (winner=1)
     regardless of which side gnubg seeded as on-roll."""

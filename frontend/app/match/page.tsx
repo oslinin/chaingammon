@@ -388,9 +388,22 @@ function MatchInner() {
           },
         );
         if (!best) {
-          // No legal moves — typically a bar dance. Not handled in v1;
-          // surface the situation rather than silently looping.
-          throw new Error("Agent has no legal move (bar dance) — not yet handled");
+          // No legal moves — typically a bar dance (checker on the bar,
+          // opponent's home board closed). Pass the turn via gnubg
+          // (board unchanged, match_id flipped to the other side) and
+          // roll dice for the new side. requestCoachHint is skipped
+          // because the side that lost the turn didn't actually choose
+          // a move worth narrating.
+          const skipped = await gnubgPost<MatchState>("/skip", {
+            position_id: game.position_id,
+            match_id: game.match_id,
+            current_turn: game.turn,
+          });
+          const skippedWithDice = skipped.game_over
+            ? skipped
+            : withFreshDice(skipped);
+          setGame(skippedWithDice);
+          return;
         }
         const next = await gnubgPost<MatchState>("/apply", {
           position_id: game.position_id,
@@ -411,6 +424,47 @@ function MatchInner() {
     // Small delay so the human sees the agent's dice land before its move.
     const timer = setTimeout(step, 400);
     return () => clearTimeout(timer);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [game, fastForward]);
+
+  // ── Auto-skip the human's turn when they have no legal moves ──────────────
+  // Symmetric counterpart to the agent loop above. Runs only on the human's
+  // turn outside fast-forward (fast-forward already routes through the agent
+  // loop). Calls /evaluate to detect a bar dance; when the candidate list is
+  // empty, /skip flips the turn and a fresh roll is seeded for the new side.
+  useEffect(() => {
+    if (!game || game.game_over) return;
+    if (game.turn !== 0 || fastForward) return;
+    if (!game.dice) return;
+    if (agentMoving.current) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const { candidates } = await gnubgPost<{
+          candidates: { move: string; equity: number }[];
+        }>("/evaluate", {
+          position_id: game.position_id,
+          match_id: game.match_id,
+          dice: game.dice,
+        });
+        if (cancelled || candidates.length > 0) return;
+        const skipped = await gnubgPost<MatchState>("/skip", {
+          position_id: game.position_id,
+          match_id: game.match_id,
+          current_turn: 0,
+        });
+        if (cancelled) return;
+        const skippedWithDice = skipped.game_over
+          ? skipped
+          : withFreshDice(skipped);
+        setGame(skippedWithDice);
+      } catch {
+        // gnubg offline — silently no-op so the human can still use /resign.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [game, fastForward]);
 
