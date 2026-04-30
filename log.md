@@ -1369,3 +1369,26 @@ Updated existing tests:
 - **[contracts/test/phase22_selfMintSubname.test.js](contracts/test/phase22_selfMintSubname.test.js)**: same change.
 
 30 new contract tests pass (22 reserved-keys + 8 unified-mint). 5 new frontend Playwright tests pass.
+
+---
+
+## Phase 33: bar-dance skip — auto-pass turn when no legal moves
+
+Backgammon: when the side on roll has no legal play of the rolled dice (the canonical case is a "bar dance" — a checker on the bar against an opponent's fully closed home board), the rules require the player to forfeit the turn. The agent loop previously surfaced this as `"Agent has no legal move (bar dance) — not yet handled"` and the match would freeze until the human forfeited. Phase 33 wires the auto-pass path end-to-end so play continues without the human noticing it happened, on either side.
+
+`/skip` endpoint (**[agent/gnubg_service.py](agent/gnubg_service.py)**, updated):
+
+- New `SkipRequest` Pydantic model — `{position_id, match_id, current_turn: 0|1}`. The frontend always knows whose turn it is from its own state, so we take it as a parameter rather than re-deriving it from `match_id` (which would require an extra gnubg subprocess round-trip).
+- New `POST /skip` — sets the matchid and board on a fresh gnubg subprocess, then issues `set turn <other-player>`. Reuses the same player-name trick `/resign` depends on: the gnubg session names X="oleg" (human, `current_turn=0`) and O="gnubg" (agent, `current_turn=1`); we map `current_turn` to the OTHER name. gnubg's auto-move is off in `_INIT_COMMANDS`, so the explicit turn flip is the only way to advance state without a move.
+- `_snapshot` returns the post-skip MatchState. Position is identical to the pre-skip board; `match_id` encodes the new turn so the next `/apply` from the new side validates correctly.
+
+Frontend bar-dance handling (**[frontend/app/match/page.tsx](frontend/app/match/page.tsx)**, updated):
+
+- Agent loop (existing `useEffect` that fires when `turn === 1` or `fastForward`): when `/move` returns `move: null`, instead of throwing, calls `/skip` with `current_turn: game.turn`, takes the response as the next state, and seeds fresh dice via `withFreshDice` for the new side. Coach hint deliberately suppressed — the side that lost the turn didn't make a move worth narrating.
+- New symmetric `useEffect` for the human side (`turn === 0`, no fast-forward): calls `/evaluate` to detect a bar dance; when the candidate list is empty, calls `/skip` with `current_turn: 0` and updates state the same way. Means a human staring at unplayable dice no longer needs to forfeit just to pass — the turn auto-flips to the agent. Errors are silently swallowed so an offline gnubg doesn't break the page.
+
+Tests (**[agent/tests/test_gnubg_service.py](agent/tests/test_gnubg_service.py)**, +1 test):
+
+- `test_skip_flips_the_turn` — calls `/skip` from the opening position with `current_turn` set to whichever side gnubg seeded as on-roll, asserts (a) the turn flips, (b) the board is byte-identical to the pre-skip board, (c) `game_over` stays false.
+
+7 agent gnubg tests pass (6 prior + 1 new). `frontend/app/match/page.tsx` type-checks clean (`pnpm exec tsc --noEmit`); pre-existing TS errors in `app/DiscoveryList.tsx` are unrelated wagmi/abi type drift.
