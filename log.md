@@ -1270,3 +1270,35 @@ Tests (**[frontend/tests/match-flow-methods.spec.ts](frontend/tests/match-flow-m
 - Fast-forward test now routes `**/hint` and asserts `hintCount === 0` after the game ends, confirming coach_service is never contacted during auto-play.
 
 4 match-flow-methods Playwright tests pass (3 prior + 1 new).
+
+### Phase 31: drag-and-drop checker movement + optimistic board display + undo
+
+Replace the text-input-only move workflow with a click-and-drag interaction where each checker movement is reflected on the board immediately. The player clicks or drags a blue checker to select it (amber highlight), then clicks or drags to a destination — the checker appears there at once via an optimistic local board update. After all dice are consumed (2 for non-doubles, 4 for doubles) the full move notation auto-submits to gnubg_service without requiring the user to click Move. An Undo button resets the board and all staged moves to the start-of-turn position. The text input and Move button remain for power users and backward compatibility with existing tests.
+
+**[frontend/app/Board.tsx](frontend/app/Board.tsx)** (updated):
+- `PointCell` gains `onDragStart` and `onDrop` props; the outer `<div>` becomes `draggable` when the cell has player-0 checkers and `onDragStart` is wired; `onDragOver` calls `e.preventDefault()` to enable drop; `cursor-grab` class added for draggable points.
+- `BoardProps` gains `onDragStart?: (point: number) => void` and `onDrop?: (point: number) => void`; both are forwarded to every `PointCell` in the top and bottom rows.
+
+**[frontend/app/match/page.tsx](frontend/app/match/page.tsx)** (updated):
+- `applyMoveSegment(board, bar, off, from, to)` — pure helper outside the component that applies one checker movement locally, handling blot hits (single opponent checker sent to bar).
+- `stagedMoves: string[]` state — accumulated "from/to" segments not yet submitted.
+- `displayBoardState` state — optimistic board/bar/off after staging; `null` while no moves are staged (falls back to `game.board`).
+- `diceCount` derived value — 4 for doubles, 2 otherwise; determines when to auto-submit.
+- `doMoveWithNotation(notation)` — extracted async helper that POSTs to `/apply`, updates game state, and clears all staged state on success or error. Used by both the manual Move button and the auto-submit path.
+- `stageMove(from, to)` — stages one segment, applies it to `displayBoardState`, and calls `doMoveWithNotation` automatically when `stagedMoves.length >= diceCount`.
+- `handleDragStart(point)` / `handleDrop(point)` — drag events wired to the same select/stage logic as click events.
+- `handlePointClick` / `handleBarClick` / `handleOffClick` updated to read from `displayBoardState` (post-staging counts) rather than `game.board` when validating source selection.
+- Board rendered with `currentBoard / currentBar / currentOff` — optimistic state when staging, server state otherwise.
+- "Reset" button renamed to "Undo"; handler also clears `stagedMoves` and `displayBoardState`.
+- "Apply (N/M)" button appears when moves are staged but fewer than `diceCount` (escape hatch when some dice cannot legally be used).
+- `useEffect([game?.turn])` extended to clear staged moves and display state when the turn flips.
+
+Tests (**[frontend/tests/board-click-moves.spec.ts](frontend/tests/board-click-moves.spec.ts)**, updated, 5 tests):
+- `deterministicDiceScript()` helper overrides `crypto.getRandomValues` so `rollDice()` always returns `[3, 2]` (non-doubles, `diceCount = 2`) — needed for tests that depend on knowing when auto-submit fires.
+- "clicking a blue checker selects it" — unchanged.
+- "clicking same point twice deselects it" — unchanged.
+- "click pair moves checker to destination on the display board immediately" — replaces "build notation in text input"; asserts `data-count` on source and destination points change immediately after one click pair.
+- "two click pairs auto-submit to /apply when both dice are used" — replaces "submit via Move button"; uses deterministic dice, clicks two pairs, asserts `/apply` receives `"8/5 6/5"` without any Move button click.
+- "Undo button resets the board to start-of-turn position" — replaces "Reset button clears notation"; stages one move, asserts optimistic `data-count` changes, clicks Undo, asserts `data-count` reverts.
+
+5 board-click-moves Playwright tests updated.

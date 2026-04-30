@@ -1,4 +1,5 @@
 // Phase 14: visual backgammon board. Phase 27: click-to-move interaction.
+// Phase 31: drag-and-drop — onDragStart/onDrop on PointCell enable HTML5 drag.
 //
 // Layout (from player 0 / human's perspective):
 //   Top row  — points 13..24 left→right (player 0 enters at 24, moves left)
@@ -17,6 +18,12 @@
 //   onOffClick()    — called when the user clicks the bear-off button.
 //   selectedPoint   — highlights the currently-selected source (1-24 or 25=bar).
 //   data-point / data-count attributes on every PointCell for Playwright selectors.
+//
+// Phase 31 additions:
+//   onDragStart(n)  — fired when the user begins dragging from point n (1-24).
+//   onDrop(n)       — fired when the user drops onto point n (1-24).
+//   A PointCell is draggable only when it has player-0 checkers and onDragStart
+//   is provided. All PointCells accept drops when onDrop is provided.
 
 interface BoardProps {
   board: number[]; // length 24; index = point - 1
@@ -28,6 +35,9 @@ interface BoardProps {
   onBarClick?: () => void;
   onOffClick?: () => void;
   selectedPoint?: number | null; // 1-24 = board point, 25 = bar
+  // Drag-and-drop (Phase 31 — optional, independent of click props).
+  onDragStart?: (point: number) => void;
+  onDrop?: (point: number) => void;
 }
 
 // Maximum checkers shown as dots before falling back to a "+N" label.
@@ -39,9 +49,12 @@ interface PointProps {
   flip?: boolean; // true for top row (dots grow downward)
   onClick?: () => void;
   isSelected?: boolean;
+  // Drag-and-drop (Phase 31).
+  onDragStart?: () => void; // drag begins from this cell
+  onDrop?: () => void;      // checker dropped onto this cell
 }
 
-function PointCell({ point, count, flip = false, onClick, isSelected }: PointProps) {
+function PointCell({ point, count, flip = false, onClick, isSelected, onDragStart, onDrop }: PointProps) {
   const abs = Math.abs(count);
   const isP0 = count > 0;
   const dotsToShow = Math.min(abs, MAX_DOTS);
@@ -67,9 +80,13 @@ function PointCell({ point, count, flip = false, onClick, isSelected }: PointPro
     </span>
   );
 
+  // Cell is draggable when it has player-0 (blue) checkers and the drag handler is wired.
+  const isDraggable = !!onDragStart && count > 0;
+
   const classes = [
     "flex flex-col items-center gap-0.5",
     onClick ? "cursor-pointer hover:opacity-75" : "",
+    isDraggable ? "cursor-grab" : "",
     isSelected
       ? "rounded bg-amber-100 ring-1 ring-amber-400 dark:bg-amber-900/30"
       : "",
@@ -88,6 +105,10 @@ function PointCell({ point, count, flip = false, onClick, isSelected }: PointPro
       className={classes}
       style={{ width: 24 }}
       onClick={onClick}
+      draggable={isDraggable}
+      onDragStart={isDraggable ? (e) => { e.dataTransfer.effectAllowed = "move"; onDragStart!(); } : undefined}
+      onDragOver={onDrop ? (e) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; } : undefined}
+      onDrop={onDrop ? (e) => { e.preventDefault(); onDrop(); } : undefined}
     >
       {/* Point label */}
       {!flip && (
@@ -182,6 +203,8 @@ export function Board({
   onBarClick,
   onOffClick,
   selectedPoint,
+  onDragStart,
+  onDrop,
 }: BoardProps) {
   // Top row: points 13–24 (indices 12–23), displayed left→right.
   const topPoints = Array.from({ length: 12 }, (_, i) => i + 13); // [13..24]
@@ -211,6 +234,8 @@ export function Board({
                 flip={true}
                 onClick={onPointClick ? () => onPointClick(pt) : undefined}
                 isSelected={selectedPoint === pt}
+                onDragStart={onDragStart ? () => onDragStart(pt) : undefined}
+                onDrop={onDrop ? () => onDrop(pt) : undefined}
               />
             ))}
             <BarCell
@@ -227,6 +252,8 @@ export function Board({
                 flip={true}
                 onClick={onPointClick ? () => onPointClick(pt) : undefined}
                 isSelected={selectedPoint === pt}
+                onDragStart={onDragStart ? () => onDragStart(pt) : undefined}
+                onDrop={onDrop ? () => onDrop(pt) : undefined}
               />
             ))}
           </div>
@@ -244,6 +271,8 @@ export function Board({
                 flip={false}
                 onClick={onPointClick ? () => onPointClick(pt) : undefined}
                 isSelected={selectedPoint === pt}
+                onDragStart={onDragStart ? () => onDragStart(pt) : undefined}
+                onDrop={onDrop ? () => onDrop(pt) : undefined}
               />
             ))}
             <div className="flex w-8 items-center justify-center">
@@ -257,6 +286,8 @@ export function Board({
                 flip={false}
                 onClick={onPointClick ? () => onPointClick(pt) : undefined}
                 isSelected={selectedPoint === pt}
+                onDragStart={onDragStart ? () => onDragStart(pt) : undefined}
+                onDrop={onDrop ? () => onDrop(pt) : undefined}
               />
             ))}
           </div>
