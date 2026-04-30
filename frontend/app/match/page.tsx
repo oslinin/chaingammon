@@ -236,6 +236,19 @@ function MatchInner() {
     window.localStorage.setItem("lastAgentId", String(agentId));
   }, [agentId]);
 
+  // Phase 36: write a stable UUID for this match session so the sidebar's
+  // 0G Storage log / ENS / KeeperHub entries deep-link to the current match.
+  // A new UUID is generated on each page load (= each new game session).
+  // The archive URI (set after keeper settlement) is stored separately under
+  // "currentMatchArchiveUri" and keyed by this UUID.
+  useEffect(() => {
+    const matchSessionId = crypto.randomUUID();
+    window.localStorage.setItem("currentMatchId", matchSessionId);
+    // Clear any archive URI from a previous match so the log page correctly
+    // shows "in progress" until this match is settled.
+    window.localStorage.removeItem("currentMatchArchiveUri");
+  }, []);
+
   const [game, setGame] = useState<MatchState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
