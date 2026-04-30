@@ -9,16 +9,44 @@ import { createConfig } from "wagmi";
 // avoid the latter's umbrella export, which transitively pulls in
 // `@wagmi/core/tempo` — that file imports a missing `accounts` package
 // and crashes Webpack at build time. Turbopack happens to skip the dead
-// branch; Webpack does not.
+// branch; Webpack does not. `walletConnect` is NOT in @wagmi/core so it
+// comes from `@wagmi/connectors` directly (same avoidance of
+// `wagmi/connectors` umbrella). next.config.ts aliases `accounts → false`
+// so Webpack resolves the optional peer without crashing.
 import { injected } from "@wagmi/core";
+import { walletConnect } from "@wagmi/connectors";
 
 import { ALL_CHAINS, CHAIN_REGISTRY } from "./chains";
 
 const transports = Object.fromEntries(ALL_CHAINS.map((c) => [c.id, http()]));
 
+// WalletConnect requires a Project ID from cloud.walletconnect.com.
+// Set NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID in your .env (or GitHub secrets
+// for CI). If it is missing we skip the connector so the app still boots.
+const projectId = process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID;
+
+const connectors = projectId
+  ? [
+      injected({ shimDisconnect: true }),
+      walletConnect({
+        projectId,
+        metadata: {
+          name: "Chaingammon",
+          description: "Open protocol for portable backgammon reputation",
+          url:
+            typeof window !== "undefined"
+              ? window.location.origin
+              : "https://oslinin.github.io/chaingammon",
+          icons: ["https://oslinin.github.io/chaingammon/favicon.ico"],
+        },
+        showQrModal: true,
+      }),
+    ]
+  : [injected({ shimDisconnect: true })];
+
 export const config = createConfig({
   chains: ALL_CHAINS,
-  connectors: [injected({ shimDisconnect: true })],
+  connectors,
   transports,
   ssr: true,
 });
