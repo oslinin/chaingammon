@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Chaingammon is an **open protocol for portable backgammon reputation**. Every player — human or AI agent — has an ENS subname (`<name>.chaingammon.eth`) whose text records hold their ELO and links to their full match archive on 0G Storage. AI agents are ERC-7857 iNFTs with their gnubg weights encrypted on 0G Storage and hash-committed to the iNFT. Match settlement runs as a KeeperHub workflow that produces a verifiable audit trail. See `plan.md` for the incremental phased build plan and `log.md` for the per-phase summary log. Work through phases in order; ask the owner before deviating.
+Chaingammon is an **open protocol for portable backgammon reputation**. Every player — human or AI agent — has an ENS subname (`<name>.chaingammon.eth`) whose text records hold their ELO and links to their full match archive on 0G Storage. AI agents are ERC-7857 iNFTs with their gnubg weights encrypted on 0G Storage and hash-committed to the iNFT. Match settlement runs as a KeeperHub workflow that produces a verifiable audit trail. See `plan.md` for the incremental phased build plan; `CHANGELOG.md` for the active per-release summary; `log.md` is a frozen archive of Phases 0–33. Work through phases in order; ask the owner before deviating.
 
 **Hackathon:** ETHGlobal Open Agents (April 24 – May 6, 2026).
 
@@ -18,8 +18,9 @@ Chaingammon is an **open protocol for portable backgammon reputation**. Every pl
 **Important rules** (after any phase development):
 
 1. The `README.md` should be updated with the commands to run the latest code, including deployments and tests.
-2. The `log.md` file should be updated by **pasting the commit message verbatim** as the phase entry, *before* committing — so the log.md update lands in the same commit as the code. No separate summary, no hash (git history has the hash). Don't edit log.md after committing. Architectural rationale, phase definitions, and detailed designs belong in `plan.md` and this file, not in `log.md`.
-3. All code files (new and updated) must be documented inline with appropriate docstrings, comments, and explanations.
+2. All code files (new and updated) must be documented inline with appropriate docstrings, comments, and explanations.
+
+`log.md` is a **frozen archive** of Phases 0–33. The historical per-phase verbatim commit log is preserved there but is no longer maintained — the Claude Code superpowers plugin plus the `anthropics/claude-code-action` GitHub workflow now produce per-phase summaries automatically. Do not append new entries.
 
 ## Architecture
 
@@ -159,7 +160,8 @@ axl status                                  # node health + registered services
 | File | Purpose |
 | --- | --- |
 | `plan.md` | Incremental phased build plan — authoritative scope |
-| `log.md` | Strategic decision log + per-phase progress |
+| `log.md` | Frozen archive of Phases 0–33 (no longer maintained) |
+| `CHANGELOG.md` | Keep-a-Changelog summary; the active per-release record |
 | `MISSION.md` | Product vision and principles |
 | `agent/gnubg_service.py` | AXL agent node: gnubg move evaluation via External Player interface |
 | `agent/coach_service.py` | AXL agent node: flan-t5-base LLM coaching hints with 0G Storage RAG context |
@@ -264,18 +266,15 @@ Tests (<sub-project>/tests/):
 - **Deployed addresses** — include the full checksummed hex address for every contract deployed in the phase. Format: contract name on one line, address on the next.
 - **Tests** — list every new test file as a top-level bullet; list the individual test cases or logical groups as sublists beneath it. Include the skip condition for any test that is not always run.
 
-The Phase 11 commit message (in `log.md`) is the canonical example of this style.
+The Phase 11 entry in the frozen `log.md` archive is the canonical worked example of this style.
 
 ### Definitions and formatting
 
 Define every project-specific term, contract field, function name, or acronym **the first time it appears** in a commit message. A reader who has only read MISSION.md and the Solidity source should be able to follow the commit message without context. If a name comes from a standard or external system (e.g. ERC-7857, gnubg, 0G Storage), give a one-clause definition the first time it shows up. Examples — what the term means, what units, who sets it, default value — pick the framing that disambiguates fastest.
 
-**File paths — different rules for log.md vs commit messages:**
+**File paths in commit messages** — use bold plain text only, no markdown link syntax. Git renders commit bodies as plain text in `git log`, `git show`, and most tooling; `[path](path)` appears verbatim and is noisy. Format: `**contracts/script/deploy_registrar.js**`. Never abbreviate (`tests/...` or `src/...` are ambiguous across sub-projects).
 
-- **In `log.md`** — use a bold relative markdown link so the path is clickable in VS Code preview and on GitHub: `**[contracts/script/deploy_registrar.js](contracts/script/deploy_registrar.js)**`. The link text and the href are both the repo-root-relative path. Never abbreviate (`tests/...` or `src/...` are ambiguous across sub-projects).
-- **In commit messages** — use bold plain text only, no markdown link syntax. Git renders commit bodies as plain text in `git log`, `git show`, and most tooling; `[path](path)` appears verbatim and is noisy. Format: `**contracts/script/deploy_registrar.js**`.
-
-**Other formatting (applies to both log.md and commit messages):**
+**Other formatting:**
 - **Code identifiers** (function names, struct fields, types, variables, events, addresses) — backticks (`` `mintAgent` ``, `` `dataHashes[1]` ``).
 - Standards/external system names (ERC-7857, gnubg, 0G Storage) — plain text, no formatting.
 - **No manual word-wrap inside paragraphs.** Paragraphs are single lines — markdown reflows them in any renderer. Hard line breaks at 72/80 chars look ragged on GitHub and force re-wrapping when content edits. Bullet items themselves can wrap naturally; just don't insert hard newlines mid-sentence.
@@ -285,12 +284,11 @@ Define every project-specific term, contract field, function name, or acronym **
 
 The flow at the end of every phase is **always**:
 
-1. Show the owner a summary of changed files and a draft commit message
-2. Paste the commit message verbatim into `log.md` as the new phase entry (no hash, no separate summary — see the log.md header)
-3. **Stop and wait.** Do not run `git commit` or `git push`.
-4. Only when the owner explicitly says "commit" (or equivalent — "ship it", "go", etc.), run the commit and push.
+1. Show the owner a summary of changed files and a draft commit message.
+2. **Stop and wait.** Do not run `git commit` or `git push`.
+3. Only when the owner explicitly says "commit" (or equivalent — "ship it", "go", etc.), run the commit and push.
 
-Approval is **per-commit, not per-workflow**. A previously approved flow does not stand as approval for future commits. Pasting the message into `log.md` is part of the prep, not a green light to commit. When in doubt, stop and ask.
+Approval is **per-commit, not per-workflow**. A previously approved flow does not stand as approval for future commits. When in doubt, stop and ask.
 
 ## Test-Driven Development
 
@@ -302,8 +300,7 @@ This project follows TDD strictly. For every phase:
    - Frontend unit-style tests via build/typecheck; visual + DOM regressions via Playwright in `frontend/tests/`
 2. **Run tests** — they must fail (red) before implementation.
 3. **Implement** the minimum code to make tests pass (green).
-4. **Update `log.md`** — append the phase entry with changes, decisions, test results.
-5. **Update `README.md`** — keep commands and instructions current.
+4. **Update `README.md`** — keep commands and instructions current.
 
 **Naming:** `server/tests/test_phase{N}_*.py`, `contracts/test/*.test.js`, `frontend/tests/<topic>.spec.ts`. Each phase adds its own test file. Never delete or weaken existing tests.
 
