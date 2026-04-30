@@ -19,7 +19,7 @@ A decentralized, verifiable ELO rating ledger for backgammon — for humans and 
 
 ## Innovations
 
-Two design choices that move the project past "demo" into a credible v1. They sit underneath the project's two pillars — *agentic power* (the AI is doing real coaching, not narrating telemetry) and *full decentralization* (no operator key in the trust path, anywhere).
+Two design choices that move the project past "demo" into a credible v1. They sit underneath the project's two pillars — _agentic power_ (the AI is doing real coaching, not narrating telemetry) and _full decentralization_ (no operator key in the trust path, anywhere).
 
 ### 1. Agentic power — the LLM is the coach, not a narrator
 
@@ -29,31 +29,31 @@ The LLM (Qwen 2.5 7B on **0G Compute**) does things gnubg's equity numbers can't
 - **Mistake explanation.** Translates "lost 0.05 equity" into the actual reason — over-aggressive blot, broken anchor, lost timing — not just the magnitude.
 - **Post-game summary.** Reviews the three biggest equity drops and names the common theme.
 - **Free-text Q&A.** The player can ask the coach anything mid-match ("why didn't I move 13/8?", "what's a prime?", "how do I beat a back-game?"). Stateful conversation kept browser-side.
-- **Opponent-aware advice.** The coach reads the *opponent's* style — for humans, the style profile blob on 0G Storage; for AI agents, the experience overlay on the iNFT (`dataHashes[1]`). Advice is tailored to who's across the board, not just to the current position.
+- **Opponent-aware advice.** The coach reads the _opponent's_ style — for humans, the style profile blob on 0G Storage; for AI agents, the experience overlay on the iNFT (`dataHashes[1]`). Advice is tailored to who's across the board, not just to the current position.
 - **Personality-driven agent play.** Each agent's overlay maps (via the LLM) to a personality paragraph that re-ranks gnubg's top candidates. Two same-tier agents play measurably differently and trash-talk in character.
 
-This is what makes the agent in *Open Agents* an actual agent. gnubg is a deterministic 2000s neural net; the LLM is the entity holding the plan, reading the opponent, and explaining the play. Inference runs on **0G Compute** (verifiable execution); the coach docs RAG context lives on **0G Storage**; the agent's personality is encoded in the iNFT on **0G Chain**; the player's identity is on **ENS**. Every protocol primitive participates.
+This is what makes the agent in _Open Agents_ an actual agent. gnubg is a deterministic 2000s neural net; the LLM is the entity holding the plan, reading the opponent, and explaining the play. Inference runs on **0G Compute** (verifiable execution); the coach docs RAG context lives on **0G Storage**; the agent's personality is encoded in the iNFT on **0G Chain**; the player's identity is on **ENS**. Every protocol primitive participates.
 
 ### 2. Full decentralization — no operator anywhere in the path
 
 The pivot to **Gensyn AXL** removed the central game server: each player runs their own gnubg + coach nodes locally and the browser talks to them over a permissionless P2P mesh. Settlement is the last centralization point, and a naïve two-sig design has a known DoS — the loser refuses to sign. So the design uses a **session-key state channel with cooperative close**:
 
-- At game start, the player's wallet authorizes an ephemeral in-browser session key — *one* MetaMask popup.
+- At game start, the player's wallet authorizes an ephemeral in-browser session key — _one_ MetaMask popup.
 - Per-move signing during play uses the session key directly — **no MetaMask popups during play**.
-- At game end, *one* MetaMask popup submits `MatchRegistry.settleWithSessionKeys(humanAuth, humanResult, agentId, ...)`. The contract verifies both the game-start authorization (the player's wallet sig) AND the final result (the session key's sig). A nonce per player blocks replay.
+- At game end, _one_ MetaMask popup submits `MatchRegistry.settleWithSessionKeys(humanAuth, humanResult, agentId, ...)`. The contract verifies both the game-start authorization (the player's wallet sig) AND the final result (the session key's sig). A nonce per player blocks replay.
 - The loser cannot DoS by going offline — they pre-signed the channel at game start, and the latest session-key-signed state is enough to finalize. Either side can submit unilaterally.
 
 Combined, these two pivots remove every "trust the operator" assumption from the live flow:
 
-| Layer | Pre-pivot | Post-pivot |
-| --- | --- | --- |
-| Game state | Server's RAM | Browser state machine |
-| Move evaluation | Server's gnubg | Player's local gnubg over AXL |
-| Coach inference | Hosted LLM (someone's API key) | Verifiable inference on 0G Compute |
-| Dice rolling | Server PRNG | `crypto.getRandomValues` (player's machine; commit-reveal in v2) |
-| Settlement | `onlyOwner recordMatch` (deployer key) | `settleWithSessionKeys` — pre-authorized state channel, anyone submits |
-| Match archive | Centralised storage | 0G Storage (content-addressed, permanent) |
-| Identity | Platform DB row | ENS subname (`<name>.chaingammon.eth`) |
+| Layer           | Pre-pivot                              | Post-pivot                                                             |
+| --------------- | -------------------------------------- | ---------------------------------------------------------------------- |
+| Game state      | Server's RAM                           | Browser state machine                                                  |
+| Move evaluation | Server's gnubg                         | Player's local gnubg over AXL                                          |
+| Coach inference | Hosted LLM (someone's API key)         | Verifiable inference on 0G Compute                                     |
+| Dice rolling    | Server PRNG                            | `crypto.getRandomValues` (player's machine; commit-reveal in v2)       |
+| Settlement      | `onlyOwner recordMatch` (deployer key) | `settleWithSessionKeys` — pre-authorized state channel, anyone submits |
+| Match archive   | Centralised storage                    | 0G Storage (content-addressed, permanent)                              |
+| Identity        | Platform DB row                        | ENS subname (`<name>.chaingammon.eth`)                                 |
 
 The win isn't any single primitive — it's that all seven layers are sponsor-protocol-native, and none of them require trusting a Chaingammon operator key.
 
@@ -171,12 +171,12 @@ In the post-pivot architecture the browser holds the entire game state. There is
 
 ```ts
 interface MatchState {
-  position_id: string;     // gnubg base64 board
-  match_id: string;        // gnubg base64 turn / score / cube
-  board: number[];         // 24 signed checker counts (decoded for rendering)
+  position_id: string; // gnubg base64 board
+  match_id: string; // gnubg base64 turn / score / cube
+  board: number[]; // 24 signed checker counts (decoded for rendering)
   bar: [number, number];
   off: [number, number];
-  turn: 0 | 1;             // 0 = human, 1 = agent
+  turn: 0 | 1; // 0 = human, 1 = agent
   dice: [number, number] | null;
   score: [number, number];
   match_length: number;
@@ -187,13 +187,13 @@ interface MatchState {
 
 **`gnubg_service` endpoints** (port 8001, served via AXL):
 
-| Endpoint     | Request                                      | Response                                                              |
-| ------------ | -------------------------------------------- | --------------------------------------------------------------------- |
-| `POST /new`  | `{match_length}`                             | full `MatchState` for the starting position                           |
-| `POST /apply`| `{position_id, match_id, dice, move}`        | full `MatchState` after applying the move, or `422` if move is illegal |
-| `POST /resign` | `{position_id, match_id}`                  | full `MatchState` with `game_over=true` and current side as the loser  |
-| `POST /move` | `{position_id, match_id, dice}`              | `{move, candidates}` — gnubg picks the best legal move (no state change) |
-| `POST /evaluate` | `{position_id, match_id, dice}`          | `{candidates}` — ranked moves only, no pick (used by `coach_service`)  |
+| Endpoint         | Request                               | Response                                                                 |
+| ---------------- | ------------------------------------- | ------------------------------------------------------------------------ |
+| `POST /new`      | `{match_length}`                      | full `MatchState` for the starting position                              |
+| `POST /apply`    | `{position_id, match_id, dice, move}` | full `MatchState` after applying the move, or `422` if move is illegal   |
+| `POST /resign`   | `{position_id, match_id}`             | full `MatchState` with `game_over=true` and current side as the loser    |
+| `POST /move`     | `{position_id, match_id, dice}`       | `{move, candidates}` — gnubg picks the best legal move (no state change) |
+| `POST /evaluate` | `{position_id, match_id, dice}`       | `{candidates}` — ranked moves only, no pick (used by `coach_service`)    |
 
 `/new`, `/apply`, and `/resign` all return the same `MatchState` shape so the browser has a single decoder. `/move` and `/evaluate` are unchanged from the original design and don't touch state.
 
@@ -322,17 +322,20 @@ Chaingammon is the layer that fixes this. It is not a backgammon website — it 
 ## Advantages
 
 ### For players
+
 - **You own your rating.** It lives in your ENS subname (`<name>.chaingammon.eth`) and can be read by any tool without your permission. No platform can revoke or alter it.
 - **No central server to trust.** The play layer runs on your machine via local AXL nodes; the settlement path is two wallet signatures verified on-chain; the archive is permanent on 0G Storage. There is no Chaingammon operator key that can cheat or disappear.
 - **Portable identity across frontends.** Switch to any Chaingammon-compatible client and your ELO, history, and subname come with you — same as switching email clients without losing your address.
 - **One MetaMask popup per match.** The session-key channel (`settleWithSessionKeys`) means a single wallet signature at game start authorises the entire match. No interruptions during play; one final popup to settle on-chain.
 
 ### For agent owners
-- **The iNFT *is* the agent, not a label.** Encrypted gnubg weights and the per-agent experience overlay are hash-committed to `dataHashes[0]` / `dataHashes[1]` on the iNFT. Transfer the token, transfer the brain — with verifiable match history.
+
+- **The iNFT _is_ the agent, not a label.** Encrypted gnubg weights and the per-agent experience overlay are hash-committed to `dataHashes[0]` / `dataHashes[1]` on the iNFT. Transfer the token, transfer the brain — with verifiable match history.
 - **Agents learn.** The experience overlay (a ~50-float preference vector) is rewritten after every match and re-committed on-chain. Two same-tier agents played differently for 50 matches will play measurably differently thereafter.
 - **Verifiable intelligence provenance.** Anyone can read `dataHashes[0]`, fetch the blob from 0G Storage, decrypt with the public AES key, and verify it is the canonical gnubg weight file. No black-box claims.
 
 ### For the ecosystem
+
 - **Open protocol.** There are no proprietary APIs. ENS subnames, 0G Storage blob hashes, and on-chain match IDs are all public primitives. A new frontend can be written in a weekend.
 - **Composable reputation.** ELO in a text record is as composable as DNS. Other protocols can build on it — leaderboards, pairing systems, stake-your-rating games — without permission.
 - **Decentralised coach.** The LLM coaching hints run locally on the player's AXL node (flan-t5-base) and use strategy docs fetched from 0G Storage as RAG context. No hosted inference key required.
@@ -342,11 +345,13 @@ Chaingammon is the layer that fixes this. It is not a backgammon website — it 
 ## Limitations
 
 ### v1 trust assumptions
+
 - **Server-rolled dice (human-vs-agent).** In v1, dice are rolled in the browser via `crypto.getRandomValues`. For human-vs-agent this is self-trust; commit-reveal for provable fairness is v2.
 - **`recordMatch` is still available to the owner.** The trusted `recordMatch(onlyOwner)` path co-exists with `settleWithSessionKeys`. In a full decentralisation the owner path would be removed; for the hackathon it is kept as a fallback.
 - **Session key lives in browser memory.** The ephemeral session key is generated in `crypto.subtle` and held only in JS memory for the match duration. A page refresh loses it; in that case the human must re-connect and re-sign. Persistent session keys (e.g. stored in a hardware security module or the wallet's `eth_getEncryptionPublicKey`) are a v2 item.
 
 ### v1 scope boundaries
+
 - **Human-vs-agent only.** Human-vs-human requires peer discovery so two players' AXL nodes can find each other on the Yggdrasil mesh. The transport works; the matchmaking layer doesn't exist yet.
 - **Coach uses flan-t5-base locally.** The README's "Innovations" section describes a Qwen 2.5 7B coach on 0G Compute. In shipped v1 the coach is flan-t5-base running locally. 0G Compute integration (for verifiable inference) is a roadmap item.
 - **ENS on 0G testnet, not real ENS.** The subname registrar is ENS-shaped (namehash, text records, resolver semantics) but deployed on 0G testnet rather than wired into real ENS on Sepolia. Moving to a real ENS L2 (Linea Durin) is a configuration change, not a redesign.
@@ -539,8 +544,7 @@ Four terminals.
 cd contracts && pnpm exec hardhat node
 
 # terminal 2: deploy locally
-cd contracts
-pnpm exec hardhat run script/deploy.js --network localhost
+cd contracts && pnpm exec hardhat run script/deploy.js --network localhost
 # copy resulting addresses from contracts/deployments/localhost.json into frontend/.env.local
 
 # terminal 3: AXL agent node
@@ -550,6 +554,24 @@ cd agent
 # terminal 4: frontend
 pnpm frontend:dev
 ```
+
+#### One-click via VS Code Tasks
+
+A pre-configured VS Code Tasks workflow (`.vscode/tasks.json`, committed) wraps the four terminals above. Each task runs in its own dedicated terminal tab and stays in the background — the panel does not auto-open.
+
+`Cmd/Ctrl+Shift+P` → **Tasks: Run Task** → pick one:
+
+| Task                          | What it runs                                                                     |
+| ----------------------------- | -------------------------------------------------------------------------------- |
+| `Localhost: hardhat node`     | `pnpm exec hardhat node` in `contracts/` (long-running)                          |
+| `Localhost: deploy contracts` | Polls port 8545 until the chain is up, then runs the localhost deploy (one-shot) |
+| `Localhost: agent node`       | `agent/start.sh` (gnubg :8001 + coach :8002; AXL relay only if installed)        |
+| `Localhost: frontend`         | `pnpm frontend:dev` (Next.js on :3000)                                           |
+| `Localhost: launch all`       | Compound task — fires all four in parallel                                       |
+
+To inspect or stop a backgrounded task: **Tasks: Show Running Tasks** or **Tasks: Terminate Task** in the command palette.
+
+The `agent` task no longer requires AXL — `start.sh` detects whether the `axl` binary is on `PATH` and skips the Yggdrasil relay when it isn't, since the local browser reaches the FastAPI services directly.
 
 Upload gnubg strategy docs to 0G Storage (one-time — sets the coach RAG context blob):
 
