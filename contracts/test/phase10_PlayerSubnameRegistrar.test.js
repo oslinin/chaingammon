@@ -150,8 +150,9 @@ describe("Phase 10 — PlayerSubnameRegistrar", function () {
     });
 
     it("subname owner can update their own text record", async function () {
-      await registrar.connect(alice).setText(aliceNode, "elo", "1500");
-      expect(await registrar.text(aliceNode, "elo")).to.equal("1500");
+      // "elo" is a reserved key (protocol-only) after Phase 31 — use "bio" here
+      await registrar.connect(alice).setText(aliceNode, "bio", "hello world");
+      expect(await registrar.text(aliceNode, "bio")).to.equal("hello world");
     });
 
     it("contract owner can update any text record", async function () {

@@ -10,6 +10,7 @@ Built for ETHGlobal Open Agents. Uses **ENS** for portable player identity, **0G
 
 A decentralized, verifiable ELO rating ledger for backgammon — for humans and for AI agents that live on-chain as 0G iNFTs and learn match by match.
 
+- **Open identity layer.** Reputation lives in ENS subnames written only by the protocol — any third-party tool (betting markets, tournaments, coaching platforms) reads `<name>.chaingammon.eth` and gets verified ELO without coordinating with Chaingammon.
 - **Verifiable.** Every match settles to a MatchRegistry contract. Result, ELO delta, and a hash of the full game record (archived on 0G Storage) are all public and cryptographically tied together — anyone can audit any rating change end-to-end.
 - **Portable.** Each player's rating lives in their wallet via an ENS subname (`<name>.chaingammon.eth`) whose text records hold current ELO, match count, and a link to the full archive. Switch frontends, switch clients — reputation comes with you.
 - **Living, learning agents.** Each AI agent _is_ an ERC-7857 iNFT minted on 0G Chain — the token itself, not a label pointing at an off-chain model. The iNFT pins two hashes that point at 0G Storage: a shared gnubg neural-net base, and a per-agent **experience overlay** that the protocol rewrites after every match. The iNFT learns. Transfer the token, transfer the brain — with the verifiable match history attached.
@@ -56,6 +57,30 @@ Combined, these two pivots remove every "trust the operator" assumption from the
 | Identity        | Platform DB row                        | ENS subname (`<name>.chaingammon.eth`)                                 |
 
 The win isn't any single primitive — it's that all seven layers are sponsor-protocol-native, and none of them require trusting a Chaingammon operator key.
+
+---
+
+## ENS as Protocol Identity
+
+Chaingammon uses ENS subnames as a true protocol identity layer — not just a display name, but a verifiable, composable reputation primitive that any third-party tool can read without coordinating with Chaingammon.
+
+### Verified, not claimed
+
+Five text record keys — `elo`, `match_count`, `last_match_id`, `kind`, `inft_id` — are **reserved** on-chain in `PlayerSubnameRegistrar`. Only the contract owner (the server, post-match settlement) can write them. A subname owner cannot set their own `elo` to "9999". The on-chain `setText` rejects the write via a `bytes32 → bool` reserved-key map keyed by `keccak256(key)`. ELO in a Chaingammon subname is a protocol claim, not a user assertion.
+
+### Humans and agents share one identity layer
+
+Both human players and AI agents are registered under `chaingammon.eth`. The `kind` text record (`"human"` or `"agent"`) discriminates between them. When an agent iNFT is minted via `AgentRegistry.mintAgent`, the contract atomically mints the corresponding subname and sets `kind="agent"` + `inft_id=<tokenId>` in the same transaction. Discovery is a single walk of `PlayerSubnameRegistrar` — no separate human registry, no separate agent directory.
+
+### Cross-protocol composability
+
+Because the schema is open and on-chain, external protocols can build on Chaingammon reputation without permission:
+
+- **Betting market** — reads `text(namehash("alice.chaingammon.eth"), "elo")` and `text(namehash("gnubg-tier1.chaingammon.eth"), "elo")` to price a match from two protocol-verified ratings.
+- **Tournament organiser** — walks `subnameCount()` + `subnameAt(i)` to enumerate all registered identities, reads `elo` to seed a bracket sorted by rating.
+- **Coaching platform** — reads `text(node, "style_uri")` to fetch the player's style profile blob from 0G Storage without ever touching Chaingammon's API.
+
+Full schema specification: [docs/ENS_SCHEMA.md](docs/ENS_SCHEMA.md).
 
 ---
 
@@ -634,6 +659,8 @@ For the full version: see [ROADMAP.md](ROADMAP.md). Architecture overview: [ARCH
 - [ ] Subname registrar deployed (address + explorer link)
 - [ ] At least one `<name>.chaingammon.eth` minted with text records
 - [ ] Write-up: text record schema and resolver flow
+- [x] Schema spec published at [docs/ENS_SCHEMA.md](docs/ENS_SCHEMA.md)
+- [x] Reserved keys enforced on-chain (verified ELO, not user-claimed)
 
 **0G:**
 
