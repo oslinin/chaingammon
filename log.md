@@ -1302,3 +1302,70 @@ Tests (**[frontend/tests/board-click-moves.spec.ts](frontend/tests/board-click-m
 - "Undo button resets the board to start-of-turn position" — replaces "Reset button clears notation"; stages one move, asserts optimistic `data-count` changes, clicks Undo, asserts `data-count` reverts.
 
 5 board-click-moves Playwright tests updated.
+
+### Phase 32: ENS-as-protocol-identity — unified registrar, reserved keys, schema spec
+
+Phase 32 strengthens the ENS prize submission by making ELO a verified on-chain claim (not a user-asserted value), unifying human and agent identities under a single registrar with a `kind` discriminator, adding enumerable discovery, and publishing a schema spec so third-party protocols can build on Chaingammon ENS subnames without coordination.
+
+**[contracts/src/PlayerSubnameRegistrar.sol](contracts/src/PlayerSubnameRegistrar.sol)** (updated):
+- `bytes32 => bool _reservedKey` mapping — initialised in the constructor with five keys: `elo`, `match_count`, `last_match_id`, `kind`, `inft_id`. Each key is stored as its `keccak256` hash; no string comparisons in the auth path.
+- `setText` updated: reserved keys require the contract owner; user-writable keys remain dual-auth (subname owner or contract owner).
+- `address => bool _authorizedMinters` mapping + `setAuthorizedMinter(address, bool) onlyOwner` — lets external contracts (e.g. `AgentRegistry`) call `mintSubname` atomically.
+- `mintSubname` modifier changed from `onlyOwner` to `msg.sender == owner() || _authorizedMinters[msg.sender]` — preserves the admin path while opening the authorized-minter path.
+- `bytes32[] _subnameIndex` — appended in both `mintSubname` and `selfMintSubname` so the registry is fully enumerable.
+- `subnameAt(uint256 index) → bytes32` — returns the node at that index; reverts with `IndexOutOfRange` when out of bounds.
+- New error `IndexOutOfRange`, new event `AuthorizedMinterSet`.
+
+**[contracts/src/AgentRegistry.sol](contracts/src/AgentRegistry.sol)** (updated):
+- `IPlayerSubnameRegistrar` interface — minimal surface: `mintSubname`, `setText`.
+- `IPlayerSubnameRegistrar public subnameRegistrar` state var, default `address(0)` (disabled).
+- `setSubnameRegistrar(address) onlyOwner` — wires the registrar; emits `SubnameRegistrarSet`.
+- `mintAgent` extended: when `subnameRegistrar != address(0)`, calls `mintSubname(cleanedLabel, to)` then `setText(node, "kind", "agent")` and `setText(node, "inft_id", _toString(agentId))` — fully atomic.
+- `_cleanLabel(string)` internal pure — strips scheme prefix (`://`) and replaces `/` with `-`, mirroring `AgentCard.tsx`.
+- `_toString(uint256)` internal pure — decimal string conversion.
+
+**[frontend/app/DiscoveryList.tsx](frontend/app/DiscoveryList.tsx)** (new):
+- Reads `subnameCount` + `subnameAt(i)` + `text(node, "kind"/"elo"/"endpoint")` from `PlayerSubnameRegistrar`.
+- Groups entries under `<section data-testid="discovery-humans-section">` and `<section data-testid="discovery-agents-section">`.
+- `EntryCard` renders each identity with ELO; shows a `data-testid="discovery-play-button"` link only when `endpoint` is non-empty.
+- `staticEntries` prop for test fixture pages (no blockchain connection needed).
+
+**[frontend/app/test-discovery/page.tsx](frontend/app/test-discovery/page.tsx)** (new):
+- Fixture page rendering three hardcoded mock entries: `alice` (human, no endpoint), `gnubg-1` (agent, endpoint set), `gnubg-2` (agent, no endpoint). Used by `discovery-list.spec.ts`.
+
+**[docs/ENS_SCHEMA.md](docs/ENS_SCHEMA.md)** (new):
+- "Chaingammon ENS Schema v1" — purpose, parent name, subname pattern.
+- Text record keys table: reserved keys (protocol-written) vs user-writable keys.
+- Authoritative source note: `elo` text record is a cache; real-time truth is `MatchRegistry.humanElo` / `MatchRegistry.agentElo`.
+- Migration note for v2 Durin / L2 ENS path.
+- Three concrete example use cases: betting market, tournament organiser, coaching platform.
+
+**[README.md](README.md)** (updated):
+- TL;DR: new top bullet "Open identity layer…"
+- New section "ENS as Protocol Identity" between Mission and How It Works — three subsections: Verified not claimed, Humans and agents share one identity layer, Cross-protocol composability.
+- Submission Checklist ENS section: added `[x] Schema spec published at docs/ENS_SCHEMA.md` and `[x] Reserved keys enforced on-chain`.
+
+**[ROADMAP.md](ROADMAP.md)** (updated):
+- Shipped table: five new rows for reserved keys, authorized minter, enumerable index, ENS schema spec, unified discovery list.
+
+Tests (**[contracts/test/phase32_reserved_keys.test.js](contracts/test/phase32_reserved_keys.test.js)**, new, 22 tests):
+- Reserved-key enforcement: each of the five keys (`elo`, `match_count`, `last_match_id`, `kind`, `inft_id`) reverts for subname owner, succeeds for contract owner.
+- User-writable keys (`bio`, `avatar`, `style_uri`, `endpoint`): subname owner can write; stranger reverts; contract owner can also write.
+- `setAuthorizedMinter`: owner grants/revokes; non-owner reverts; granted minter can call `mintSubname`; revoked minter reverts; granted minter cannot re-grant.
+- `subnameAt`: first/last node; out-of-range reverts; insertion order preserved; authorized-minter mint and `selfMintSubname` both appear in the index.
+
+Tests (**[contracts/test/phase32_unified_mint.test.js](contracts/test/phase32_unified_mint.test.js)**, new, 8 tests):
+- After `mintAgent`, subname exists; `kind` is `"agent"`; `inft_id` matches token ID; label equals cleaned `metadataURI`; `subnameCount` increments 0→1→2; second agent gets `inft_id="2"`; `mintAgent` does not revert when no registrar configured; subname owner equals the `to` wallet.
+
+Tests (**[frontend/tests/discovery-list.spec.ts](frontend/tests/discovery-list.spec.ts)**, new, 5 tests):
+- Separate headers for humans and agents rendered.
+- Exactly one Play button (gnubg-1 only has an endpoint).
+- Agents section contains at least one discovery entry.
+- Players section contains at least one discovery entry.
+- Humans section has zero Play buttons.
+
+Updated existing tests:
+- **[contracts/test/phase10_PlayerSubnameRegistrar.test.js](contracts/test/phase10_PlayerSubnameRegistrar.test.js)**: "subname owner can update their own text record" key changed from `"elo"` (now reserved) to `"bio"`.
+- **[contracts/test/phase22_selfMintSubname.test.js](contracts/test/phase22_selfMintSubname.test.js)**: same change.
+
+30 new contract tests pass (22 reserved-keys + 8 unified-mint). 5 new frontend Playwright tests pass.

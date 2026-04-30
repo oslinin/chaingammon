@@ -89,10 +89,11 @@ describe("Phase 22 — selfMintSubname", function () {
   });
 
   it("subname owner can update their own text record after self-mint", async function () {
+    // "elo" is a reserved key (protocol-only) after Phase 31 — use "bio" here
     await registrar.connect(alice).selfMintSubname("alice");
     const node = await registrar.subnameNode("alice");
-    await registrar.connect(alice).setText(node, "elo", "1400");
-    expect(await registrar.text(node, "elo")).to.equal("1400");
+    await registrar.connect(alice).setText(node, "bio", "my profile");
+    expect(await registrar.text(node, "bio")).to.equal("my profile");
   });
 
   it("alice and bob can each claim their own subname independently", async function () {
