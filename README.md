@@ -462,6 +462,49 @@ You can pin a custom backgammon-net endpoint via `OG_COMPUTE_EVAL_PROVIDER=<addr
 5. Click **Play**. The trainer subprocess spawns; the status panel polls every 2 s and shows per-agent wins as `C(N, 2)` games per epoch run.
 6. Hover any agent card on `/`. The popover lazy-fetches `/agents/{id}/profile` and shows the agent's match count + style summary.
 7. On `/match?teamMode=1`, the read-only "🤝 Agent prefers teammate #N" chip appears, scored by `recommend_teammate` against the requester's trained checkpoint loaded from 0G storage.
+8. Open `/team-demo`. Click "Create team game" then "Play next move" repeatedly — each turn renders one `AdvisorSignal` per non-captain teammate (proposed move + confidence bar + rationale), with the captain badge tagging who decided. The captain rotates per the team's `captain_rotation` policy ("alternating" by default). All signals are archived to `MoveEntry.advisor_signals` for the audit replayer.
+
+## Full-board training (Phase J)
+
+The trained `BackgammonNet` originally operated on a simplified pip-race state. **Phase J** (commit `63f6f18` and predecessors) replaces that with the standard Tesauro 198-dim contact-net encoding — `agent/gnubg_encoder.py` ports the canonical layout, `agent/full_board_state.py` drives self-play through real gnubg subprocesses, and `agent/sample_trainer.py --full-board` writes checkpoints carrying `feature_encoder: "gnubg_full"` so `/games/{id}/agent-move` with `use_per_agent_nn=true` can score real positions.
+
+**Producing a full-board checkpoint** (one-shot, ~30-60 min wall time):
+
+```bash
+cd agent
+uv run python sample_trainer.py \
+    --full-board \
+    --matches 100 \
+    --career-mode \
+    --save-checkpoint /tmp/agent7-fullboard.pt \
+    --upload-to-0g --no-encrypt \
+    --status-file /tmp/run.jsonl
+```
+
+The trainer prints the resulting Merkle `rootHash`. Register it on `AgentRegistry`:
+
+```bash
+# from contracts/
+npx hardhat run scripts/set-agent-data-hash.ts --network 0g-testnet \
+    -- --agent-id 7 --slot 1 --hash 0x<rootHash>
+```
+
+After the on-chain write, `POST /games/{gameId}/agent-move` with body `{"use_per_agent_nn": true}` will load the checkpoint, encode each gnubg candidate's successor position to 198 features, and pick the NN's argmax — that's the per-agent neural net actually driving moves.
+
+**Latency note:** each `/agent-move` with the NN flag costs ~N gnubg subprocess calls (one per candidate). For typical positions (5-10 candidates) that's ~500-1000 ms per move. The gnubg+overlay fallback path remains the default (no flag); the NN flag is opt-in for demo turns.
+
+**Compatibility:** old race-only checkpoints stay loadable (`ModelProfile.metrics()["feature_encoder"]` defaults to `"race"`). The `/agent-move` helper refuses race weights for full-board scoring and falls through to overlay so a transition mid-deployment is safe.
+
+## Team-mode communication (Phase K)
+
+Two agents on the same team now publish per-turn signals. **Phase K** (commit `1ca678c`) wires the live flow:
+
+- `POST /games` accepts optional `team_a` and `team_b` rosters (each is `{members: PlayerRef[], captain_rotation: "alternating" | "fixed_first" | "per_turn_vote"}`).
+- Each `/agent-move` computes the captain via `team_mode.captain_index`, scores every non-captain teammate via `teammate_advisor.score_advisor_move`, and returns `AdvisorSignal[]` + `captain_id` alongside the new `GameState`.
+- Signals are archived in `MoveEntry.advisor_signals` and propagated into the on-chain `GameRecord` commitment.
+- The `/team-demo` frontend page exercises the flow end-to-end with a 2v1 game.
+
+**MVP captain decision rule:** the captain ignores advisors at pick time — its own move (gnubg+overlay, or per-agent NN under Phase J's flag) is final. Signals are *archived*, not *consumed*. Vote fusion / confidence-weighted rank fusion is a follow-up: every signal is on the on-chain record, so a future endpoint that re-ranks captain picks against archived advisors lights up retroactively.
 
 ---
 
