@@ -226,15 +226,71 @@ export default function MatchPage() {
   );
 }
 
+// Default candidate pool for the team-mode teammate-recommendation chip.
+// Read from `?candidates=2,3,4` if present; otherwise fall back to a small
+// demo list. The requester (agentId) is filtered out before the call.
+const DEFAULT_TEAMMATE_CANDIDATES = [1, 2, 3, 4, 5];
+
+interface TeammateRec {
+  best_teammate_id: number;
+  equities: Record<string, number>;
+  spread: number;
+  requester_kind: "model" | "overlay" | "null";
+  candidate_kinds: Record<string, "model" | "overlay" | "null">;
+}
+
 function MatchInner() {
   const params = useSearchParams();
   const agentId = Number(params.get("agentId") ?? "1");
+
+  // Read team-mode + candidates from the URL. `?teamMode=1` enables the
+  // teammate-recommendation chip; `?candidates=2,3,4` overrides the
+  // default candidate pool. Both are optional — without `?teamMode=1`
+  // the chip never renders so existing match flows are unaffected.
+  const teamMode = params.get("teamMode") === "1";
+  const candidatesParam = params.get("candidates");
+  const teammateCandidates = candidatesParam
+    ? candidatesParam.split(",").map((s) => Number(s.trim())).filter((n) => Number.isFinite(n))
+    : DEFAULT_TEAMMATE_CANDIDATES;
 
   // Phase 28: persist the most-recently-played agentId so the sidebar can
   // link back to this agent on subsequent visits.
   useEffect(() => {
     window.localStorage.setItem("lastAgentId", String(agentId));
   }, [agentId]);
+
+  // Career-mode teammate recommendation. Fires once on mount when team
+  // mode is on; result feeds the read-only chip in the main column.
+  // Failures are silent — the chip is a hint, not the page's reason
+  // for existing.
+  const [teammateRec, setTeammateRec] = useState<TeammateRec | null>(null);
+  useEffect(() => {
+    if (!teamMode) return;
+    const filtered = teammateCandidates.filter((c) => c !== agentId);
+    if (filtered.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`${COACH}/agents/${agentId}/recommend-teammate`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ candidates: filtered }),
+        });
+        if (!res.ok) return;
+        const data = (await res.json()) as TeammateRec;
+        if (!cancelled) setTeammateRec(data);
+      } catch {
+        // Endpoint unreachable — keep teammateRec null so the chip
+        // renders nothing.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // teamMode + agentId change → page is effectively re-loaded; the
+    // candidate list is derived once per mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [teamMode, agentId]);
 
   // Phase 36: write a stable UUID for this match session so the sidebar's
   // 0G Storage log / ENS / KeeperHub entries deep-link to the current match.
@@ -888,6 +944,26 @@ function MatchInner() {
 
       {/* Main */}
       <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-6 px-3 py-6 sm:px-8 sm:py-8">
+        {/* Career-mode teammate-preference chip. Renders only when the
+            page is loaded with ?teamMode=1 AND the endpoint returned
+            a recommendation. Read-only — clicking does nothing in this
+            phase; swap-to-teammate is a follow-up. */}
+        {teamMode && teammateRec && (
+          <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm text-emerald-900 dark:border-emerald-700/40 dark:bg-emerald-900/10 dark:text-emerald-200">
+            <span className="mr-2" aria-hidden>🤝</span>
+            <span className="font-medium">
+              Agent prefers teammate #{teammateRec.best_teammate_id}
+            </span>
+            <span className="ml-2 font-mono text-xs text-emerald-700 dark:text-emerald-400">
+              (+{teammateRec.spread.toFixed(3)} eq · vs {Object.keys(teammateRec.equities).length - 1} other{Object.keys(teammateRec.equities).length === 2 ? "" : "s"})
+            </span>
+            {teammateRec.requester_kind === "overlay" && (
+              <span className="ml-2 italic text-xs text-emerald-700/80 dark:text-emerald-400/80">
+                (based on style only — agent not yet trained)
+              </span>
+            )}
+          </div>
+        )}
         {game.game_over && (
           <div
             className={`rounded-lg border p-4 ${
