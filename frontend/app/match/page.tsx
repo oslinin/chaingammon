@@ -40,6 +40,7 @@
 // agent/gnubg_service.py or the agent test suite for examples.
 "use client";
 
+import { useQuery } from "@tanstack/react-query";
 import { Suspense, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
@@ -1232,29 +1233,82 @@ function MatchInner() {
   );
 }
 
-// Phase F: read-only chip mirroring the global Compute pill's
-// inference-backend value. Decorative until Phase G wires the flag
-// through to /agent-move; in this phase it's purely informational so
-// the player knows which backend the agent will use for its moves.
+// Phase I.3: chip mirroring the global Compute pill's inference
+// backend. When 0G is on, fetches a one-shot probe from
+// /training/estimate so the chip can render real provider state +
+// per-inference cost when a backgammon-net provider is registered.
+// When local, the chip is a static label.
+//
+// The match flow today goes through gnubg_service (port 8001) which
+// doesn't know about 0G; per-move billing through /agent-move is
+// part of Phase J's per-agent-NN cutover. For now the chip surfaces
+// the standing 0G availability + cost so judges can see the matrix
+// is wired, even though each in-flight move doesn't tick the meter.
 function InferenceChip() {
   const { backends, hydrated } = useComputeBackends();
+  const is0G = hydrated && backends.inference === "0g";
+
+  // One-shot probe via /training/estimate (epochs=1, agent_ids=1,2 ->
+  // per_inference_og + available). Cheap; backed by React Query so
+  // re-renders don't re-fetch.
+  const probe = useQuery({
+    enabled: is0G,
+    queryKey: ["inference-probe"],
+    staleTime: 60_000,
+    queryFn: async () => {
+      const url = new URL(`${COACH}/training/estimate`);
+      url.searchParams.set("epochs", "1");
+      url.searchParams.set("agent_ids", "1,2");
+      url.searchParams.set("use_0g_inference", "true");
+      const r = await fetch(url.toString());
+      if (!r.ok) throw new Error(`${r.status}`);
+      return (await r.json()) as {
+        available: boolean;
+        per_inference_og: number;
+        gas_og: number;
+        note?: string;
+      };
+    },
+  });
+
   if (!hydrated) return null;
-  const is0G = backends.inference === "0g";
+
+  let label: string;
+  let title: string;
+  let className: string;
+  if (!is0G) {
+    label = "Inference: local";
+    title = "Agent inference runs locally";
+    className =
+      "border-zinc-300 text-zinc-600 dark:border-zinc-700 dark:text-zinc-400";
+  } else if (probe.isLoading) {
+    label = "Inference: 0G (probing…)";
+    title = "Checking the 0G eval bridge for a backgammon-net provider";
+    className =
+      "border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-300";
+  } else if (probe.error || !probe.data?.available) {
+    const note = probe.data?.note ?? "provider unavailable";
+    label = "Inference: 0G · provider unavailable";
+    title = `0G eval bridge: ${note}. Local inference will be used during play.`;
+    className =
+      "border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-300";
+  } else {
+    const cost = probe.data.per_inference_og.toFixed(6);
+    label = `Inference: 0G · ~${cost} OG/move`;
+    title = `0G compute provider live; per-move cost ≈ ${cost} OG`;
+    className =
+      "border-emerald-300 bg-emerald-50 text-emerald-800 dark:border-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300";
+  }
+
   return (
     <div
       className={[
         "self-start rounded-md border px-2 py-1 text-xs font-mono",
-        is0G
-          ? "border-emerald-300 bg-emerald-50 text-emerald-800 dark:border-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300"
-          : "border-zinc-300 text-zinc-600 dark:border-zinc-700 dark:text-zinc-400",
+        className,
       ].join(" ")}
-      title={
-        is0G
-          ? "Agent inference will route through 0G compute (decorative until Phase G)"
-          : "Agent inference runs locally"
-      }
+      title={title}
     >
-      Inference: {is0G ? "0G" : "local"}
+      {label}
     </div>
   );
 }
