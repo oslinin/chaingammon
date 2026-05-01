@@ -68,8 +68,12 @@ class DialogueState(BaseModel):
     (`chaingammon:dialogue:<matchId>`) and is sent to the coach on
     every /chat request so the agent has full context.
 
-    `preferences` is a per-session signal derived from the human's
-    accept/reject pattern across this match — see `update_preferences`."""
+    `preferences` is a session-local signal derived from the human's
+    accept/reject pattern across this match — see `update_preferences`.
+    It expires when the browser session ends and does NOT feed agent
+    training. The human-in-the-loop training signal in Chaingammon
+    comes from team mode (see `docs/team-mode.md`), not from solo
+    coach dialogue."""
     match_id: str
     history: list[DialogueMessage] = Field(default_factory=list)
     preferences: dict[str, float] = Field(default_factory=dict)
@@ -229,8 +233,8 @@ def build_chat_prompt(req: ChatRequest, *, agent_persona: str = "") -> str:
 
 
 # Heuristic mapping: keywords in the human's message map to preference
-# keys. Hand-coded for v1 — Phase E will replace this with an LLM-
-# extracted signal once we have enough labelled exchanges to train it.
+# keys. Hand-coded for v1; an LLM-extracted v2 signal would still be
+# session-scoped UX adaptation (it does not feed agent training).
 _PREF_KEYWORDS: dict[str, list[str]] = {
     "prefers_running": ["running game", "race", "run my back checkers"],
     "prefers_holding": ["holding game", "hold the anchor", "keep the back point"],
@@ -249,6 +253,10 @@ def update_preferences(prev: dict[str, float], message: DialogueMessage,
     matches against `_PREF_KEYWORDS` and nudge the corresponding key
     by +`learning_rate`. Agent messages don't move preferences (only
     the human's words count).
+
+    The output is consumed only by the next prompt assembly within
+    this match's session — it is session-local UX adaptation, not
+    persisted into agent training data.
 
     Output is a fresh dict (input is not mutated) clipped to
     [-PREF_BOUND, PREF_BOUND].

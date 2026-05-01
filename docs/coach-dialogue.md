@@ -1,19 +1,20 @@
-# Coach dialogue — turn-by-turn human↔agent collaboration
+# Coach dialogue — turn-by-turn explanation
+
+> **Note:** the actual *human-in-the-loop* feature in Chaingammon
+> is **team mode** — a human and an agent playing as teammates
+> against an opponent (`docs/team-mode.md`). The coach dialogue
+> described here is a single-player explanation layer: the agent
+> narrates its take, the human can ask follow-ups, but the human
+> alone decides the move. Per-session preferences derived here are
+> session-local UX adaptation, **not** training data.
 
 The coach today is one-shot: per turn, the frontend POSTs `/hint` to
 `coach_service`, gets back a single sentence, and renders it. That
-gets you a narrator. The coach we *want* — the one that makes
-Chaingammon a real Open Agents project — is a stateful, two-way
+gets you a narrator. The coach we *want* is a stateful, two-way
 dialogue with the player: the agent considers the human's history
 and tendencies, the human can push back on the suggestion or ask
 follow-up questions, and the agent updates its take in light of the
 exchange.
-
-This is the **human-in-the-loop** thesis. Pure-AI play converges on
-gnubg-equivalent equity-maxing; pure-human play tops out at the
-human's ELO. The collaboration is what unlocks the next plateau —
-the same way Claude Code is a stronger software engineer with a
-human reviewing and redirecting it than either is alone.
 
 ## Design goals
 
@@ -32,11 +33,14 @@ human reviewing and redirecting it than either is alone.
    13/8?"), challenges ("but I'd be leaving a blot"), or
    acceptance ("ok, doing it"). The agent's next message is
    conditioned on the exchange so far.
-4. **Feedback adjusts the coach, not just the conversation.** A
-   human's correction ("I prefer running games, stop suggesting
-   primes") becomes a per-session preference signal that biases
-   the agent's next hint *and* — eventually — feeds the agent's
-   training as a labelled data point about this human's style.
+4. **Per-session adaptation, not training data.** A human's
+   correction ("I prefer running games, stop suggesting primes")
+   becomes a per-session preference signal that biases the agent's
+   next hint within this match. The signal is session-local UX
+   adaptation; it is **not** persisted into agent training. Agent
+   training is plain backpropagation on self-play and refereed-match
+   data — humans enter the training loop only as teammates in team
+   mode, not as preference-labelers in solo dialogue.
 5. **Bounded latency.** Total round-trip (browser → coach →
    browser) under 1.5 seconds for the dialogue to feel
    conversational rather than chat-shaped. Streaming responses
@@ -131,13 +135,12 @@ class ChatResponse(BaseModel):
 | Prompt assembly | `agent/coach_dialogue.py` (`build_chat_prompt`) | Combines state + dialogue + opponent profile + agent profile + RAG docs |
 | Inference backend | unchanged — Qwen 2.5 7B on 0G Compute, flan-t5-base local fallback | `agent/coach_compute_client.py` |
 | Frontend session | `frontend/app/match/page.tsx` (extend) | Persist dialogue in `localStorage`; render bubbles inline with the move panel |
-| Per-session prefs | `agent/coach_dialogue.py` (`update_preferences`) | Derive `{prefers_running: +0.4}`-style signal from accept/reject patterns |
-| Future training feed | `server/app/...` (out of scope for v1) | Periodically aggregate per-session prefs into the human's style profile blob on 0G Storage KV |
+| Per-session prefs | `agent/coach_dialogue.py` (`update_preferences`) | Derive `{prefers_running: +0.4}`-style signal from accept/reject patterns. Session-local; expires when the session ends. |
 
 ## Implementation phases
 
-The plan is to ship in three small, reviewable steps so we keep the
-existing `/hint` flow working while we layer the dialogue on top.
+Four small, reviewable steps so the existing `/hint` flow keeps
+working while the dialogue layer goes on top.
 
 ### Phase A — data shapes + endpoint stub *(this is the next commit)*
 
@@ -172,20 +175,13 @@ existing `/hint` flow working while we layer the dialogue on top.
 
 ### Phase D — preference loop
 
-- Persist `preferences` per session (browser-side) and feed back
-  into `ChatRequest.preferences` so the agent sees the running
-  signal across turns.
-- Periodically (post-match) write the session preferences into the
-  human's `style_uri` blob on 0G Storage. The next match's coach
-  starts already-calibrated.
-
-### Phase E — training feedback (post-hackathon)
-
-- Aggregate per-session preference updates as labelled
-  human-in-the-loop signal for the agent's next training round.
-  This closes the human-agent collaboration loop in the way
-  DeepMind's Gato / RT-2 work argues for: the human's corrections
-  aren't just for that turn, they shape the agent's future play.
+- Persist `preferences` per session (browser-side, `localStorage`)
+  and feed back into `ChatRequest.preferences` so the agent sees
+  the running signal across turns within the same match.
+- Preferences expire when the session ends. They do **not** flow
+  into agent training and are not written into the human's
+  `style_uri` blob on 0G Storage — see the note at the top of this
+  doc on why.
 
 ## Cost / latency budget
 
