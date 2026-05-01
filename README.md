@@ -160,7 +160,43 @@ There is **no static corpus** in the loop. The only corpus-shaped step is one-ti
 
 The career-mode head adds contextual feature inputs (teammate style, opponent profile, tournament position, stake size) and optimizes a longer-horizon return; the same backprop machinery applies.
 
-**Career-mode training (the `--career-mode` flag).** The default trainer fills the value net's `extras` slot with a per-agent random projection — the architecture works, the encoder is a placeholder. `--career-mode` swaps that placeholder for `agent/career_features.encode_career_context`, which projects opponent style (6 axes from `agent_overlay.CATEGORIES`), teammate style (zeros for solo matches), `log1p(stake_wei)/70`, tournament position, and a team-match flag into a 16-d vector. The trainer samples a fresh `CareerContext` per match (uniform style, log-uniform stake on `[0, 1e21]` wei, 50/50 teammate) so the extras head sees a wide distribution of contexts. Trained checkpoints can then meaningfully condition on context at inference time, which is what makes "agent vs human" and "agent + human team" different in practice.
+**Career-mode training (the `--career-mode` flag).** The default trainer fills the value net's `extras` slot with a per-agent random projection — the architecture works, the encoder is a placeholder. `--career-mode` swaps that placeholder for `agent/career_features.encode_career_context`, which projects five contextual inputs into a 16-d vector consumed by the extras head. The trainer samples a fresh `CareerContext` per match (uniform style, log-uniform stake on `[0, 1e21]` wei, 50/50 teammate) so the extras head sees a wide distribution of contexts. Trained checkpoints can then meaningfully condition on context at inference time, which is what makes "agent vs human" and "agent + human team" different in practice.
+
+**Career-mode training inputs (slot layout).** The five inputs and their encodings, as enforced by `encode_career_context`:
+
+| Slots | Input | Encoding |
+| --- | --- | --- |
+| `[0:6]` | `opponent_style` | 6-axis projection of the opponent's `agent_overlay` style dict; each component clamped to `[-1, 1]`; missing axes default to 0. |
+| `[6:12]` | `teammate_style` | Same 6 axes for the teammate; all zeros when solo. |
+| `[12]` | `stake_wei` | `log1p(stake_wei) / 70` clamped to `[0, 1]`. Divisor 70 chosen because `log1p(1e30) ≈ 69.08` — stakes up to 10^30 wei map into `[0, 1]` without clamping. |
+| `[13]` | `tournament_position` | Scalar in `[-1, 1]`; 0 = casual match. |
+| `[14]` | `is_team_match` | `1.0` in doubles / chouette / human+agent; `0.0` solo. |
+| `[15]` | (bias) | Constant `1.0` ones-channel so the extras head has usable signal even before training. |
+
+The 16-d minimum is enforced (`encode_career_context` raises on `dim < 16`); larger `dim` zero-pads `[16:dim)`.
+
+**The six style axes.** `opponent_style` and `teammate_style` project onto these axes (`career_features.STYLE_AXES`):
+
+| Axis | What it measures |
+| --- | --- |
+| `opening_slot` | Aggressive opening preference. |
+| `phase_prime_building` | Tendency to build primes. |
+| `runs_back_checker` | Running-game preference (vs holding). |
+| `phase_holding_game` | Holding-game preference. |
+| `bearoff_efficient` | Bear-off skill. |
+| `hits_blot` | Aggression on contact. |
+
+These match a subset of the `agent_overlay.CATEGORIES` keys produced by the per-agent overlay JSON on 0G Storage KV; opponent profiles fetched at runtime project onto these axes without a translation step.
+
+**Why these features and not others.**
+
+- *Why these five input kinds.* They are exactly the contextual inputs `chaingammon_plan.md` calls out for the career-mode head — opponent profile, teammate identity (and their style), match stake, tournament position — plus the team-match flag added so a single network handles solo and team modes without retraining. Anything else (match length, time controls, dice variance) is either part of the board features the gnubg-init core already encodes or stays at training-time defaults until evidence says otherwise.
+
+- *Why these six style axes.* They are a strict subset of `agent_overlay.CATEGORIES`. Two reasons: (a) they cover the four distinguishable strategic dimensions the coach already reads — opening, phase (prime / holding), mid-game risk (`hits_blot`), bear-off — so the encoder isn't introducing a new vocabulary the rest of the system has to learn; (b) reusing the existing CATEGORIES keeps the on-disk style-profile blob format on 0G Storage KV in lockstep with the trainer's input format, so opponent profiles fetched at runtime drop straight in without a translation step.
+
+- *Why log1p for the stake.* Stake distributions are heavy-tailed (most matches are unstaked; a handful are large). A linear scaling would saturate the field for every realistic stake; log scaling spreads the typical range across the unit interval. The exact divisor (70) is the smallest integer that doesn't clamp at the high end for any plausible Ethereum-balance stake.
+
+The encoder lives in `agent/career_features.py`; see the module docstring and `STYLE_AXES` for the canonical layout this README mirrors.
 
 **Pseudocode** (one self-play training match):
 
