@@ -97,7 +97,6 @@
 - Anti-cheat for human ratings
 - 0G Compute for verifiable inference (v3)
 - ZK proofs for move provenance (v3)
-- Gensyn (skipped — training surface too small)
 
 ---
 
@@ -850,6 +849,5 @@ Tasks:
 - No skipping EloMath.sol tests
 - No secrets committed (use .env.example)
 - No mainnet, testnets only
-- No Gensyn (training surface too small)
 - No commits/pushes without owner approval
 - TDD only — no implementation without a failing test first

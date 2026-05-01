@@ -172,7 +172,7 @@ This gives you a clean training pipeline:
    storing public ELO and style profile  
    discovery of opponents
 
-**AXL** is not necessary to decentralize as HTTP is used.
+Decentralization is achieved without any custom relay layer — plain HTTP between the browser and local agent processes is enough.
 
 gnubg wasm is too hard. train a NN on agent birth, start with gnubg weights.  
 since keeperhub doesn’t support 0G:  
@@ -181,7 +181,6 @@ Settlement contracts on Sepolia (KeeperHub-native).
 0G Compute for the coach LLM (TEE-attested).  
 KeeperHub for orchestration \+ audit. keeperhub schedules the game, escrows the gas/prize money, provides VRF through _drand_, and checks/settles the game using the 0G storage audit trail and **In a WASM rules module (after game, in browser during the game),** and updates the ENS ELO/weights  
 ENS subnames on real Sepolia ENS.  
-axl doesn’t seem to help the project.  
 agent move evaluation: in 0G compute or browser.  
 coach: depends of setting:  
 default: browser for small flan-t5-base model,  
@@ -194,7 +193,7 @@ Permissionless agent strength (every owner trains/hosts their own).
 0G Compute optionally hosts inference (sponsor double-dip).  
 KeeperHub orchestrates settlement and audit.  
 ENS carries portable reputation, but game history auditable from 0G storage.  
-No central server, no AXL, no relay, no gnubg dependency at all.  
+No central server, no relay, no gnubg dependency at all.  
 move to Base/Optimism for real economics; design is identical, just a chain swap.  
 **0G Storage** is HTTP-accessed via its indexer so it’s ok to use sepolia, to get ENS & keeperhub.
 
@@ -213,7 +212,7 @@ Either way, weights end up on 0G Storage and inference happens on 0G Compute. Wh
 - **drand** — third-party dice randomness.
 - **ENS (real)** — portable reputation via subname text records.
 
-Six sponsors/protocols, each doing the thing it's actually best at, no glue layers, no custom relay, no AXL, no bridge.
+Six sponsors/protocols, each doing the thing it's actually best at, no glue layers, no custom relay, no bridge.
 
 # frontend
 

@@ -1,7 +1,7 @@
 {
   "name": "chaingammon",
   "private": true,
-  "description": "Monorepo for the Chaingammon project, including AXL agent nodes, contracts, and frontend.",
+  "description": "Monorepo for the Chaingammon project, including local agent processes, contracts, and frontend.",
   "scripts": {
     "contracts:compile": "pnpm --filter contracts exec hardhat compile",
     "contracts:test": "pnpm --filter contracts exec hardhat test",
