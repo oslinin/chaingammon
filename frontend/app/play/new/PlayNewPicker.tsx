@@ -30,7 +30,9 @@ import { useAllChaingammonSubnames, type SubnameEntry } from "../../useAllChaing
 
 interface RosterRow extends SubnameEntry {
   elo: number;
-  agentId: string | undefined;
+  // `inftId` is set when `kind == "agent"` (atomic-mint side effect of
+  // AgentRegistry.mintAgent). Empty string for humans.
+  inftId: string | undefined;
   kind: string;
 }
 
@@ -45,14 +47,20 @@ export function PlayNewPicker() {
   const router = useRouter();
   const chainId = useActiveChainId();
   const { playerSubnameRegistrar } = useChainContracts();
-  const { entries, isLoading: rosterLoading } = useAllChaingammonSubnames();
+  const {
+    entries,
+    isLoading: rosterLoading,
+    notDeployed,
+  } = useAllChaingammonSubnames();
 
   const [sideA, setSideA] = useState<Set<`0x${string}`>>(new Set());
   const [sideB, setSideB] = useState<Set<`0x${string}`>>(new Set());
   const [matchLength, setMatchLength] = useState<number>(5);
   const [mode, setMode] = useState<"single" | "career">("single");
 
-  // Read all profile fields in batch — eloOf, agent_id text, kind text.
+  // Read all profile fields in batch — eloOf (typed), kind text, inft_id text.
+  // The agent / human discriminator is `kind == "agent"`; inft_id is the iNFT
+  // token id, used by the autoplay route to drive the right gnubg backend.
   const profileReads = useMemo(() => {
     if (!playerSubnameRegistrar) return [];
     return entries.flatMap((e) => [
@@ -67,14 +75,14 @@ export function PlayNewPicker() {
         address: playerSubnameRegistrar,
         abi: PlayerSubnameRegistrarABI as unknown as readonly unknown[],
         functionName: "text",
-        args: [e.node, "agent_id"],
+        args: [e.node, "kind"],
         chainId,
       },
       {
         address: playerSubnameRegistrar,
         abi: PlayerSubnameRegistrarABI as unknown as readonly unknown[],
         functionName: "text",
-        args: [e.node, "kind"],
+        args: [e.node, "inft_id"],
         chainId,
       },
     ]);
@@ -88,17 +96,18 @@ export function PlayNewPicker() {
 
   const rows: RosterRow[] = useMemo(() => {
     if (!profileResults) {
-      return entries.map((e) => ({ ...e, elo: 1500, agentId: undefined, kind: "" }));
+      return entries.map((e) => ({ ...e, elo: 1500, inftId: undefined, kind: "" }));
     }
     return entries.map((e, i) => {
       const eloRaw = profileResults[i * 3]?.result;
-      const agentIdRaw = profileResults[i * 3 + 1]?.result;
-      const kindRaw = profileResults[i * 3 + 2]?.result;
+      const kindRaw = profileResults[i * 3 + 1]?.result;
+      const inftIdRaw = profileResults[i * 3 + 2]?.result;
       return {
         ...e,
         elo: typeof eloRaw === "bigint" ? Number(eloRaw) : 1500,
-        agentId: typeof agentIdRaw === "string" && agentIdRaw !== "" ? agentIdRaw : undefined,
         kind: typeof kindRaw === "string" ? kindRaw : "",
+        inftId:
+          typeof inftIdRaw === "string" && inftIdRaw !== "" ? inftIdRaw : undefined,
       };
     });
   }, [entries, profileResults]);
@@ -124,12 +133,15 @@ export function PlayNewPicker() {
   const selectedA = rows.filter((r) => sideA.has(r.node));
   const selectedB = rows.filter((r) => sideB.has(r.node));
 
-  // Auto-play requires every selected subname to be an agent.
+  // Auto-play requires every selected subname to be an agent. The iNFT
+  // token id (`inft_id` text record) is what AgentRegistry's atomic-mint
+  // path writes; absence means "not an agent" (a human or a subname
+  // claimed via selfMintSubname without the atomic-agent flow).
   const allAgents =
     selectedA.length > 0 &&
     selectedB.length > 0 &&
-    selectedA.every((r) => r.agentId) &&
-    selectedB.every((r) => r.agentId);
+    selectedA.every((r) => r.kind === "agent" && r.inftId) &&
+    selectedB.every((r) => r.kind === "agent" && r.inftId);
 
   const eitherSideEmpty = selectedA.length === 0 || selectedB.length === 0;
 
@@ -159,8 +171,8 @@ export function PlayNewPicker() {
       // selected agent on the opposing side as the legacy `agentId` when
       // available so the existing route still works.
       const opposingAgent =
-        selectedA.find((r) => r.agentId)?.agentId ??
-        selectedB.find((r) => r.agentId)?.agentId;
+        selectedA.find((r) => r.inftId)?.inftId ??
+        selectedB.find((r) => r.inftId)?.inftId;
       const params = new URLSearchParams({
         subnameA: labelsA,
         subnameB: labelsB,
@@ -171,6 +183,27 @@ export function PlayNewPicker() {
       router.push(`/match?${params.toString()}`);
     }
   };
+
+  if (notDeployed) {
+    return (
+      <div data-testid="picker-not-deployed" className="p-6">
+        <div className="rounded-md border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-100">
+          <p className="font-semibold">No PlayerSubnameRegistrar on this chain.</p>
+          <p className="mt-1">
+            Deploy the contracts (
+            <code className="font-mono text-xs">
+              pnpm exec hardhat run script/deploy.js --network localhost
+            </code>
+            ) and add the address to{" "}
+            <code className="font-mono text-xs">
+              contracts/deployments/&lt;network&gt;.json
+            </code>
+            , or switch your wallet to a chain with a deployed registrar.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col gap-6 p-6">

@@ -53,18 +53,36 @@ export function useChaingammonProfile(label: string | null) {
     query: { enabled: !!node },
   });
 
-  const { data: agentIdRaw, isLoading: agentLoading } = useReadContract({
+  const { data: kindRaw, isLoading: kindLoading } = useReadContract({
     address: playerSubnameRegistrar,
     abi: PlayerSubnameRegistrarABI,
     functionName: "text",
-    args: node ? [node, "agent_id"] : undefined,
+    args: node ? [node, "kind"] : undefined,
+    chainId,
+    query: { enabled: !!node },
+  });
+
+  const { data: inftIdRaw, isLoading: inftLoading } = useReadContract({
+    address: playerSubnameRegistrar,
+    abi: PlayerSubnameRegistrarABI,
+    functionName: "text",
+    args: node ? [node, "inft_id"] : undefined,
     chainId,
     query: { enabled: !!node },
   });
 
   const elo = typeof eloRaw === "bigint" ? Number(eloRaw) : undefined;
-  const agentId =
-    typeof agentIdRaw === "string" && agentIdRaw !== "" ? agentIdRaw : undefined;
+  const kind = typeof kindRaw === "string" && kindRaw !== "" ? kindRaw : undefined;
+  const inftId =
+    typeof inftIdRaw === "string" && inftIdRaw !== "" ? inftIdRaw : undefined;
 
-  return { elo, agentId, node, isLoading: eloLoading || agentLoading };
+  return {
+    elo,
+    kind,
+    inftId,
+    // `agentId` retained as an alias for backward-compat — same value as inftId.
+    agentId: inftId,
+    node,
+    isLoading: eloLoading || kindLoading || inftLoading,
+  };
 }

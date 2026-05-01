@@ -33,11 +33,16 @@ export function useAllChaingammonSubnames() {
   const [isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {
-    if (
-      !client ||
+    // Guard against the zero-address placeholder returned by
+    // useChainContracts() when no PlayerSubnameRegistrar is deployed on
+    // the active chain. Without the guard, `getLogs(0x0)` succeeds with
+    // an empty array but masks the configuration problem — better to
+    // expose it as `notDeployed=true` so callers can render a banner
+    // rather than a confusingly empty roster.
+    const notDeployed =
       !playerSubnameRegistrar ||
-      playerSubnameRegistrar.length < 4
-    ) {
+      playerSubnameRegistrar === "0x0000000000000000000000000000000000000000";
+    if (!client || notDeployed) {
       setEntries([]);
       return;
     }
@@ -75,5 +80,8 @@ export function useAllChaingammonSubnames() {
     };
   }, [client, playerSubnameRegistrar]);
 
-  return { entries, isLoading };
+  const notDeployed =
+    !playerSubnameRegistrar ||
+    playerSubnameRegistrar === "0x0000000000000000000000000000000000000000";
+  return { entries, isLoading, notDeployed };
 }
