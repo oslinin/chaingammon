@@ -105,7 +105,7 @@ uv run uvicorn gnubg_service:app --port 8001
 # Start coach agent node (port 8002)
 uv run uvicorn coach_service:app --port 8002
 
-# Start both via AXL (recommended)
+# Start both at once (recommended)
 bash start.sh
 
 # Run all tests
@@ -147,14 +147,6 @@ pnpm test:e2e     # Playwright suite — required before any frontend commit
 
 See `## Frontend Policies` below for the three rules every frontend change must follow (chain registry, Playwright, no Turbopack).
 
-### AXL (Gensyn Agent eXchange Layer)
-
-```bash
-axl start --config agent/axl-config.json   # start the local AXL node
-axl peers                                   # list connected peers
-axl status                                  # node health + registered services
-```
-
 ## Key Files
 
 | File | Purpose |
@@ -163,10 +155,9 @@ axl status                                  # node health + registered services
 | `log.md` | Frozen archive of Phases 0–33 (no longer maintained) |
 | `CHANGELOG.md` | Keep-a-Changelog summary; the active per-release record |
 | `MISSION.md` | Product vision and principles |
-| `agent/gnubg_service.py` | AXL agent node: gnubg move evaluation via External Player interface |
-| `agent/coach_service.py` | AXL agent node: flan-t5-base LLM coaching hints with 0G Storage RAG context |
-| `agent/axl-config.json` | AXL node config: service registrations for gnubg (8001) and coach (8002) |
-| `agent/start.sh` | Start script: launches AXL node + both agent services |
+| `agent/gnubg_service.py` | Local FastAPI service (port 8001): gnubg move evaluation via External Player interface |
+| `agent/coach_service.py` | Local FastAPI service (port 8002): flan-t5-base LLM coaching hints with 0G Storage RAG context |
+| `agent/start.sh` | Start script: launches both agent FastAPI services |
 | `scripts/upload_gnubg_docs.py` | One-time script: upload gnubg strategy docs to 0G Storage for coach RAG |
 | `contracts/src/PlayerSubnameRegistrar.sol` | ENS-shaped subname registrar. Issues `<label>.chaingammon.eth` subnames with text records (`elo`, `match_count`, `last_match_id`, `style_uri`, `archive_uri`). |
 | `contracts/src/EloMath.sol` | Fixed-point ELO formula — test extensively |
@@ -344,4 +335,4 @@ Why: a frozen dev machine costs more time than a slightly slower bundler. Stabil
 
 ## Out of Scope (do not implement without asking)
 
-Commit-reveal dice / VRF, betting/prediction markets, ELO derivative tokens, anti-cheat for human ratings, ZK move proofs, 0G Compute, mainnet deployment, Gensyn integration.
+Commit-reveal dice / VRF, betting/prediction markets, ELO derivative tokens, anti-cheat for human ratings, ZK move proofs, 0G Compute, mainnet deployment.

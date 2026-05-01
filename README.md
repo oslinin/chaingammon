@@ -2,7 +2,7 @@
 
 > **An open protocol for portable backgammon reputation.** Your wallet (or your AI agent) is your player profile. Your ENS subname is your portable identity. Your full match archive lives on 0G Storage, owned by you forever.
 
-Built for ETHGlobal Open Agents. Uses **ENS** for portable player identity, **0G** for agent iNFTs and the match archive, and **Gensyn AXL** (Agent eXchange Layer — a permissionless P2P mesh for agent-to-agent communication) for game relay, move evaluation, and the LLM coach that narrates each turn.
+Built for ETHGlobal Open Agents. Uses **ENS** for portable player identity and **0G** for agent iNFTs, the match archive, and the LLM coach that narrates each turn. Move evaluation runs as a small local agent process on each player's machine — no central server.
 
 ---
 
@@ -14,7 +14,7 @@ A decentralized, verifiable ELO rating ledger for backgammon — for humans and 
 - **Verifiable.** Every match settles to a MatchRegistry contract. Result, ELO delta, and a hash of the full game record (archived on 0G Storage) are all public and cryptographically tied together — anyone can audit any rating change end-to-end.
 - **Portable.** Each player's rating lives in their wallet via an ENS subname (`<name>.chaingammon.eth`) whose text records hold current ELO, match count, and a link to the full archive. Switch frontends, switch clients — reputation comes with you.
 - **Living, learning agents.** Each AI agent _is_ an ERC-7857 iNFT minted on 0G Chain — the token itself, not a label pointing at an off-chain model. The iNFT pins two hashes that point at 0G Storage: a shared gnubg neural-net base, and a per-agent **experience overlay** that the protocol rewrites after every match. The iNFT learns. Transfer the token, transfer the brain — with the verifiable match history attached.
-- **Decentralised play layer.** There is no central game server. Instead, each player runs a pair of **Gensyn AXL** agent nodes locally — a gnubg node that evaluates moves and an LLM coach node that narrates each turn. The browser talks to those local nodes over AXL (Agent eXchange Layer), a permissionless P2P mesh. Current v1 supports human-vs-agent only; human-vs-human requires peer discovery on top of AXL, which is a roadmap item.
+- **Decentralised play layer.** There is no central game server. Each player runs a pair of small local agent processes — a gnubg-driven move evaluator and an LLM coach that narrates each turn — and the browser talks to them over plain HTTP on `localhost`. Current v1 supports human-vs-agent only; human-vs-human requires peer discovery, which is a roadmap item.
 
 ---
 
@@ -37,7 +37,7 @@ This is what makes the agent in _Open Agents_ an actual agent. gnubg is a determ
 
 ### 2. Full decentralization — no operator anywhere in the path
 
-The pivot to **Gensyn AXL** removed the central game server: each player runs their own gnubg + coach nodes locally and the browser talks to them over a permissionless P2P mesh. Settlement is the last centralization point, and a naïve two-sig design has a known DoS — the loser refuses to sign. So the design uses a **session-key state channel with cooperative close**:
+The pivot to **local agent processes** removed the central game server: each player runs their own gnubg + coach services on `localhost` and the browser hits them directly over HTTP. Settlement is the last centralization point, and a naïve two-sig design has a known DoS — the loser refuses to sign. So the design uses a **session-key state channel with cooperative close**:
 
 - At game start, the player's wallet authorizes an ephemeral in-browser session key — _one_ MetaMask popup.
 - Per-move signing during play uses the session key directly — **no MetaMask popups during play**.
@@ -49,7 +49,7 @@ Combined, these two pivots remove every "trust the operator" assumption from the
 | Layer           | Pre-pivot                              | Post-pivot                                                             |
 | --------------- | -------------------------------------- | ---------------------------------------------------------------------- |
 | Game state      | Server's RAM                           | Browser state machine                                                  |
-| Move evaluation | Server's gnubg                         | Player's local gnubg over AXL                                          |
+| Move evaluation | Server's gnubg                         | Player's local gnubg over HTTP                                         |
 | Coach inference | Hosted LLM (someone's API key)         | Verifiable inference on 0G Compute                                     |
 | Dice rolling    | Server PRNG                            | `crypto.getRandomValues` (player's machine; commit-reveal in v2)       |
 | Settlement      | `onlyOwner recordMatch` (deployer key) | `settleWithSessionKeys` — pre-authorized state channel, anyone submits |
@@ -98,7 +98,7 @@ Any front-end can read another player's ENS subname and reconstruct their full r
 
 1. Connect a wallet → frontend resolves (or auto-mints) your `<name>.chaingammon.eth` subname
 2. Pick an opponent — another human's subname or an AI agent (e.g. `gnubg-classic.chaingammon.eth`)
-3. Play a game — move requests go from the browser to your local gnubg AXL node (no central server); the LLM coach AXL node narrates each turn in plain English
+3. Play a game — move requests go from the browser to your local gnubg agent process (no central server); the local LLM coach narrates each turn in plain English
 4. Game ends → both players sign the result → `MatchRegistry.recordMatch(sig1, sig2)` verifies signatures on-chain → ENS text records updated, full game record archived on 0G Storage
 5. Any other tool can read your subname and import your full backgammon DNA
 
@@ -305,30 +305,30 @@ Anyone can later resolve a match by id, read `MatchInfo.gameRecordHash`, fetch t
 
 ---
 
-## Gensyn AXL — the Play Layer
+## Local Agent Processes — the Play Layer
 
 Pre-pivot, all game logic ran on a central FastAPI server: the browser sent moves to it, it ran gnubg, it rolled dice, it signed settlement transactions. That server was a single point of trust and failure.
 
-Post-pivot, there is no central server. The browser talks to **local AXL agent nodes** over the Gensyn AXL (Agent eXchange Layer) — a permissionless, encrypted P2P mesh. Each player runs the nodes themselves; the mesh routes traffic between them without a coordinator.
+Post-pivot, there is no central server. The browser talks directly to two small **local agent processes** over plain HTTP on `localhost`. Each player runs them on their own machine; if a process is down, only that player's session is affected — there is nothing shared to fail for everyone at once.
 
-### The two agent nodes
+### The two agent processes
 
-Each player's local stack exposes two services through AXL:
+Each player's local stack exposes two FastAPI services on `localhost`:
 
-| Node                                       | Port | What it does                                                                                                                                               |
-| ------------------------------------------ | ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **gnubg agent** (`agent/gnubg_service.py`) | 8001 | Wraps the gnubg subprocess via its External Player interface. Accepts a `position_id` + dice and returns the best legal move and equity-ranked candidates. |
-| **LLM coach** (`agent/coach_service.py`)   | 8002 | Narrates each turn in plain English. Uses flan-t5-base with gnubg strategy docs (uploaded to 0G Storage) as RAG context.                                   |
+| Process                                      | Port | What it does                                                                                                                                               |
+| -------------------------------------------- | ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **gnubg agent** (`agent/gnubg_service.py`)   | 8001 | Wraps the gnubg subprocess via its External Player interface. Accepts a `position_id` + dice and returns the best legal move and equity-ranked candidates. |
+| **LLM coach** (`agent/coach_service.py`)     | 8002 | Narrates each turn in plain English. Uses flan-t5-base with gnubg strategy docs (uploaded to 0G Storage) as RAG context.                                   |
 
-AXL (`agent/axl-config.json`) proxies the browser's HTTP requests to whichever service is registered under those names, and routes requests destined for the opponent's node over the encrypted Yggdrasil mesh.
+The browser hits `http://localhost:8001` and `http://localhost:8002` directly via `fetch`. CORS is open in dev (`allow_origins=["*"]`) since both services live on the player's own machine.
 
-### Why AXL and not a server?
+### Why local processes and not a server?
 
-A central server is a trust assumption: it can cheat on dice, misreport moves, or go down. AXL removes it from the critical path entirely. Both nodes run locally — the player can audit them. Settlement is still on-chain (two ECDSA signatures on `MatchRegistry`) so the result is verifiable even if one player disputes it.
+A central server is a trust assumption: it can cheat on dice, misreport moves, or go down. Putting both services on the player's own machine removes that assumption — the player can audit the processes, restart them, swap them. Settlement is still on-chain (two ECDSA signatures on `MatchRegistry`) so the result is verifiable even if one player disputes it.
 
 ### Current limitations
 
-v1 supports **human-vs-agent** only. The agent's gnubg node evaluates the AI's moves; the human moves in the browser. Human-vs-human would require a peer discovery / matchmaking layer so two players' AXL nodes can find each other — this is a roadmap item (the transport already works; the discovery doesn't exist yet).
+v1 supports **human-vs-agent** only. The agent's gnubg process evaluates the AI's moves; the human moves in the browser. Human-vs-human would require a peer discovery / matchmaking layer so two players' machines can find each other — this is a roadmap item.
 
 ### Match flow — browser-driven game state
 
@@ -352,7 +352,7 @@ interface MatchState {
 }
 ```
 
-**`gnubg_service` endpoints** (port 8001, served via AXL):
+**`gnubg_service` endpoints** (FastAPI on `localhost:8001`):
 
 | Endpoint         | Request                               | Response                                                                 |
 | ---------------- | ------------------------------------- | ------------------------------------------------------------------------ |
@@ -393,7 +393,7 @@ forfeit
 
 Dice are rolled client-side using `crypto.getRandomValues`. For v1 (human-vs-agent) the human is rolling for themselves; trust is local. Human-vs-human commit-reveal is a roadmap item.
 
-**Why this shape?** gnubg already encodes every backgammon rule (move legality, dice consumption, hits, bear-off, game-over) inside `submit_move`. Re-implementing those rules in TypeScript would either duplicate years of work or quietly diverge from the engine the agent uses. Putting `/apply` on the agent node keeps gnubg authoritative on rules while letting the browser own state.
+**Why this shape?** gnubg already encodes every backgammon rule (move legality, dice consumption, hits, bear-off, game-over) inside `submit_move`. Re-implementing those rules in TypeScript would either duplicate years of work or quietly diverge from the engine the agent uses. Putting `/apply` on the local agent process keeps gnubg authoritative on rules while letting the browser own state.
 
 **Out of scope at this layer:** coach narration (delivered by `coach_service`), two-signature on-chain settlement (driven by the wallet from the post-game banner), cube doubling, and human-vs-human peer discovery.
 
@@ -408,25 +408,17 @@ Dice are rolled client-side using `crypto.getRandomValues`. For v1 (human-vs-age
                        │  replay, live game,      │
                        │  LLM coach panel         │
                        └────────────┬─────────────┘
-                                    │ localhost:9002
-                                    ▼
-                       ┌──────────────────────────┐
-                       │   AXL node (local)       │
-                       │  Gensyn Agent eXchange   │
-                       │  Layer — P2P encrypted   │
-                       │  mesh on Yggdrasil       │
-                       └────────┬─────────────────┘
-                                │ AXL mesh
-              ┌─────────────────┼─────────────────┐
-              ▼                 ▼                  ▼
-   ┌─────────────────┐  ┌──────────────┐  ┌──────────────┐
-   │  gnubg agent    │  │ coach agent  │  │  opponent    │
-   │  (agent/)       │  │  (agent/)    │  │  AXL node    │
-   │  FastAPI+gnubg  │  │  flan-t5-    │  │  (H vs H)    │
-   │  POST /move     │  │  base LLM    │  │              │
-   └────────┬────────┘  └──────────────┘  └──────────────┘
-            │ browser signs result
-            ▼
+                                    │ HTTP fetch to localhost
+              ┌─────────────────────┴──────────────────────┐
+              ▼                                            ▼
+   ┌──────────────────────┐                  ┌──────────────────────┐
+   │  gnubg agent         │                  │  coach agent         │
+   │  (agent/, :8001)     │                  │  (agent/, :8002)     │
+   │  FastAPI + gnubg     │                  │  FastAPI + flan-t5   │
+   │  POST /move /apply   │                  │  POST /coach         │
+   └──────────┬───────────┘                  └──────────────────────┘
+              │ browser signs result
+              ▼
    ┌──────────────────────────────────────────────┐
    │  MatchRegistry.recordMatch(sig1, sig2)       │
    │  + PlayerSubnameRegistrar.setTextBatch x2    │
@@ -449,8 +441,7 @@ Dice are rolled client-side using `crypto.getRandomValues`. For v1 (human-vs-age
 | --------------------- | -------------------------------------------------------------- |
 | Frontend              | Next.js 16, React 19, TypeScript, Tailwind CSS 4               |
 | Wallet / chain        | wagmi 3, viem 2, @tanstack/react-query 5                       |
-| AXL agent nodes       | Python 3.12, FastAPI, uvicorn, flan-t5-base (coach LLM)        |
-| P2P relay             | Gensyn AXL (Agent eXchange Layer) — Yggdrasil mesh             |
+| Local agent processes | Python 3.12, FastAPI, uvicorn, flan-t5-base (coach LLM)        |
 | Backgammon engine     | GNU Backgammon (gnubg) via External Player interface           |
 | Smart contracts       | Solidity 0.8.24, Hardhat 2, evmVersion cancun, OpenZeppelin v5 |
 | Blockchain            | 0G Chain testnet (EVM, chainId 16602)                          |
@@ -465,7 +456,6 @@ Dice are rolled client-side using `crypto.getRandomValues`. For v1 (human-vs-age
 | **ENS**        | Portable player identity. `<name>.chaingammon.eth` subnames per player; text records (`elo`, `match_count`, `last_match_id`, `style_uri`, `archive_uri`) carry the reputation. | `contracts/src/PlayerSubnameRegistrar.sol`                |
 | **0G Chain**   | Hosts AgentRegistry, MatchRegistry, EloMath, and the subname registrar.                                                                                                        | `contracts/src/`, `contracts/deployments/0g-testnet.json` |
 | **0G Storage** | Per-match game record archive (Log); per-player style profile (KV); per-agent encrypted gnubg weights (Blob); gnubg strategy docs blob (coach RAG context).                    | `agent/coach_service.py`, `scripts/upload_gnubg_docs.py`  |
-| **Gensyn AXL** | P2P encrypted mesh (Yggdrasil) that routes browser requests to the local gnubg and coach agent services without a central server.                                              | `agent/axl-config.json`, `agent/start.sh`                 |
 
 ### Claude Skills Used
 
@@ -491,7 +481,7 @@ Chaingammon is the layer that fixes this. It is not a backgammon website — it 
 ### For players
 
 - **You own your rating.** It lives in your ENS subname (`<name>.chaingammon.eth`) and can be read by any tool without your permission. No platform can revoke or alter it.
-- **No central server to trust.** The play layer runs on your machine via local AXL nodes; the settlement path is two wallet signatures verified on-chain; the archive is permanent on 0G Storage. There is no Chaingammon operator key that can cheat or disappear.
+- **No central server to trust.** The play layer runs on your machine via local agent processes; the settlement path is two wallet signatures verified on-chain; the archive is permanent on 0G Storage. There is no Chaingammon operator key that can cheat or disappear.
 - **Portable identity across frontends.** Switch to any Chaingammon-compatible client and your ELO, history, and subname come with you — same as switching email clients without losing your address.
 - **One MetaMask popup per match.** The session-key channel (`settleWithSessionKeys`) means a single wallet signature at game start authorises the entire match. No interruptions during play; one final popup to settle on-chain.
 
@@ -505,7 +495,7 @@ Chaingammon is the layer that fixes this. It is not a backgammon website — it 
 
 - **Open protocol.** There are no proprietary APIs. ENS subnames, 0G Storage blob hashes, and on-chain match IDs are all public primitives. A new frontend can be written in a weekend.
 - **Composable reputation.** ELO in a text record is as composable as DNS. Other protocols can build on it — leaderboards, pairing systems, stake-your-rating games — without permission.
-- **Decentralised coach.** The LLM coaching hints run locally on the player's AXL node (flan-t5-base) and use strategy docs fetched from 0G Storage as RAG context. No hosted inference key required.
+- **Decentralised coach.** The LLM coaching hints run locally on the player's machine (flan-t5-base via the `coach` agent process) and use strategy docs fetched from 0G Storage as RAG context. No hosted inference key required.
 
 ---
 
@@ -519,7 +509,7 @@ Chaingammon is the layer that fixes this. It is not a backgammon website — it 
 
 ### v1 scope boundaries
 
-- **Human-vs-agent only.** Human-vs-human requires peer discovery so two players' AXL nodes can find each other on the Yggdrasil mesh. The transport works; the matchmaking layer doesn't exist yet.
+- **Human-vs-agent only.** Human-vs-human requires peer discovery so two players' machines can find each other; that layer doesn't exist yet.
 - **Coach uses flan-t5-base locally.** The README's "Innovations" section describes a Qwen 2.5 7B coach on 0G Compute. In shipped v1 the coach is flan-t5-base running locally. 0G Compute integration (for verifiable inference) is a roadmap item.
 - **ENS on 0G testnet, not real ENS.** The subname registrar is ENS-shaped (namehash, text records, resolver semantics) but deployed on 0G testnet rather than wired into real ENS on Sepolia. Moving to a real ENS L2 (Linea Durin) is a configuration change, not a redesign.
 - **No cube doubling UI.** The backgammon doubling cube is tracked by gnubg internally but the frontend does not surface cube offers/takes. This is visual polish, not a protocol gap.
@@ -529,7 +519,7 @@ Chaingammon is the layer that fixes this. It is not a backgammon website — it 
 
 ## GitHub Pages Deployment
 
-The frontend is a fully static Next.js app (`output: 'export'`). No server is needed at runtime — the browser talks directly to the player's local AXL agent nodes and to public RPC endpoints for on-chain reads.
+The frontend is a fully static Next.js app (`output: 'export'`). No server is needed at runtime — the browser talks directly to the player's local agent processes on `localhost` and to public RPC endpoints for on-chain reads.
 
 ### One-time contract redeploy (for `selfMintSubname`)
 
@@ -629,11 +619,10 @@ Leave `BASE_PATH` unset (or empty) if you're deploying to a custom domain at roo
 - Python 3.12+, [uv](https://github.com/astral-sh/uv) or plain `pip`
 - Node 20+, [pnpm](https://pnpm.io)
 - `gnubg` — `sudo apt install gnubg` (Ubuntu/Debian) or `brew install gnubg` (macOS)
-- Gensyn AXL binary — `axl` must be in PATH (see Gensyn docs for install)
 
 ### Mental model
 
-Contracts live on a chain and are deployed once. Two long-running local processes: **AXL agent node** (gnubg + coach FastAPI services + AXL relay) and **frontend** (Next.js). Settlement is trustless — both player wallets sign the result in-browser; no backend server needed.
+Contracts live on a chain and are deployed once. Two long-running local processes: **agent processes** (gnubg + coach FastAPI services on `localhost`) and **frontend** (Next.js). Settlement is trustless — both player wallets sign the result in-browser; no backend server needed.
 
 You can run against either chain:
 
@@ -687,14 +676,14 @@ When the script finishes it prints the new addresses; copy them into **frontend/
 Two terminals.
 
 ```bash
-# terminal 1: AXL agent node (gnubg + coach + AXL relay)
+# terminal 1: local agent processes (gnubg :8001 + coach :8002)
 cd agent && ./start.sh
 
 # terminal 2: frontend
 pnpm frontend:dev
 ```
 
-The AXL node generates a public key on first run. Copy it to the `gnubg_axl_pubkey` ENS text record on `chaingammon.eth` so the frontend can discover the node without a server.
+The agent processes listen on `localhost:8001` and `localhost:8002`; the frontend hits them directly via `fetch`.
 
 #### Sub-flows
 
@@ -714,7 +703,7 @@ cd contracts && pnpm exec hardhat node
 cd contracts && pnpm exec hardhat run script/deploy.js --network localhost
 # copy resulting addresses from contracts/deployments/localhost.json into frontend/.env.local
 
-# terminal 3: AXL agent node
+# terminal 3: local agent processes
 cd agent
 ./start.sh
 
@@ -732,13 +721,11 @@ A pre-configured VS Code Tasks workflow (`.vscode/tasks.json`, committed) wraps 
 | ----------------------------- | -------------------------------------------------------------------------------- |
 | `Localhost: hardhat node`     | `pnpm exec hardhat node` in `contracts/` (long-running)                          |
 | `Localhost: deploy contracts` | Polls port 8545 until the chain is up, then runs the localhost deploy (one-shot) |
-| `Localhost: agent node`       | `agent/start.sh` (gnubg :8001 + coach :8002; AXL relay only if installed)        |
+| `Localhost: agent node`       | `agent/start.sh` (gnubg :8001 + coach :8002)                                     |
 | `Localhost: frontend`         | `pnpm frontend:dev` (Next.js on :3000)                                           |
 | `Localhost: launch all`       | Compound task — fires all four in parallel                                       |
 
 To inspect or stop a backgrounded task: **Tasks: Show Running Tasks** or **Tasks: Terminate Task** in the command palette.
-
-The `agent` task no longer requires AXL — `start.sh` detects whether the `axl` binary is on `PATH` and skips the Yggdrasil relay when it isn't, since the local browser reaches the FastAPI services directly.
 
 Upload gnubg strategy docs to 0G Storage (one-time — sets the coach RAG context blob):
 
@@ -769,7 +756,7 @@ The Next.js app is a fully static export. All routes are client-side; the sideba
 | Route | Page | Data source |
 | --- | --- | --- |
 | `/` | Agent discovery + matchmaking | On-chain reads via wagmi |
-| `/match?agentId=N` | Live match against agent N | AXL gnubg service (`:8001`) |
+| `/match?agentId=N` | Live match against agent N | local gnubg service (`:8001`) |
 | `/expenses` | 0G token spending ledger | localStorage |
 | `/log/[matchId]` | 0G Storage log for the current match | FastAPI server `/game-records/{rootHash}` (live) |
 | `/ens/[matchId]` | ENS text records before/after keeper settlement | `PlayerSubnameRegistrar.text()` on-chain (live) |
@@ -833,7 +820,7 @@ After deploy, contract addresses live in `contracts/deployments/0g-testnet.json`
 
 For the full version: see [ROADMAP.md](ROADMAP.md). Architecture overview: [ARCHITECTURE.md](ARCHITECTURE.md).
 
-- **v1 (this submission):** Human-vs-human and human-vs-agent gameplay; on-chain ELO; ENS subnames as identity; agent iNFTs with encrypted gnubg weights; full match archive on 0G Storage; two-signature trustless settlement via Gensyn AXL
+- **v1 (this submission):** Human-vs-human and human-vs-agent gameplay; on-chain ELO; ENS subnames as identity; agent iNFTs with encrypted gnubg weights; full match archive on 0G Storage; two-signature trustless settlement
 - **v2:** Commit-reveal dice (trustless randomness); per-player anti-cheat heuristics; agent style overlay that learns from each match; subnames moved to L2 ENS for cheap onboarding
 - **v3:** Agent-vs-agent autonomous tournaments; ZK proofs of agent inference (zkML); 0G Compute for verifiable inference; betting markets; ELO derivative tokens
 - **v4:** Open agent marketplace — bring your own engine, stake your iNFT
@@ -865,11 +852,9 @@ For the full version: see [ROADMAP.md](ROADMAP.md). Architecture overview: [ARCH
 - [ ] Match game records visible on 0G Storage
 - [ ] Write-up: which 0G features used (Chain, Storage)
 
-**Gensyn AXL:**
+**Settlement:**
 
-- [ ] AXL agent node running gnubg + coach services
 - [x] Session-key state channel: `MatchRegistry.settleWithSessionKeys(humanAuthSig, resultSig, agentId, ...)` — human wallet authorises an in-browser session key at game start; session key signs the result; either side can submit unilaterally
-- [ ] Write-up: AXL mesh architecture and trustless settlement flow
 
 **Main track:**
 

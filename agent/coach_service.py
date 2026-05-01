@@ -1,8 +1,9 @@
 """
-coach_service.py — AXL agent node: LLM coaching hints.
+coach_service.py — local FastAPI agent process: LLM coaching hints.
 
-@notice Exposed via AXL (Gensyn Agent eXchange Layer) as an A2A service on a
-        separate port from gnubg_service. Run alongside AXL:
+@notice Run as a plain HTTP service on the player's own machine on a
+        separate port from gnubg_service. The browser hits localhost:8002
+        directly via fetch. Start with:
 
           uvicorn coach_service:app --port 8002
 

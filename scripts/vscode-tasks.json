@@ -68,7 +68,7 @@
     },
     {
       "label": "Localhost: agent node",
-      "detail": "Terminal 3 — gnubg_service (port 8001) + coach_service (port 8002) + AXL relay if installed. Long-running.",
+      "detail": "Terminal 3 — gnubg_service (port 8001) + coach_service (port 8002). Long-running.",
       "type": "shell",
       "command": "./start.sh; exec $SHELL",
       "options": { "cwd": "${workspaceFolder}/agent" },

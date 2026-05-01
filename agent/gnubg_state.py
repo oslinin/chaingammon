@@ -1,6 +1,6 @@
 """gnubg_state.py — pure bit-unpacking decoders for gnubg ids.
 
-Ported from `server/app/game_state.py` so the AXL agent node is fully
+Ported from `server/app/game_state.py` so the local agent process is fully
 self-contained. NO gnubg subprocess, NO FastAPI here — these helpers
 exist so HTTP endpoints can hand back the unified `MatchState` shape
 without each one shelling out twice.
