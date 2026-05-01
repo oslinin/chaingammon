@@ -21,22 +21,22 @@ Chaingammon: Backgammon on chain
 
 **Verifiable**: matches are settled on chain; ELO is verifiable through full game records.
 
-**Agentic**: while decentralization is necessary to bring this ancient game backgammon into the future, machine learning unlocks
+**Agentic**: while decentralization is necessary to bring this ancient game backgammon into the future, machine learning unlocks new possibilities for optimal play through:
 
-1. new possibilities for optimal play through
-   1. agent/human interaction
-      1. agent can coach human to increase ELO
-      2. agent can process data about opponents/team members to nudge move suggestions
-   2. model collaboration between agents in high dimensional ways by allowing agents to train/play together
-   3. career optimization: agents train for long term equity, considering other agents style profile.
-      1. This goes beyond GNUBG’s optimal move selection to unlock the possibility of
-        1. Star players
-        2. Star teams of agents
-        3. Star teams of humans/agents. This is similar to how Claude Code is better at coding than humans, but the interaction of the two is still optimal.
-        4. This also unlocks new markets:
-         1. betting
-         2. prediction/derivatives
-         3. star agent bonds/equity
+1.  Agent/human interaction
+    - Agent can coach human to increase ELO
+    - Agent can process data about opponents/team members to nudge move suggestions
+2.  Model collaboration between agents in high dimensional ways by allowing agents to train/play together
+3.  Career optimization: agents train for long term equity, considering other agents style profile.
+    - This goes beyond GNUBG’s optimal move selection to unlock the possibility of
+      1. Star players
+      2. Star teams of agents
+      3. Star teams of humans/agents. This is similar to how Claude Code is better at coding than humans, but the interaction of the two is still optimal.
+      4. This also unlocks new markets:
+         - Betting
+         - Prediction/derivatives
+         - Star agent bonds/equity
+      5. If it should become necessary, agents paid for resources for services currently performed by keeperhub below can offer users to stake into the ecosystem.
 
 ## **Detail:**
 
