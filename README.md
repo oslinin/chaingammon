@@ -160,6 +160,8 @@ There is **no static corpus** in the loop. The only corpus-shaped step is one-ti
 
 The career-mode head adds contextual feature inputs (teammate style, opponent profile, tournament position, stake size) and optimizes a longer-horizon return; the same backprop machinery applies.
 
+**Career-mode training (the `--career-mode` flag).** The default trainer fills the value net's `extras` slot with a per-agent random projection — the architecture works, the encoder is a placeholder. `--career-mode` swaps that placeholder for `agent/career_features.encode_career_context`, which projects opponent style (6 axes from `agent_overlay.CATEGORIES`), teammate style (zeros for solo matches), `log1p(stake_wei)/70`, tournament position, and a team-match flag into a 16-d vector. The trainer samples a fresh `CareerContext` per match (uniform style, log-uniform stake on `[0, 1e21]` wei, 50/50 teammate) so the extras head sees a wide distribution of contexts. Trained checkpoints can then meaningfully condition on context at inference time, which is what makes "agent vs human" and "agent + human team" different in practice.
+
 **Pseudocode** (one self-play training match):
 
 ```python
@@ -287,10 +289,12 @@ The environment in the demo is a deliberately tiny pip-race abstraction so the f
 | `--drand-digest <hex>` | Derive every turn's dice via `drand_dice.derive_dice(digest, turn_index)` instead of local PRNG — the same deterministic mapping production uses. Get a fresh round digest from `scripts/fetch_drand_round.py`. |
 | `--upload-to-0g` | After saving, AES-256-GCM-encrypt the checkpoint with a fresh key, write the key to `<ckpt>.key`, and upload the sealed blob to 0G Storage via `og-bridge`. Prints the resulting `rootHash` (what KeeperHub commits to `iNFT.dataHashes[1]` in production). |
 | `--init-from-0g <root_hash>` + `--init-key <path>` | Resume training from a 0G Storage checkpoint. Fetches the sealed blob, decrypts with the local key file, and continues with `match_count` carried forward. Mutually exclusive with `--load-checkpoint`. |
+| `--career-mode` | Replace the placeholder per-agent random extras with `career_features.encode_career_context(...)` over a freshly-sampled `CareerContext` per match. Requires `--extras-dim >= 16`. The career-mode head learns to use opponent style, teammate style, stake, tournament position, and the team-match flag. |
 | `--launch-tensorboard` | Spawn `tensorboard --logdir <logdir>` after training. |
 
 **Supporting modules** (each with a focused test file):
 
+- `agent/career_features.py` — career-mode feature encoder. `encode_career_context(ctx, dim=16)` projects opponent style, teammate style, stake (log1p/70), tournament position, and team-match flag into a fixed-dim vector consumed by the value net's extras head. `sample_career_context(rng)` draws synthetic contexts for the trainer's `--career-mode` path.
 - `agent/drand_dice.py` — derive dice from a drand round digest. The contract is `dice = keccak256(round_digest ‖ turn_index_be8) mod 36`. Pure stdlib, no network.
 - `agent/checkpoint_encryption.py` — AES-256-GCM wrap/unwrap. Sealed blob is `nonce(12) ‖ ciphertext_with_tag`. Used to encrypt checkpoints before upload.
 - `agent/og_storage_upload.py` — shells out to the `og-bridge` Node CLI to publish bytes to 0G Storage and return the Merkle root.

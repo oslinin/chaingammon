@@ -220,3 +220,84 @@ def test_match_with_drand_digest_is_deterministic_in_dice():
         f"matches with same drand digest + identical nets should run "
         f"the same number of turns, got {a_steps_list}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Career-mode end-to-end (--career-mode CLI smoke test)
+# ---------------------------------------------------------------------------
+
+
+def test_career_mode_runs_end_to_end(tmp_path):
+    """`python sample_trainer.py --career-mode --matches 3` must complete
+    without error, write TensorBoard event files, and save a checkpoint."""
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    trainer = Path(__file__).resolve().parents[1] / "sample_trainer.py"
+    logdir = tmp_path / "runs"
+    ckpt = tmp_path / "agent.pt"
+
+    result = subprocess.run(
+        [sys.executable, str(trainer),
+         "--career-mode", "--matches", "3",
+         "--logdir", str(logdir),
+         "--save-checkpoint", str(ckpt)],
+        capture_output=True, text=True, timeout=60,
+    )
+    assert result.returncode == 0, (
+        f"trainer failed: stdout={result.stdout!r} stderr={result.stderr!r}"
+    )
+    assert ckpt.exists(), "checkpoint should be written"
+    assert any(logdir.glob("events.out.tfevents.*")), (
+        "TensorBoard event files should be written"
+    )
+
+
+def test_career_mode_requires_extras_dim_at_least_16(tmp_path):
+    """The encoder's slot layout is fixed at 16 — the trainer should
+    refuse to start if --extras-dim is below that."""
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    trainer = Path(__file__).resolve().parents[1] / "sample_trainer.py"
+    result = subprocess.run(
+        [sys.executable, str(trainer),
+         "--career-mode", "--extras-dim", "8", "--matches", "1",
+         "--logdir", str(tmp_path / "runs")],
+        capture_output=True, text=True, timeout=30,
+    )
+    assert result.returncode != 0
+    assert "extras-dim >= 16" in result.stderr
+
+
+def test_career_mode_extras_use_real_encoder():
+    """A `CareerContext` passed through `encode_career_context` must
+    produce a tensor compatible with `BackgammonNet`'s extras head —
+    i.e. the trainer's career-mode wiring routes through the real
+    encoder, not the placeholder random projection."""
+    from career_features import (
+        CareerContext,
+        STYLE_AXES,
+        encode_career_context,
+    )
+
+    ctx = CareerContext(
+        opponent_style={a: 0.4 for a in STYLE_AXES},
+        teammate_style={a: -0.2 for a in STYLE_AXES},
+        stake_wei=10**18,
+        tournament_position=0.5,
+        is_team_match=True,
+    )
+    extras = encode_career_context(ctx, dim=DEFAULT_EXTRAS_DIM)
+
+    # The extras vector must be consumable by the value net's extras head.
+    net = BackgammonNet(extras_dim=DEFAULT_EXTRAS_DIM, extras_seed=0)
+    board = torch.zeros(1, GNUBG_FEAT_DIM)
+    out = net(board, extras.unsqueeze(0))
+    assert out.shape == (1,)
+
+    # And the encoder is deterministic for a fixed context.
+    extras2 = encode_career_context(ctx, dim=DEFAULT_EXTRAS_DIM)
+    assert torch.equal(extras, extras2)

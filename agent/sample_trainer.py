@@ -26,6 +26,22 @@ Usage:
 then open http://localhost:6006 to watch loss, win-rate, and parameter
 histograms evolve. Without --launch-tensorboard the script just writes
 events; run `tensorboard --logdir runs` separately to view them.
+
+Two trainer modes:
+
+  Default (single-game-mode demo):
+    `extras` is a deterministic per-agent random projection (see
+    `encode_extras`). The architecture works; the encoder is a
+    placeholder.
+
+  Career mode (`--career-mode`):
+    `extras` is `career_features.encode_career_context(ctx)` over a
+    fresh `CareerContext` per match — opponent style, teammate style,
+    stake size, tournament position, team-match flag. The value net
+    learns to use these contextual inputs across the training
+    distribution. Requires `--extras-dim >= 16`. Eval extras stay
+    fixed across the run so `eval/win_rate_vs_frozen` is comparable
+    match to match.
 """
 
 from __future__ import annotations
@@ -45,6 +61,11 @@ import torch
 from torch import nn
 from torch.utils.tensorboard import SummaryWriter
 
+from career_features import (
+    CareerContext,
+    encode_career_context,
+    sample_career_context,
+)
 from drand_dice import derive_dice
 
 
@@ -194,12 +215,13 @@ def encode_state(state: RaceState, perspective: int) -> torch.Tensor:
 
 
 def encode_extras(extras_dim: int, agent_id: int, *, seed: int) -> torch.Tensor:
-    """Per-agent contextual feature vector (the "personality" inputs).
+    """Placeholder per-agent extras for the standalone-demo path.
 
-    Production code would compute this from teammate identity,
-    opponent style profile, tournament position, stake size, etc. For
-    the demo we use a deterministic per-agent random projection so the
-    extras head has *something* to learn.
+    A deterministic per-agent random projection so the extras head
+    has *something* to learn when the trainer is invoked without
+    `--career-mode`. The career-mode path computes extras through
+    `career_features.encode_career_context` over a freshly-sampled
+    `CareerContext` per match — that's the real encoder.
     """
     g = torch.Generator().manual_seed(seed + agent_id)
     return torch.randn(extras_dim, generator=g)
@@ -468,6 +490,15 @@ def main() -> None:
                              "an earlier --upload-to-0g run (the .key file "
                              "alongside the checkpoint). Required with "
                              "--init-from-0g.")
+    parser.add_argument("--career-mode", action="store_true",
+                        help="Replace the placeholder per-agent random "
+                             "extras with `career_features.encode_career_"
+                             "context(...)` over a freshly-sampled "
+                             "CareerContext per match (opponent style, "
+                             "teammate style, stake, tournament position, "
+                             "team-match flag). The value-net's extras "
+                             "head learns to use these contextual inputs "
+                             "instead of memorizing one random projection.")
     args = parser.parse_args()
 
     if args.init_from_0g and args.load_checkpoint:
@@ -510,10 +541,31 @@ def main() -> None:
         agent = BackgammonNet(extras_dim=args.extras_dim, core_seed=0xBACC, extras_seed=1)
     opponent = BackgammonNet(extras_dim=args.extras_dim, core_seed=0xBACC, extras_seed=2)
 
-    agent_extras = (encode_extras(args.extras_dim, agent_id=1, seed=args.seed)
-                    if args.extras_dim > 0 else torch.zeros(0))
-    opponent_extras = (encode_extras(args.extras_dim, agent_id=2, seed=args.seed)
-                       if args.extras_dim > 0 else torch.zeros(0))
+    if args.career_mode and args.extras_dim < 16:
+        parser.error("--career-mode requires --extras-dim >= 16 "
+                     "(career_features.encode_career_context slot layout)")
+
+    # Career-mode samples a fresh context per match (see the loop below);
+    # the placeholder path is a single deterministic projection per agent.
+    career_rng = random.Random(args.seed) if args.career_mode else None
+
+    if args.career_mode:
+        # Eval contexts are fixed across the run so the win-rate-vs-frozen
+        # scalar is comparable from match to match. The contexts are
+        # asymmetric (agent has a teammate, opponent does not) to give
+        # the extras head a non-trivial signal in eval as well.
+        eval_agent_ctx = sample_career_context(random.Random(args.seed + 1001),
+                                                force_team=True)
+        eval_opponent_ctx = sample_career_context(random.Random(args.seed + 1002),
+                                                   force_team=False)
+        agent_extras = encode_career_context(eval_agent_ctx, dim=args.extras_dim)
+        opponent_extras = encode_career_context(eval_opponent_ctx, dim=args.extras_dim)
+    elif args.extras_dim > 0:
+        agent_extras = encode_extras(args.extras_dim, agent_id=1, seed=args.seed)
+        opponent_extras = encode_extras(args.extras_dim, agent_id=2, seed=args.seed)
+    else:
+        agent_extras = torch.zeros(0)
+        opponent_extras = torch.zeros(0)
 
     # Sanity check: at fresh init both nets share the gnubg-init core.
     # Skip when loading from a checkpoint or 0G Storage — the agent's
@@ -538,12 +590,26 @@ def main() -> None:
     baseline_wr = evaluate(agent, opponent, agent_extras, opponent_extras, n_matches=20)
     writer.add_scalar("eval/win_rate_vs_frozen", baseline_wr, 0)
     print(f"Baseline win rate (untrained): {baseline_wr:.2%}")
+    # Note: in career mode `agent_extras`/`opponent_extras` get re-bound
+    # per match below; `eval_agent_extras`/`eval_opponent_extras` (set
+    # just below) stay frozen so eval is comparable across matches.
 
     global_step = 0
     rolling_outcomes: list[int] = []
 
+    # Eval extras stay frozen for the run so eval/win_rate_vs_frozen is
+    # comparable across matches; only training extras vary in career mode.
+    eval_agent_extras = agent_extras
+    eval_opponent_extras = opponent_extras
+
     t0 = time.time()
     for match_idx in range(args.matches):
+        if career_rng is not None:
+            agent_ctx = sample_career_context(career_rng)
+            opponent_ctx = sample_career_context(career_rng)
+            agent_extras = encode_career_context(agent_ctx, dim=args.extras_dim)
+            opponent_extras = encode_career_context(opponent_ctx, dim=args.extras_dim)
+
         steps, won = td_lambda_match(
             agent, opponent, agent_extras, opponent_extras,
             gamma=args.gamma, lam=args.lam, lr=args.lr,
@@ -567,13 +633,15 @@ def main() -> None:
                 writer.add_histogram(f"params/{name}", p, match_idx)
                 if p.grad is not None:
                     writer.add_histogram(f"grads/{name}", p.grad, match_idx)
-            wr = evaluate(agent, opponent, agent_extras, opponent_extras, n_matches=20)
+            wr = evaluate(agent, opponent, eval_agent_extras, eval_opponent_extras,
+                          n_matches=20)
             writer.add_scalar("eval/win_rate_vs_frozen", wr, match_idx + 1)
             print(f"  match {match_idx + 1:>4}/{args.matches}  "
                   f"rolling win-rate {sum(rolling_outcomes)/len(rolling_outcomes):.2%}  "
                   f"eval vs frozen {wr:.2%}")
 
-    final_wr = evaluate(agent, opponent, agent_extras, opponent_extras, n_matches=50)
+    final_wr = evaluate(agent, opponent, eval_agent_extras, eval_opponent_extras,
+                        n_matches=50)
     elapsed = time.time() - t0
     print(f"\nDone. {args.matches} matches in {elapsed:.1f}s. "
           f"Final win rate vs frozen opponent: {final_wr:.2%}")
