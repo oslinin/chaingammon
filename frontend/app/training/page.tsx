@@ -94,6 +94,11 @@ interface StatusResponse {
   use_0g_coaching: boolean;
   ended: "done" | "aborted" | null;
   last_update_ts: number;
+  // Phase L.2: TensorBoard sidecar metadata. Frontend uses this to
+  // mount the live-training iframe; null when launch failed (e.g.
+  // tensorboard binary not on PATH on the operator's host).
+  tensorboard_url?: string | null;
+  logdir?: string | null;
 }
 
 export default function TrainingPage() {
@@ -281,6 +286,8 @@ export default function TrainingPage() {
       </div>
 
       <StatusPanel status={statusQuery.data} />
+
+      <TensorBoardPanel status={statusQuery.data} agentIds={selectedIds} />
     </main>
   );
 }
@@ -617,4 +624,123 @@ function formatBig(n: number): string {
   if (n >= 1_000_000) return `${n / 1_000_000}M`;
   if (n >= 1_000) return `${n / 1_000}k`;
   return String(n);
+}
+
+// Phase L.3: TensorBoard panel — embeds the live tb dashboard so a
+// judge can watch the network learn (TD error, weight L2 per agent,
+// rolling win-rate per agent) while the trainer runs.
+//
+// Per-agent picker uses TensorBoard 2.x's #scalars URL params:
+//   #scalars&tagFilter=agent_<id>&_smoothingWeight=0
+// which restricts the visible scalar tags to those mentioning the
+// selected agent (Phase L.1 logs them under win_rate/agent_<id>,
+// weights/core_l2_agent_<id>, weights/extras_l2_agent_<id>, plus the
+// pair-level win/agent_a_vs_b — those show under either agent's filter).
+//
+// When tensorboard_url is null (sidecar didn't launch — binary
+// missing on PATH, port in use, etc.) the panel renders a clear
+// placeholder rather than an iframe pointing nowhere.
+function TensorBoardPanel({
+  status,
+  agentIds,
+}: {
+  status: StatusResponse | undefined;
+  agentIds: number[];
+}) {
+  const [pickedAgent, setPickedAgent] = useState<number | "all">("all");
+
+  if (!status) return null;
+
+  const url = status.tensorboard_url;
+  if (!url) {
+    return (
+      <section className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-200">
+        <strong>TensorBoard unavailable.</strong> The training service
+        couldn&apos;t spawn the <code>tensorboard</code> sidecar — likely the
+        binary isn&apos;t on PATH in the agent venv. Run{" "}
+        <code>uv pip install tensorboard</code> in <code>agent/</code> to
+        enable live charts here.
+      </section>
+    );
+  }
+
+  const tagFilter =
+    pickedAgent === "all" ? "" : `agent_${pickedAgent}`;
+  const iframeSrc = tagFilter
+    ? `${url}/#scalars&tagFilter=${encodeURIComponent(tagFilter)}`
+    : `${url}/#scalars`;
+
+  // Pool the available agents from both the status report (canonical
+  // set the trainer started with) and the page's selection (so the
+  // picker is responsive even before status arrives).
+  const allAgents = Array.from(
+    new Set([...(status.agent_ids ?? []), ...agentIds]),
+  ).sort((a, b) => a - b);
+
+  return (
+    <section className="flex flex-col gap-3 rounded-md border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
+      <div className="flex items-center justify-between gap-3">
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">
+          TensorBoard
+        </h2>
+        <div className="flex items-center gap-2">
+          <label
+            htmlFor="tb-agent-picker"
+            className="text-xs text-zinc-600 dark:text-zinc-400"
+          >
+            Filter:
+          </label>
+          <select
+            id="tb-agent-picker"
+            value={String(pickedAgent)}
+            onChange={(e) => {
+              const v = e.target.value;
+              setPickedAgent(v === "all" ? "all" : Number(v));
+            }}
+            className="rounded-md border border-zinc-300 bg-white px-2 py-1 text-xs font-mono dark:border-zinc-700 dark:bg-zinc-900"
+          >
+            <option value="all">all agents</option>
+            {allAgents.map((a) => (
+              <option key={a} value={a}>
+                agent {a}
+              </option>
+            ))}
+          </select>
+          <a
+            href={iframeSrc}
+            target="_blank"
+            rel="noreferrer"
+            className="rounded border border-zinc-300 px-2 py-1 text-xs hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
+            title="Open TensorBoard in a new tab"
+          >
+            ↗
+          </a>
+        </div>
+      </div>
+
+      <p className="text-xs text-zinc-500">
+        Live scalars from the trainer:{" "}
+        <code className="font-mono">train/td_error</code>,{" "}
+        <code className="font-mono">match/plies</code>,{" "}
+        <code className="font-mono">win_rate/agent_*</code>,{" "}
+        <code className="font-mono">weights/core_l2_agent_*</code>.
+        {pickedAgent !== "all" && (
+          <> Filtered to agent {pickedAgent}.</>
+        )}
+      </p>
+
+      <iframe
+        key={iframeSrc /* re-mount when filter changes */}
+        src={iframeSrc}
+        title="TensorBoard"
+        className="h-[600px] w-full rounded border border-zinc-200 dark:border-zinc-800"
+      />
+
+      {status.logdir && (
+        <p className="font-mono text-[10px] text-zinc-400">
+          logdir: {status.logdir}
+        </p>
+      )}
+    </section>
+  );
 }
