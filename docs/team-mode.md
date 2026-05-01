@@ -137,16 +137,15 @@ on whether `GameRecord.team_a` is populated.
 | **Team-2** | `/chat` `kind` extensions (`teammate_propose`, `teammate_advise`, `captain_decide`) + `ChatRequest.chosen_advisor_id` + tests | landed |
 | **Team-3** | `MatchEscrow.payoutSplit(matchId, winners[], shares[])` Solidity variant + Hardhat tests | landed |
 | **Team-3.5** | `MatchRegistry.recordMatchAndSplit` + `setMatchEscrow` wiring; `deploy.js` wires the two contracts end-to-end | landed |
+| **Team-5** | `settleWithSessionKeysAndSplit` (trustless settlement with split bound to resultHash) | landed |
 | **Team-4** | `/play/new` frontend route + match-page UI for advisor display | follow-up |
-| **Team-5** | `settleWithSessionKeysAndSplit` (trustless settlement with split bound to resultHash) | follow-up |
 
-Team-1 through Team-3.5 close the on-chain story for owner-trusted
-settlement. The trustless session-key variant (Team-5) needs a new
-signed-message format that binds the split to the result hash — that
-landed as its own phase rather than being squeezed into Team-3.5.
-Team-4 is the frontend match-page display for advisor signals + a
-`/play/new` route that lets users pick solo vs team mode at match
-creation.
+Team-1 through Team-5 close the on-chain story for both owner-trusted
+and trustless session-key settlement, in solo and team-mode flows.
+The remaining phase (Team-4) is the frontend match-page display for
+advisor signals + a `/play/new` route that lets users pick solo vs
+team mode at match creation; that needs Playwright verification per
+project policy and lands in its own PR.
 
 ## What this is NOT
 
