@@ -48,6 +48,23 @@ class _FakePopen:
 
     def __init__(self, cmd, *, cwd=None, stdout=None, stderr=None, **kwargs):
         self.cmd = list(cmd)
+        # Phase L.2: training_service spawns a tensorboard sidecar
+        # alongside the trainer (cmd[0] == "tensorboard"). Tag it so
+        # we don't try to parse trainer-only args from its argv.
+        self.is_tensorboard = (
+            len(self.cmd) > 0 and Path(self.cmd[0]).name == "tensorboard"
+        )
+        if self.is_tensorboard:
+            self.status_path = None
+            self.epochs = 0
+            self.agent_ids = []
+            self.use_0g_inference = False
+            self.pid = 999500 + len(_FakePopen.instances)
+            self._alive = True
+            self._aborted = False
+            _FakePopen.instances.append(self)
+            return
+
         # Pull out --status-file's value.
         try:
             i = self.cmd.index("--status-file")
@@ -163,6 +180,41 @@ def test_start_happy_path(monkeypatch):
     assert "started_at" in body
 
 
+def test_start_spawns_tensorboard_sidecar(monkeypatch):
+    """Phase L.2: /training/start launches a TensorBoard subprocess
+    alongside the trainer. Two _FakePopen instances are created — one
+    for the trainer, one for the TB sidecar — and /training/status
+    surfaces the URL."""
+    _install_fake_popen(monkeypatch)
+    r = client.post("/training/start", json={
+        "epochs": 1, "agent_ids": [1, 2],
+    })
+    assert r.status_code == 200
+    # Two subprocess.Popen calls observed: trainer + tensorboard.
+    assert len(_FakePopen.instances) == 2
+    tb = next(i for i in _FakePopen.instances if i.is_tensorboard)
+    assert "--logdir" in tb.cmd
+    # /training/status surfaces the TensorBoard URL for the iframe.
+    status = client.get("/training/status").json()
+    assert status["tensorboard_url"] == "http://localhost:6006"
+    assert status["logdir"] is not None
+
+
+def test_start_passes_logdir_to_trainer(monkeypatch):
+    """Phase L.2: the trainer subprocess gets --logdir so it writes
+    TensorBoard event files. Same path is passed to TensorBoard so
+    they line up."""
+    _install_fake_popen(monkeypatch)
+    client.post("/training/start", json={
+        "epochs": 1, "agent_ids": [1, 2],
+    })
+    trainer = next(i for i in _FakePopen.instances if not i.is_tensorboard)
+    tb = next(i for i in _FakePopen.instances if i.is_tensorboard)
+    trainer_logdir = trainer.cmd[trainer.cmd.index("--logdir") + 1]
+    tb_logdir = tb.cmd[tb.cmd.index("--logdir") + 1]
+    assert trainer_logdir == tb_logdir
+
+
 def test_start_409_when_already_running(monkeypatch):
     _install_fake_popen(monkeypatch)
     r1 = client.post("/training/start", json={
@@ -209,7 +261,7 @@ def test_status_running_job_aggregates_matches(monkeypatch):
     client.post("/training/start", json={
         "epochs": 2, "agent_ids": [1, 2, 3],
     })
-    fake = _FakePopen.instances[-1]
+    fake = next(i for i in reversed(_FakePopen.instances) if not i.is_tensorboard)
     fake.emit_match(epoch=0, agent_a=1, agent_b=2, winner=1)
     fake.emit_match(epoch=0, agent_a=1, agent_b=3, winner=3)
 
@@ -228,7 +280,7 @@ def test_status_running_job_aggregates_matches(monkeypatch):
 def test_status_done_event_marks_ended(monkeypatch):
     _install_fake_popen(monkeypatch)
     client.post("/training/start", json={"epochs": 1, "agent_ids": [1, 2]})
-    fake = _FakePopen.instances[-1]
+    fake = next(i for i in reversed(_FakePopen.instances) if not i.is_tensorboard)
     fake.emit_match(epoch=0, agent_a=1, agent_b=2, winner=2)
     fake.emit_done()
 
@@ -241,7 +293,7 @@ def test_status_done_event_marks_ended(monkeypatch):
 def test_status_dead_process_no_done_marks_aborted(monkeypatch):
     _install_fake_popen(monkeypatch)
     client.post("/training/start", json={"epochs": 1, "agent_ids": [1, 2]})
-    fake = _FakePopen.instances[-1]
+    fake = next(i for i in reversed(_FakePopen.instances) if not i.is_tensorboard)
     fake.emit_match(epoch=0, agent_a=1, agent_b=2, winner=1)
     fake.kill_quietly()  # simulate crash without 'done'
 
@@ -264,7 +316,7 @@ def test_status_dead_process_no_done_marks_aborted(monkeypatch):
 def test_abort_kills_running_job(monkeypatch):
     _install_fake_popen(monkeypatch)
     client.post("/training/start", json={"epochs": 1, "agent_ids": [1, 2]})
-    fake = _FakePopen.instances[-1]
+    fake = next(i for i in reversed(_FakePopen.instances) if not i.is_tensorboard)
     assert fake.is_alive() is True
 
     r = client.post("/training/abort")
