@@ -428,12 +428,17 @@ def estimate_run(
     if eval_estimator is not None:
         try:
             result = eval_estimator(total_inferences)
+            # Result has `available` (the eval bridge returns this when
+            # the discovery step couldn't find a provider but pricing
+            # arithmetic still works). Honor it instead of always
+            # returning available=true.
             return {
                 "games": games,
                 "total_inferences": total_inferences,
                 "gas_og": float(result.total_og),
                 "per_inference_og": float(result.per_inference_og),
-                "available": True,
+                "available": bool(getattr(result, "available", True)),
+                "note": str(getattr(result, "note", "")),
             }
         except Exception as e:
             return {
