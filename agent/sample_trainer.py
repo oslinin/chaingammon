@@ -456,7 +456,24 @@ def main() -> None:
                              "og-bridge. Requires --save-checkpoint and "
                              "the OG_STORAGE_{RPC,INDEXER,PRIVATE_KEY} "
                              "env triple (see server/.env.example).")
+    parser.add_argument("--init-from-0g", type=str, default=None,
+                        metavar="ROOT_HASH",
+                        help="Fetch a sealed checkpoint by 0G Storage "
+                             "Merkle root, decrypt it with the key at "
+                             "--init-key, and resume training from it. "
+                             "Mutually exclusive with --load-checkpoint.")
+    parser.add_argument("--init-key", type=str, default=None,
+                        metavar="PATH",
+                        help="Path to the AES-256-GCM key file written by "
+                             "an earlier --upload-to-0g run (the .key file "
+                             "alongside the checkpoint). Required with "
+                             "--init-from-0g.")
     args = parser.parse_args()
+
+    if args.init_from_0g and args.load_checkpoint:
+        parser.error("--init-from-0g and --load-checkpoint are mutually exclusive")
+    if args.init_from_0g and not args.init_key:
+        parser.error("--init-from-0g requires --init-key")
 
     drand_digest = bytes.fromhex(args.drand_digest) if args.drand_digest else None
 
@@ -468,6 +485,27 @@ def main() -> None:
     if args.load_checkpoint:
         agent, starting_match_count = load_checkpoint(Path(args.load_checkpoint))
         print(f"Resumed from {args.load_checkpoint} (match_count={starting_match_count}).")
+    elif args.init_from_0g:
+        # Fetch the sealed checkpoint from 0G Storage, decrypt it with
+        # the local key file, write the plaintext checkpoint to a temp
+        # path, and load it. Locally imported so the trainer works
+        # without the cryptography / og-bridge deps when not needed.
+        import tempfile
+        from checkpoint_encryption import decrypt_blob
+        from og_storage_download import fetch_checkpoint
+
+        key = Path(args.init_key).read_bytes()
+        sealed = fetch_checkpoint(args.init_from_0g)
+        plaintext = decrypt_blob(sealed, key)
+        with tempfile.NamedTemporaryFile(suffix=".pt", delete=False) as tf:
+            tf.write(plaintext)
+            tmp_path = Path(tf.name)
+        try:
+            agent, starting_match_count = load_checkpoint(tmp_path)
+        finally:
+            tmp_path.unlink(missing_ok=True)
+        print(f"Resumed from 0G Storage {args.init_from_0g} "
+              f"(match_count={starting_match_count}).")
     else:
         agent = BackgammonNet(extras_dim=args.extras_dim, core_seed=0xBACC, extras_seed=1)
     opponent = BackgammonNet(extras_dim=args.extras_dim, core_seed=0xBACC, extras_seed=2)
@@ -478,9 +516,10 @@ def main() -> None:
                        if args.extras_dim > 0 else torch.zeros(0))
 
     # Sanity check: at fresh init both nets share the gnubg-init core.
-    # Skip when loading from a checkpoint — the agent's core has already
-    # diverged from the gnubg init through prior training.
-    if not args.load_checkpoint:
+    # Skip when loading from a checkpoint or 0G Storage — the agent's
+    # core has already diverged from the gnubg init through prior
+    # training.
+    if not args.load_checkpoint and not args.init_from_0g:
         assert torch.allclose(agent.core.weight, opponent.core.weight), \
             "core weights should be identical at init (both seeded from gnubg published init)"
 
