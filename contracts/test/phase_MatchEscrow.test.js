@@ -198,4 +198,219 @@ describe("MatchEscrow", function () {
       ).to.be.revertedWithCustomError(disabled, "NoSettlerConfigured");
     });
   });
+
+  // ---------------------------------------------------------------------
+  // payoutSplit — team-mode settlement (see docs/team-mode.md).
+  // ---------------------------------------------------------------------
+
+  describe("payoutSplit", function () {
+    let dave;
+
+    beforeEach(async function () {
+      [, , , , , dave] = await ethers.getSigners();
+      await escrow.connect(alice).deposit(matchId, STAKE, { value: STAKE });
+      await escrow.connect(bob).deposit(matchId, STAKE, { value: STAKE });
+    });
+
+    it("splits the pot 50/50 between two winners", async function () {
+      const POT = STAKE * 2n;
+      const half = POT / 2n;
+      const aliceBefore = await ethers.provider.getBalance(alice.address);
+      const charlieBefore = await ethers.provider.getBalance(charlie.address);
+
+      await expect(
+        escrow.connect(settler).payoutSplit(
+          matchId,
+          [alice.address, charlie.address],
+          [half, half],
+        )
+      )
+        .to.emit(escrow, "PaidOut").withArgs(matchId, alice.address, half)
+        .and.to.emit(escrow, "PaidOut").withArgs(matchId, charlie.address, half);
+
+      const aliceAfter = await ethers.provider.getBalance(alice.address);
+      const charlieAfter = await ethers.provider.getBalance(charlie.address);
+      expect(aliceAfter - aliceBefore).to.equal(half);
+      expect(charlieAfter - charlieBefore).to.equal(half);
+    });
+
+    it("supports an arbitrary 3-way split summing to the pot", async function () {
+      const POT = STAKE * 2n;
+      // 60/30/10 split. Pot is 0.2 ETH so shares are 0.12, 0.06, 0.02.
+      const s1 = (POT * 60n) / 100n;
+      const s2 = (POT * 30n) / 100n;
+      const s3 = POT - s1 - s2;
+      expect(s1 + s2 + s3).to.equal(POT);
+
+      await expect(
+        escrow.connect(settler).payoutSplit(
+          matchId,
+          [alice.address, bob.address, charlie.address],
+          [s1, s2, s3],
+        )
+      ).to.emit(escrow, "PaidOut");
+
+      const m = await escrow.getMatch(matchId);
+      expect(m.settled).to.equal(true);
+    });
+
+    it("allows winners who are NOT depositors (team-mode case)", async function () {
+      // The captain (alice) deposited; dave is the agent's owner who
+      // never staked but is on the winning team per the settler.
+      const POT = STAKE * 2n;
+      const captainShare = (POT * 70n) / 100n;
+      const advisorShare = POT - captainShare;
+      const daveBefore = await ethers.provider.getBalance(dave.address);
+
+      await escrow.connect(settler).payoutSplit(
+        matchId,
+        [alice.address, dave.address],
+        [captainShare, advisorShare],
+      );
+
+      const daveAfter = await ethers.provider.getBalance(dave.address);
+      expect(daveAfter - daveBefore).to.equal(advisorShare);
+    });
+
+    it("skips zero-share entries without emitting PaidOut for them", async function () {
+      // Settler may include team members with 0 share for record-keeping.
+      const POT = STAKE * 2n;
+
+      const tx = await escrow.connect(settler).payoutSplit(
+        matchId,
+        [alice.address, charlie.address],
+        [POT, 0n],
+      );
+      const receipt = await tx.wait();
+      // Exactly one PaidOut event — the zero-share entry is skipped.
+      const paidOuts = receipt.logs.filter((l) => {
+        try {
+          return escrow.interface.parseLog(l)?.name === "PaidOut";
+        } catch {
+          return false;
+        }
+      });
+      expect(paidOuts).to.have.lengthOf(1);
+    });
+
+    it("rejects non-settler caller", async function () {
+      await expect(
+        escrow.connect(alice).payoutSplit(matchId,
+          [alice.address], [STAKE * 2n])
+      ).to.be.revertedWithCustomError(escrow, "NotSettler");
+    });
+
+    it("rejects empty winners array", async function () {
+      await expect(
+        escrow.connect(settler).payoutSplit(matchId, [], [])
+      ).to.be.revertedWithCustomError(escrow, "EmptyWinners");
+    });
+
+    it("rejects winners.length != shares.length", async function () {
+      await expect(
+        escrow.connect(settler).payoutSplit(
+          matchId,
+          [alice.address, bob.address],
+          [STAKE * 2n],
+        )
+      ).to.be.revertedWithCustomError(escrow, "LengthMismatch");
+    });
+
+    it("rejects zero-address winner", async function () {
+      await expect(
+        escrow.connect(settler).payoutSplit(
+          matchId,
+          [alice.address, ZERO],
+          [STAKE, STAKE],
+        )
+      ).to.be.revertedWithCustomError(escrow, "ZeroAddressWinner");
+    });
+
+    it("rejects share sum greater than pot", async function () {
+      await expect(
+        escrow.connect(settler).payoutSplit(
+          matchId,
+          [alice.address, bob.address],
+          [STAKE * 2n, 1n],
+        )
+      ).to.be.revertedWithCustomError(escrow, "ShareSumMismatch");
+    });
+
+    it("rejects share sum less than pot", async function () {
+      await expect(
+        escrow.connect(settler).payoutSplit(
+          matchId,
+          [alice.address, bob.address],
+          [STAKE, STAKE - 1n],
+        )
+      ).to.be.revertedWithCustomError(escrow, "ShareSumMismatch");
+    });
+
+    it("rejects payout when match isn't open", async function () {
+      const otherMatch = ethers.id("match-002");
+      await expect(
+        escrow.connect(settler).payoutSplit(
+          otherMatch,
+          [alice.address],
+          [STAKE * 2n],
+        )
+      ).to.be.revertedWithCustomError(escrow, "MatchNotOpen");
+    });
+
+    it("rejects double payoutSplit", async function () {
+      const POT = STAKE * 2n;
+      await escrow.connect(settler).payoutSplit(
+        matchId, [alice.address], [POT]
+      );
+      await expect(
+        escrow.connect(settler).payoutSplit(matchId, [alice.address], [POT])
+      ).to.be.revertedWithCustomError(escrow, "AlreadySettled");
+    });
+
+    it("payoutSplit then payoutWinner reverts with AlreadySettled", async function () {
+      const POT = STAKE * 2n;
+      await escrow.connect(settler).payoutSplit(
+        matchId, [alice.address], [POT]
+      );
+      await expect(
+        escrow.connect(settler).payoutWinner(matchId, alice.address)
+      ).to.be.revertedWithCustomError(escrow, "AlreadySettled");
+    });
+
+    it("payoutWinner then payoutSplit reverts with AlreadySettled", async function () {
+      await escrow.connect(settler).payoutWinner(matchId, alice.address);
+      await expect(
+        escrow.connect(settler).payoutSplit(
+          matchId, [alice.address], [STAKE * 2n]
+        )
+      ).to.be.revertedWithCustomError(escrow, "AlreadySettled");
+    });
+
+    it("settler == 0 disables payoutSplit entirely", async function () {
+      const Disabled = await ethers.getContractFactory("MatchEscrow");
+      const disabled = await Disabled.deploy(ZERO);
+      await disabled.connect(alice).deposit(matchId, STAKE, { value: STAKE });
+      await disabled.connect(bob).deposit(matchId, STAKE, { value: STAKE });
+      await expect(
+        disabled.connect(settler).payoutSplit(
+          matchId, [alice.address], [STAKE * 2n]
+        )
+      ).to.be.revertedWithCustomError(disabled, "NoSettlerConfigured");
+    });
+
+    it("flips status to PaidOut and zeros amounts", async function () {
+      const POT = STAKE * 2n;
+      await escrow.connect(settler).payoutSplit(
+        matchId,
+        [alice.address, bob.address],
+        [POT / 2n, POT / 2n],
+      );
+      const m = await escrow.getMatch(matchId);
+      expect(m.settled).to.equal(true);
+      expect(m.a.status).to.equal(Status.PaidOut);
+      expect(m.b.status).to.equal(Status.PaidOut);
+      expect(m.a.amount).to.equal(0n);
+      expect(m.b.amount).to.equal(0n);
+    });
+  });
 });

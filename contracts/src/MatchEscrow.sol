@@ -65,6 +65,10 @@ contract MatchEscrow {
     error NotSettler();
     error NoSettlerConfigured();
     error WrongStakeAmount();
+    error EmptyWinners();
+    error LengthMismatch();
+    error ZeroAddressWinner();
+    error ShareSumMismatch();
 
     constructor(address settler_) {
         settler = settler_;
@@ -163,17 +167,80 @@ contract MatchEscrow {
             revert NotDepositor();
         }
 
-        uint256 pot = uint256(m.a.amount) + uint256(m.b.amount);
+        uint256 pot_ = uint256(m.a.amount) + uint256(m.b.amount);
         m.settled = true;
         m.a.status = Status.PaidOut;
         m.b.status = Status.PaidOut;
         m.a.amount = 0;
         m.b.amount = 0;
 
-        (bool ok, ) = winner.call{value: pot}("");
+        (bool ok, ) = winner.call{value: pot_}("");
         require(ok, "payout: transfer failed");
 
-        emit PaidOut(matchId, winner, pot);
+        emit PaidOut(matchId, winner, pot_);
+    }
+
+    /// @notice Settler-only: split the pot across multiple addresses
+    ///         per the team-mode design (see docs/team-mode.md). Used
+    ///         when the winning side is a team and the agreed split
+    ///         was committed by the settler at game-end.
+    /// @dev    `winners` and `shares` are aligned arrays. `shares[i]`
+    ///         is the wei amount sent to `winners[i]`. The sum of
+    ///         shares MUST equal the pot — the settler pre-computes
+    ///         the split so this contract just verifies it.
+    ///
+    ///         Unlike `payoutWinner`, recipients are NOT restricted
+    ///         to the two depositors: the team-mode design assumes
+    ///         only one address per side stakes (per-match terms can
+    ///         change every match — there is no team treasury) and
+    ///         the team's internal split is decided off-chain. The
+    ///         settler is fully trusted to provide a sane list.
+    ///
+    ///         Effects-then-interactions: settled flag is flipped
+    ///         BEFORE any of the N transfers, so a reentrant call
+    ///         hits `AlreadySettled` and cannot double-spend. If any
+    ///         single transfer reverts the whole tx reverts and the
+    ///         pot remains in escrow for the settler to retry.
+    ///
+    ///         Zero-share entries are allowed (the settler may want
+    ///         to record team membership without paying) and skipped
+    ///         at transfer time so they don't trigger spurious
+    ///         `PaidOut` events. Zero-address winners revert.
+    function payoutSplit(
+        bytes32 matchId,
+        address[] calldata winners,
+        uint256[] calldata shares
+    ) external {
+        if (settler == address(0)) revert NoSettlerConfigured();
+        if (msg.sender != settler) revert NotSettler();
+        if (winners.length == 0) revert EmptyWinners();
+        if (winners.length != shares.length) revert LengthMismatch();
+
+        Match storage m = _matches[matchId];
+        if (!m.open) revert MatchNotOpen();
+        if (m.settled) revert AlreadySettled();
+
+        uint256 pot_ = uint256(m.a.amount) + uint256(m.b.amount);
+        uint256 sum;
+        for (uint256 i = 0; i < winners.length; ++i) {
+            if (winners[i] == address(0)) revert ZeroAddressWinner();
+            sum += shares[i];
+        }
+        if (sum != pot_) revert ShareSumMismatch();
+
+        m.settled = true;
+        m.a.status = Status.PaidOut;
+        m.b.status = Status.PaidOut;
+        m.a.amount = 0;
+        m.b.amount = 0;
+
+        for (uint256 i = 0; i < winners.length; ++i) {
+            uint256 share = shares[i];
+            if (share == 0) continue;
+            (bool ok, ) = winners[i].call{value: share}("");
+            require(ok, "payoutSplit: transfer failed");
+            emit PaidOut(matchId, winners[i], share);
+        }
     }
 
     // -------------------------------------------------------------------
