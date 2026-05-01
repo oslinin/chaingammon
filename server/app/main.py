@@ -30,9 +30,11 @@ from .agent_overlay import Overlay, OverlayError, apply_overlay, update_overlay
 from .chain_client import ChainClient, ChainError
 from .ens_client import EnsClient, EnsError
 from .game_record import (
+    AdvisorSignal,
     GameRecord,
     MoveEntry,
     PlayerRef,
+    Team,
     build_from_state,
     serialize_record,
 )
@@ -59,6 +61,12 @@ games: Dict[str, GameState] = {}
 # When did each game start (used as the GameRecord's started_at).
 _game_started_at: Dict[str, str] = {}
 
+# Phase K.1: optional team rosters per game_id. Populated by
+# create_game when the request body carries team_a/team_b. Read by
+# /agent-move to compute captain + advisor signals, and by
+# finalize_game to write rosters into the on-chain GameRecord.
+_game_teams: Dict[str, "tuple[Team, Team]"] = {}
+
 # Per-game move history. Each entry is one checker-move commit (after a
 # roll). Roll-only events aren't moves; cube actions are tracked separately
 # (not in v1). Populated by /move and /agent-move; consumed by /finalize.
@@ -78,6 +86,13 @@ _game_overlays: Dict[str, Overlay] = {}
 class NewGameRequest(BaseModel):
     match_length: int = 3
     agent_id: int
+    # Phase K.1: optional team rosters for live team-mode play. When
+    # set, the per-turn /agent-move endpoint emits AdvisorSignal[]
+    # from each non-captain teammate and rotates captain per the
+    # team's `captain_rotation` policy. Solo flows leave both None
+    # and hit zero new code paths.
+    team_a: Optional[Team] = None
+    team_b: Optional[Team] = None
 
 class MoveRequest(BaseModel):
     move: str
@@ -136,6 +151,10 @@ def create_game(req: NewGameRequest):
     _game_started_at[game_id] = datetime.now(timezone.utc).isoformat()
     _move_history[game_id] = []
     _game_agent_id[game_id] = req.agent_id
+    # Phase K.1: stash team rosters when the game is opened in
+    # team mode. Solo flows leave both None and skip this branch.
+    if req.team_a is not None and req.team_b is not None:
+        _game_teams[game_id] = (req.team_a, req.team_b)
     return state
 
 
@@ -645,6 +664,9 @@ def finalize_game(game_id: str, req: FinalizeRequest):
         if req.loser_agent_id == 0
         else PlayerRef(kind="agent", agent_id=req.loser_agent_id)
     )
+    # Phase K.6: thread team rosters through to the GameRecord when
+    # the game was opened in team mode. Solo games leave both None.
+    team_a, team_b = _game_teams.get(game_id, (None, None))
     record = build_from_state(
         state,
         winner=winner,
@@ -652,6 +674,8 @@ def finalize_game(game_id: str, req: FinalizeRequest):
         moves=_move_history.get(game_id, []),
         started_at=_game_started_at.get(game_id),
         ended_at=datetime.now(timezone.utc).isoformat(),
+        team_a=team_a,
+        team_b=team_b,
     )
     payload = serialize_record(record)
 

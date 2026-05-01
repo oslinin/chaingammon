@@ -165,11 +165,18 @@ def build_from_state(
     cube_actions: Optional[list[CubeAction]] = None,
     started_at: Optional[str] = None,
     ended_at: Optional[str] = None,
+    team_a: Optional[Team] = None,
+    team_b: Optional[Team] = None,
 ) -> GameRecord:
     """Build a GameRecord from a final-state GameState plus the participants.
 
     `state` is duck-typed against `app.game_state.GameState` so this module
     doesn't pull pydantic-cycle imports during testing.
+
+    Phase K.6: when `team_a`/`team_b` are provided (team-mode games),
+    they're attached to the record so the on-chain commitment covers
+    the rosters. Solo records leave both None; `serialize_record`'s
+    exclude_none keeps prior records byte-stable.
     """
     return GameRecord(
         match_length=int(state.match_length),
@@ -182,4 +189,6 @@ def build_from_state(
         cube_actions=cube_actions or [],
         started_at=started_at,
         ended_at=ended_at,
+        team_a=team_a,
+        team_b=team_b,
     )
