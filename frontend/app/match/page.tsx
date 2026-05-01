@@ -337,16 +337,22 @@ function MatchInner() {
   // User's coach-backend pick. Default to the free local path so no 0G tokens
   // are charged without the user explicitly opting in. Persisted to
   // localStorage so a user who switches to "compute" stays on it across
-  // page loads. SSR-safe: `useEffect` reads localStorage after mount; before
-  // then the server-rendered HTML matches the initial client render ("local").
-  const [coachBackend, setCoachBackend] = useState<CoachBackend>("local");
-  useEffect(() => {
-    const saved = window.localStorage.getItem("coachBackend");
-    if (saved === "local" || saved === "compute") setCoachBackend(saved);
-  }, []);
-  useEffect(() => {
-    window.localStorage.setItem("coachBackend", coachBackend);
-  }, [coachBackend]);
+  // page loads. SSR-safe: ComputeBackendsContext defers localStorage
+  // reads behind a `hydrated` flag so the server-rendered HTML matches
+  // the initial client render ("local").
+  //
+  // Phase I.4: derive coachBackend from the global ComputeBackendsContext
+  // (the pill in layout.tsx) so flipping Coach in the pill updates this
+  // page's coach calls — and vice versa via the per-match buttons below.
+  // The context value is "local" | "0g"; the coach API's wire format is
+  // "local" | "compute"; we adapt at the boundary.
+  const { backends: computeBackends, setBackend: setComputeBackend } =
+    useComputeBackends();
+  const coachBackend: CoachBackend =
+    computeBackends.coach === "0g" ? "compute" : "local";
+  const setCoachBackend = (value: CoachBackend) => {
+    setComputeBackend("coach", value === "compute" ? "0g" : "local");
+  };
 
   // Always carry the latest pick into fire-and-forget callbacks without
   // re-creating closures (which would force every move handler to depend
