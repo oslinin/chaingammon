@@ -277,6 +277,24 @@ uv run python sample_trainer.py --matches 200 --launch-tensorboard
 
 The environment in the demo is a deliberately tiny pip-race abstraction so the file runs anywhere without a backgammon engine; production training swaps it for the real engine, with the same encoder shape and the same training mechanics.
 
+**Trainer CLI flags worth knowing:**
+
+| Flag | Effect |
+| --- | --- |
+| `--matches N` | Number of self-play matches (default 100). |
+| `--save-checkpoint <path>` | Write the trained agent's `state_dict` + metadata as a torch blob. |
+| `--load-checkpoint <path>` | Resume training from a prior checkpoint. |
+| `--drand-digest <hex>` | Derive every turn's dice via `drand_dice.derive_dice(digest, turn_index)` instead of local PRNG — the same deterministic mapping production uses. Get a fresh round digest from `scripts/fetch_drand_round.py`. |
+| `--upload-to-0g` | After saving, AES-256-GCM-encrypt the checkpoint with a fresh key, write the key to `<ckpt>.key`, and upload the sealed blob to 0G Storage via `og-bridge`. Prints the resulting `rootHash` (what KeeperHub commits to `iNFT.dataHashes[1]` in production). |
+| `--launch-tensorboard` | Spawn `tensorboard --logdir <logdir>` after training. |
+
+**Supporting modules** (each with a focused test file):
+
+- `agent/drand_dice.py` — derive dice from a drand round digest. The contract is `dice = keccak256(round_digest ‖ turn_index_be8) mod 36`. Pure stdlib, no network.
+- `agent/checkpoint_encryption.py` — AES-256-GCM wrap/unwrap. Sealed blob is `nonce(12) ‖ ciphertext_with_tag`. Used to encrypt checkpoints before upload.
+- `agent/og_storage_upload.py` — shells out to the `og-bridge` Node CLI to publish bytes to 0G Storage and return the Merkle root.
+- `scripts/fetch_drand_round.py` — manual / debugging companion to `--drand-digest`. Pulls a public drand round and prints its digest in hex.
+
 ---
 
 ## Match Archive on 0G Storage
