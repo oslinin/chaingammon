@@ -403,6 +403,66 @@ Full design: [docs/coach-dialogue.md](docs/coach-dialogue.md). Phase A (data sha
 
 The actual *human-in-the-loop* feature is **team mode** — a human and an agent (or any 2v2 mix) playing as teammates against an opponent. Per turn the captain receives advisor signals from each teammate (`{teammate_id, proposed_move, confidence, optional_message}`); the captain decides; both contributions are logged into the match record. This is where humans enter the agent training loop: refereed team-vs-team match data feeds future training rounds. Design: [docs/team-mode.md](docs/team-mode.md) (forthcoming).
 
+## Compute Backends — three operations × two backends
+
+Chaingammon has three distinct compute operations. Each can run locally (default) or on **0G Compute** — the bounty story is that the matrix is wired and visible end-to-end:
+
+| Operation | What it computes | Local backend | 0G compute backend | Status |
+| --- | --- | --- | --- | --- |
+| **Coaching** | LLM hint text (Qwen 2.5 7B chat) | `agent/coach_service.py` fallback | `og-compute-bridge/src/chat.mjs` → `agent/coach_compute_client.chat()` | Both wired |
+| **Inference** | `BackgammonNet.forward(board, extras) → equity` | `torch.nn.Module(...)` call in the trainer | `og-compute-bridge/src/eval.mjs` → `agent/og_compute_eval_client.evaluate()` | Plumbing wired; provider TBD |
+| **Training** | Round-robin self-play with TD-λ updates | `agent/round_robin_trainer.py` spawned by FastAPI | Same trainer with `--use-0g-inference` so per-move forward passes route through the eval bridge | Inference-on-0G during a run is the bounty path; remote training-as-a-service is out of scope |
+
+**The compute pill** in the frontend header (visible on every page) shows the current backend per operation; clicking flips it. State persists in `localStorage["chaingammon.computeBackends"]`.
+
+### What "Training on 0G compute" actually means
+
+The trainer's control loop, TD-λ updates, optimizer steps, and weight saves always run locally. The 0G toggle reroutes only the per-move `net(features, extras)` forward passes through the eval bridge. ~99 % of training compute lives in those forward passes — that's where meterable cost actually accrues — so this is enough to surface a real gas estimate to the judge before they hit Play.
+
+### Env vars per backend
+
+All compute backends use the same wallet that the storage bridge already needs:
+
+```
+OG_STORAGE_RPC          0G testnet/mainnet RPC
+OG_STORAGE_PRIVATE_KEY  funded wallet (pays for inference + storage)
+```
+
+Per-backend optional pinning + tuning:
+
+```
+OG_COMPUTE_PROVIDER          (coach)     pin a chat provider, else first chatbot
+OG_COMPUTE_EVAL_PROVIDER     (inference) pin a backgammon-net provider
+BACKGAMMON_NET_MODEL         (inference) listService filter (default backgammon-net-v1)
+OG_COMPUTE_PER_INFERENCE_OG  fallback per-inference price when provider doesn't
+                              expose live rates (default 0.00001)
+OG_COMPUTE_MIN_BALANCE       sub-account min balance in OG (default 0.01)
+OG_COMPUTE_DEPOSIT           initial ledger deposit on first run (default 0.05)
+CHAINGAMMON_MEAN_PLIES       trainer-side gas-estimate denominator (default 60)
+```
+
+### Cost expectations
+
+- **Coach** ≈ 0.0001 OG per chat completion (Qwen 2.5 7B token-priced on 0G).
+- **Inference** ≈ 0.00001 OG per forward pass (placeholder until a real backgammon-net provider publishes live rates).
+- **Training** = `epochs × C(N, 2) × ~60 plies × per-inference-cost`. The training page shows a live estimate as you move the slider.
+
+### Provider availability — current limitation
+
+The 0G inference network advertises chat-completion services today (Qwen, Llama, etc.) but not a backgammon equity-net. Hosting a backgammon-NN provider on the 0G compute network is documented as a follow-up. When no provider is registered, `og-compute-bridge/src/eval.mjs` exits non-zero with `OG_EVAL_UNAVAILABLE`; the frontend disables the inference 0G toggle with a tooltip explaining why. Local-mode training is unaffected.
+
+You can pin a custom backgammon-net endpoint via `OG_COMPUTE_EVAL_PROVIDER=<addr>` for testing — the bridge will route through it as if it were a real 0G provider (with the same auth + funding flow).
+
+### Demo playbook (the bounty story)
+
+1. Connect a wallet that holds testnet OG.
+2. Click the compute pill (top right of every page); flip **Coach** to 0G — watch a match's coach hints route through 0G Compute (live), OG balance ticks down per hint.
+3. Open `/training`. Select a few agents. Move the slider to ~10 epochs. The estimate row shows games + total inferences.
+4. Flip **Inference** to 0G in the pill. Slider extends to 10 M; gas estimate row appears with the placeholder per-inference cost. (When a real backgammon-net provider exists, this becomes the live cost.)
+5. Click **Play**. The trainer subprocess spawns; the status panel polls every 2 s and shows per-agent wins as `C(N, 2)` games per epoch run.
+6. Hover any agent card on `/`. The popover lazy-fetches `/agents/{id}/profile` and shows the agent's match count + style summary.
+7. On `/match?teamMode=1`, the read-only "🤝 Agent prefers teammate #N" chip appears, scored by `recommend_teammate` against the requester's trained checkpoint loaded from 0G storage.
+
 ---
 
 ## Running Locally
