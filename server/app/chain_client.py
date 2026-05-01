@@ -351,6 +351,12 @@ class ChainClient:
     def match_count(self) -> int:
         return int(self.match_registry.functions.matchCount().call())
 
+    def agent_count(self) -> int:
+        """Total number of agents minted on AgentRegistry. Mirrors the
+        `agentCount()` view the frontend's AgentsList reads."""
+        contract = self._require_agent_registry()
+        return int(contract.functions.agentCount().call())
+
     def agent_elo(self, agent_id: int) -> int:
         return int(self.match_registry.functions.agentElo(agent_id).call())
 

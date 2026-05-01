@@ -914,3 +914,200 @@ def recommend_teammate_endpoint(agent_id: int, req: RecommendTeammateRequest):
         "requester_kind": requester_kind,
         "candidate_kinds": candidate_kinds,
     }
+
+
+# ─── Phase E: training endpoints + agents listing ──────────────────────────
+#
+# Implements the /training/* surface the training page calls:
+#   POST /training/start    — spawn round_robin_trainer.py subprocess
+#   GET  /training/status   — aggregate JSONL events
+#   POST /training/abort    — SIGTERM the trainer
+#   GET  /training/estimate — gas estimate for a hypothetical run
+#   GET  /agents            — list all minted agents (id + weights_hash + match_count)
+#   GET  /agents/{id}/profile — load_profile summary
+#
+# Auth/CSRF: hackathon scope; CORS already `*`. Production should
+# restrict allow_origins and add a session-key check on /training/start
+# and /training/abort.
+
+from .training_service import (
+    abort_job,
+    estimate_run,
+    get_status as get_training_status_dict,
+    start_job,
+)
+
+
+class StartTrainingRequest(BaseModel):
+    epochs: int
+    agent_ids: List[int]
+    use_0g_inference: bool = False
+    use_0g_coaching: bool = False
+    extras_dim: int = 16
+    seed: int = 42
+
+
+@app.post("/training/start")
+def post_training_start(req: StartTrainingRequest):
+    """Spawn a round-robin training subprocess. 409 if one is already
+    running. Returns `{job_id, started_at, epochs, agent_ids}`."""
+    try:
+        job = start_job(
+            epochs=req.epochs,
+            agent_ids=req.agent_ids,
+            use_0g_inference=req.use_0g_inference,
+            use_0g_coaching=req.use_0g_coaching,
+            extras_dim=req.extras_dim,
+            seed=req.seed,
+        )
+    except RuntimeError as e:
+        # Already running.
+        raise HTTPException(status_code=409, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    return {
+        "job_id": str(job.pid),
+        "started_at": job.started_at.isoformat(),
+        "epochs": job.epochs,
+        "agent_ids": job.agent_ids,
+        "use_0g_inference": job.use_0g_inference,
+        "use_0g_coaching": job.use_0g_coaching,
+        "status_file": str(job.status_file_path),
+    }
+
+
+@app.get("/training/status")
+def get_training_status_endpoint():
+    """Aggregate the current (or most recent) trainer's JSONL events.
+    Always returns the same shape so the frontend doesn't have to
+    branch on whether a job is active."""
+    return get_training_status_dict()
+
+
+@app.post("/training/abort")
+def post_training_abort():
+    """SIGTERM the running trainer. Returns `{aborted: bool}` — false
+    when no job was running."""
+    aborted = abort_job()
+    return {"aborted": aborted}
+
+
+@app.get("/training/estimate")
+def get_training_estimate(
+    epochs: int,
+    agent_ids: str,
+    use_0g_inference: bool = False,
+):
+    """Compute games + total inferences + (optional) gas estimate for a
+    hypothetical training run. Polled by the training page on every
+    slider change with debounce.
+
+    `agent_ids` is a comma-separated query string (FastAPI doesn't
+    natively bind list[int] from query params without dependencies,
+    and a string keeps the URL readable)."""
+    try:
+        ids = [int(s.strip()) for s in agent_ids.split(",") if s.strip()]
+    except ValueError:
+        raise HTTPException(
+            status_code=422,
+            detail=f"agent_ids must be comma-separated ints, got {agent_ids!r}",
+        )
+    if not ids:
+        raise HTTPException(
+            status_code=422,
+            detail="agent_ids must contain at least one ID",
+        )
+    if epochs < 1:
+        raise HTTPException(status_code=422, detail="epochs must be >= 1")
+
+    # Phase G will plumb a real eval_estimator here. For Phase E we
+    # leave it None so the helper returns the placeholder pricing and
+    # surfaces `available: false` to the frontend.
+    return estimate_run(
+        epochs=epochs,
+        agent_ids=ids,
+        use_0g_inference=use_0g_inference,
+        eval_estimator=None,
+    )
+
+
+@app.get("/agents")
+def list_agents():
+    """List all minted agents. Returns `[{agent_id, weights_hash,
+    match_count, tier}]`. Label resolution (ENS) happens client-side.
+    503 when the chain isn't reachable so the training page can render
+    a 'chain unavailable' state instead of an empty list."""
+    try:
+        chain = ChainClient.from_env()
+        if chain.agent_registry is None:
+            raise ChainError("AGENT_REGISTRY_ADDRESS not set")
+        count = chain.agent_count()
+    except ChainError as e:
+        raise HTTPException(status_code=503, detail=f"chain unavailable: {e}")
+
+    agents = []
+    for aid in range(1, count + 1):
+        try:
+            hashes = chain.agent_data_hashes(aid)
+            agents.append({
+                "agent_id": aid,
+                "weights_hash": hashes[1] if len(hashes) >= 2 else "",
+                "match_count": chain.agent_match_count(aid),
+                "tier": chain.agent_tier(aid),
+            })
+        except ChainError:
+            # Skip agents the chain client can't read — but report the
+            # ID so the frontend knows there's a gap.
+            agents.append({
+                "agent_id": aid,
+                "weights_hash": "",
+                "match_count": 0,
+                "tier": 0,
+                "error": "chain read failed",
+            })
+    return agents
+
+
+@app.get("/agents/{agent_id}/profile")
+def get_agent_profile(agent_id: int):
+    """Resolve `agent_id`'s on-chain `dataHashes[1]` → 0G storage blob
+    → `load_profile` content-sniff → `{match_count, summary, kind}`.
+
+    Mirrors the resolver path /games/{id}/agent-move (overlay) and
+    /agents/{id}/recommend-teammate (model) already use. Returns the
+    NullProfile shape for cold-start agents (frontend renders a
+    'no measurable style yet' chip)."""
+    from agent_profile import (
+        ModelProfile,
+        NullProfile,
+        OverlayProfile,
+        load_profile,
+    )
+
+    try:
+        chain = ChainClient.from_env()
+        if chain.agent_registry is None:
+            raise ChainError("AGENT_REGISTRY_ADDRESS not set")
+        hashes = chain.agent_data_hashes(agent_id)
+    except ChainError as e:
+        raise HTTPException(status_code=503, detail=f"chain unavailable: {e}")
+
+    weights_hash = hashes[1] if len(hashes) >= 2 else ""
+    profile = (
+        load_profile(weights_hash, fetch=get_blob)
+        if weights_hash and weights_hash != "0x" + "00" * 32
+        else NullProfile()
+    )
+    metrics = profile.metrics()
+    if isinstance(profile, ModelProfile):
+        kind = "model"
+    elif isinstance(profile, OverlayProfile):
+        kind = "overlay"
+    else:
+        kind = "null"
+    return {
+        "agent_id": agent_id,
+        "kind": kind,
+        "match_count": int(metrics.get("match_count", 0)),
+        "summary": profile.summarize(),
+    }
