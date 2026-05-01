@@ -212,15 +212,27 @@ class RaceState:
         return None
 
 
-def encode_state(state: RaceState, perspective: int) -> torch.Tensor:
+def encode_state(state, perspective: int) -> torch.Tensor:
     """Encode `state` into a GNUBG_FEAT_DIM-shaped vector from
     `perspective`'s point of view.
 
-    The first 99 dims encode a unary thermometer of the perspective's pip
-    count (lower = closer to winning); the next 99 dims encode the
-    opponent's. Production code uses gnubg's exact 198-dim contact-net
-    encoding here.
+    Phase J.1: dispatches by state type. RaceState → simplified
+    pip-race thermometer (the original encoder). FullBoardState → real
+    Tesauro 198-dim contact-net encoding via gnubg_encoder. Both
+    produce shape [198], float32.
     """
+    # Lazy import to avoid pulling gnubg_encoder unless full-board mode
+    # is actually exercised.
+    try:
+        from full_board_state import FullBoardState
+    except ImportError:
+        FullBoardState = None  # type: ignore[assignment]
+    if FullBoardState is not None and isinstance(state, FullBoardState):
+        from gnubg_encoder import encode_full_board
+        return encode_full_board(
+            state.board, state.bar, state.off, perspective=perspective,
+        )
+    # Original race-encoder path.
     feat = torch.zeros(GNUBG_FEAT_DIM)
     me = max(0, min(99, state.pip[perspective]))
     op = max(0, min(99, state.pip[1 - perspective]))
@@ -242,12 +254,34 @@ def encode_extras(extras_dim: int, agent_id: int, *, seed: int) -> torch.Tensor:
     return torch.randn(extras_dim, generator=g)
 
 
-def legal_successors(state: RaceState, dice: tuple[int, int]) -> list[RaceState]:
-    """Enumerate up to 4 candidate successor states for `state` given
-    `dice`. The race-env is too simple to have real choice, so we
-    fabricate plausible variants (use both dice / drop one die / play
-    the larger first). The point is to give the value network *some*
-    selection problem to solve."""
+# Module-level gnubg client used by legal_successors when the state is
+# a FullBoardState. Set by sample_trainer.main() when --full-board is
+# enabled. Never written from elsewhere; staying None means the legacy
+# RaceState path is the only one exercised.
+_GNUBG_CLIENT_FOR_FULL_BOARD = None
+
+
+def legal_successors(state, dice: tuple[int, int]) -> list:
+    """Enumerate candidate successor states.
+
+    Phase J.2: dispatches on state type. FullBoardState → calls
+    legal_successors_full driven by the module-level gnubg client.
+    RaceState → original fabricated-variants path below.
+    """
+    try:
+        from full_board_state import FullBoardState, legal_successors_full
+    except ImportError:
+        FullBoardState = None  # type: ignore[assignment]
+        legal_successors_full = None  # type: ignore[assignment]
+    if FullBoardState is not None and isinstance(state, FullBoardState):
+        if _GNUBG_CLIENT_FOR_FULL_BOARD is None:
+            raise RuntimeError(
+                "FullBoardState passed to legal_successors but "
+                "_GNUBG_CLIENT_FOR_FULL_BOARD is unset. "
+                "sample_trainer.main() should set it when --full-board is enabled."
+            )
+        return legal_successors_full(state, dice, _GNUBG_CLIENT_FOR_FULL_BOARD)
+    # Original race-env path: fabricate up to 4 plausible variants.
     d1, d2 = dice
     side = state.turn
     new_pips = list(state.pip)
@@ -309,6 +343,7 @@ def td_lambda_match(
     global_step: int = 0,
     drand_round_digest: bytes | None = None,
     infer_fn=None,
+    state_factory=None,
 ) -> tuple[int, int]:
     """Play a single self-play match. `agent` learns; `opponent` is frozen.
 
@@ -326,8 +361,13 @@ def td_lambda_match(
     optimizer steps stay local — only the evaluation step routes through
     `infer_fn`. Used by Phase I to dispatch per-move forward passes
     through the 0G compute eval bridge while keeping autograd local.
+
+    `state_factory`: zero-arg callable returning the initial state.
+    Defaults to `RaceState` (race-env training). Phase J.3 uses
+    `lambda: FullBoardState.initial(gnubg_client)` to drive a real
+    backgammon game per match.
     """
-    state = RaceState()
+    state = state_factory() if state_factory is not None else RaceState()
     eligibility = {p: torch.zeros_like(p) for p in agent.parameters()}
 
     while not state.terminal():
@@ -417,15 +457,18 @@ def td_lambda_match(
 
 def evaluate(agent: BackgammonNet, opponent: BackgammonNet,
              agent_extras: torch.Tensor, opponent_extras: torch.Tensor,
-             n_matches: int = 20, *, infer_fn=None) -> float:
+             n_matches: int = 20, *, infer_fn=None,
+             state_factory=None) -> float:
     """Win rate of `agent` vs `opponent` over `n_matches` greedy games.
 
     `infer_fn` matches td_lambda_match's signature — when supplied, the
     candidate-evaluation step routes through it instead of `net(...)`.
+    `state_factory` matches td_lambda_match's signature — defaults to
+    RaceState; full-board mode passes a FullBoardState factory.
     """
     wins = 0
     for _ in range(n_matches):
-        state = RaceState()
+        state = state_factory() if state_factory is not None else RaceState()
         while not state.terminal():
             d1, d2 = random.randint(1, 6), random.randint(1, 6)
             cands = legal_successors(state, (d1, d2))
@@ -457,11 +500,22 @@ def maybe_launch_tensorboard(logdir: Path) -> subprocess.Popen | None:
 
 
 def save_checkpoint(net: BackgammonNet, path: Path, *, match_count: int,
-                    extras_dim: int) -> None:
+                    extras_dim: int,
+                    feature_encoder: str = "race") -> None:
     """Persist the agent's state_dict + the metadata needed to rebuild
     the network shape on load. Production code wraps this with
     AES-256-GCM and uploads to 0G Storage; the local file format here
-    is the same shape, just unencrypted."""
+    is the same shape, just unencrypted.
+
+    Phase J.4: `feature_encoder` is the new field telling readers which
+    encoder produced the training inputs:
+       "race"        — pip-race thermometer (the original encoder;
+                       checkpoints written before J.3 default to this).
+       "gnubg_full"  — Tesauro 198-dim contact-net (J.1's encoder).
+    A reader that wants to score a full-board position with a "race"
+    checkpoint must refuse the call (the weights weren't trained on
+    full-board features). agent_profile.ModelProfile exposes the
+    field via metrics()["feature_encoder"]."""
     path.parent.mkdir(parents=True, exist_ok=True)
     torch.save({
         "state_dict": net.state_dict(),
@@ -469,6 +523,7 @@ def save_checkpoint(net: BackgammonNet, path: Path, *, match_count: int,
         "extras_dim": extras_dim,
         "in_dim": GNUBG_FEAT_DIM,
         "hidden": DEFAULT_HIDDEN,
+        "feature_encoder": feature_encoder,
     }, path)
 
 
@@ -543,6 +598,19 @@ def main() -> None:
                              "an earlier --upload-to-0g run (the .key file "
                              "alongside the checkpoint). Required with "
                              "--init-from-0g.")
+    parser.add_argument("--full-board", action="store_true",
+                        help="Phase J.3: train against full backgammon "
+                             "positions driven by gnubg subprocess instead "
+                             "of the simplified RaceState pip race. Uses "
+                             "the Tesauro 198-dim contact-net encoder from "
+                             "agent/gnubg_encoder.py + FullBoardState from "
+                             "agent/full_board_state.py. Each match plays a "
+                             "real backgammon game; ~100x slower per match "
+                             "than --race because each move shells out to "
+                             "gnubg. The resulting checkpoint carries "
+                             "feature_encoder='gnubg_full' and is the only "
+                             "kind /games/{id}/agent-move with "
+                             "use_per_agent_nn=true can score.")
     parser.add_argument("--status-file", type=str, default=None,
                         metavar="PATH",
                         help="Append JSONL training events to this path so "
@@ -667,8 +735,33 @@ def main() -> None:
     else:
         writer.add_graph(agent, sample_board)
 
+    # Phase J.3: when --full-board is on, swap the state factory + set
+    # the module-level gnubg client so legal_successors dispatches to
+    # the gnubg-driven path. encode_state's dispatch is type-based and
+    # needs no setup. Latency here is dominated by gnubg subprocess
+    # cost (see full_board_state.py docstring).
+    state_factory = None
+    if args.full_board:
+        global _GNUBG_CLIENT_FOR_FULL_BOARD
+        # Add server/ to sys.path so we can import GnubgClient.
+        import sys
+        from pathlib import Path as _P
+        _server_root = _P(__file__).resolve().parents[1]
+        if str(_server_root) not in sys.path:
+            sys.path.insert(0, str(_server_root))
+        from server.app.gnubg_client import GnubgClient
+
+        from full_board_state import FullBoardState
+
+        client = GnubgClient()
+        _GNUBG_CLIENT_FOR_FULL_BOARD = client
+        state_factory = lambda: FullBoardState.initial(client)
+        print("Full-board mode active — each match drives gnubg subprocess; "
+              "expect ~100x slower per match than --race.", file=sys.stderr)
+
     # Baseline win rate before training.
-    baseline_wr = evaluate(agent, opponent, agent_extras, opponent_extras, n_matches=20)
+    baseline_wr = evaluate(agent, opponent, agent_extras, opponent_extras,
+                           n_matches=20, state_factory=state_factory)
     writer.add_scalar("eval/win_rate_vs_frozen", baseline_wr, 0)
     print(f"Baseline win rate (untrained): {baseline_wr:.2%}")
     # Note: in career mode `agent_extras`/`opponent_extras` get re-bound
@@ -697,6 +790,7 @@ def main() -> None:
             gamma=args.gamma, lam=args.lam, lr=args.lr,
             writer=writer, global_step=global_step,
             drand_round_digest=drand_digest,
+            state_factory=state_factory,
         )
         _emit("match", match_idx=match_idx, total=args.matches,
               winner="agent" if won else "opponent",
@@ -719,14 +813,14 @@ def main() -> None:
                 if p.grad is not None:
                     writer.add_histogram(f"grads/{name}", p.grad, match_idx)
             wr = evaluate(agent, opponent, eval_agent_extras, eval_opponent_extras,
-                          n_matches=20)
+                          n_matches=20, state_factory=state_factory)
             writer.add_scalar("eval/win_rate_vs_frozen", wr, match_idx + 1)
             print(f"  match {match_idx + 1:>4}/{args.matches}  "
                   f"rolling win-rate {sum(rolling_outcomes)/len(rolling_outcomes):.2%}  "
                   f"eval vs frozen {wr:.2%}")
 
     final_wr = evaluate(agent, opponent, eval_agent_extras, eval_opponent_extras,
-                        n_matches=50)
+                        n_matches=50, state_factory=state_factory)
     elapsed = time.time() - t0
     print(f"\nDone. {args.matches} matches in {elapsed:.1f}s. "
           f"Final win rate vs frozen opponent: {final_wr:.2%}")
@@ -737,7 +831,8 @@ def main() -> None:
         ckpt_path = Path(args.save_checkpoint)
         save_checkpoint(agent, ckpt_path,
                         match_count=starting_match_count + args.matches,
-                        extras_dim=args.extras_dim)
+                        extras_dim=args.extras_dim,
+                        feature_encoder="gnubg_full" if args.full_board else "race")
         print(f"Saved checkpoint: {ckpt_path}")
 
         if args.upload_to_0g:
