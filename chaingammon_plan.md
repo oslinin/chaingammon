@@ -28,11 +28,15 @@ Chaingammon: Backgammon on chain
       1. agent can coach human to increase ELO
       2. agent can process data about opponents/team members to nudge move suggestions
    2. model collaboration between agents in high dimensional ways by allowing agents to train/play together
-   3. career optimization: agents train for long term equity, considering other agents style profile. This goes beyond GNUBG’s optimal move selection to unlock the possibility of star players/teams of humans/agents.
-      1. This also unlocks new markets:
+   3. career optimization: agents train for long term equity, considering other agents style profile.
+      1. This goes beyond GNUBG’s optimal move selection to unlock the possibility of
+        1. Star players
+        2. Star teams of agents
+        3. Star teams of humans/agents. This is similar to how Claude Code is better at coding than humans, but the interaction of the two is still optimal.
+        4. This also unlocks new markets:
          1. betting
-         2. prediction
-         3. star agent equity
+         2. prediction/derivatives
+         3. star agent bonds/equity
 
 ## **Detail:**
 
