@@ -95,12 +95,24 @@ team-vs-solo by `team_a is not None`.
 
 Settlement uses **`MatchEscrow.payoutSplit(matchId, winners[],
 shares[])`** — a per-match split function called by `MatchRegistry`
-at game-end with the winning team's addresses and on-chain shares.
+at game-end with the winning team's addresses and the agreed shares.
 
 There is **no team treasury** and **no off-chain multisig**. Team
-terms can change at any match, so the split is committed at deposit
-time and verified on-chain when the match settles. Implementation
-lands in a separate plan; this doc captures the design intent.
+terms can change at every match, so the split is decided
+off-chain by the team and committed by the settler when the
+match settles — the contract verifies that `sum(shares) == pot`
+and that no winner is the zero address. Recipients are NOT
+restricted to the two depositors: in team mode only one address
+per side stakes (no team treasury) but the team's internal split
+may include teammates who never put money on the table.
+
+Effects-then-interactions: the `settled` flag flips before any
+of the N transfers, so a reentrant winner cannot double-spend.
+If any single transfer reverts, the whole transaction reverts and
+the pot stays in escrow — the settler retries with a corrected
+list. Zero-share entries are allowed (the settler may want to
+record team membership without paying) and silently skipped at
+transfer time so they don't trigger spurious `PaidOut` events.
 
 ## Coach in team mode
 
@@ -123,14 +135,15 @@ on whether `GameRecord.team_a` is populated.
 | --- | --- | --- |
 | **Team-1** | GameRecord schema (`AdvisorSignal`, `Team`, optional fields on `MoveEntry`/`GameRecord`) + tests | landed |
 | **Team-2** | `/chat` `kind` extensions (`teammate_propose`, `teammate_advise`, `captain_decide`) + `ChatRequest.chosen_advisor_id` + tests | landed |
-| **Team-3** | `MatchEscrow.payoutSplit` Solidity variant + Hardhat tests + `deploy.js` wiring | follow-up |
+| **Team-3** | `MatchEscrow.payoutSplit(matchId, winners[], shares[])` Solidity variant + Hardhat tests | landed |
 | **Team-4** | `/play/new` frontend route + match-page UI for advisor display | follow-up |
 
-Team-1 and Team-2 are wired end-to-end as Phase-A stubs (deterministic
-replies, real schema validation). Team-3 and Team-4 are the
-on-chain settlement and the frontend; both are scoped here so the
-schema decisions can be made now without waiting on the full
-implementation.
+Team-1, Team-2 and Team-3 are wired. The `MatchRegistry → MatchEscrow.payoutSplit`
+hook (analogous to the existing `payoutWinner` hook) is a one-line edit
+to `MatchRegistry.settle*` and lands when the frontend (Team-4)
+needs an end-to-end team-mode flow. Team-4 is the frontend match-page
+display for advisor signals + a `/play/new` route that lets users pick
+solo vs team mode at match creation.
 
 ## What this is NOT
 
