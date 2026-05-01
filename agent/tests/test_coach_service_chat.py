@@ -37,6 +37,11 @@ def _request_body(kind: str = "open_turn", **overrides) -> dict:
         "agent_weights_hash": "",
         "dialogue": [],
         "preferences": {},
+        # Phase B wired the real LLM path. These tests exercise the
+        # deterministic stub handler — assertions on stub output must
+        # stay stable. Tests of the LLM path live below and mock
+        # _generate_chat_compute / _generate_chat_local directly.
+        "backend": "stub",
     }
     body.update(overrides)
     return body
@@ -266,3 +271,116 @@ async def test_team_mode_kinds_round_trip_chosen_advisor_id_field(app):
                 kind=kind, chosen_advisor_id="agent:3",
             ))
         assert resp.status_code == 200, f"{kind} should accept chosen_advisor_id"
+
+
+# ---------------------------------------------------------------------------
+# Phase B — real LLM path (compute → local fallback)
+#
+# Tests above force backend="stub" so they assert on deterministic text.
+# These tests exercise the wired LLM path itself: build the prompt, ship
+# it to the inner _generate_chat_compute / _generate_chat_local, return
+# the model's content. Inner functions are mocked so the test suite
+# stays offline.
+# ---------------------------------------------------------------------------
+
+
+from unittest.mock import patch
+
+
+@pytest.mark.anyio
+async def test_chat_compute_path_uses_compute_when_available(app):
+    """When req.backend == 'compute' and the compute call succeeds,
+    the response carries backend == 'compute' and the model's text."""
+    with patch("coach_service._generate_chat_compute") as mock_compute:
+        mock_compute.return_value = "Building a prime here is the best line."
+        async with AsyncClient(transport=ASGITransport(app=app),
+                                base_url="http://test") as c:
+            resp = await c.post("/chat", json=_request_body(backend="compute"))
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["backend"] == "compute"
+    assert "prime" in body["message"]["text"].lower()
+    # The wired path must build + ship the prompt — confirm the inner
+    # function was actually called (not the stub).
+    assert mock_compute.called
+    prompt_arg = mock_compute.call_args[0][0]
+    # build_chat_prompt should embed the dice + candidates in the prompt.
+    assert "13/8 13/10" in prompt_arg
+    assert "dice: 3-5" in prompt_arg
+
+
+@pytest.mark.anyio
+async def test_chat_falls_back_to_local_when_compute_fails(app):
+    """If 0G Compute raises, /chat must fall back to the local model
+    (same as /hint). Surface backend == 'local' in the response."""
+    def boom(*_a, **_kw):
+        raise RuntimeError("0G testnet unreachable")
+
+    with patch("coach_service._generate_chat_compute", side_effect=boom), \
+         patch("coach_service._generate_chat_local") as mock_local:
+        mock_local.return_value = "Local fallback advice."
+        async with AsyncClient(transport=ASGITransport(app=app),
+                                base_url="http://test") as c:
+            resp = await c.post("/chat", json=_request_body(backend="compute"))
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["backend"] == "local"
+    assert "fallback" in body["message"]["text"].lower()
+
+
+@pytest.mark.anyio
+async def test_chat_local_only_skips_compute_entirely(app):
+    """backend == 'local' means do NOT attempt compute even on the
+    happy path. This is the offline-development backend choice."""
+    with patch("coach_service._generate_chat_compute") as mock_compute, \
+         patch("coach_service._generate_chat_local") as mock_local:
+        mock_local.return_value = "Local model output."
+        async with AsyncClient(transport=ASGITransport(app=app),
+                                base_url="http://test") as c:
+            resp = await c.post("/chat", json=_request_body(backend="local"))
+    assert resp.status_code == 200
+    assert not mock_compute.called  # compute was skipped
+    assert mock_local.called
+    assert resp.json()["backend"] == "local"
+
+
+@pytest.mark.anyio
+async def test_chat_compute_only_raises_on_compute_failure(app):
+    """backend == 'compute-only' surfaces the compute error to the
+    caller instead of falling back. Used in CI when the demo path
+    must work — the failure must NOT be swallowed by the local-fallback
+    path. Under ASGITransport the unhandled exception propagates
+    directly to the test (no error middleware); in production FastAPI
+    converts it to a 500 response."""
+    def boom(*_a, **_kw):
+        raise RuntimeError("0G testnet unreachable")
+
+    with patch("coach_service._generate_chat_compute", side_effect=boom), \
+         patch("coach_service._generate_chat_local") as mock_local:
+        mock_local.return_value = "should not be reached"
+        with pytest.raises(RuntimeError, match="0G testnet unreachable"):
+            async with AsyncClient(transport=ASGITransport(app=app),
+                                    base_url="http://test") as c:
+                await c.post("/chat", json=_request_body(backend="compute-only"))
+        # Local was never reached — the whole point of compute-only.
+        assert not mock_local.called
+
+
+@pytest.mark.anyio
+async def test_chat_preferences_update_runs_in_real_path_too(app):
+    """Preference updates live outside the LLM call, so they must run
+    on the LLM path identically to the stub path."""
+    history = [
+        {"role": "human", "text": "I want to play this as a running game",
+         "turn_index": 0, "timestamp": "2026-05-01T12:00:00Z"},
+    ]
+    with patch("coach_service._generate_chat_compute") as mock_compute:
+        mock_compute.return_value = "OK, leaning racing."
+        async with AsyncClient(transport=ASGITransport(app=app),
+                                base_url="http://test") as c:
+            resp = await c.post("/chat", json=_request_body(
+                kind="human_reply", dialogue=history, backend="compute",
+            ))
+    body = resp.json()
+    assert "prefers_running" in body["preferences_delta"]
+    assert body["preferences_delta"]["prefers_running"] > 0

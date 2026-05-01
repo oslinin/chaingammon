@@ -119,6 +119,17 @@ class ChatRequest(BaseModel):
     # or "agent:N"); None means the captain chose independently.
     chosen_advisor_id: Optional[str] = None
 
+    # Per-request backend override. Mirrors HintRequest.backend:
+    #   "compute"      — paid 0G inference, falls back to local on failure
+    #   "local"        — free flan-t5 (no network)
+    #   "compute-only" — paid; raise on failure (used in CI)
+    #   "stub"         — deterministic placeholder reply (used in tests)
+    # None means use the server default (`COACH_BACKEND` env, default
+    # "compute"). The "stub" value is the bridge between Phase A's
+    # always-stubbed handler and Phase B's real LLM path — production
+    # never sets it; tests set it explicitly to assert on stub output.
+    backend: Optional[str] = None
+
 
 class ChatResponse(BaseModel):
     """Response body for POST /chat."""

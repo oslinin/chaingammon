@@ -142,25 +142,38 @@ class ChatResponse(BaseModel):
 Four small, reviewable steps so the existing `/hint` flow keeps
 working while the dialogue layer goes on top.
 
-### Phase A — data shapes + endpoint stub *(this is the next commit)*
+### Phase A — data shapes + endpoint stub *(landed)*
 
 - New `agent/coach_dialogue.py`: `DialogueMessage`, `DialogueState`,
   `build_chat_prompt`, `update_preferences`. Pure data + helpers,
-  no HTTP yet.
+  no HTTP.
 - New `POST /chat` endpoint in `agent/coach_service.py` that
-  consumes `ChatRequest`, returns a stub `ChatResponse` so the
-  frontend can integrate against it before the LLM path is wired.
+  consumes `ChatRequest`, returns a deterministic stub
+  `ChatResponse` so the frontend can integrate against it before
+  the LLM path is wired.
 - Unit tests for the data shapes, prompt assembly, and preference
   updates.
 
-### Phase B — wire the LLM backend
+### Phase B — wire the LLM backend *(landed)*
 
 - `_generate_chat` analogue of the existing `_generate` for
-  the dialogue prompt; reuse `_generate_compute` and
-  `_generate_local`.
-- Add `streaming=True` for the `compute` path when the SDK supports
-  it (the dialogue is conversational; streaming is the difference
-  between "feels live" and "feels like chat-with-a-bot").
+  the dialogue prompt — selects between 0G Compute (Qwen 2.5 7B)
+  and the local flan-t5 fallback with the same compute → local
+  fallback chain `/hint` uses.
+- `_generate_chat_compute` ships the assembled `build_chat_prompt`
+  output as a single user message to `coach_compute_client.chat`
+  (per-kind framing already lives inside the prompt; the system
+  prompt stays generic). `_generate_chat_local` concatenates the
+  same content and runs flan-t5 seq2seq with `max_new_tokens=160`.
+- `ChatRequest.backend` field mirrors `HintRequest.backend` —
+  `"compute"`, `"local"`, `"compute-only"`, `"stub"`, or unset
+  to use the `COACH_BACKEND` env default. Tests pass `"stub"` to
+  exercise the deterministic Phase-A handler; production never
+  sets it.
+- Streaming for the compute path is a Phase-B-tail follow-up: the
+  Node bridge already supports it, the FastAPI endpoint needs a
+  small change to a `StreamingResponse`. Lands when the frontend
+  reads it (Phase C).
 
 ### Phase C — frontend integration
 

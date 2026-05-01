@@ -270,7 +270,83 @@ def get_hint(req: HintRequest) -> dict:
     return {"hint": hint, "backend": backend}
 
 
-# ─── /chat endpoint (Phase A — stub LLM path) ───────────────────────────────
+# ─── /chat endpoint ─────────────────────────────────────────────────────────
+#
+# Phase A landed the deterministic stub. Phase B (this commit) wires the
+# real LLM path: build_chat_prompt → 0G Compute (Qwen 2.5 7B) with flan-
+# t5 local fallback, mirroring `/hint`'s _generate_compute / _generate_
+# local / _generate selector. The stub stays callable so tests that
+# assert on deterministic output keep working — they pass
+# `backend="stub"` in the request.
+
+
+_CHAT_SYSTEM_PROMPT = (
+    "You are a backgammon coach embedded in a live match. The user "
+    "message contains the full position context, dialogue history "
+    "and a per-turn framing instruction; respect the framing and "
+    "produce ONLY the reply text the player will see. Keep replies "
+    "to 1-2 sentences unless the framing explicitly asks for more."
+)
+
+
+def _generate_chat_compute(prompt: str) -> str:
+    """0G Compute path for /chat — Qwen 2.5 7B Instruct via the Node bridge.
+
+    The full assembled prompt (`build_chat_prompt(req)`) is the user
+    message; per-kind framing lives inside the prompt so the system
+    prompt stays generic.
+    """
+    from coach_compute_client import chat
+    result = chat(
+        [{"role": "user", "content": prompt}],
+        system=_CHAT_SYSTEM_PROMPT,
+    )
+    return result.content.strip()
+
+
+def _generate_chat_local(prompt: str) -> str:
+    """Local fallback for /chat — flan-t5-base seq2seq on the same prompt.
+
+    flan-t5 is a single-prompt seq2seq model; concatenate the system
+    prompt and the user message into one input sequence. Mirrors the
+    existing `_generate_local` for /hint.
+    """
+    _load_local_model()
+    text = _CHAT_SYSTEM_PROMPT + "\n\n" + prompt
+    inputs = _local_tokenizer(
+        text, return_tensors="pt", max_length=1024, truncation=True
+    )
+    outputs = _local_model.generate(**inputs, max_new_tokens=160)
+    return _local_tokenizer.decode(
+        outputs[0], skip_special_tokens=True
+    ).strip()
+
+
+def _generate_chat(
+    prompt: str, backend: Optional[str] = None
+) -> tuple[str, str]:
+    """Run /chat inference with the requested backend (or the server default).
+
+    Selection rules mirror `_generate` for /hint:
+      - backend == "local"        → local flan-t5 only
+      - backend == "compute-only" → 0G Compute; raise on failure
+      - backend in ("compute", None) → 0G Compute, fall back to local on error
+    `backend == "stub"` is handled by `post_chat` directly and never
+    reaches this function.
+    """
+    chosen = (backend or _BACKEND).lower()
+    if chosen == "local":
+        return _generate_chat_local(prompt), "local"
+    try:
+        return _generate_chat_compute(prompt), "compute"
+    except Exception as e:
+        if chosen == "compute-only":
+            raise
+        import logging
+        logging.getLogger(__name__).warning(
+            "0G Compute /chat failed (%s); falling back to local flan-t5.", e
+        )
+        return _generate_chat_local(prompt), "local"
 
 
 def _stub_chat_reply(req: ChatRequest) -> str:
@@ -329,17 +405,15 @@ def _stub_chat_reply(req: ChatRequest) -> str:
 def post_chat(req: ChatRequest) -> ChatResponse:
     """Turn-by-turn dialogue endpoint. See docs/coach-dialogue.md.
 
-    @notice Phase-A stub: returns a deterministic placeholder reply
-            so the frontend can integrate against the shape. The LLM
-            call lands in Phase B — at that point this handler will
-            call `_generate_chat(prompt, backend)` mirroring the
-            existing `_generate` for `/hint`, with the same
-            compute/local fallback chain.
+    @notice Builds the prompt via `build_chat_prompt`, dispatches to
+            `_generate_chat` (0G Compute → flan-t5 local fallback)
+            or, when `backend == "stub"`, to the deterministic
+            `_stub_chat_reply` used by tests. Same backend-selection
+            shape as the existing `/hint` endpoint.
 
     @dev    Pipeline:
               1. build_chat_prompt(req) — pure function, deterministic.
-              2. (Phase B) ship the prompt to 0G Compute / flan-t5;
-                 fall back on failure. Phase A returns a stub instead.
+              2. dispatch to LLM (compute → local fallback) or stub.
               3. Update per-session preferences from the human's last
                  message (if any) and emit the delta in the response.
             The pipeline lives entirely outside the LLM call so the
@@ -349,11 +423,14 @@ def post_chat(req: ChatRequest) -> ChatResponse:
     import time
     started = time.monotonic()
 
-    # Build the prompt — used in Phase B, ignored in the Phase-A stub
-    # but constructed here so the assembly logic is exercised on every
-    # request and any prompt-building failure surfaces immediately.
-    _ = build_chat_prompt(req)
-    reply_text = _stub_chat_reply(req)
+    prompt = build_chat_prompt(req)
+
+    chosen = (req.backend or _BACKEND).lower()
+    if chosen == "stub":
+        reply_text = _stub_chat_reply(req)
+        backend_used = "stub"
+    else:
+        reply_text, backend_used = _generate_chat(prompt, req.backend)
 
     # Per-session preference update: only the most recent human
     # message contributes; agent messages don't move prefs (per
@@ -375,7 +452,7 @@ def post_chat(req: ChatRequest) -> ChatResponse:
             turn_index=req.turn_index,
             timestamp=now_iso(),
         ),
-        backend="stub",
+        backend=backend_used,
         preferences_delta=delta,
         latency_ms=elapsed_ms,
     )
