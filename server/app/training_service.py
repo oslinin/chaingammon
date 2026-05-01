@@ -40,6 +40,12 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 _AGENT_DIR = _REPO_ROOT / "agent"
 _TRAINER = _AGENT_DIR / "round_robin_trainer.py"
 
+# Phase L.2: TensorBoard alongside the trainer. We pin the port so the
+# frontend's iframe URL is predictable; the env override exists for
+# operators running multiple training jobs side by side.
+TENSORBOARD_PORT = int(os.environ.get("CHAINGAMMON_TB_PORT", "6006"))
+TENSORBOARD_HOST = os.environ.get("CHAINGAMMON_TB_HOST", "localhost")
+
 
 # Used by /training/estimate when use_0g_inference is true. Calibrated
 # from typical race lengths in the trainer's test fixtures; configurable
@@ -69,6 +75,16 @@ class TrainingJob:
     use_0g_inference: bool
     use_0g_coaching: bool
     process: Optional[subprocess.Popen] = field(default=None, repr=False)
+    # Phase L.2: TensorBoard sidecar — written when the trainer's
+    # --logdir is set (the default for every job started via
+    # /training/start). url is published in /training/status so the
+    # frontend can iframe it.
+    logdir: Optional[Path] = None
+    tensorboard_pid: Optional[int] = None
+    tensorboard_url: Optional[str] = None
+    tensorboard_process: Optional[subprocess.Popen] = field(
+        default=None, repr=False
+    )
 
 
 _current_job: Optional[TrainingJob] = None
@@ -98,7 +114,10 @@ def _clear_if_dead() -> None:
     if _current_job is not None and not _is_pid_alive(_current_job.pid):
         # Don't drop the JSONL path — the status reader still wants it
         # for post-mortem; just zero out the module global so a new
-        # start_job() doesn't 409 against a corpse.
+        # start_job() doesn't 409 against a corpse. Phase L.2: also
+        # tear down the tensorboard sidecar (the trainer is dead but
+        # tb keeps the port pinned otherwise).
+        _terminate_tensorboard(_current_job)
         _current_job = None
 
 
@@ -143,6 +162,11 @@ def start_job(
     log_fd, log_path = tempfile.mkstemp(prefix="chaingammon-training-", suffix=".log")
     log_file = Path(log_path)
 
+    # Phase L.2: TensorBoard logdir lives next to the status file so
+    # event files persist for post-mortem inspection. mkdtemp keeps
+    # the directory unique per run.
+    tb_logdir = Path(tempfile.mkdtemp(prefix="chaingammon-training-tb-"))
+
     cmd = [
         sys.executable,
         str(_TRAINER),
@@ -151,6 +175,7 @@ def start_job(
         "--status-file", str(status_file),
         "--extras-dim", str(extras_dim),
         "--seed", str(seed),
+        "--logdir", str(tb_logdir),
     ]
     if checkpoint_dir is not None:
         cmd.extend(["--checkpoint-dir", str(checkpoint_dir)])
@@ -178,6 +203,14 @@ def start_job(
         log_file.unlink(missing_ok=True)
         raise
 
+    # Phase L.2: spawn TensorBoard alongside the trainer. Best-effort —
+    # if the binary isn't on PATH or the port is already taken, log
+    # the failure and continue: training still works without it, and
+    # /training/status will report tensorboard_url=None so the
+    # frontend can show a "tensorboard unavailable" placeholder
+    # instead of a broken iframe.
+    tb_proc, tb_url = _maybe_spawn_tensorboard(tb_logdir, log_fh)
+
     job = TrainingJob(
         pid=process.pid,
         started_at=datetime.now(timezone.utc),
@@ -188,9 +221,64 @@ def start_job(
         use_0g_inference=use_0g_inference,
         use_0g_coaching=use_0g_coaching,
         process=process,
+        logdir=tb_logdir,
+        tensorboard_pid=tb_proc.pid if tb_proc is not None else None,
+        tensorboard_url=tb_url,
+        tensorboard_process=tb_proc,
     )
     _current_job = job
     return job
+
+
+def _maybe_spawn_tensorboard(
+    logdir: Path, log_fh
+) -> "tuple[Optional[subprocess.Popen], Optional[str]]":
+    """Best-effort tensorboard launch. Returns (process, url) on success
+    or (None, None) when the binary isn't available / port is in use."""
+    cmd = [
+        "tensorboard",
+        "--logdir", str(logdir),
+        "--host", TENSORBOARD_HOST,
+        "--port", str(TENSORBOARD_PORT),
+        # Survive remote browsers when host is bound to 0.0.0.0; harmless
+        # at localhost.
+        "--bind_all",
+    ]
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            stdout=log_fh,
+            stderr=log_fh,
+        )
+    except FileNotFoundError:
+        # tensorboard binary not on PATH — silently skip.
+        return None, None
+    except Exception:
+        # Permission / port binding / unknown — also skip.
+        return None, None
+    url = f"http://{TENSORBOARD_HOST}:{TENSORBOARD_PORT}"
+    return proc, url
+
+
+def _terminate_tensorboard(job: TrainingJob) -> None:
+    """Best-effort tensorboard teardown. Called from abort_job and from
+    next start_job's _clear_if_dead path so a finished run's TB
+    sidecar doesn't keep the port pinned."""
+    if job.tensorboard_pid is None:
+        return
+    try:
+        os.kill(job.tensorboard_pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+    proc = job.tensorboard_process
+    if proc is not None:
+        try:
+            proc.wait(timeout=5.0)
+        except subprocess.TimeoutExpired:
+            try:
+                os.kill(job.tensorboard_pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
 
 
 def abort_job(*, grace_seconds: float = 5.0) -> bool:
@@ -233,6 +321,8 @@ def abort_job(*, grace_seconds: float = 5.0) -> bool:
             except ProcessLookupError:
                 pass
 
+    # Phase L.2: tensorboard sidecar cleanup before clearing singleton.
+    _terminate_tensorboard(_current_job)
     _current_job = None
     return True
 
@@ -290,6 +380,12 @@ def _empty_status() -> dict[str, Any]:
         "use_0g_coaching": False,
         "ended": None,
         "last_update_ts": 0.0,
+        # Phase L.2: TensorBoard sidecar metadata. Frontend reads these
+        # to mount the iframe; absent / null means the iframe should
+        # render a "tensorboard unavailable" placeholder instead of
+        # pointing at a dead URL.
+        "tensorboard_url": None,
+        "logdir": None,
     }
 
 
@@ -387,6 +483,10 @@ def _aggregate(events: list[dict], *, job: Optional[TrainingJob],
         "use_0g_coaching": bool(job.use_0g_coaching) if job else False,
         "ended": ended,
         "last_update_ts": last_ts,
+        # Phase L.2: tensorboard sidecar — null when launch failed
+        # (e.g. binary not on PATH) so the frontend can disclose state.
+        "tensorboard_url": job.tensorboard_url if job else None,
+        "logdir": str(job.logdir) if job and job.logdir else None,
     }
 
 
