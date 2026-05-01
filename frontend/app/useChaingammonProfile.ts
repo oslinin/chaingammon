@@ -1,9 +1,13 @@
-// Phase 15: read text records from a chaingammon subname's profile.
+// Phase 15 + Commit 0 typed-ELO: read a backgammon subname's profile.
 //
-// The ENS namehash for `<label>.<parent>` is computed locally as
-// `keccak256(parentNode || keccak256(label))`. parentNode is read once
-// from the contract (immutable) and cached forever via react-query's
-// staleTime: Infinity.
+// ELO comes from the typed `eloOf(node)` view (uint256 → bigint via viem),
+// not from a `text(node, "elo")` string round-trip. The ENS namehash is
+// computed locally as `keccak256(parentNode || keccak256(label))`;
+// parentNode is read once from the contract (immutable) and cached
+// forever via react-query's staleTime: Infinity.
+//
+// `agent_id` is still a text record on the subname (see
+// `useAllChaingammonSubnames` for the picker discriminator).
 //
 // Reads pin to the wallet's current chain (Phase 24); the registrar
 // address comes from `chains.ts`.
@@ -30,7 +34,6 @@ export function useChaingammonProfile(label: string | null) {
     functionName: "parentNode",
     chainId,
     query: {
-      // Immutable on-chain, set at registrar deploy time.
       staleTime: Number.POSITIVE_INFINITY,
       enabled: !!playerSubnameRegistrar,
     },
@@ -41,15 +44,27 @@ export function useChaingammonProfile(label: string | null) {
       ? subnameNode(parentNode as `0x${string}`, label)
       : undefined;
 
-  const { data: elo, isLoading } = useReadContract({
+  const { data: eloRaw, isLoading: eloLoading } = useReadContract({
     address: playerSubnameRegistrar,
     abi: PlayerSubnameRegistrarABI,
-    functionName: "text",
-    args: node ? [node, "elo"] : undefined,
+    functionName: "eloOf",
+    args: node ? [node] : undefined,
     chainId,
     query: { enabled: !!node },
   });
 
-  const eloValue = typeof elo === "string" && elo !== "" ? elo : undefined;
-  return { elo: eloValue, node, isLoading };
+  const { data: agentIdRaw, isLoading: agentLoading } = useReadContract({
+    address: playerSubnameRegistrar,
+    abi: PlayerSubnameRegistrarABI,
+    functionName: "text",
+    args: node ? [node, "agent_id"] : undefined,
+    chainId,
+    query: { enabled: !!node },
+  });
+
+  const elo = typeof eloRaw === "bigint" ? Number(eloRaw) : undefined;
+  const agentId =
+    typeof agentIdRaw === "string" && agentIdRaw !== "" ? agentIdRaw : undefined;
+
+  return { elo, agentId, node, isLoading: eloLoading || agentLoading };
 }

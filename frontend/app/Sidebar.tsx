@@ -33,6 +33,13 @@ import { useChainContracts } from "./contracts";
 // Inline ABI fragment for mintAgent. Kept here so the sidebar builds
 // independently of the Hardhat compile step (same pattern as ClaimForm
 // using SELF_MINT_ABI). The full artifact ABI covers all other reads.
+//
+// Updated post-Commit 0: mintAgent now takes 4 args. The 4th is an
+// explicit subname label; passing "" preserves the legacy
+// `_cleanLabel(metadataURI)` behaviour. Commit 4 introduces a proper
+// /agents/new page with a label input; until then the sidebar form
+// passes the user-typed string as both metadataURI AND label_ so the
+// on-chain ENS subname matches what the user typed.
 const MINT_AGENT_ABI = [
   {
     type: "function",
@@ -41,6 +48,7 @@ const MINT_AGENT_ABI = [
       { name: "to", type: "address", internalType: "address" },
       { name: "metadataURI", type: "string", internalType: "string" },
       { name: "tier_", type: "uint8", internalType: "uint8" },
+      { name: "label_", type: "string", internalType: "string" },
     ],
     outputs: [{ name: "agentId", type: "uint256", internalType: "uint256" }],
     stateMutability: "nonpayable",
@@ -94,11 +102,15 @@ export function Sidebar() {
   const submit = () => {
     if (!address || !agentLabel.trim()) return;
     reset();
+    const trimmed = agentLabel.trim();
     writeContract({
       address: agentRegistry,
       abi: MINT_AGENT_ABI,
       functionName: "mintAgent",
-      args: [address, agentLabel.trim(), agentTier],
+      // Pass the user input as both metadataURI and the explicit label_
+      // so the resulting ENS subname matches what they typed. Commit 4
+      // introduces a proper /agents/new with separate fields.
+      args: [address, trimmed, agentTier, trimmed],
     });
   };
 
@@ -122,6 +134,20 @@ export function Sidebar() {
       </div>
 
       <nav className="flex flex-col gap-1 p-3">
+        {/* Entry 0: new match selector — full-roster picker (Commit 2) */}
+        <Link
+          href="/play/new"
+          data-testid="sidebar-play-new"
+          className="flex flex-col gap-0.5 rounded-md px-3 py-3 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800"
+        >
+          <span className="font-semibold text-zinc-900 dark:text-zinc-50">
+            New match
+          </span>
+          <span className="text-xs text-zinc-500 dark:text-zinc-400">
+            Pick sides + length
+          </span>
+        </Link>
+
         {/* Entry 1: current play with agent */}
         <Link
           href={playHref}
