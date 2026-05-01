@@ -1,11 +1,10 @@
 """
-gnubg_service.py — AXL agent node: gnubg move evaluation.
+gnubg_service.py — local FastAPI agent process: gnubg move evaluation.
 
-@notice Exposed via AXL (Gensyn Agent eXchange Layer) as an A2A
-        (agent-to-agent) service. The AXL binary proxies HTTP traffic from
-        remote peers to this service running on localhost. Run alongside AXL:
+@notice Run as a plain HTTP service on the player's own machine. The
+        browser hits localhost:8001 directly via fetch; CORS is open in
+        dev. Start with:
 
-          axl start --config axl-config.json &
           uvicorn gnubg_service:app --port 8001
 
 @dev    Endpoints:

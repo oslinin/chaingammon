@@ -1,4 +1,4 @@
-// Phase 26: match flow over the AXL gnubg agent node.
+// Phase 26: match flow over the local gnubg agent process (HTTP on localhost:8001).
 // Phase 31: drag-and-drop checker movement with optimistic board display and undo.
 //
 // URL: /match?agentId=<N>
@@ -836,7 +836,7 @@ function MatchInner() {
           Could not start game: {error}
         </p>
         <p className="text-sm text-zinc-500 dark:text-zinc-400">
-          Make sure the AXL gnubg agent node is running at{" "}
+          Make sure the local gnubg agent process is running at{" "}
           <code className="font-mono">{GNUBG}</code>.
         </p>
         <Link

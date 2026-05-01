@@ -11,8 +11,8 @@ the per-phase verbatim commit log (with full architectural rationale), see
 ### Added
 
 - **Phase 20 — 0G Compute coach with agent-bias awareness.** Replaces the local-only flan-t5-base coach with verifiable inference on 0G Compute (Qwen 2.5 7B Instruct) via a new `og-compute-bridge` Node CLI. Adds an `AgentProfile` abstraction (`agent/agent_profile.py`) that pulls each agent's experience overlay from 0G Storage and renders its top biases as a one-sentence prompt context — forward-compatible with the `learn` branch's PyTorch model. Coach panel now has a Paid · 0G / Free · Local toggle (persisted in `localStorage`); the server falls back from compute → local invisibly when 0G is unreachable, and surfaces the served backend in the hint card.
-- **Phase 18 — match page over AXL gnubg agent node.** Browser holds match state; routes every move through `gnubg_service` (`/new`, `/apply`, `/move`, `/resign`); rolls dice client-side via `crypto.getRandomValues`. Removes the last dependency on the retired FastAPI server. (`frontend/app/match/page.tsx`, `frontend/app/dice.ts`)
-- **Phase 17 — AXL agent nodes** (`agent/gnubg_service.py`, `agent/coach_service.py`). gnubg service exposes `/move` / `/evaluate` plus the new `/new` / `/apply` / `/resign` endpoints over a unified `MatchState` shape. Coach service runs flan-t5-base for one-to-two-sentence move narrations. Python project is `uv`-managed.
+- **Phase 18 — match page over local gnubg agent process.** Browser holds match state; routes every move through `gnubg_service` (`/new`, `/apply`, `/move`, `/resign`) on `localhost:8001`; rolls dice client-side via `crypto.getRandomValues`. Removes the last dependency on the retired FastAPI server. (`frontend/app/match/page.tsx`, `frontend/app/dice.ts`)
+- **Phase 17 — local agent processes** (`agent/gnubg_service.py`, `agent/coach_service.py`). gnubg service exposes `/move` / `/evaluate` plus the new `/new` / `/apply` / `/resign` endpoints over a unified `MatchState` shape. Coach service runs flan-t5-base for one-to-two-sentence move narrations. Python project is `uv`-managed.
 - **Network dropdown in navbar.** Lets the user switch between 0G Galileo Testnet, Sepolia, and (in dev) Hardhat Localhost from the connect button area. Replaces the one-shot "Switch to X" amber nudge.
 - **`/test-network-dropdown` fixture page** + Playwright spec covering dropdown variants.
 - **`home-navbar.spec.ts`** — positive Playwright assertion that the home page renders one of the three connect-state UIs (catches a class of regressions where `ConnectButton` silently fails to render).
@@ -21,9 +21,9 @@ the per-phase verbatim commit log (with full architectural rationale), see
 
 ### Changed
 
-- **Frontend match page** rewritten end-to-end for the post-pivot AXL flow. New `MatchState` interface (drops `game_id`, `cube`, `cube_owner`); calls `NEXT_PUBLIC_GNUBG_URL` (default `http://localhost:8001`) instead of the retired FastAPI server.
+- **Frontend match page** rewritten end-to-end for the post-pivot local-agent flow. New `MatchState` interface (drops `game_id`, `cube`, `cube_owner`); calls `NEXT_PUBLIC_GNUBG_URL` (default `http://localhost:8001`) instead of the retired FastAPI server.
 - **`MatchRegistry.recordMatch`** records `winnerHuman` / `loserHuman` addresses with zero-address slots when an agent plays — same shape, kept compatible with the upcoming two-sig design.
-- **Pivot (`7053a9fb`):** dropped the central FastAPI server and KeeperHub workflow in favor of local AXL agent nodes and a two-sig (or future state-channel) on-chain settlement.
+- **Pivot (`7053a9fb`):** dropped the central FastAPI server and KeeperHub workflow in favor of local agent processes (gnubg + coach FastAPI services on `localhost`) and a two-sig (or future state-channel) on-chain settlement.
 
 ### Fixed
 
