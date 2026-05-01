@@ -125,6 +125,100 @@ Two reasons:
 
 The overlay is the right primitive for "this agent learned": it's cheap to compute (no backprop, no gradient descent), bounded (each entry clipped to [-1, 1]), explainable (you can read off "this agent prefers slot openings"), and it gives every iNFT a unique, monotonically-growing piece of state that's cryptographically tied to the token through `dataHashes[1]`. That's what makes the iNFT meaningful as an asset rather than a label.
 
+### How the overlay learns — the update rule in detail
+
+We don't run backpropagation. We don't sample from a corpus of expert games. We don't run a self-play loop in the background. The overlay update is a tiny, closed-form arithmetic step that runs **once per completed match, for the agent that played it**. Implementation lives in `server/app/agent_overlay.py:268` (`update_overlay`).
+
+**Where the training signal comes from.** Every completed match generates exactly one update for that match's agent. The inputs are (a) the agent's own moves from the match (parsed from the `GameRecord` archived to 0G Storage) and (b) a binary win/loss label. The overlay learns *only* from games the iNFT actually played — never from a static corpus, never from agent-vs-agent self-play. This makes each iNFT's learning trajectory exactly its lived match history, which is also why two iNFTs that started identical drift into measurably different styles.
+
+**The five steps that turn one match into one weight update.**
+
+1. **Exposure** — for each of the 20 categories in `CATEGORIES`, sum `classify_move(move)[c]` across the agent's moves, then L1-normalize so per-category exposure sums to 1. `classify_move` is a hand-coded heuristic (e.g. `dst == "5"` → `build_5_point`).
+2. **Outcome** — `+1` for a win, `-1` for a loss. One scalar per match, broadcast across categories.
+3. **Proposed delta** — `LEARNING_RATE * outcome * exposure[c]`, per category. With `LEARNING_RATE = 0.05`, full exposure on a winning match nudges that category by `+0.05`.
+4. **Damping** — `alpha = DAMPING_N / (DAMPING_N + match_count)` blends the proposed value back toward the old. With `DAMPING_N = 20`, the 20th match has `alpha = 0.5` (half-strength); the 100th has `alpha ≈ 0.17`. Early matches move the overlay; later matches stabilize it.
+5. **Clip** — every value is clipped to `[-1, 1]` so no single category can run away.
+
+**Pseudocode** (mirrors `update_overlay` in `server/app/agent_overlay.py:268`):
+
+```python
+def update_overlay(overlay, agent_moves, won, match_count):
+    # 1. Exposure: how often did the agent's moves trigger each category?
+    exposure = {c: 0.0 for c in CATEGORIES}
+    for move in agent_moves:
+        scores = classify_move(move)            # heuristic, scores in [0, 1]
+        for c in CATEGORIES:
+            exposure[c] += scores[c]
+    total = sum(exposure.values())
+    if total > 0:
+        exposure = {c: x / total for c, x in exposure.items()}
+
+    # 2. Outcome signal — one scalar per match
+    outcome = +1.0 if won else -1.0
+
+    # 3 & 4. Damped reinforcement
+    alpha = DAMPING_N / (DAMPING_N + match_count)
+    new_values = {}
+    for c in CATEGORIES:
+        proposed = overlay.values[c] + LEARNING_RATE * outcome * exposure[c]
+        blended  = (1.0 - alpha) * overlay.values[c] + alpha * proposed
+        new_values[c] = max(-1.0, min(1.0, blended))   # 5. clip
+
+    return Overlay(values=new_values, match_count=match_count + 1)
+```
+
+**Visualization — the lifecycle of one update.**
+
+```mermaid
+flowchart TD
+    A[Match ends:<br/>frontend builds GameRecord] --> B[Server pulls agent's moves<br/>+ win/loss label]
+    B --> C[classify_move per move<br/>→ per-category scores in 0,1]
+    C --> D[Sum + L1-normalize<br/>→ exposure vector]
+    D --> E[outcome = +1 win / -1 loss]
+    E --> F[proposed = old + LR · outcome · exposure]
+    F --> G[α = N / N + match_count<br/>damping factor]
+    G --> H[new = 1−α · old + α · proposed,<br/>clip to −1, 1]
+    H --> I[Serialize JSON,<br/>upload bytes to 0G Storage]
+    I --> J[Indexer returns<br/>32-byte Merkle root]
+    J --> K[KeeperHub workflow:<br/>iNFT.dataHashes 1 = root]
+```
+
+**PyTorch analogue.** We don't use PyTorch in v1 — the update is a few lines of vanilla Python — but readers familiar with gradient-step formulations may find this mapping useful. The exposure vector plays the role of a "gradient", and outcome plays the role of a sign-only scalar reward; there is no autograd graph because there is no differentiable forward pass.
+
+```python
+import torch
+
+class OverlayLearner(torch.nn.Module):
+    """Equivalent of update_overlay expressed as a manual SGD step.
+
+    Differences from real RL:
+      - No value or policy network; no Bellman target.
+      - One scalar reward per match, broadcast across all moves.
+      - The "gradient" is the exposure vector — chosen by hand, not autograd.
+    """
+    def __init__(self, num_categories: int = 20):
+        super().__init__()
+        self.bias = torch.nn.Parameter(torch.zeros(num_categories))
+        self.match_count = 0
+
+    def forward(self, exposure: torch.Tensor) -> torch.Tensor:
+        # Score added on top of gnubg's equity when re-ranking candidates.
+        return (self.bias * exposure).sum(dim=-1)
+
+    @torch.no_grad()
+    def update(self, exposure: torch.Tensor, won: bool,
+               lr: float = 0.05, damping_n: int = 20) -> None:
+        outcome = 1.0 if won else -1.0
+        alpha = damping_n / (damping_n + self.match_count)
+
+        proposed = self.bias + lr * outcome * exposure
+        self.bias.copy_((1 - alpha) * self.bias + alpha * proposed)
+        self.bias.clamp_(-1.0, 1.0)
+        self.match_count += 1
+```
+
+This is not backpropagation: there is no loss function, no autograd graph, no gradient descent through a value or policy network. It is an outcome-weighted, exposure-driven, damped moving average over a fixed feature dictionary. Calling the result "learned" is accurate; calling it "trained" in the deep-learning sense would be a stretch.
+
 ---
 
 ## Match Archive on 0G Storage
