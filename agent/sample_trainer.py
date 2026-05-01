@@ -49,10 +49,12 @@ from __future__ import annotations
 from __future__ import annotations
 
 import argparse
+import json
 import math
 import os
 import random
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -511,6 +513,15 @@ def main() -> None:
                              "an earlier --upload-to-0g run (the .key file "
                              "alongside the checkpoint). Required with "
                              "--init-from-0g.")
+    parser.add_argument("--status-file", type=str, default=None,
+                        metavar="PATH",
+                        help="Append JSONL training events to this path so "
+                             "the FastAPI /training/status endpoint (or any "
+                             "subscriber) can read live progress. Events: "
+                             "started, match (one per match), done | "
+                             "aborted. Empty by default; the trainer is "
+                             "silent when unset, identical to pre-flag "
+                             "behavior.")
     parser.add_argument("--career-mode", action="store_true",
                         help="Replace the placeholder per-agent random "
                              "extras with `career_features.encode_career_"
@@ -528,6 +539,25 @@ def main() -> None:
         parser.error("--init-from-0g requires --init-key")
 
     drand_digest = bytes.fromhex(args.drand_digest) if args.drand_digest else None
+
+    # SIGTERM-safe: the FastAPI /training/abort endpoint sends SIGTERM
+    # and expects a final 'aborted' event so the status reader can tell
+    # graceful completion from kill. Raising SystemExit lets the
+    # try/finally below emit the event and close the file.
+    def _on_sigterm(signum, frame):
+        sys.exit(0)
+    signal.signal(signal.SIGTERM, _on_sigterm)
+
+    # Line-buffered append so the status reader sees events live.
+    status_fh = open(args.status_file, "a", buffering=1) if args.status_file else None
+
+    def _emit(event: str, **fields) -> None:
+        if status_fh is None:
+            return
+        fields["event"] = event
+        fields.setdefault("ts", time.time())
+        status_fh.write(json.dumps(fields) + "\n")
+        status_fh.flush()
 
     random.seed(args.seed)
     torch.manual_seed(args.seed)
@@ -624,6 +654,7 @@ def main() -> None:
     eval_opponent_extras = opponent_extras
 
     t0 = time.time()
+    _emit("started", total=args.matches, career_mode=bool(args.career_mode))
     for match_idx in range(args.matches):
         if career_rng is not None:
             agent_ctx = sample_career_context(career_rng)
@@ -637,6 +668,9 @@ def main() -> None:
             writer=writer, global_step=global_step,
             drand_round_digest=drand_digest,
         )
+        _emit("match", match_idx=match_idx, total=args.matches,
+              winner="agent" if won else "opponent",
+              plies=int(steps))
         global_step += steps
         rolling_outcomes.append(won)
         if len(rolling_outcomes) > 50:
@@ -716,6 +750,9 @@ def main() -> None:
               file=sys.stderr)
 
     writer.close()
+    _emit("done", total=args.matches, final_win_rate=float(final_wr))
+    if status_fh is not None:
+        status_fh.close()
 
     if args.launch_tensorboard:
         proc = maybe_launch_tensorboard(logdir)
