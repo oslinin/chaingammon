@@ -1020,14 +1020,24 @@ def get_training_estimate(
     if epochs < 1:
         raise HTTPException(status_code=422, detail="epochs must be >= 1")
 
-    # Phase G will plumb a real eval_estimator here. For Phase E we
-    # leave it None so the helper returns the placeholder pricing and
-    # surfaces `available: false` to the frontend.
+    # Phase G: when use_0g_inference, wire the eval bridge in. The
+    # bridge returns available=False if no backgammon-net provider is
+    # registered, and estimate_run preserves that flag to the frontend
+    # so the toggle disables itself with a tooltip.
+    eval_estimator = None
+    if use_0g_inference:
+        try:
+            from og_compute_eval_client import estimate as og_estimate
+
+            eval_estimator = og_estimate
+        except ImportError:
+            # Bridge wrapper not available — fall through to placeholder.
+            pass
     return estimate_run(
         epochs=epochs,
         agent_ids=ids,
         use_0g_inference=use_0g_inference,
-        eval_estimator=None,
+        eval_estimator=eval_estimator,
     )
 
 

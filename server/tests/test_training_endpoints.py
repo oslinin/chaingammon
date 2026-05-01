@@ -292,15 +292,54 @@ def test_estimate_local_returns_zero_gas():
     assert body["available"] is True
 
 
-def test_estimate_0g_returns_placeholder_pricing():
+def test_estimate_0g_unavailable_without_env():
+    """When use_0g_inference=true and no OG_STORAGE_* env is set, the
+    eval bridge subprocess fails fast; the endpoint catches the
+    exception, returns available=false, gas_og=0, and a note that
+    contains the structured 'OG_EVAL_UNAVAILABLE' marker so the
+    frontend can disclose state instead of erroring."""
     r = client.get("/training/estimate?epochs=4&agent_ids=1,2&use_0g_inference=true")
     assert r.status_code == 200
     body = r.json()
     assert body["games"] == 4 * 1  # C(2,2) = 1
-    assert body["gas_og"] > 0.0
-    assert body["per_inference_og"] > 0.0
-    # Phase G placeholder — eval bridge not wired yet.
     assert body["available"] is False
+    assert body["gas_og"] == 0.0
+    assert "OG_EVAL_UNAVAILABLE" in body.get("note", "") \
+        or "Missing env" in body.get("note", "") \
+        or "og-compute-bridge" in body.get("note", "")
+
+
+def test_estimate_0g_uses_eval_client_when_available(monkeypatch):
+    """When the eval client succeeds, gas_og + per_inference_og are
+    populated from the bridge's response and available=true."""
+    from app import training_service
+
+    class _StubResult:
+        per_inference_og = 0.0001
+        total_og = 0.024
+        available = True
+        note = ""
+
+    def _stub_estimate(count):
+        return _StubResult()
+
+    # Inject a stub eval client by monkey-patching the import at the
+    # endpoint's call site. Because the import lives inside the
+    # endpoint function (lazy), we patch the module that's imported
+    # FROM (the agent-side og_compute_eval_client).
+    import sys as _sys
+    from pathlib import Path as _P
+    _sys.path.insert(0, str(_P(__file__).resolve().parents[2] / "agent"))
+    import og_compute_eval_client  # noqa: E402
+    monkeypatch.setattr(og_compute_eval_client, "estimate", _stub_estimate)
+
+    r = client.get("/training/estimate?epochs=10&agent_ids=1,2,3&use_0g_inference=true")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["games"] == 10 * 3  # C(3,2) = 3
+    assert body["available"] is True
+    assert body["per_inference_og"] == pytest.approx(0.0001)
+    assert body["gas_og"] == pytest.approx(0.024)
 
 
 def test_estimate_invalid_agent_ids_string_422():
