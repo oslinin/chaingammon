@@ -10,6 +10,7 @@ dependencies = [
     "pytest>=8.0.0",
     "pytest-anyio>=0.0.0",
     "torch>=2.2.0",
+    "tensorboard>=2.16.0",
     "transformers>=4.40.0",
     "uvicorn>=0.29.0",
 ]
