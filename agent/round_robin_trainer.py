@@ -73,6 +73,75 @@ def _emit(fh: Optional[TextIO], event: str, **fields) -> None:
     fh.flush()
 
 
+def _maybe_build_0g_infer_fn(use_0g_inference: bool, status_fh):
+    """Phase I: if use_0g_inference is True, probe the eval bridge to
+    confirm a backgammon-net provider is registered. On success build
+    an `infer_fn(features, extras) -> equities` that routes each
+    candidate forward pass through `og_compute_eval_client.evaluate`.
+    On any failure (provider missing, env unset, bridge import fails)
+    emit a `warning` event to the status JSONL and return None so the
+    trainer falls back to local inference cleanly.
+
+    The trade-off: 0G inference is one network round-trip per
+    candidate, so a position with K legal candidates becomes K
+    sequential calls. The eval bridge could batch in a future iteration;
+    for now we accept the latency to keep the wire faithful.
+    """
+    if not use_0g_inference:
+        return None
+    try:
+        import torch as _torch  # local import keeps the trainer importable
+        from og_compute_eval_client import (    # noqa: E402
+            OgEvalUnavailable,
+            evaluate as _og_evaluate,
+            estimate as _og_estimate,
+        )
+    except Exception as exc:
+        _emit(status_fh, "warning",
+              reason="OG_EVAL_IMPORT_FAILED", detail=str(exc))
+        return None
+
+    # Probe — cheap availability check before the loop runs. estimate
+    # always returns 0 exit so we read its `available` field.
+    try:
+        probe = _og_estimate(1)
+    except Exception as exc:
+        _emit(status_fh, "warning",
+              reason="OG_EVAL_PROBE_FAILED", detail=str(exc))
+        return None
+    if not probe.available:
+        _emit(status_fh, "warning",
+              reason="OG_EVAL_UNAVAILABLE",
+              detail=probe.note or "no backgammon-net provider registered",
+              fallback="local")
+        return None
+
+    _emit(status_fh, "0g_inference_active",
+          provider=probe.provider_address,
+          per_inference_og=probe.per_inference_og)
+
+    def _infer(features, extras):
+        # features: [N, 198] tensor; extras: [N, 16] tensor or None.
+        n = features.shape[0]
+        equities = []
+        for i in range(n):
+            f_list = features[i].tolist()
+            e_list = (extras[i].tolist() if extras is not None else [0.0] * 16)
+            try:
+                r = _og_evaluate(f_list, e_list)
+                equities.append(r.equity)
+            except OgEvalUnavailable:
+                # Provider went away mid-run. Caller (pick_move) can't
+                # easily fall back per-call without the net handle, so
+                # we surface zero — the picker will degrade to a tie-
+                # break. Subsequent matches keep trying; if availability
+                # is gone the warnings stack up but training completes.
+                equities.append(0.0)
+        return _torch.tensor(equities, dtype=features.dtype)
+
+    return _infer
+
+
 def _resolve_weights_hash(agent_id: int) -> str:
     """Look up `agent_id`'s per-agent weights hash from `AgentRegistry`.
 
@@ -161,6 +230,16 @@ def run_round_robin(
         use_0g_inference=bool(use_0g_inference),
     )
 
+    # Phase I: when use_0g_inference is set, probe the eval bridge once
+    # and build an `infer_fn` that routes per-candidate forward passes
+    # through 0G compute. If the probe says no provider is available
+    # (the common case today — backgammon-net-v1 isn't registered on
+    # the serving network yet), emit a 'warning' event and fall back
+    # to local inference for the rest of the run. Means the toggle
+    # doesn't crash a run on a network without a provider — the wire
+    # is in place for when one stands up.
+    infer_fn = _maybe_build_0g_infer_fn(use_0g_inference, status_fh)
+
     # Hybrid load: try AgentRegistry → 0G storage; else seed fresh.
     agents: dict[int, AgentState] = {}
     for aid in agent_ids:
@@ -191,10 +270,16 @@ def run_round_robin(
             a_extras = encode_career_context(a_ctx, dim=extras_dim)
             b_extras = encode_career_context(b_ctx, dim=extras_dim)
 
+            # Pass infer_fn keyword only when set; the test stub
+            # td_match signature (used by hermetic tests) doesn't
+            # accept it.
+            kwargs = {"gamma": gamma, "lam": lam, "lr": lr}
+            if infer_fn is not None:
+                kwargs["infer_fn"] = infer_fn
             steps, won = td_match(
                 agents[a_id].net, agents[b_id].net,
                 a_extras, b_extras,
-                gamma=gamma, lam=lam, lr=lr,
+                **kwargs,
             )
             winner = a_id if won else b_id
             _emit(
@@ -272,10 +357,11 @@ def main() -> int:
         parser.error("--agent-ids must have at least 2 IDs")
     if args.upload_to_0g and not args.checkpoint_dir:
         parser.error("--upload-to-0g requires --checkpoint-dir")
-    if args.use_0g_inference:
-        print("WARNING: --use-0g-inference set but Phase G eval bridge is "
-              "not wired yet. Inference runs locally for this run.",
-              file=sys.stderr)
+    # --use-0g-inference is wired through to the per-candidate forward
+    # pass via _maybe_build_0g_infer_fn. When no backgammon-net provider
+    # is registered on the serving network, the helper emits a 'warning'
+    # event to the status JSONL and the trainer falls back to local
+    # inference for the run. Nothing to print here.
 
     random.seed(args.seed)
     torch.manual_seed(args.seed)

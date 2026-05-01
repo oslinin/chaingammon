@@ -33,12 +33,19 @@ def _stub_td_match():
     """Return a `td_match` stub plus a list capturing the calls.
     The stub returns deterministic (steps, won) so tests can predict
     winners exactly. Winner pattern alternates so neither agent
-    dominates artificially."""
-    calls: list[tuple] = []
+    dominates artificially.
+
+    `infer_fn` is captured (via **kwargs) so I.1 can assert that
+    run_round_robin only forwards the kwarg when 0G inference is
+    actually wired."""
+    calls: list[dict] = []
     counter = {"i": 0}
 
-    def stub(agent, opp, agent_extras, opp_extras, *, gamma, lam, lr):
-        calls.append((id(agent), id(opp)))
+    def stub(agent, opp, agent_extras, opp_extras, *, gamma, lam, lr, **kwargs):
+        calls.append({
+            "agent": id(agent), "opp": id(opp),
+            "infer_fn": kwargs.get("infer_fn"),
+        })
         counter["i"] += 1
         steps = 30 + counter["i"]   # distinct plies per match for sanity
         won = counter["i"] % 2      # 0/1 alternation
@@ -326,3 +333,141 @@ def test_resolver_routes_to_load_or_seed_branch():
     )
     loaded_event = next(e for e in _read_events(buf) if e["event"] == "agents_loaded")
     assert loaded_event["loaded"] == {"1": "model", "2": "model"}
+
+
+# ─── Phase I.1: 0G inference wiring ────────────────────────────────────────
+
+
+def test_use_0g_inference_off_means_infer_fn_not_passed():
+    """Default path: trainer must NOT pass `infer_fn` to td_match when
+    use_0g_inference is False. Existing local-mode behaviour preserved."""
+    buf = io.StringIO()
+    stub, calls = _stub_td_match()
+    run_round_robin(
+        agent_ids=[1, 2, 3],
+        epochs=1,
+        status_fh=buf,
+        td_match=stub,
+        weights_hash_resolver=lambda aid: "",
+        use_0g_inference=False,
+    )
+    assert all(c["infer_fn"] is None for c in calls)
+
+
+def test_use_0g_inference_unavailable_falls_back_to_local(monkeypatch):
+    """When use_0g_inference=True but the eval bridge probe says no
+    provider is registered, the trainer emits a 'warning' JSONL event,
+    sets infer_fn=None, and proceeds locally so the run still completes."""
+    # Stub estimate to return available=False (the common case today —
+    # backgammon-net-v1 isn't registered on the 0G serving network yet).
+    import og_compute_eval_client as ec
+
+    class _Unavailable:
+        per_inference_og = 0.00001
+        total_og = 0.00001
+        provider_address = ""
+        available = False
+        note = "OG_EVAL_UNAVAILABLE: no backgammon-net provider registered"
+
+    monkeypatch.setattr(ec, "estimate", lambda count: _Unavailable())
+
+    buf = io.StringIO()
+    stub, calls = _stub_td_match()
+    run_round_robin(
+        agent_ids=[1, 2],
+        epochs=1,
+        status_fh=buf,
+        td_match=stub,
+        weights_hash_resolver=lambda aid: "",
+        use_0g_inference=True,
+    )
+    events = _read_events(buf)
+    warnings = [e for e in events if e["event"] == "warning"]
+    assert len(warnings) == 1
+    assert warnings[0]["reason"] == "OG_EVAL_UNAVAILABLE"
+    assert warnings[0]["fallback"] == "local"
+    # Run completes; td_match received None (fell back to local).
+    assert all(c["infer_fn"] is None for c in calls)
+
+
+def test_use_0g_inference_available_passes_infer_fn(monkeypatch):
+    """When the probe says available=True, trainer builds an infer_fn
+    and forwards it to td_match. Each call to infer_fn dispatches one
+    `evaluate(...)` per candidate row; the test asserts the wire is
+    intact by stubbing both estimate + evaluate and counting calls."""
+    import og_compute_eval_client as ec
+    import torch as _torch
+
+    class _Avail:
+        per_inference_og = 0.0001
+        total_og = 0.0001
+        provider_address = "0xprovider"
+        available = True
+        note = ""
+
+    eval_calls = {"n": 0}
+
+    class _EvalRes:
+        def __init__(self, eq):
+            self.equity = eq
+            self.model = "stub"
+            self.provider_address = "0xprovider"
+
+    def _fake_evaluate(features, extras, *, timeout=30.0):
+        eval_calls["n"] += 1
+        return _EvalRes(0.5)
+
+    monkeypatch.setattr(ec, "estimate", lambda count: _Avail())
+    monkeypatch.setattr(ec, "evaluate", _fake_evaluate)
+
+    buf = io.StringIO()
+    stub, calls = _stub_td_match()
+    run_round_robin(
+        agent_ids=[1, 2],
+        epochs=1,
+        status_fh=buf,
+        td_match=stub,
+        weights_hash_resolver=lambda aid: "",
+        use_0g_inference=True,
+    )
+    # Probe succeeded → '0g_inference_active' event present.
+    events = _read_events(buf)
+    active = [e for e in events if e["event"] == "0g_inference_active"]
+    assert len(active) == 1
+    assert active[0]["provider"] == "0xprovider"
+
+    # Stub td_match captured infer_fn (not None).
+    assert all(c["infer_fn"] is not None for c in calls)
+
+    # The infer_fn the trainer built is callable and dispatches
+    # evaluate per row of the input batch.
+    infer_fn = calls[0]["infer_fn"]
+    feats = _torch.zeros(3, 198)
+    extras = _torch.zeros(3, 16)
+    out = infer_fn(feats, extras)
+    assert out.shape == (3,)
+    assert eval_calls["n"] == 3
+
+
+def test_pick_move_infer_fn_overrides_net():
+    """Sanity check on sample_trainer.pick_move's new injection point:
+    when infer_fn is passed, the chosen candidate must be the argmax
+    of infer_fn's output, not the local net's."""
+    from sample_trainer import BackgammonNet, RaceState, pick_move
+
+    net = BackgammonNet(extras_dim=16, core_seed=0xBACC, extras_seed=1)
+    cands = [RaceState(), RaceState()]
+    extras = torch.zeros(16)
+
+    # infer_fn returns equities favoring index 1 regardless of net.
+    captured_args: list = []
+
+    def fake_infer(feats, ext):
+        captured_args.append((feats.shape, ext.shape if ext is not None else None))
+        return torch.tensor([0.1, 0.9])
+
+    chosen, _ = pick_move(net, cands, extras, perspective=0, infer_fn=fake_infer)
+    assert chosen is cands[1]
+    assert len(captured_args) == 1
+    assert captured_args[0][0] == (2, 198)
+    assert captured_args[0][1] == (2, 16)

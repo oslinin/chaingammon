@@ -275,13 +275,23 @@ def legal_successors(state: RaceState, dice: tuple[int, int]) -> list[RaceState]
 
 
 def pick_move(net: BackgammonNet, candidates: list[RaceState], extras: torch.Tensor,
-              perspective: int) -> tuple[RaceState, torch.Tensor]:
+              perspective: int, *, infer_fn=None) -> tuple[RaceState, torch.Tensor]:
     """Greedily pick the candidate that maximizes net's predicted equity
-    for `perspective`. Returns the (chosen state, V-tensor for chosen)."""
+    for `perspective`. Returns the (chosen state, V-tensor for chosen).
+
+    `infer_fn(features, extras) -> equities` is an optional override of
+    the no-grad evaluation step. When None (default) the per-candidate
+    forward pass runs locally (`net(feats, ext)`); when set, the call
+    routes through the supplied function. Phase I uses this to send
+    candidate evaluation through the 0G compute eval bridge.
+    """
     feats = torch.stack([encode_state(c, perspective) for c in candidates])
     with torch.no_grad():
         ext = extras.unsqueeze(0).expand(len(candidates), -1) if net.extras is not None else None
-        equities = net(feats, ext)
+        if infer_fn is not None:
+            equities = infer_fn(feats, ext)
+        else:
+            equities = net(feats, ext)
     best = int(equities.argmax().item())
     return candidates[best], equities[best:best + 1]
 
@@ -298,6 +308,7 @@ def td_lambda_match(
     writer: SummaryWriter | None = None,
     global_step: int = 0,
     drand_round_digest: bytes | None = None,
+    infer_fn=None,
 ) -> tuple[int, int]:
     """Play a single self-play match. `agent` learns; `opponent` is frozen.
 
@@ -309,6 +320,12 @@ def td_lambda_match(
     deterministic mapping production code uses with KeeperHub's pulled
     drand rounds. When None, falls back to local PRNG so the demo runs
     standalone without a fixed digest.
+
+    `infer_fn`: optional override for the no-grad equity calls in
+    pick_move + the agent's bootstrap V(s') eval. Backprop, TD-λ, and
+    optimizer steps stay local — only the evaluation step routes through
+    `infer_fn`. Used by Phase I to dispatch per-move forward passes
+    through the 0G compute eval bridge while keeping autograd local.
     """
     state = RaceState()
     eligibility = {p: torch.zeros_like(p) for p in agent.parameters()}
@@ -332,13 +349,19 @@ def td_lambda_match(
                           agent_extras.unsqueeze(0)) if agent.extras is not None else \
                     agent(board_now.unsqueeze(0))
 
-            chosen, _ = pick_move(agent, cands, agent_extras, perspective=0)
+            chosen, _ = pick_move(agent, cands, agent_extras, perspective=0,
+                                  infer_fn=infer_fn)
             with torch.no_grad():
                 board_next = encode_state(chosen, perspective=0)
-                v_next_t = agent(board_next.unsqueeze(0),
-                                 agent_extras.unsqueeze(0)) if agent.extras is not None else \
-                          agent(board_next.unsqueeze(0))
-                v_next = v_next_t.item()
+                if infer_fn is not None:
+                    ext_next = (agent_extras.unsqueeze(0)
+                                if agent.extras is not None else None)
+                    v_next_t = infer_fn(board_next.unsqueeze(0), ext_next)
+                else:
+                    v_next_t = agent(board_next.unsqueeze(0),
+                                     agent_extras.unsqueeze(0)) if agent.extras is not None else \
+                              agent(board_next.unsqueeze(0))
+                v_next = v_next_t.item() if hasattr(v_next_t, "item") else float(v_next_t)
 
             # Terminal reward is observed when the chosen state is terminal
             # for the agent's side; otherwise we bootstrap from V(s').
@@ -379,7 +402,8 @@ def td_lambda_match(
             state = chosen
         else:
             # Opponent's turn — frozen network picks greedily; no learning.
-            chosen, _ = pick_move(opponent, cands, opponent_extras, perspective=1)
+            chosen, _ = pick_move(opponent, cands, opponent_extras,
+                                  perspective=1, infer_fn=infer_fn)
             state = chosen
 
     winner = state.winner() or 0
@@ -393,8 +417,12 @@ def td_lambda_match(
 
 def evaluate(agent: BackgammonNet, opponent: BackgammonNet,
              agent_extras: torch.Tensor, opponent_extras: torch.Tensor,
-             n_matches: int = 20) -> float:
-    """Win rate of `agent` vs `opponent` over `n_matches` greedy games."""
+             n_matches: int = 20, *, infer_fn=None) -> float:
+    """Win rate of `agent` vs `opponent` over `n_matches` greedy games.
+
+    `infer_fn` matches td_lambda_match's signature — when supplied, the
+    candidate-evaluation step routes through it instead of `net(...)`.
+    """
     wins = 0
     for _ in range(n_matches):
         state = RaceState()
@@ -402,9 +430,11 @@ def evaluate(agent: BackgammonNet, opponent: BackgammonNet,
             d1, d2 = random.randint(1, 6), random.randint(1, 6)
             cands = legal_successors(state, (d1, d2))
             if state.turn == 0:
-                state, _ = pick_move(agent, cands, agent_extras, perspective=0)
+                state, _ = pick_move(agent, cands, agent_extras,
+                                     perspective=0, infer_fn=infer_fn)
             else:
-                state, _ = pick_move(opponent, cands, opponent_extras, perspective=1)
+                state, _ = pick_move(opponent, cands, opponent_extras,
+                                     perspective=1, infer_fn=infer_fn)
         if state.winner() == 0:
             wins += 1
     return wins / n_matches
