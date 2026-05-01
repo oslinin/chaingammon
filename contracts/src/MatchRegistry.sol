@@ -280,6 +280,101 @@ contract MatchRegistry is Ownable {
         }
     }
 
+    /// @notice Trustless settlement WITH on-chain payout via the
+    ///         escrow's `payoutSplit`. Same auth-then-result flow as
+    ///         `settleWithSessionKeys`, with two extensions:
+    ///
+    ///           1. The result hash uses a distinct prefix
+    ///              ("Chaingammon:result-with-split") so a signature
+    ///              for the non-payout `settleWithSessionKeys` can't
+    ///              be replayed here, and vice-versa.
+    ///           2. The result hash binds `escrowMatchId` and
+    ///              `splitHash = keccak256(abi.encode(winners, shares))`
+    ///              so a relayer cannot tamper with the split. The
+    ///              session key signs the exact split off-chain; the
+    ///              contract recomputes the hash from calldata and
+    ///              checks it matches.
+    ///
+    ///         The auth hash is the SAME as `settleWithSessionKeys`
+    ///         (the session key is authorized at game open before
+    ///         the split is known) so a single human auth signature
+    ///         can be reused across both settlement paths.
+    ///
+    /// @dev    Either player or any relayer can submit. The split
+    ///         arrays are pass-through to the escrow, which enforces
+    ///         `sum(shares) == pot`, no zero-address winners, and
+    ///         the existing match-not-open / already-settled rules.
+    function settleWithSessionKeysAndSplit(
+        address human,
+        uint256 agentId,
+        uint16 matchLength,
+        bool humanWins,
+        bytes32 gameRecordHash,
+        uint256 nonce,
+        address sessionKey,
+        bytes calldata humanAuthSig,
+        bytes calldata resultSig,
+        bytes32 escrowMatchId,
+        address[] calldata winners,
+        uint256[] calldata shares
+    ) external returns (uint256 matchId) {
+        require(human != address(0), "human must not be zero");
+        require(agentId != 0, "agentId must be non-zero");
+
+        // ── 1. Auth — identical to settleWithSessionKeys ──────────────────────
+        bytes32 authHash = MessageHashUtils.toEthSignedMessageHash(
+            keccak256(abi.encode(
+                "Chaingammon:open",
+                block.chainid,
+                address(this),
+                human,
+                nonce,
+                agentId,
+                matchLength,
+                sessionKey
+            ))
+        );
+        require(
+            ECDSA.recover(authHash, humanAuthSig) == human,
+            "humanAuthSig not from human"
+        );
+
+        // ── 2. Result with split binding ─────────────────────────────────────
+        bytes32 splitHash = keccak256(abi.encode(winners, shares));
+        bytes32 resultHash = MessageHashUtils.toEthSignedMessageHash(
+            keccak256(abi.encode(
+                "Chaingammon:result-with-split",
+                block.chainid,
+                address(this),
+                human,
+                nonce,
+                agentId,
+                humanWins,
+                gameRecordHash,
+                escrowMatchId,
+                splitHash
+            ))
+        );
+        require(
+            ECDSA.recover(resultHash, resultSig) == sessionKey,
+            "resultSig not from sessionKey"
+        );
+
+        // ── 3. Consume nonce ──────────────────────────────────────────────────
+        require(nonces[human] == nonce, "nonce mismatch");
+        nonces[human] += 1;
+
+        // ── 4. Record the match ──────────────────────────────────────────────
+        if (humanWins) {
+            matchId = _doRecord(0, human, agentId, address(0), matchLength, gameRecordHash);
+        } else {
+            matchId = _doRecord(agentId, address(0), 0, human, matchLength, gameRecordHash);
+        }
+
+        // ── 5. Pay out from escrow ───────────────────────────────────────────
+        _payoutFromEscrow(escrowMatchId, winners, shares);
+    }
+
     // ── Internal helpers ──────────────────────────────────────────────────────
 
     /// @dev Pay out the escrowed pot via `IMatchEscrow.payoutSplit`.
