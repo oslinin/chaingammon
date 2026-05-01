@@ -9,6 +9,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { WagmiProvider } from "wagmi";
 import { useState } from "react";
 
+import { ComputeBackendsProvider } from "./ComputeBackendsContext";
 import { config } from "./wagmi";
 
 export function Providers({ children }: { children: React.ReactNode }) {
@@ -18,7 +19,9 @@ export function Providers({ children }: { children: React.ReactNode }) {
 
   return (
     <WagmiProvider config={config}>
-      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+      <QueryClientProvider client={queryClient}>
+        <ComputeBackendsProvider>{children}</ComputeBackendsProvider>
+      </QueryClientProvider>
     </WagmiProvider>
   );
 }

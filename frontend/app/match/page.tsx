@@ -53,6 +53,7 @@ import { DiceRoll } from "../DiceRoll";
 import { rollDice } from "../dice";
 import { recordExpense } from "../expenses";
 import { useActiveChain } from "../chains";
+import { useComputeBackends } from "../ComputeBackendsContext";
 import { MatchRegistryABI, useChainContracts } from "../contracts";
 
 // ── Types matching agent/gnubg_state.py:MatchStateDict ────────────────────
@@ -944,6 +945,13 @@ function MatchInner() {
 
       {/* Main */}
       <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-6 px-3 py-6 sm:px-8 sm:py-8">
+        {/* Phase F: inference-backend chip. Mirrors the global Compute
+            pill so the user can see at a glance which backend the
+            agent's per-move equity calls run on. Currently decorative
+            — /agent-move uses gnubg, not the per-agent NN. Phase G
+            wires the flag through to og_compute_eval_client.evaluate. */}
+        <InferenceChip />
+
         {/* Career-mode teammate-preference chip. Renders only when the
             page is loaded with ?teamMode=1 AND the endpoint returned
             a recommendation. Read-only — clicking does nothing in this
@@ -1220,6 +1228,33 @@ function MatchInner() {
           </div>
         )}
       </main>
+    </div>
+  );
+}
+
+// Phase F: read-only chip mirroring the global Compute pill's
+// inference-backend value. Decorative until Phase G wires the flag
+// through to /agent-move; in this phase it's purely informational so
+// the player knows which backend the agent will use for its moves.
+function InferenceChip() {
+  const { backends, hydrated } = useComputeBackends();
+  if (!hydrated) return null;
+  const is0G = backends.inference === "0g";
+  return (
+    <div
+      className={[
+        "self-start rounded-md border px-2 py-1 text-xs font-mono",
+        is0G
+          ? "border-emerald-300 bg-emerald-50 text-emerald-800 dark:border-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300"
+          : "border-zinc-300 text-zinc-600 dark:border-zinc-700 dark:text-zinc-400",
+      ].join(" ")}
+      title={
+        is0G
+          ? "Agent inference will route through 0G compute (decorative until Phase G)"
+          : "Agent inference runs locally"
+      }
+    >
+      Inference: {is0G ? "0G" : "local"}
     </div>
   );
 }

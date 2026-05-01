@@ -1,4 +1,8 @@
 // Phase 13: on-chain agent card with live ELO.
+// Phase F: hover popover surfaces the on-chain profile (match count +
+// summary) by lazy-fetching /agents/{id}/profile when the card is
+// hovered or focused — kept lazy so the home page doesn't fan out N
+// requests on mount.
 //
 // Reads agentMetadata (label/URI) from AgentRegistry and agentElo from
 // MatchRegistry in a single batched call. The "Play" link navigates to
@@ -6,6 +10,8 @@
 "use client";
 
 import Link from "next/link";
+import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { useReadContracts } from "wagmi";
 
 import { useActiveChainId } from "./chains";
@@ -14,6 +20,15 @@ import {
   MatchRegistryABI,
   useChainContracts,
 } from "./contracts";
+
+const SERVER = process.env.NEXT_PUBLIC_COACH_URL ?? "http://localhost:8002";
+
+interface AgentProfile {
+  agent_id: number;
+  kind: "model" | "overlay" | "null";
+  match_count: number;
+  summary: string;
+}
 
 interface AgentCardProps {
   agentId: number;
@@ -61,8 +76,28 @@ export function AgentCard({ agentId }: AgentCardProps) {
 
   const eloDisplay = elo !== undefined ? elo.toString() : "—";
 
+  // Phase F: hover/focus → lazy-fetch the agent's profile from
+  // /agents/{id}/profile. Stale-time 60s so re-hovering the same card
+  // doesn't refetch; `enabled: hovered` keeps the home page from
+  // fanning out N requests when the user just lands on it.
+  const [hovered, setHovered] = useState(false);
+  const profileQuery = useQuery({
+    enabled: hovered,
+    staleTime: 60_000,
+    queryKey: ["agent-profile", agentId],
+    queryFn: async (): Promise<AgentProfile> => {
+      const r = await fetch(`${SERVER}/agents/${agentId}/profile`);
+      if (!r.ok) throw new Error(`/profile → ${r.status}`);
+      return r.json();
+    },
+  });
+
   return (
-    <div className="flex flex-col gap-3 rounded-lg border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-900">
+    <div
+      className="relative group flex flex-col gap-3 rounded-lg border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-900"
+      onMouseEnter={() => setHovered(true)}
+      onFocus={() => setHovered(true)}
+    >
       <div className="flex items-start justify-between gap-2">
         <h3 className="font-mono text-sm font-semibold text-zinc-900 dark:text-zinc-50 break-all">
           {label}
@@ -87,6 +122,35 @@ export function AgentCard({ agentId }: AgentCardProps) {
       >
         Play
       </Link>
+
+      {/* Hover popover — surfaces the profile loaded from the backend.
+          Hidden by default; revealed on hover/focus via Tailwind group. */}
+      <div className="invisible absolute left-full top-0 z-10 ml-2 w-64 rounded-lg border border-zinc-200 bg-white p-3 text-xs shadow-lg group-hover:visible group-focus-within:visible dark:border-zinc-700 dark:bg-zinc-950">
+        <div className="mb-1 font-mono uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+          Profile
+        </div>
+        {profileQuery.isLoading ? (
+          <p className="text-zinc-500">Loading profile…</p>
+        ) : profileQuery.error ? (
+          <p className="text-red-600">Profile unavailable.</p>
+        ) : profileQuery.data ? (
+          <>
+            <p className="mb-1 text-zinc-700 dark:text-zinc-300">
+              <span className="font-mono">
+                Matches: {profileQuery.data.match_count}
+              </span>
+              <span className="ml-2 rounded bg-zinc-100 px-1 py-0.5 font-mono text-[10px] uppercase text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+                {profileQuery.data.kind}
+              </span>
+            </p>
+            <p className="text-zinc-600 dark:text-zinc-400">
+              {profileQuery.data.summary}
+            </p>
+          </>
+        ) : (
+          <p className="text-zinc-500">Hover to load.</p>
+        )}
+      </div>
     </div>
   );
 }
