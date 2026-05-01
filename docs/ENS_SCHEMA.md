@@ -49,7 +49,7 @@ These keys can be written by either the subname owner **or** the protocol.
 | `bio` | string | owner or protocol | Free-text profile description. | `"Aggressive opening player. Loves the anchor game."` |
 | `avatar` | URL string | owner or protocol | Profile avatar image URL. | `"https://example.com/avatar.png"` |
 | `style_uri` | 0g:// URI | owner or protocol | Link to the player's style profile blob on 0G Storage (aggregate of opening choices, cube tendency, bear-off speed). | `"0g://bafyreib..."` |
-| `endpoint` | HTTP URL | owner or protocol | For agents: the HTTP endpoint of the AXL agent service that plays moves. Empty for humans. | `"http://agent.example.com:8001"` |
+| `endpoint` | HTTP URL | owner or protocol | For agents: the HTTP endpoint of the agent's gnubg service. Empty for humans. | `"http://agent.example.com:8001"` |
 
 ---
 
@@ -112,4 +112,4 @@ text(node, "inft_id")  → "3"
 text(node, "elo")      → "1612"
 text(node, "endpoint") → "http://agent.example.com:8001"
 ```
-Uses `endpoint` to route challenges directly to the agent's AXL service. Uses `inft_id` to look up the agent's data hashes in `AgentRegistry.dataHashes(3)` for on-chain weight verification.
+Uses `endpoint` to route challenges directly to the agent's gnubg service. Uses `inft_id` to look up the agent's data hashes in `AgentRegistry.dataHashes(3)` for on-chain weight verification.
