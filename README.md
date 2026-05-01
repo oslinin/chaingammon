@@ -327,7 +327,8 @@ The environment in the demo is a deliberately tiny pip-race abstraction so the f
 | `--no-encrypt` | Demo modifier for `--upload-to-0g`: upload the raw `torch.save` bytes (no AES-256-GCM seal, no `.key` file). Used by the recommend-teammate demo path so a server with no key can fetch and content-sniff the checkpoint via `agent_profile.load_profile`. Production agents should leave this off — the encrypted path is the verifiable-training flow. |
 | `--init-from-0g <root_hash>` + `--init-key <path>` | Resume training from a 0G Storage checkpoint. Fetches the sealed blob, decrypts with the local key file, and continues with `match_count` carried forward. Mutually exclusive with `--load-checkpoint`. |
 | `--career-mode` | Replace the placeholder per-agent random extras with `career_features.encode_career_context(...)` over a freshly-sampled `CareerContext` per match. Requires `--extras-dim >= 16`. The career-mode head learns to use opponent style, teammate style, stake, tournament position, and the team-match flag. |
-| `--launch-tensorboard` | Spawn `tensorboard --logdir <logdir>` after training. |
+| `--launch-tensorboard` | Spawn `tensorboard --logdir <logdir>` after training (sample_trainer's standalone-mode convenience). For round-robin runs spawned from `/training`, the FastAPI service launches the sidecar and the `/training` page embeds the iframe — no separate `tensorboard` invocation needed. |
+| `--logdir <path>` | TensorBoard event-file output directory. The round-robin trainer (`agent/round_robin_trainer.py --logdir <path>`) supports the same flag and writes `train/*` (TD error, gradient norm, eligibility norm), `match/*` (plies, per-pair win), `win_rate/agent_*` (rolling), and `weights/*_agent_*` (per-epoch L2 norms). `/training/start` sets this automatically and spawns TensorBoard alongside the trainer. |
 
 **Supporting modules** (each with a focused test file):
 
@@ -411,7 +412,7 @@ Chaingammon has three distinct compute operations. Each can run locally (default
 | --- | --- | --- | --- | --- |
 | **Coaching** | LLM hint text (Qwen 2.5 7B chat) | `agent/coach_service.py` fallback | `og-compute-bridge/src/chat.mjs` → `agent/coach_compute_client.chat()` | Both wired end-to-end. A chat provider exists on 0G testnet today; flipping the pill makes /hint route through it. |
 | **Inference** | `BackgammonNet.forward(board, extras) → equity` | `torch.nn.Module(...)` call in the trainer | `og-compute-bridge/src/eval.mjs` → `agent/og_compute_eval_client.evaluate()` | Wire plumbed end-to-end (eval bridge, Python client, `/training/estimate`, match-page chip, round-robin trainer's `--use-0g-inference`). **Provider not yet registered** — backgammon-net-v1 isn't advertised on the 0G serving network, so calls return `available: false` with a clear note. Once a provider stands up the toggle becomes live without code changes. |
-| **Training** | Round-robin self-play with TD-λ updates | `agent/round_robin_trainer.py` spawned by FastAPI | Same trainer with `--use-0g-inference` so per-move forward passes route through the eval bridge | Inference-on-0G during a run is the bounty path; remote training-as-a-service is out of scope. Trainer probes the bridge once, emits a `0g_inference_active` JSONL event with provider+price on success, or a `warning` event with reason+fallback="local" on unavailable. Run completes either way. |
+| **Training** | Round-robin self-play with TD-λ updates | `agent/round_robin_trainer.py` spawned by FastAPI | Same trainer with `--use-0g-inference` so per-move forward passes route through the eval bridge | Inference-on-0G during a run is the bounty path; remote training-as-a-service is out of scope. Trainer probes the bridge once, emits a `0g_inference_active` JSONL event with provider+price on success, or a `warning` event with reason+fallback="local" on unavailable. Run completes either way. While running, the `/training` page embeds TensorBoard (`localhost:6006`) with a per-agent dropdown so judges can watch TD error, gradient norm, per-agent rolling win-rate, and per-agent weight L2 norms update live. |
 
 **The compute pill** in the frontend header (visible on every page) shows the current backend per operation; clicking flips it. State persists in `localStorage["chaingammon.computeBackends"]`.
 
@@ -459,7 +460,7 @@ You can pin a custom backgammon-net endpoint via `OG_COMPUTE_EVAL_PROVIDER=<addr
 2. Click the compute pill (top right of every page); flip **Coach** to 0G — watch a match's coach hints route through 0G Compute (live), OG balance ticks down per hint.
 3. Open `/training`. Select a few agents. Move the slider to ~10 epochs. The estimate row shows games + total inferences.
 4. Flip **Inference** to 0G in the pill. Slider extends to 10 M; gas estimate row appears with the placeholder per-inference cost. (When a real backgammon-net provider exists, this becomes the live cost.)
-5. Click **Play**. The trainer subprocess spawns; the status panel polls every 2 s and shows per-agent wins as `C(N, 2)` games per epoch run.
+5. Click **Play**. Two subprocesses spawn — the trainer + a TensorBoard sidecar at `localhost:6006`. The status panel polls every 2 s and shows per-agent wins as `C(N, 2)` games per epoch run. The **TensorBoard panel below the status panel** renders live charts: TD error per ply, match length, rolling win-rate per agent, and per-epoch weight L2 norms. Pick `agent 2` from the dropdown to filter to that agent's scalars only — `weights/core_l2_agent_2` and `weights/extras_l2_agent_2` are the "is the network actually learning" signal: flat lines = no learning, gentle drift = TD-λ is working as expected.
 6. Hover any agent card on `/`. The popover lazy-fetches `/agents/{id}/profile` and shows the agent's match count + style summary.
 7. On `/match?teamMode=1`, the read-only "🤝 Agent prefers teammate #N" chip appears, scored by `recommend_teammate` against the requester's trained checkpoint loaded from 0G storage.
 8. Open `/team-demo`. Click "Create team game" then "Play next move" repeatedly — each turn renders one `AdvisorSignal` per non-captain teammate (proposed move + confidence bar + rationale), with the captain badge tagging who decided. The captain rotates per the team's `captain_rotation` policy ("alternating" by default). All signals are archived to `MoveEntry.advisor_signals` for the audit replayer.
@@ -478,8 +479,11 @@ uv run python sample_trainer.py \
     --career-mode \
     --save-checkpoint /tmp/agent7-fullboard.pt \
     --upload-to-0g --no-encrypt \
-    --status-file /tmp/run.jsonl
+    --status-file /tmp/run.jsonl \
+    --logdir /tmp/agent7-tb
 ```
+
+Add `--logdir /tmp/agent7-tb` to write TensorBoard events; open with `tensorboard --logdir /tmp/agent7-tb` in another terminal to watch the full-board encoding's TD-error trajectory mid-run.
 
 The trainer prints the resulting Merkle `rootHash`. Register it on `AgentRegistry`:
 
@@ -505,6 +509,21 @@ Two agents on the same team now publish per-turn signals. **Phase K** (commit `1
 - The `/team-demo` frontend page exercises the flow end-to-end with a 2v1 game.
 
 **MVP captain decision rule:** the captain ignores advisors at pick time — its own move (gnubg+overlay, or per-agent NN under Phase J's flag) is final. Signals are *archived*, not *consumed*. Vote fusion / confidence-weighted rank fusion is a follow-up: every signal is on the on-chain record, so a future endpoint that re-ranks captain picks against archived advisors lights up retroactively.
+
+## Live training visualization (Phase L)
+
+Round-robin training runs spawned from the `/training` page are observable in real time via an embedded TensorBoard panel — judges can watch the network learn while it learns.
+
+How the pieces fit:
+
+- **Trainer side.** `agent/round_robin_trainer.py` opens a `SummaryWriter` when `--logdir` is set and emits scalars at three cadences:
+  - per-ply (via `td_lambda_match`'s existing writer hook): `train/td_error`, `train/v_now`, `train/v_next`, `train/grad_norm`, `train/eligibility_norm`
+  - per-match: `match/plies`, `win/agent_a_vs_b`, `win_rate/agent_<id>` (rolling)
+  - per-epoch: `weights/core_l2_agent_<id>` and `weights/extras_l2_agent_<id>`
+- **Service side.** `server/app/training_service.py` `mkdtemp`s a fresh logdir per run, passes `--logdir` to the trainer, and spawns `tensorboard --logdir <path> --host localhost --port 6006 --bind_all` as a sidecar. Best-effort: if the binary isn't on PATH or the port is in use, the launch fails silently and `/training/status` returns `tensorboard_url: null` so the frontend can disclose state cleanly.
+- **Frontend side.** `/training` reads `tensorboard_url` from `/training/status` and mounts the dashboard in an iframe. A per-agent dropdown filters scalars via TensorBoard 2.x's `#scalars&tagFilter=agent_<id>` URL fragment — pick "agent 2" and the iframe re-mounts showing only that agent's `win_rate/agent_2`, `weights/core_l2_agent_2`, etc. The `weights/*_agent_*` charts are the canonical "is the network actually learning" signal: flat lines mean no movement, gentle drift means TD-λ is updating the value head as expected.
+
+To inspect a saved run after the fact, point TensorBoard at the persisted logdir from `/training/status` (the directory survives the trainer subprocess; cleanup on `/training/abort`).
 
 ---
 
@@ -593,6 +612,7 @@ See [ROADMAP.md](ROADMAP.md) for the full version. Architecture: [ARCHITECTURE.m
 - [x] Public repo + README with pitch and architecture
 - [x] Session-key state channel (`MatchRegistry.settleWithSessionKeys`) — pre-authorized at game start, either side can submit
 - [x] Sample trainer (`agent/sample_trainer.py`) with TensorBoard
+- [x] Round-robin multi-agent trainer + `/training` page with live TensorBoard panel (per-agent picker)
 - [ ] Contracts deployed on Sepolia (etherscan links)
 - [ ] Demo video < 3 min
 
