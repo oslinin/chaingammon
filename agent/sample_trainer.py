@@ -478,6 +478,14 @@ def main() -> None:
                              "og-bridge. Requires --save-checkpoint and "
                              "the OG_STORAGE_{RPC,INDEXER,PRIVATE_KEY} "
                              "env triple (see server/.env.example).")
+    parser.add_argument("--no-encrypt", action="store_true",
+                        help="Demo modifier for --upload-to-0g: upload the "
+                             "raw torch.save bytes (no AES-256-GCM seal, "
+                             "no .key file). Used by the recommend-teammate "
+                             "demo path so a server with no key can fetch "
+                             "and content-sniff the checkpoint via "
+                             "agent_profile.load_profile. Production agents "
+                             "should leave this off.")
     parser.add_argument("--init-from-0g", type=str, default=None,
                         metavar="ROOT_HASH",
                         help="Fetch a sealed checkpoint by 0G Storage "
@@ -658,19 +666,29 @@ def main() -> None:
         if args.upload_to_0g:
             # Locally-imported so the trainer works without the
             # cryptography lib for users who don't intend to upload.
-            from checkpoint_encryption import encrypt_blob, generate_key
             from og_storage_upload import OgUploadError, upload_checkpoint
 
-            key = generate_key()
-            sealed = encrypt_blob(ckpt_path.read_bytes(), key)
-            key_path = ckpt_path.with_suffix(ckpt_path.suffix + ".key")
-            key_path.write_bytes(key)
-            print(f"Wrote AES-256-GCM key alongside checkpoint: {key_path} "
-                  f"(keep this; without it the uploaded blob is unreadable)")
+            raw = ckpt_path.read_bytes()
+            if args.no_encrypt:
+                sealed = raw
+                print("WARNING: --no-encrypt set; uploading PLAINTEXT "
+                      "checkpoint to 0G Storage. The blob will be readable "
+                      "by anyone who fetches the rootHash. This is the "
+                      "demo path for recommend-teammate end-to-end; "
+                      "production agents must leave --no-encrypt off.")
+            else:
+                from checkpoint_encryption import encrypt_blob, generate_key
+                key = generate_key()
+                sealed = encrypt_blob(raw, key)
+                key_path = ckpt_path.with_suffix(ckpt_path.suffix + ".key")
+                key_path.write_bytes(key)
+                print(f"Wrote AES-256-GCM key alongside checkpoint: {key_path} "
+                      f"(keep this; without it the uploaded blob is unreadable)")
 
             try:
                 result = upload_checkpoint(sealed)
-                print(f"Uploaded encrypted checkpoint to 0G Storage:")
+                kind = "plaintext" if args.no_encrypt else "encrypted"
+                print(f"Uploaded {kind} checkpoint to 0G Storage:")
                 print(f"  rootHash = {result.root_hash}")
                 print(f"  txHash   = {result.tx_hash}")
                 print(f"This rootHash is what KeeperHub commits to "
