@@ -87,19 +87,21 @@ async function main() {
   );
 
   // MatchEscrow holds per-match stake deposits; the configured `settler`
-  // is the only address allowed to release the pot via payoutWinner.
-  // We point it at MatchRegistry so the eventual settle hook there can
-  // pay out atomically with the on-chain ELO update.
-  //
-  // MatchRegistry doesn't actually call payoutWinner yet — wiring is a
-  // follow-up. Setting the settler at deploy time gets the address
-  // committed so the wiring change is a one-line MatchRegistry edit
-  // (no escrow redeploy + address shuffle).
+  // is the only address allowed to release the pot via payoutWinner /
+  // payoutSplit. We point it at MatchRegistry so the settle hook there
+  // pays out atomically with the on-chain ELO update.
   const MatchEscrow = await ethers.getContractFactory("MatchEscrow");
   const escrow = await MatchEscrow.deploy(matchAddr);
   await escrow.waitForDeployment();
   const escrowAddr = await escrow.getAddress();
   console.log(`MatchEscrow deployed: ${escrowAddr} (settler = ${matchAddr})`);
+
+  // Wire the registry → escrow connection so `recordMatchAndSplit` can
+  // release funds at game end. Setter is owner-only and idempotent —
+  // safe to re-run on a re-deploy with a new escrow address.
+  const wireTx = await matchRegistry.setMatchEscrow(escrowAddr);
+  await wireTx.wait();
+  console.log(`MatchRegistry.setMatchEscrow(${escrowAddr}) → tx ${wireTx.hash}`);
 
   const out = {
     network: network.name,

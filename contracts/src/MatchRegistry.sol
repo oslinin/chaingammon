@@ -6,6 +6,18 @@ import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 import "./EloMath.sol";
 
+/// @dev The slice of MatchEscrow's API that MatchRegistry calls. Defined
+///      inline so MatchRegistry doesn't depend on the full escrow source
+///      tree (and so the wiring can later target a different escrow
+///      implementation that conforms to this slice).
+interface IMatchEscrow {
+    function payoutSplit(
+        bytes32 matchId,
+        address[] calldata winners,
+        uint256[] calldata shares
+    ) external;
+}
+
 /// @title MatchRegistry — records backgammon matches and updates ELO.
 /// @dev Two settlement paths:
 ///
@@ -51,6 +63,15 @@ contract MatchRegistry is Ownable {
     ///         Starts at 0; each successful settlement increments by 1.
     mapping(address => uint256) public nonces;
 
+    /// @notice Optional escrow contract for atomic record-and-payout.
+    ///         Zero address (default) disables the on-chain payout
+    ///         path — `recordMatch` and `settleWithSessionKeys` keep
+    ///         working and just don't move money. Wired post-deploy
+    ///         via `setMatchEscrow` so MatchEscrow can be deployed
+    ///         independently with `settler = MatchRegistry` (see
+    ///         `contracts/script/deploy.js`).
+    address public matchEscrow;
+
     // Stored ratings; default 1500 returned via getter when unset.
     mapping(uint256 => uint256) private _agentElo;
     mapping(address => uint256) private _humanElo;
@@ -68,8 +89,21 @@ contract MatchRegistry is Ownable {
     );
     event EloUpdated(uint256 indexed agentId, address indexed human, uint256 oldElo, uint256 newElo);
     event GameRecordStored(uint256 indexed matchId, bytes32 gameRecordHash);
+    event MatchEscrowSet(address indexed previous, address indexed current);
+
+    error NoEscrowConfigured();
 
     constructor() Ownable(msg.sender) {}
+
+    /// @notice Owner-only: wire (or re-wire) the MatchEscrow address.
+    ///         Idempotent — passing the same address twice is a no-op
+    ///         from the contract's perspective; the MatchEscrowSet
+    ///         event still fires so off-chain indexers can rebuild
+    ///         the wiring history.
+    function setMatchEscrow(address escrow) external onlyOwner {
+        emit MatchEscrowSet(matchEscrow, escrow);
+        matchEscrow = escrow;
+    }
 
     function agentElo(uint256 agentId) public view returns (uint256) {
         return _agentSeen[agentId] ? _agentElo[agentId] : EloMath.INITIAL;
@@ -101,6 +135,54 @@ contract MatchRegistry is Ownable {
             "loser must be exactly one of agent or human"
         );
         return _doRecord(winnerAgentId, winnerHuman, loserAgentId, loserHuman, matchLength, gameRecordHash);
+    }
+
+    /// @notice Owner-only: record + pay out atomically.
+    ///
+    ///         Calls `_doRecord` then `IMatchEscrow.payoutSplit` —
+    ///         either both succeed or the whole transaction reverts
+    ///         (no orphan match records, no orphan deposits in
+    ///         escrow). For solo matches, pass a single-winner
+    ///         array `[winner]` with `shares=[pot]`; payoutSplit
+    ///         handles N=1 as the degenerate case. For team-mode,
+    ///         pass the full split arrays the team agreed on.
+    ///
+    ///         Reverts with `NoEscrowConfigured` if the escrow
+    ///         address has not been set — the sister `recordMatch`
+    ///         function handles record-only flows where the escrow
+    ///         isn't in play (e.g. unstaked matches).
+    ///
+    /// @dev    Effects-then-interactions: the MatchRegistry record
+    ///         is written before the external escrow call, so a
+    ///         reentrant payout receiver hits the registry's
+    ///         already-incremented `matchCount` if it tries to
+    ///         re-enter `recordMatchAndSplit`.
+    function recordMatchAndSplit(
+        uint256 winnerAgentId,
+        address winnerHuman,
+        uint256 loserAgentId,
+        address loserHuman,
+        uint16 matchLength,
+        bytes32 gameRecordHash,
+        bytes32 escrowMatchId,
+        address[] calldata winners,
+        uint256[] calldata shares
+    ) external onlyOwner returns (uint256 matchId) {
+        require(
+            (winnerAgentId == 0) != (winnerHuman == address(0)),
+            "winner must be exactly one of agent or human"
+        );
+        require(
+            (loserAgentId == 0) != (loserHuman == address(0)),
+            "loser must be exactly one of agent or human"
+        );
+
+        matchId = _doRecord(
+            winnerAgentId, winnerHuman, loserAgentId, loserHuman,
+            matchLength, gameRecordHash
+        );
+
+        _payoutFromEscrow(escrowMatchId, winners, shares);
     }
 
     /// @notice Trustless settlement via session-key state channel.
@@ -199,6 +281,18 @@ contract MatchRegistry is Ownable {
     }
 
     // ── Internal helpers ──────────────────────────────────────────────────────
+
+    /// @dev Pay out the escrowed pot via `IMatchEscrow.payoutSplit`.
+    ///      Reverts if the escrow address is unset; the wrapping
+    ///      function decides whether to require escrow wiring.
+    function _payoutFromEscrow(
+        bytes32 escrowMatchId,
+        address[] calldata winners,
+        uint256[] calldata shares
+    ) internal {
+        if (matchEscrow == address(0)) revert NoEscrowConfigured();
+        IMatchEscrow(matchEscrow).payoutSplit(escrowMatchId, winners, shares);
+    }
 
     /// @dev Core ELO update and storage write, shared by both settlement paths.
     function _doRecord(
