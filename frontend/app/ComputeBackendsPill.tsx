@@ -31,6 +31,14 @@ interface OpRow {
   unavailableTooltip?: Record<Backend, string>;
 }
 
+// Phase I.5 honesty pass: Inference 0G is now wired end-to-end (eval
+// bridge + Python wrapper + /training/estimate + match-page chip). The
+// only thing missing is a registered backgammon-net provider on the 0G
+// serving network — when one stands up, the toggle becomes live with
+// zero further code changes. Until then, flipping the toggle still
+// works (matches the bounty story; the training/estimate endpoint
+// surfaces "available: false" gracefully) — we just can't actually
+// dispatch a real inference yet.
 const OPS: readonly OpRow[] = [
   {
     key: "coach",
@@ -40,19 +48,19 @@ const OPS: readonly OpRow[] = [
   {
     key: "inference",
     label: "Inference",
-    available: { local: true, "0g": false },
+    available: { local: true, "0g": true },
     unavailableTooltip: {
       local: "",
-      "0g": "Phase G: eval bridge not wired yet",
+      "0g": "Wire is plumbed end-to-end (eval.mjs + Python client + /training/estimate). Backgammon-net provider not yet registered on the 0G serving network — once it is, the toggle dispatches real inferences.",
     },
   },
   {
     key: "training",
     label: "Training",
-    available: { local: true, "0g": false },
+    available: { local: true, "0g": true },
     unavailableTooltip: {
       local: "",
-      "0g": "Use Inference=0G during a training run for the bounty story; remote training-as-a-service is out of scope",
+      "0g": "Training control loop stays local; flipping this routes per-move forward passes through the eval bridge for the duration of the run. Same provider caveat as Inference.",
     },
   },
 ] as const;
@@ -115,7 +123,7 @@ function Row({
               role="radio"
               aria-checked={renderActive}
               disabled={!isAvailable}
-              title={!isAvailable && tooltip ? tooltip : undefined}
+              title={tooltip || undefined}
               onClick={() => isAvailable && onChange(backend)}
               className={[
                 "px-2 py-0.5 font-mono uppercase tracking-wide transition-colors",

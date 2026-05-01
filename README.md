@@ -409,9 +409,9 @@ Chaingammon has three distinct compute operations. Each can run locally (default
 
 | Operation | What it computes | Local backend | 0G compute backend | Status |
 | --- | --- | --- | --- | --- |
-| **Coaching** | LLM hint text (Qwen 2.5 7B chat) | `agent/coach_service.py` fallback | `og-compute-bridge/src/chat.mjs` → `agent/coach_compute_client.chat()` | Both wired |
-| **Inference** | `BackgammonNet.forward(board, extras) → equity` | `torch.nn.Module(...)` call in the trainer | `og-compute-bridge/src/eval.mjs` → `agent/og_compute_eval_client.evaluate()` | Plumbing wired; provider TBD |
-| **Training** | Round-robin self-play with TD-λ updates | `agent/round_robin_trainer.py` spawned by FastAPI | Same trainer with `--use-0g-inference` so per-move forward passes route through the eval bridge | Inference-on-0G during a run is the bounty path; remote training-as-a-service is out of scope |
+| **Coaching** | LLM hint text (Qwen 2.5 7B chat) | `agent/coach_service.py` fallback | `og-compute-bridge/src/chat.mjs` → `agent/coach_compute_client.chat()` | Both wired end-to-end. A chat provider exists on 0G testnet today; flipping the pill makes /hint route through it. |
+| **Inference** | `BackgammonNet.forward(board, extras) → equity` | `torch.nn.Module(...)` call in the trainer | `og-compute-bridge/src/eval.mjs` → `agent/og_compute_eval_client.evaluate()` | Wire plumbed end-to-end (eval bridge, Python client, `/training/estimate`, match-page chip, round-robin trainer's `--use-0g-inference`). **Provider not yet registered** — backgammon-net-v1 isn't advertised on the 0G serving network, so calls return `available: false` with a clear note. Once a provider stands up the toggle becomes live without code changes. |
+| **Training** | Round-robin self-play with TD-λ updates | `agent/round_robin_trainer.py` spawned by FastAPI | Same trainer with `--use-0g-inference` so per-move forward passes route through the eval bridge | Inference-on-0G during a run is the bounty path; remote training-as-a-service is out of scope. Trainer probes the bridge once, emits a `0g_inference_active` JSONL event with provider+price on success, or a `warning` event with reason+fallback="local" on unavailable. Run completes either way. |
 
 **The compute pill** in the frontend header (visible on every page) shows the current backend per operation; clicking flips it. State persists in `localStorage["chaingammon.computeBackends"]`.
 
