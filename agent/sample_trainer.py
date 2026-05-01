@@ -46,6 +46,8 @@ Two trainer modes:
 
 from __future__ import annotations
 
+from __future__ import annotations
+
 import argparse
 import math
 import os
@@ -59,7 +61,18 @@ from pathlib import Path
 
 import torch
 from torch import nn
-from torch.utils.tensorboard import SummaryWriter
+
+# Tensorboard is only needed by the trainer's main() loop. Guarding the
+# import lets lightweight consumers (e.g. server/app/main.py importing
+# `BackgammonNet` for the recommend-teammate endpoint, or
+# agent_profile.ModelProfile.from_bytes deserializing a checkpoint) load
+# this module without pulling in `tensorboard` and its transitive deps.
+# `main()` re-imports SummaryWriter directly and surfaces a clear error
+# if tensorboard isn't installed.
+try:
+    from torch.utils.tensorboard import SummaryWriter  # type: ignore
+except ImportError:
+    SummaryWriter = None  # type: ignore
 
 from career_features import (
     CareerContext,

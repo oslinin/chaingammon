@@ -1,13 +1,25 @@
 from datetime import datetime, timezone
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from pathlib import Path
 from pydantic import BaseModel
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 import hashlib
 import json
 import os
 import re
+import sys
 import uuid
+
+# `agent/` is a sibling directory of `server/`, not a package.
+# /agents/{id}/recommend-teammate (below) needs `agent_profile.load_profile`
+# (the runtime resolver that picks OverlayProfile vs ModelProfile from a 0G
+# storage blob) and `teammate_selection.recommend_teammate`. Insert agent/
+# onto sys.path once at module import — same pattern used by tests like
+# server/tests/test_phase9_overlay_integration.py.
+_AGENT_DIR = Path(__file__).resolve().parents[2] / "agent"
+if str(_AGENT_DIR) not in sys.path:
+    sys.path.insert(0, str(_AGENT_DIR))
 
 # ENS label rules: lowercase alphanumeric + hyphens, must start and end with
 # an alphanumeric char, 1–63 characters.  Mirrors the validation in the
@@ -789,3 +801,116 @@ def keeper_workflow_status(match_id: str):
         run_status = "pending"
 
     return {"matchId": match_id, "status": run_status, "steps": steps}
+
+
+# ─── Career-mode teammate recommendation ────────────────────────────────────
+#
+# Reads off the trained value-net's own teammate-style preference: for each
+# candidate, project that candidate's style profile into the extras vector's
+# teammate slots [6:12] and average equity over a fixed reference battery.
+# Wires together the resolver (agent_profile.load_profile) and the scorer
+# (teammate_selection.recommend_teammate). See the relevant modules for the
+# math; this endpoint is just the HTTP shim.
+
+
+class RecommendTeammateRequest(BaseModel):
+    candidates: List[int]
+
+
+@app.post("/agents/{agent_id}/recommend-teammate")
+def recommend_teammate_endpoint(agent_id: int, req: RecommendTeammateRequest):
+    """Pick the teammate from `req.candidates` whose style profile best
+    aligns with this agent's trained value net.
+
+    Returns a JSON body with:
+      best_teammate_id   the candidate the agent prefers
+      equities           per-candidate mean equity over the reference battery
+      spread             max - min equity (small = low-confidence pick)
+      requester_kind     "model"   — requester has a trained checkpoint on 0G
+                         "overlay" — requester has only a Phase-9 overlay
+                                     (falls back to a deterministic fresh net;
+                                     equities reflect architecture, not training)
+      candidate_kinds    per-candidate kind, same enum as requester_kind plus "null"
+
+    422 when the requester has no weights yet (NullProfile) or `candidates`
+    is empty. Pre-existing testnet env (OG_STORAGE_*, AGENT_REGISTRY_ADDRESS)
+    is required so the resolver can read on-chain `dataHashes[1]` and fetch
+    blobs from 0G storage.
+    """
+    if not req.candidates:
+        raise HTTPException(status_code=422, detail="candidates must be non-empty")
+
+    # Resolver imports — agent/ on sys.path via the top-of-file insert.
+    from agent_profile import (
+        ModelProfile,
+        NullProfile,
+        OverlayProfile,
+        load_profile,
+    )
+
+    try:
+        chain = ChainClient.from_env()
+        if chain.agent_registry is None:
+            raise ChainError("AGENT_REGISTRY_ADDRESS not set")
+    except ChainError as e:
+        raise HTTPException(status_code=503, detail=f"chain unavailable: {e}")
+
+    def _resolve(aid: int):
+        """Resolve agent_id → AgentProfile via the same dataHashes[1]
+        path /games/{id}/agent-move uses for overlays. Pass `fetch=get_blob`
+        so load_profile doesn't fall back to its own server.app import path."""
+        hashes = chain.agent_data_hashes(aid)
+        weights_hash = hashes[1]
+        if weights_hash == "0x" + "00" * 32:
+            return NullProfile()
+        return load_profile(weights_hash, fetch=get_blob)
+
+    # 1. Resolve requester's net.
+    requester_profile = _resolve(agent_id)
+    if isinstance(requester_profile, NullProfile):
+        raise HTTPException(
+            status_code=422,
+            detail=f"agent {agent_id} has no weights yet — train first",
+        )
+
+    if isinstance(requester_profile, ModelProfile):
+        net = requester_profile.net
+        requester_kind = "model"
+    else:  # OverlayProfile — fall back to a deterministic fresh net so the
+           # endpoint is still usable for untrained agents. The frontend
+           # surfaces requester_kind so the UI can disclose.
+        from sample_trainer import BackgammonNet
+        net = BackgammonNet(extras_dim=16, core_seed=0xBACC, extras_seed=agent_id)
+        net.eval()
+        requester_kind = "overlay"
+
+    # 2. Resolve each candidate's style dict.
+    candidate_styles: list[tuple[int, dict]] = []
+    candidate_kinds: dict[str, str] = {}
+    for cid in req.candidates:
+        c_profile = _resolve(cid)
+        if isinstance(c_profile, OverlayProfile):
+            style = dict(c_profile.metrics().get("values", {}))
+            candidate_kinds[str(cid)] = "overlay"
+        elif isinstance(c_profile, ModelProfile):
+            # Trained checkpoints don't carry a style summary in their
+            # metadata yet — pass an empty style. Embedding a style
+            # summary in save_checkpoint is a follow-up.
+            style = {}
+            candidate_kinds[str(cid)] = "model"
+        else:
+            style = {}
+            candidate_kinds[str(cid)] = "null"
+        candidate_styles.append((cid, style))
+
+    # 3. Score.
+    from teammate_selection import recommend_teammate
+    rec = recommend_teammate(net, candidate_styles)
+
+    return {
+        "best_teammate_id": rec.best_teammate_id,
+        "equities": {str(k): v for k, v in rec.equities.items()},
+        "spread": rec.spread,
+        "requester_kind": requester_kind,
+        "candidate_kinds": candidate_kinds,
+    }
