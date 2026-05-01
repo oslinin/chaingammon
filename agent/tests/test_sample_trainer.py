@@ -29,6 +29,8 @@ from sample_trainer import (
     encode_extras,
     encode_state,
     legal_successors,
+    load_checkpoint,
+    save_checkpoint,
     td_lambda_match,
 )
 
@@ -153,3 +155,38 @@ def test_match_terminates_within_max_turns():
     )
     # MAX_TURNS = 200 in sample_trainer.
     assert 1 <= steps <= 200
+
+
+# ---------------------------------------------------------------------------
+# Checkpoint save/load round-trip
+# ---------------------------------------------------------------------------
+
+
+def test_checkpoint_round_trip_preserves_weights(tmp_path):
+    """save → load must reproduce a network whose every parameter
+    matches the original bit-for-bit."""
+    original = BackgammonNet(extras_dim=DEFAULT_EXTRAS_DIM, extras_seed=99)
+    ckpt = tmp_path / "agent.pt"
+    save_checkpoint(original, ckpt, match_count=42, extras_dim=DEFAULT_EXTRAS_DIM)
+
+    loaded, match_count = load_checkpoint(ckpt)
+    assert match_count == 42
+
+    for (n1, p1), (n2, p2) in zip(original.named_parameters(),
+                                  loaded.named_parameters()):
+        assert n1 == n2
+        assert torch.equal(p1, p2), f"{n1} differs after round-trip"
+
+
+def test_loaded_checkpoint_matches_original_forward_output(tmp_path):
+    """A stronger guarantee: the loaded net must produce identical
+    forward outputs on identical inputs."""
+    torch.manual_seed(0)
+    original = BackgammonNet(extras_dim=DEFAULT_EXTRAS_DIM, extras_seed=7)
+    ckpt = tmp_path / "agent.pt"
+    save_checkpoint(original, ckpt, match_count=0, extras_dim=DEFAULT_EXTRAS_DIM)
+    loaded, _ = load_checkpoint(ckpt)
+
+    board = torch.randn(4, GNUBG_FEAT_DIM)
+    extras = torch.randn(4, DEFAULT_EXTRAS_DIM)
+    assert torch.equal(original(board, extras), loaded(board, extras))

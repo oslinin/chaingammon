@@ -376,6 +376,37 @@ def maybe_launch_tensorboard(logdir: Path) -> subprocess.Popen | None:
     )
 
 
+def save_checkpoint(net: BackgammonNet, path: Path, *, match_count: int,
+                    extras_dim: int) -> None:
+    """Persist the agent's state_dict + the metadata needed to rebuild
+    the network shape on load. Production code wraps this with
+    AES-256-GCM and uploads to 0G Storage; the local file format here
+    is the same shape, just unencrypted."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save({
+        "state_dict": net.state_dict(),
+        "match_count": match_count,
+        "extras_dim": extras_dim,
+        "in_dim": GNUBG_FEAT_DIM,
+        "hidden": DEFAULT_HIDDEN,
+    }, path)
+
+
+def load_checkpoint(path: Path) -> tuple[BackgammonNet, int]:
+    """Load a checkpoint written by `save_checkpoint`. Returns
+    `(net, match_count)`. The net is rebuilt with the shape recorded
+    in the checkpoint metadata, then the state_dict is loaded into it.
+    `weights_only=True` keeps load safe against malicious pickles."""
+    blob = torch.load(path, weights_only=True)
+    net = BackgammonNet(
+        in_dim=blob["in_dim"],
+        hidden=blob["hidden"],
+        extras_dim=blob["extras_dim"],
+    )
+    net.load_state_dict(blob["state_dict"])
+    return net, int(blob["match_count"])
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--matches", type=int, default=100,
@@ -390,13 +421,25 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=42, help="Python+torch RNG seed.")
     parser.add_argument("--extras-dim", type=int, default=DEFAULT_EXTRAS_DIM,
                         help="Per-agent contextual feature dim (0 = single-game head).")
+    parser.add_argument("--save-checkpoint", type=str, default=None,
+                        help="Path to write the trained agent's checkpoint "
+                             "(.pt). Skipped if unset.")
+    parser.add_argument("--load-checkpoint", type=str, default=None,
+                        help="Path to a checkpoint to resume training from. "
+                             "Bypasses the gnubg-init core; the opponent is "
+                             "still freshly initialized with extras_seed=2.")
     args = parser.parse_args()
 
     random.seed(args.seed)
     torch.manual_seed(args.seed)
 
     # Both nets share core weights (gnubg-init); each has its own extras head.
-    agent = BackgammonNet(extras_dim=args.extras_dim, core_seed=0xBACC, extras_seed=1)
+    starting_match_count = 0
+    if args.load_checkpoint:
+        agent, starting_match_count = load_checkpoint(Path(args.load_checkpoint))
+        print(f"Resumed from {args.load_checkpoint} (match_count={starting_match_count}).")
+    else:
+        agent = BackgammonNet(extras_dim=args.extras_dim, core_seed=0xBACC, extras_seed=1)
     opponent = BackgammonNet(extras_dim=args.extras_dim, core_seed=0xBACC, extras_seed=2)
 
     agent_extras = (encode_extras(args.extras_dim, agent_id=1, seed=args.seed)
@@ -404,9 +447,12 @@ def main() -> None:
     opponent_extras = (encode_extras(args.extras_dim, agent_id=2, seed=args.seed)
                        if args.extras_dim > 0 else torch.zeros(0))
 
-    # Sanity check: shared core weights at init.
-    assert torch.allclose(agent.core.weight, opponent.core.weight), \
-        "core weights should be identical at init (both seeded from gnubg published init)"
+    # Sanity check: at fresh init both nets share the gnubg-init core.
+    # Skip when loading from a checkpoint — the agent's core has already
+    # diverged from the gnubg init through prior training.
+    if not args.load_checkpoint:
+        assert torch.allclose(agent.core.weight, opponent.core.weight), \
+            "core weights should be identical at init (both seeded from gnubg published init)"
 
     logdir = Path(args.logdir)
     logdir.mkdir(parents=True, exist_ok=True)
@@ -463,6 +509,13 @@ def main() -> None:
           f"Final win rate vs frozen opponent: {final_wr:.2%}")
     print(f"TensorBoard events: {logdir}")
     print(f"View with: tensorboard --logdir {logdir}")
+
+    if args.save_checkpoint:
+        ckpt_path = Path(args.save_checkpoint)
+        save_checkpoint(agent, ckpt_path,
+                        match_count=starting_match_count + args.matches,
+                        extras_dim=args.extras_dim)
+        print(f"Saved checkpoint: {ckpt_path}")
 
     writer.close()
 
