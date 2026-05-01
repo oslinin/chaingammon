@@ -44,6 +44,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from agent_profile import AgentProfile, NullProfile, load_profile
+from coach_dialogue import (
+    ChatRequest,
+    ChatResponse,
+    DialogueMessage,
+    build_chat_prompt,
+    derive_preferences_delta,
+    now_iso,
+    update_preferences,
+)
 
 app = FastAPI(title="Chaingammon Coach Agent")
 
@@ -259,3 +268,91 @@ def get_hint(req: HintRequest) -> dict:
         req.dice, req.candidates, docs_context, profile, backend=req.backend
     )
     return {"hint": hint, "backend": backend}
+
+
+# ─── /chat endpoint (Phase A — stub LLM path) ───────────────────────────────
+
+
+def _stub_chat_reply(req: ChatRequest) -> str:
+    """Phase-A placeholder for the LLM call. Echoes the assembled
+    prompt context so the frontend can integrate against a known shape
+    while Phase B wires the actual LLM backend (`_generate_chat`).
+
+    The text returned here is intentionally bland — it's not what the
+    user will see in production, just a deterministic acknowledgement
+    that the request was understood."""
+    if req.kind == "open_turn":
+        if not req.candidates:
+            return "No legal moves on this roll — the turn passes."
+        top = req.candidates[0]
+        return (f"For the {req.dice[0]}-{req.dice[1]}, the top candidate "
+                f"is {top.move} (eq {top.equity:+.3f}). Want to talk "
+                f"through the alternatives?")
+    if req.kind == "human_reply":
+        last_human = next(
+            (m for m in reversed(req.dialogue) if m.role == "human"),
+            None,
+        )
+        if last_human is None:
+            return "Acknowledged — let me know which line you want to take."
+        return (f"You said: '{last_human.text}'. (LLM-driven reply lands "
+                f"in Phase B; this is the Phase-A stub.)")
+    if req.kind == "move_committed":
+        return f"Got it — recording {req.move_committed}."
+    return "(unknown chat kind)"
+
+
+@app.post("/chat")
+def post_chat(req: ChatRequest) -> ChatResponse:
+    """Turn-by-turn dialogue endpoint. See docs/coach-dialogue.md.
+
+    @notice Phase-A stub: returns a deterministic placeholder reply
+            so the frontend can integrate against the shape. The LLM
+            call lands in Phase B — at that point this handler will
+            call `_generate_chat(prompt, backend)` mirroring the
+            existing `_generate` for `/hint`, with the same
+            compute/local fallback chain.
+
+    @dev    Pipeline:
+              1. build_chat_prompt(req) — pure function, deterministic.
+              2. (Phase B) ship the prompt to 0G Compute / flan-t5;
+                 fall back on failure. Phase A returns a stub instead.
+              3. Update per-session preferences from the human's last
+                 message (if any) and emit the delta in the response.
+            The pipeline lives entirely outside the LLM call so the
+            preference-update logic is testable without a model.
+    @return ChatResponse(message, backend, preferences_delta, latency_ms)
+    """
+    import time
+    started = time.monotonic()
+
+    # Build the prompt — used in Phase B, ignored in the Phase-A stub
+    # but constructed here so the assembly logic is exercised on every
+    # request and any prompt-building failure surfaces immediately.
+    _ = build_chat_prompt(req)
+    reply_text = _stub_chat_reply(req)
+
+    # Per-session preference update: only the most recent human
+    # message contributes; agent messages don't move prefs (per
+    # update_preferences semantics).
+    new_prefs = dict(req.preferences)
+    last_human = next(
+        (m for m in reversed(req.dialogue) if m.role == "human"),
+        None,
+    )
+    if last_human is not None:
+        new_prefs = update_preferences(new_prefs, last_human)
+    delta = derive_preferences_delta(req.preferences, new_prefs)
+
+    elapsed_ms = int((time.monotonic() - started) * 1000)
+    return ChatResponse(
+        message=DialogueMessage(
+            role="agent",
+            text=reply_text,
+            turn_index=req.turn_index,
+            timestamp=now_iso(),
+        ),
+        backend="stub",
+        preferences_delta=delta,
+        latency_ms=elapsed_ms,
+    )
