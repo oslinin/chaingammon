@@ -10,9 +10,19 @@ the per-phase verbatim commit log (with full architectural rationale), see
 
 ### Added
 
-- **`agent/sample_trainer.py`** — runnable end-to-end demo of the per-agent value-network training loop. Defines `BackgammonNet` (gnubg-init core + per-agent random extras head + scalar equity head); instantiates two networks that share the same gnubg-initialised core but have different random extras (the "same gnubg base, different personality" picture); runs self-play TD(λ) with eligibility traces; logs scalars (TD error, value estimates, eligibility-trace norm, gradient norm, win-rate vs the frozen opponent), parameter and gradient histograms, and the model graph to TensorBoard via `torch.utils.tensorboard.SummaryWriter`. Supports `--launch-tensorboard` to subprocess the dashboard, `--save-checkpoint` / `--load-checkpoint` for state-dict round-trips, and a tiny in-file `RaceEnv` so the demo runs anywhere without a backgammon engine. New tests in `agent/tests/test_sample_trainer.py` (11 cases) lock in the shared-core / divergent-extras invariants and the checkpoint round-trip.
+- **`agent/sample_trainer.py`** — runnable end-to-end demo of the per-agent value-network training loop. Defines `BackgammonNet` (gnubg-init core + per-agent random extras head + scalar equity head); instantiates two networks that share the same gnubg-initialised core but have different random extras (the "same gnubg base, different personality" picture); runs self-play TD(λ) with eligibility traces; logs scalars (TD error, value estimates, eligibility-trace norm, gradient norm, win-rate vs the frozen opponent), parameter and gradient histograms, and the model graph to TensorBoard via `torch.utils.tensorboard.SummaryWriter`. CLI flags: `--launch-tensorboard`, `--save-checkpoint` / `--load-checkpoint`, `--drand-digest`, `--upload-to-0g`. Includes a tiny in-file `RaceEnv` so the demo runs anywhere without a backgammon engine.
+- **`agent/drand_dice.py`** — pure-Python helper that derives backgammon dice from a drand round digest: `dice = keccak256(round_digest ‖ turn_index_be8) mod 36`. Wired into `sample_trainer` via `--drand-digest`; production code consumes it through KeeperHub-pulled rounds.
+- **`agent/checkpoint_encryption.py`** — AES-256-GCM wrap/unwrap for trainer checkpoint blobs. Format: `nonce(12) ‖ ciphertext_with_tag`. The encrypt/decrypt step in the README's "AES-GCM encrypt weights → upload to 0G Storage" lifecycle. `cryptography>=47.0.0` added to `agent/pyproject.toml`.
+- **`agent/og_storage_upload.py`** — agent-side helper that shells out to the `og-bridge` Node CLI to publish a (typically encrypted) blob to 0G Storage and return `UploadResult(root_hash, tx_hash)`. Mirrors the subprocess pattern in `server/app/og_storage_client.py` and `agent/coach_compute_client.py`.
+- **`agent/tests/test_sample_trainer.py`** (12 cases), **`agent/tests/test_drand_dice.py`** (10), **`agent/tests/test_checkpoint_encryption.py`** (14), **`agent/tests/test_og_storage_upload.py`** (9) — 45 new agent tests covering the trainer + helpers.
+- **`scripts/fetch_drand_round.py`** — manual / debugging companion to the trainer's `--drand-digest` flag. Pulls a public drand round (League of Entropy mainnet) and prints its digest in hex.
+- **`contracts/src/MatchEscrow.sol`** + **`contracts/test/phase_MatchEscrow.test.js`** — per-match stake escrow with `deposit` / `refund` / `payoutWinner`. Matches keyed by `bytes32 matchId` (off-chain `keccak256(playerA ‖ playerB ‖ nonce)`). Settler-only payout; refunds allowed only before the match opens. 15 hardhat tests cover deposit / refund / payout happy paths and revert cases.
 - **`tensorboard>=2.16.0`** dependency added to `agent/pyproject.toml` for `SummaryWriter` + the dashboard binary.
 - **`runs/`, `*.ckpt`, `*.pt`** added to `.gitignore` — TensorBoard event files and trainer checkpoints are per-run, large, and should not be tracked.
+
+### Fixed
+
+- **Sepolia default RPC in `contracts/hardhat.config.js`** — was `https://rpc.sepolia.org` (Cloudflare 522 by late 2025); now `https://ethereum-sepolia.publicnode.com`. Documents `SEPOLIA_RPC_URL` in `contracts/.env.example`.
 
 ### Changed
 
