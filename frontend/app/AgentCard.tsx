@@ -45,7 +45,7 @@ export function AgentCard({ agentId }: AgentCardProps) {
   const metadataUri = data?.[0]?.result as string | undefined;
   const elo = data?.[1]?.result as bigint | undefined;
 
-  // Phase 15: format the agent identity as `<label>.chaingammon.eth` for
+  // Phase 15: format the agent identity as `<label>.backgammon.eth` for
   // visual parity with player names. metadataUri is the string passed at
   // mintAgent time (e.g. `ipfs://gnubg-default-placeholder`); strip the
   // protocol prefix and any path slashes, then attach the parent. Fall
@@ -56,7 +56,7 @@ export function AgentCard({ agentId }: AgentCardProps) {
     : "";
   const label =
     cleanedLabel && cleanedLabel.length <= 60
-      ? `${cleanedLabel}.chaingammon.eth`
+      ? `${cleanedLabel}.backgammon.eth`
       : `Agent #${agentId}`;
 
   const eloDisplay = elo !== undefined ? elo.toString() : "—";

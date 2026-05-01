@@ -24,7 +24,7 @@ function namehash(name) {
   return node;
 }
 
-const PARENT = namehash("chaingammon.eth");
+const PARENT = namehash("backgammon.eth");
 
 // Mirror the label-cleaning logic from AgentCard.tsx:
 //   strip scheme (e.g. "ipfs://") and replace "/" with "-"

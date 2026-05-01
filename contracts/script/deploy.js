@@ -12,12 +12,15 @@ const { ethers, network } = require("hardhat");
 const SEED_AGENT_METADATA = "ipfs://gnubg-default-placeholder";
 const SEED_AGENT_TIER = 2; // 0=beginner, 1=intermediate, 2=advanced, 3=world-class
 
-// ENS namehash of "chaingammon.eth". Pinned at construction so the
+// ENS namehash of "backgammon.eth". Pinned at construction so the
 // PlayerSubnameRegistrar can derive subname namehashes deterministically.
-// On a chain with no real ENS root (e.g. 0G testnet), this acts as a
-// project-scoped namespace; on Sepolia/Linea with real ENS, the parent
-// would be the actual chaingammon.eth name. Override via
-// ENS_PARENT_NODE env var if you've registered a different parent.
+// `backgammon.eth` is intentionally protocol-neutral — chaingammon is one
+// stack (gnubg + 0G + drand) but the ENS parent should accept any
+// backgammon stack with humans + agents. On a chain with no real ENS root
+// (e.g. 0G testnet), this acts as a project-scoped namespace; on
+// Sepolia/Linea with real ENS, the parent would be the actual
+// backgammon.eth name. Override via ENS_PARENT_NODE env var if you've
+// registered a different parent.
 function namehash(name) {
   let node = "0x" + "00".repeat(32);
   if (name) {
@@ -29,7 +32,7 @@ function namehash(name) {
   }
   return node;
 }
-const DEFAULT_ENS_PARENT_NODE = namehash("chaingammon.eth");
+const DEFAULT_ENS_PARENT_NODE = namehash("backgammon.eth");
 const ENS_PARENT_NODE = process.env.ENS_PARENT_NODE || DEFAULT_ENS_PARENT_NODE;
 
 // Initial baseWeightsHash for the AgentRegistry constructor.

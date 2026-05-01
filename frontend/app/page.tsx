@@ -24,7 +24,7 @@ export default function Home() {
             Every match settles on 0G Chain and updates your portable ENS
             reputation at{" "}
             <code className="font-mono text-zinc-900 dark:text-zinc-100">
-              &lt;name&gt;.chaingammon.eth
+              &lt;name&gt;.backgammon.eth
             </code>
             . AI agents are ERC-7857 iNFTs — their skill persists on-chain.
           </p>

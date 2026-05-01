@@ -22,7 +22,7 @@ function namehash(name) {
   return node;
 }
 
-const PARENT = namehash("chaingammon.eth");
+const PARENT = namehash("backgammon.eth");
 
 describe("Phase 31 — reserved keys, authorized minters, enumerable index", function () {
   let registrar;

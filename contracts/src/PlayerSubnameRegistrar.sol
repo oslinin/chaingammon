@@ -5,12 +5,17 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/Strings.sol";
 
 /// @title PlayerSubnameRegistrar — ENS-shaped subname registrar for
-///        chaingammon player profiles.
+///        portable backgammon player profiles.
 ///
 /// @notice v1 is a self-contained registrar (deployed alongside the rest
-///         of the protocol on 0G testnet). Each player gets a subname
-///         like `alice.chaingammon.eth` whose ENS-format namehash is
-///         derived from the parent node passed at construction. Reputation
+///         of the protocol on Sepolia / 0G testnet). Each player gets a
+///         subname like `alice.backgammon.eth` whose ENS-format namehash
+///         is derived from the parent node passed at construction. The
+///         parent name is intentionally protocol-neutral (`backgammon.eth`,
+///         not `chaingammon.eth`) so other backgammon stacks can mint
+///         subnames under the same root and participate in the same
+///         humans+agents roster — chaingammon is one stack among many.
+///         Reputation
 ///         is split between a typed `eloOf(node)` numeric record (default
 ///         1500 at mint, writable only by authorized minters) and ENS-style
 ///         text records for everything else: `match_count`, `last_match_id`,
@@ -43,7 +48,7 @@ import "@openzeppelin/contracts/utils/Strings.sol";
 ///          - `subnameAt(uint256)` exposes an enumerable index so
 ///            frontends can walk every registered identity in one query.
 contract PlayerSubnameRegistrar is Ownable {
-    /// @notice ENS namehash of the parent name (e.g. "chaingammon.eth").
+    /// @notice ENS namehash of the parent name (e.g. "backgammon.eth").
     bytes32 public immutable parentNode;
 
     /// @notice Total subnames issued (running counter; useful for

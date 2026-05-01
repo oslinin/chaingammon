@@ -133,7 +133,7 @@ export default function EnsPage() {
               </p>
               <p className="mt-1 font-mono text-sm text-zinc-900 dark:text-zinc-50">
                 {mounted && ensLabel
-                  ? `${ensLabel}.chaingammon.eth`
+                  ? `${ensLabel}.backgammon.eth`
                   : "No ENS label — claim one from your profile"}
               </p>
             </div>

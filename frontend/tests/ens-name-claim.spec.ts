@@ -2,7 +2,7 @@
 //
 // Renders ClaimForm via the /test-ens-claim fixture page (no wallet / no
 // blockchain connection needed) and asserts:
-//   - the input + ".chaingammon.eth" suffix + Claim button are all visible
+//   - the input + ".backgammon.eth" suffix + Claim button are all visible
 //   - the Claim button is disabled when the input is empty
 //   - inline validation messages fire for invalid labels
 //   - the Claim button becomes enabled for a valid label
@@ -18,7 +18,7 @@ test.describe("ENS name-claim form", () => {
   test("renders input, suffix, and Claim button", async ({ page }) => {
     await expect(page.getByTestId("ens-claim-input")).toBeVisible();
     await expect(page.getByTestId("ens-suffix")).toBeVisible();
-    await expect(page.getByTestId("ens-suffix")).toHaveText(".chaingammon.eth");
+    await expect(page.getByTestId("ens-suffix")).toHaveText(".backgammon.eth");
     await expect(page.getByTestId("ens-claim-button")).toBeVisible();
   });
 

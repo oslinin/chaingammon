@@ -39,7 +39,7 @@ function EntryCard({ entry }: { entry: DiscoveryEntry }) {
     >
       <div className="flex items-start justify-between gap-2">
         <h3 className="font-mono text-sm font-semibold text-zinc-900 dark:text-zinc-50 break-all">
-          {entry.label}.chaingammon.eth
+          {entry.label}.backgammon.eth
         </h3>
         <span className="shrink-0 rounded bg-zinc-100 px-1.5 py-0.5 text-xs font-mono text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
           {entry.kind || "unknown"}

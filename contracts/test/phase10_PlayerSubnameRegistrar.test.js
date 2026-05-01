@@ -4,10 +4,10 @@ const { ethers } = require("hardhat");
 const ZERO_HASH = ethers.ZeroHash;
 const ZERO_ADDR = ethers.ZeroAddress;
 
-// ENS namehash for "chaingammon.eth" — computed off-chain so the contract
+// ENS namehash for "backgammon.eth" — computed off-chain so the contract
 // can pin the parent node as an immutable on construction.
 //   namehash("eth") = keccak256(0x00...0 || keccak256("eth"))
-//   namehash("chaingammon.eth") = keccak256(namehash("eth") || keccak256("chaingammon"))
+//   namehash("backgammon.eth") = keccak256(namehash("eth") || keccak256("backgammon"))
 function namehash(name) {
   let node = ZERO_HASH;
   if (name) {
@@ -20,7 +20,7 @@ function namehash(name) {
   return node;
 }
 
-const PARENT = namehash("chaingammon.eth");
+const PARENT = namehash("backgammon.eth");
 
 describe("Phase 10 — PlayerSubnameRegistrar", function () {
   let registrar;
@@ -44,7 +44,7 @@ describe("Phase 10 — PlayerSubnameRegistrar", function () {
 
   describe("namehash helper", function () {
     it("computes ENS-style namehash for a subname under the parent", async function () {
-      const expected = namehash("alice.chaingammon.eth");
+      const expected = namehash("alice.backgammon.eth");
       expect(await registrar.subnameNode("alice")).to.equal(expected);
     });
 
@@ -191,7 +191,7 @@ describe("Phase 10 — PlayerSubnameRegistrar", function () {
     });
 
     it("setText reverts for non-existent subname", async function () {
-      const fake = namehash("nonexistent.chaingammon.eth");
+      const fake = namehash("nonexistent.backgammon.eth");
       let reverted = false;
       try {
         await registrar.connect(owner).setText(fake, "bio", "anything");
@@ -288,7 +288,7 @@ describe("Phase 10 — PlayerSubnameRegistrar", function () {
 
     it("setElo reverts for non-existent subname", async function () {
       await registrar.connect(owner).setAuthorizedMinter(bob.address, true);
-      const fake = namehash("ghost.chaingammon.eth");
+      const fake = namehash("ghost.backgammon.eth");
       let reverted = false;
       try {
         await registrar.connect(bob).setElo(fake, 1500n);
@@ -301,7 +301,7 @@ describe("Phase 10 — PlayerSubnameRegistrar", function () {
 
   describe("ownerOf for non-existent subname returns zero address", function () {
     it("zero address signals no such subname", async function () {
-      const fake = namehash("ghost.chaingammon.eth");
+      const fake = namehash("ghost.backgammon.eth");
       expect(await registrar.ownerOf(fake)).to.equal(ZERO_ADDR);
     });
   });

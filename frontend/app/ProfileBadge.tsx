@@ -1,7 +1,7 @@
 // Phase 21: ENS name selection UX improvements.
 //
 // ClaimForm is now shown automatically when a connected wallet has no
-// chaingammon.eth subname — no extra "Claim name" button click required.
+// backgammon.eth subname — no extra "Claim name" button click required.
 // Input is validated against ENS label rules (lowercase alphanumeric +
 // hyphens, 1-63 chars). If the chosen name is already taken the component
 // surfaces a fallback suggestion (<label><3-digit suffix>) so the user
@@ -158,7 +158,7 @@ export function ClaimForm({ address: _address }: { address: `0x${string}` }) {
           data-testid="ens-suffix"
           className="font-mono text-xs text-zinc-500 dark:text-zinc-400"
         >
-          .chaingammon.eth
+          .backgammon.eth
         </span>
         <button
           data-testid="ens-claim-button"
@@ -195,7 +195,7 @@ export function ClaimForm({ address: _address }: { address: `0x${string}` }) {
               }}
               className="text-xs text-indigo-600 hover:underline dark:text-indigo-400"
             >
-              Try &ldquo;{suggestion}.chaingammon.eth&rdquo; instead
+              Try &ldquo;{suggestion}.backgammon.eth&rdquo; instead
             </button>
           ) : null}
         </div>

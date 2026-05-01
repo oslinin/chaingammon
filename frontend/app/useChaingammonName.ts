@@ -75,6 +75,6 @@ export function useChaingammonName(address: `0x${string}` | undefined) {
     };
   }, [address, client, playerSubnameRegistrar]);
 
-  const name = label ? `${label}.chaingammon.eth` : null;
+  const name = label ? `${label}.backgammon.eth` : null;
   return { label, name, isLoading };
 }
