@@ -86,6 +86,21 @@ async function main() {
     `PlayerSubnameRegistrar deployed: ${registrarAddr} (parent node ${ENS_PARENT_NODE})`,
   );
 
+  // MatchEscrow holds per-match stake deposits; the configured `settler`
+  // is the only address allowed to release the pot via payoutWinner.
+  // We point it at MatchRegistry so the eventual settle hook there can
+  // pay out atomically with the on-chain ELO update.
+  //
+  // MatchRegistry doesn't actually call payoutWinner yet — wiring is a
+  // follow-up. Setting the settler at deploy time gets the address
+  // committed so the wiring change is a one-line MatchRegistry edit
+  // (no escrow redeploy + address shuffle).
+  const MatchEscrow = await ethers.getContractFactory("MatchEscrow");
+  const escrow = await MatchEscrow.deploy(matchAddr);
+  await escrow.waitForDeployment();
+  const escrowAddr = await escrow.getAddress();
+  console.log(`MatchEscrow deployed: ${escrowAddr} (settler = ${matchAddr})`);
+
   const out = {
     network: network.name,
     chainId: Number(network.config.chainId ?? 0),
@@ -94,7 +109,11 @@ async function main() {
       MatchRegistry: matchAddr,
       AgentRegistry: agentAddr,
       PlayerSubnameRegistrar: registrarAddr,
+      MatchEscrow: escrowAddr,
       ...(mockOgStorageAddr ? { MockOgStorage: mockOgStorageAddr } : {}),
+    },
+    matchEscrowConstructorArgs: {
+      settler: matchAddr,
     },
     agentRegistryConstructorArgs: {
       matchRegistry: matchAddr,
