@@ -299,6 +299,29 @@ def _stub_chat_reply(req: ChatRequest) -> str:
                 f"in Phase B; this is the Phase-A stub.)")
     if req.kind == "move_committed":
         return f"Got it — recording {req.move_committed}."
+    if req.kind == "teammate_propose":
+        if not req.candidates:
+            return "No legal moves on this roll — I have nothing to propose."
+        top = req.candidates[0]
+        return (f"I propose {top.move}. Confidence: 0.70. The eq is "
+                f"{top.equity:+.3f} which is the strongest line on the "
+                f"board.")
+    if req.kind == "teammate_advise":
+        last_human = next(
+            (m for m in reversed(req.dialogue) if m.role == "human"),
+            None,
+        )
+        if last_human is None:
+            return ("Happy to elaborate — what specifically do you want me "
+                    "to address?")
+        return (f"On '{last_human.text}': (LLM-driven elaboration lands "
+                f"in Phase B; this is the Phase-A stub.)")
+    if req.kind == "captain_decide":
+        move = req.move_committed or "(no move recorded)"
+        if req.chosen_advisor_id:
+            return (f"Got it — captain committed {move}, following "
+                    f"{req.chosen_advisor_id}.")
+        return f"Got it — captain committed {move}."
     return "(unknown chat kind)"
 
 

@@ -231,3 +231,70 @@ def test_chat_response_round_trip():
     assert resp.message.text == "acknowledged"
     assert resp.backend == "stub"
     assert resp.preferences_delta == {}
+
+
+# ---------------------------------------------------------------------------
+# Team-mode kinds — see docs/team-mode.md
+# ---------------------------------------------------------------------------
+
+
+def test_chat_request_validates_team_mode_kinds():
+    for kind in ("teammate_propose", "teammate_advise", "captain_decide"):
+        _req(kind=kind)
+
+
+def test_chat_request_accepts_chosen_advisor_id():
+    r = _req(kind="captain_decide", chosen_advisor_id="agent:7",
+             move_committed="13/8 13/10")
+    assert r.chosen_advisor_id == "agent:7"
+
+
+def test_chat_request_chosen_advisor_id_defaults_none():
+    assert _req().chosen_advisor_id is None
+
+
+def test_prompt_teammate_propose_framing_includes_proposal_format():
+    """The teammate_propose framing must tell the LLM the exact shape
+    the frontend will parse into an AdvisorSignal."""
+    p = build_chat_prompt(_req(kind="teammate_propose"))
+    assert "I propose" in p
+    assert "Confidence" in p
+    assert "team-mode" in p.lower()
+
+
+def test_prompt_teammate_advise_framing_assumes_same_team():
+    """The advise framing differs from human_reply: same-team good faith,
+    not defending a position against an opposing player."""
+    p = build_chat_prompt(_req(kind="teammate_advise"))
+    assert "same team" in p.lower()
+    assert "elaborate" in p.lower()
+
+
+def test_prompt_captain_decide_with_chosen_advisor_id_credits_them():
+    """When the captain credits a specific advisor, the framing must
+    surface that advisor id so the LLM acknowledges them."""
+    p = build_chat_prompt(_req(kind="captain_decide",
+                                move_committed="13/8 13/10",
+                                chosen_advisor_id="agent:7"))
+    assert "agent:7" in p
+    assert "Move committed: 13/8 13/10" in p
+    assert "Chosen advisor: agent:7" in p
+
+
+def test_prompt_captain_decide_without_chosen_advisor_id_omits_credit():
+    """When the captain does NOT credit anyone, the prompt must not
+    invent an advisor id — the LLM should just acknowledge the move."""
+    p = build_chat_prompt(_req(kind="captain_decide",
+                                move_committed="13/8 13/10"))
+    assert "Chosen advisor:" not in p
+    assert "without speculating" in p.lower()
+
+
+def test_prompt_captain_decide_includes_chosen_advisor_in_body():
+    """Both the framing and the body should carry chosen_advisor_id —
+    the body so the LLM has the raw id to quote, the framing so it
+    knows what to do with it."""
+    p = build_chat_prompt(_req(kind="captain_decide",
+                                move_committed="24/18 13/10",
+                                chosen_advisor_id="0xDEADBEEF"))
+    assert p.count("0xDEADBEEF") >= 2  # framing + body

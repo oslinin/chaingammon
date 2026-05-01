@@ -172,3 +172,97 @@ async def test_negative_turn_index_returns_422(app):
                             base_url="http://test") as c:
         resp = await c.post("/chat", json=_request_body(turn_index=-1))
     assert resp.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# Team-mode kinds — see docs/team-mode.md
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_teammate_propose_returns_proposal_text(app):
+    async with AsyncClient(transport=ASGITransport(app=app),
+                            base_url="http://test") as c:
+        resp = await c.post("/chat", json=_request_body(kind="teammate_propose"))
+    assert resp.status_code == 200
+    body = resp.json()
+    text = body["message"]["text"]
+    assert "I propose" in text
+    assert "Confidence" in text
+    # Top candidate's move should be in the proposal text.
+    assert "13/8 13/10" in text
+
+
+@pytest.mark.anyio
+async def test_teammate_propose_with_no_candidates_handles_pass(app):
+    """No legal moves: the advisor has nothing to propose. The endpoint
+    must still 200 — frontend renders a 'no proposal' state."""
+    async with AsyncClient(transport=ASGITransport(app=app),
+                            base_url="http://test") as c:
+        resp = await c.post("/chat", json=_request_body(
+            kind="teammate_propose", candidates=[],
+        ))
+    assert resp.status_code == 200
+    assert "nothing to propose" in resp.json()["message"]["text"].lower()
+
+
+@pytest.mark.anyio
+async def test_teammate_advise_addresses_last_human_message(app):
+    history = [
+        {"role": "agent", "text": "I propose 13/8 8/3. Confidence: 0.70.",
+         "turn_index": 0, "timestamp": "2026-05-01T12:00:00Z"},
+        {"role": "human", "text": "but doesn't 8/3 leave a blot?",
+         "turn_index": 0, "timestamp": "2026-05-01T12:00:05Z"},
+    ]
+    async with AsyncClient(transport=ASGITransport(app=app),
+                            base_url="http://test") as c:
+        resp = await c.post("/chat", json=_request_body(
+            kind="teammate_advise", dialogue=history,
+        ))
+    assert resp.status_code == 200
+    text = resp.json()["message"]["text"]
+    assert "8/3 leave a blot" in text
+
+
+@pytest.mark.anyio
+async def test_captain_decide_acknowledges_with_advisor_credit(app):
+    async with AsyncClient(transport=ASGITransport(app=app),
+                            base_url="http://test") as c:
+        resp = await c.post("/chat", json=_request_body(
+            kind="captain_decide",
+            move_committed="13/8 13/10",
+            chosen_advisor_id="agent:7",
+        ))
+    assert resp.status_code == 200
+    text = resp.json()["message"]["text"]
+    assert "13/8 13/10" in text
+    assert "agent:7" in text
+
+
+@pytest.mark.anyio
+async def test_captain_decide_acknowledges_without_advisor_credit(app):
+    async with AsyncClient(transport=ASGITransport(app=app),
+                            base_url="http://test") as c:
+        resp = await c.post("/chat", json=_request_body(
+            kind="captain_decide",
+            move_committed="13/8 13/10",
+        ))
+    assert resp.status_code == 200
+    text = resp.json()["message"]["text"]
+    assert "13/8 13/10" in text
+    # No advisor was credited — the reply should NOT name one.
+    assert "following" not in text.lower()
+
+
+@pytest.mark.anyio
+async def test_team_mode_kinds_round_trip_chosen_advisor_id_field(app):
+    """The chosen_advisor_id field must round-trip through the request
+    parser without 422'ing on the other team-mode kinds either, even
+    though only captain_decide reads it."""
+    for kind in ("teammate_propose", "teammate_advise"):
+        async with AsyncClient(transport=ASGITransport(app=app),
+                                base_url="http://test") as c:
+            resp = await c.post("/chat", json=_request_body(
+                kind=kind, chosen_advisor_id="agent:3",
+            ))
+        assert resp.status_code == 200, f"{kind} should accept chosen_advisor_id"

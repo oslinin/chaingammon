@@ -32,7 +32,12 @@ from typing import Literal, Optional
 from pydantic import BaseModel, Field
 
 
-ChatKind = Literal["open_turn", "human_reply", "move_committed"]
+ChatKind = Literal[
+    # Solo flow (1 human + 1 agent advisor vs 1 opponent — see docs/coach-dialogue.md):
+    "open_turn", "human_reply", "move_committed",
+    # Team flow (captain + advisor(s) vs opponent team — see docs/team-mode.md):
+    "teammate_propose", "teammate_advise", "captain_decide",
+]
 DialogueRole = Literal["human", "agent"]
 
 # Per-session preference deltas are clipped to [-1, 1] so any single
@@ -106,8 +111,13 @@ class ChatRequest(BaseModel):
     dialogue: list[DialogueMessage] = Field(default_factory=list)
     preferences: dict[str, float] = Field(default_factory=dict)
 
-    # Only set when kind == "move_committed".
+    # Only set when kind == "move_committed" or kind == "captain_decide".
     move_committed: Optional[str] = None
+
+    # Only set when kind == "captain_decide" and the captain followed a
+    # specific advisor's proposal. PlayerRef.id of the advisor (address
+    # or "agent:N"); None means the captain chose independently.
+    chosen_advisor_id: Optional[str] = None
 
 
 class ChatResponse(BaseModel):
@@ -197,12 +207,49 @@ def build_chat_prompt(req: ChatRequest, *, agent_persona: str = "") -> str:
             "good. If not, note what the chosen move trades for vs the "
             "alternative without lecturing."
         )
+    elif req.kind == "teammate_propose":
+        framing = (
+            "You are a teammate-advisor in a team-mode match — see "
+            "docs/team-mode.md. The captain has the dice and is "
+            "asking what you'd propose. Give your proposal in 1-2 "
+            "sentences with a confidence in [0, 1] and a one-line "
+            "rationale. Format: 'I propose <move>. Confidence: "
+            "<0..1>. <rationale>'. The captain decides; you advise."
+        )
+    elif req.kind == "teammate_advise":
+        framing = (
+            "You are a teammate-advisor in a team-mode match. The "
+            "captain has asked you to elaborate on your earlier "
+            "proposal. Address their question directly in 1-2 "
+            "sentences. You're on the same team — assume good faith, "
+            "no need to defensively justify your proposal."
+        )
+    elif req.kind == "captain_decide":
+        if req.chosen_advisor_id:
+            framing = (
+                f"The captain has committed their move and noted they "
+                f"followed advisor '{req.chosen_advisor_id}'. "
+                f"Acknowledge in one short sentence — credit the "
+                f"advisor if it wasn't you, or briefly confirm your "
+                f"earlier read if it was."
+            )
+        else:
+            framing = (
+                "The captain has committed their move without "
+                "crediting a specific advisor. Acknowledge in one "
+                "short sentence without speculating about whose "
+                "advice was followed."
+            )
     else:
         framing = "(unknown chat kind — produce a generic acknowledgement)"
 
     move_committed_line = (
         f"Move committed: {req.move_committed}\n"
         if req.move_committed else ""
+    )
+    chosen_advisor_line = (
+        f"Chosen advisor: {req.chosen_advisor_id}\n"
+        if req.chosen_advisor_id else ""
     )
 
     return (
@@ -222,6 +269,7 @@ def build_chat_prompt(req: ChatRequest, *, agent_persona: str = "") -> str:
         f"Dialogue so far:\n"
         f"{_format_dialogue(req.dialogue)}\n"
         f"{move_committed_line}"
+        f"{chosen_advisor_line}"
         f"\n"
         f"{framing}"
     )

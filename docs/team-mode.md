@@ -119,16 +119,18 @@ on whether `GameRecord.team_a` is populated.
 
 ## Phasing
 
-| Phase | Scope | Lands in |
+| Phase | Scope | Status |
 | --- | --- | --- |
-| **Team-1** | GameRecord schema (`AdvisorSignal`, `Team`, optional fields on `MoveEntry`/`GameRecord`) + tests | this PR |
-| **Team-2** | `/chat` `kind` extensions + tests | follow-up |
+| **Team-1** | GameRecord schema (`AdvisorSignal`, `Team`, optional fields on `MoveEntry`/`GameRecord`) + tests | landed |
+| **Team-2** | `/chat` `kind` extensions (`teammate_propose`, `teammate_advise`, `captain_decide`) + `ChatRequest.chosen_advisor_id` + tests | landed |
 | **Team-3** | `MatchEscrow.payoutSplit` Solidity variant + Hardhat tests + `deploy.js` wiring | follow-up |
 | **Team-4** | `/play/new` frontend route + match-page UI for advisor display | follow-up |
 
-Only **Team-1** has code in this PR. The remaining phases are scoped
-in this doc so the schema decisions can be made now without waiting
-on the full implementation.
+Team-1 and Team-2 are wired end-to-end as Phase-A stubs (deterministic
+replies, real schema validation). Team-3 and Team-4 are the
+on-chain settlement and the frontend; both are scoped here so the
+schema decisions can be made now without waiting on the full
+implementation.
 
 ## What this is NOT
 
