@@ -30,7 +30,12 @@ module.exports = {
       accounts: process.env.DEPLOYER_PRIVATE_KEY ? [process.env.DEPLOYER_PRIVATE_KEY] : [],
     },
     sepolia: {
-      url: process.env.SEPOLIA_RPC_URL || "https://rpc.sepolia.org",
+      // Default RPC is publicnode's Sepolia endpoint. The old default
+      // (rpc.sepolia.org) returned Cloudflare 522 / connection timeout
+      // by late 2025 — replaced by publicnode, which is also what the
+      // frontend's NEXT_PUBLIC_SEPOLIA_RPC_URL fallback points at.
+      // Override with SEPOLIA_RPC_URL if you have a private RPC.
+      url: process.env.SEPOLIA_RPC_URL || "https://ethereum-sepolia.publicnode.com",
       chainId: 11155111,
       accounts: process.env.DEPLOYER_PRIVATE_KEY ? [process.env.DEPLOYER_PRIVATE_KEY] : [],
     },
