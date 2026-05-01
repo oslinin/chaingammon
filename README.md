@@ -38,6 +38,38 @@ A decentralized, verifiable ELO ledger for backgammon — humans and agents shar
 4. Game ends → both players sign the result → `MatchRegistry.settleWithSessionKeys` verifies signatures → ENS text records updated → KeeperHub mirrors the audit JSON to 0G Storage.
 5. Any other tool reads your ENS subname and reconstructs your full backgammon DNA — ELO, games played, playing style.
 
+### Per-turn sequence
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Browser as Frontend (Browser)
+    participant Agent as Agent NN<br/>(browser / 0G Compute)
+    participant KH as KeeperHub workflow
+    participant Drand as drand beacon
+    participant Storage as 0G Storage
+    participant Sepolia as Sepolia
+
+    Note over Browser,Sepolia: Game start: wallet authorises ephemeral session key, escrow deposits confirmed
+
+    loop Each turn
+        KH->>Drand: pull round R
+        Drand-->>KH: round digest D_R
+        KH->>KH: dice = keccak256(D_R, turn_index) mod 36
+        KH->>Browser: dice (R, d1, d2)
+        Browser->>Agent: forward pass over legal successors
+        Agent-->>Browser: chosen move (highest-equity)
+        Browser->>KH: signed move {state, dice, R, move}
+        KH->>KH: validate via WASM rules engine
+        KH->>Storage: append to GameRecord (Log)
+    end
+
+    Note over Browser,Sepolia: Game end
+    Browser->>Sepolia: settleWithSessionKeys(humanAuth, resultSig, agentId, gameRecordHash)
+    Sepolia-->>Browser: settled (ELO updated, ENS text records written)
+    KH->>Storage: mirror audit JSON
+```
+
 ---
 
 ## Where each protocol fits
