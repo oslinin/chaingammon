@@ -32,6 +32,30 @@ class MoveEntry(BaseModel):
     dice: list[int]
     move: str = Field(description="gnubg-format move string, e.g. '8/5 6/5'")
     position_id_after: Optional[str] = None
+    # Optional drand round number that produced `dice`. Set when the
+    # match runs through KeeperHub's drand-derived dice path; left
+    # unset for legacy / standalone-demo records that used a local
+    # PRNG. With this field, an audit replayer can re-fetch the same
+    # drand round and re-derive the same dice via
+    # `agent.drand_dice.derive_dice(round_digest, turn_index)`.
+    drand_round: Optional[int] = None
+
+
+class SeriesEnvelope(BaseModel):
+    """Optional envelope identifying a single match as part of a
+    multi-match series (best-of-N, tournament round, etc.).
+
+    `series_id` is the off-chain identifier that ties the matches
+    together (typically `keccak256(participantsA || participantsB ||
+    nonce)`); `series_index` is this match's position in the series
+    (0-based); `series_total` is the total number of matches in the
+    series. All three fields are required when the envelope is
+    present, so that any downstream tool can validate completeness.
+    """
+
+    series_id: str = Field(description="Off-chain identifier shared across all matches in the series")
+    series_index: int = Field(ge=0, description="0-based position of this match within the series")
+    series_total: int = Field(ge=1, description="Total number of matches in the series")
 
 
 class CubeAction(BaseModel):
@@ -63,6 +87,11 @@ class GameRecord(BaseModel):
     started_at: Optional[str] = None  # ISO-8601 UTC
     ended_at: Optional[str] = None
     notes: Optional[str] = None
+
+    # Optional series membership. Populated when this match is one of
+    # several played as a unit (best-of-N, tournament round). Left as
+    # None for solo / one-off matches.
+    series: Optional[SeriesEnvelope] = None
 
     # Reserved for v2: a literal `.mat` text export from gnubg's
     # `export match` command. Left as None for v1.
