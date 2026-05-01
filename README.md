@@ -345,6 +345,21 @@ Production move evaluation is the per-agent NN forward pass — in the browser b
 
 ---
 
+## Coach dialogue — human↔agent collaboration
+
+The coach is a turn-by-turn conversation, not a one-shot narrator. Per turn the agent considers the human's history, the opponent's style, and the dialogue so far; the human can challenge, ask follow-ups, or accept; and the agent's next message is conditioned on the exchange. A free-text correction ("I prefer running games, stop suggesting primes") becomes a per-session preference signal that biases later turns and — eventually — feeds the agent's next training round.
+
+This is the human-in-the-loop bet: pure-AI play converges on gnubg-equivalent equity-maxing, pure-human play tops out at the human's ELO, and the collaboration is the next plateau — the same dynamic that makes Claude Code a stronger software engineer with a human in the loop than either is alone.
+
+| Endpoint | Body | Purpose |
+| --- | --- | --- |
+| `POST /chat` | `ChatRequest{kind, match_id, turn_index, position_id, dice, candidates, dialogue, preferences, ...}` | Turn-by-turn dialogue. Three message kinds: `open_turn` (initial take after dice roll), `human_reply` (response to the human's text), `move_committed` (acknowledgement after move commit). Returns `ChatResponse{message, backend, preferences_delta, latency_ms}`. |
+| `POST /hint` | (existing one-shot) | Single-sentence narration for users who don't want a back-and-forth. Stays for backwards-compat. |
+
+Full design: [docs/coach-dialogue.md](docs/coach-dialogue.md). Phase A (data shapes + endpoint stub) is in code now (`agent/coach_dialogue.py`, `agent/coach_service.py`); Phase B wires the LLM call, Phase C lands the frontend dialogue panel, Phase D persists per-session preferences across turns, Phase E feeds them into the next training round.
+
+---
+
 ## Running Locally
 
 ### Prerequisites
