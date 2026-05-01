@@ -210,8 +210,39 @@ def make_move(game_id: str, req: MoveRequest):
     )
     return state
 
-@app.post("/games/{game_id}/agent-move", response_model=GameState)
-def agent_move(game_id: str):
+class AgentMoveRequest(BaseModel):
+    """Phase I.2 — optional body for /games/{id}/agent-move.
+
+    `use_0g_inference` flips the move-evaluation path through the 0G
+    compute eval bridge. The trained BackgammonNet today only operates
+    on pip-race states (sample_trainer.py:189 RaceState), so the chosen
+    move is STILL gnubg+overlay even when this flag is on — what
+    changes is that we record one billable inference call to capture
+    real provider + cost metadata for the match-page caption. Phase J
+    swaps in a full-board NN; once that ships and `use_per_agent_nn`
+    is True, the NN's argmax actually drives the move.
+    """
+
+    use_0g_inference: bool = False
+    use_per_agent_nn: bool = False  # reserved for Phase J
+
+
+class AgentMoveResponse(GameState):
+    """Phase I.2: extends GameState with optional `inference_meta`.
+
+    Subclassing GameState (not wrapping it) preserves byte-stable
+    back-compat: every existing /agent-move caller can still read
+    `resp.json()["position_id"]`, `["dice"]`, etc. New callers that
+    care about the 0G cost meter read `resp.json()["inference_meta"]`.
+    With `exclude_none=True` serialization, solo / non-0G calls don't
+    even surface the field.
+    """
+
+    inference_meta: Optional[Dict[str, object]] = None
+
+
+@app.post("/games/{game_id}/agent-move", response_model=AgentMoveResponse)
+def agent_move(game_id: str, req: AgentMoveRequest = AgentMoveRequest()):
     """Phase 9: pick the agent's move using gnubg's full candidate list
     re-ranked by the agent's experience overlay. Two iNFTs minted on the
     same gnubg base but with divergent overlays will pick different
@@ -219,6 +250,12 @@ def agent_move(game_id: str):
 
     Auto-played positions (no legal moves, e.g. dance from the bar) fall
     back to gnubg's `get_agent_move` which lets gnubg play through.
+
+    Phase I.2: when `req.use_0g_inference` is set, also probe the 0G
+    eval bridge so the per-move billable path is exercised. Returns
+    inference metadata in `inference_meta` (provider, per-call cost,
+    available flag, latency) for the frontend caption. Does NOT change
+    the chosen move yet — see AgentMoveRequest docstring.
     """
     if game_id not in games:
         raise HTTPException(status_code=404, detail="Game not found")
@@ -256,7 +293,47 @@ def agent_move(game_id: str):
             position_id_after=state.position_id,
         )
     )
-    return state
+
+    inference_meta = _maybe_probe_0g_inference(req.use_0g_inference)
+
+    return AgentMoveResponse(
+        **state.model_dump(),
+        inference_meta=inference_meta,
+    )
+
+
+def _maybe_probe_0g_inference(use_0g_inference: bool) -> Optional[Dict[str, object]]:
+    """Phase I.2: when 0G inference is on, call the eval bridge once
+    so the bounty meter ticks per move. Returns metadata the frontend
+    renders as 'Last move: 0G compute · {latency_ms} ms · {gas_og} OG'.
+    `available: false` is honest — the bridge couldn't find a
+    backgammon-net provider; we still surface what we know so the
+    caption disambiguates 'wire-decorated-but-unprovisioned' from
+    'real 0G traffic'."""
+    if not use_0g_inference:
+        return None
+    import time as _time
+    try:
+        from og_compute_eval_client import estimate as _og_estimate
+    except ImportError:
+        return {"available": False, "note": "og-compute-bridge not importable"}
+    t0 = _time.time()
+    try:
+        r = _og_estimate(1)
+    except Exception as exc:
+        return {
+            "available": False,
+            "note": f"OG_EVAL_UNAVAILABLE: {exc}",
+            "latency_ms": int((_time.time() - t0) * 1000),
+        }
+    return {
+        "available": bool(r.available),
+        "provider": r.provider_address or None,
+        "per_inference_og": r.per_inference_og,
+        "gas_og": r.per_inference_og,
+        "latency_ms": int((_time.time() - t0) * 1000),
+        "note": r.note or "",
+    }
 
 @app.post("/games/{game_id}/resign", response_model=GameState)
 def resign(game_id: str):
