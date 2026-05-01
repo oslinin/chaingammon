@@ -345,18 +345,20 @@ Production move evaluation is the per-agent NN forward pass — in the browser b
 
 ---
 
-## Coach dialogue — human↔agent collaboration
+## Coach dialogue — turn-by-turn explanation
 
-The coach is a turn-by-turn conversation, not a one-shot narrator. Per turn the agent considers the human's history, the opponent's style, and the dialogue so far; the human can challenge, ask follow-ups, or accept; and the agent's next message is conditioned on the exchange. A free-text correction ("I prefer running games, stop suggesting primes") becomes a per-session preference signal that biases later turns and — eventually — feeds the agent's next training round.
-
-This is the human-in-the-loop bet: pure-AI play converges on gnubg-equivalent equity-maxing, pure-human play tops out at the human's ELO, and the collaboration is the next plateau — the same dynamic that makes Claude Code a stronger software engineer with a human in the loop than either is alone.
+The coach is a turn-by-turn conversation, not a one-shot narrator. Per turn the agent considers the human's history, the opponent's style, and the dialogue so far; the human can challenge, ask follow-ups, or accept; and the agent's next message is conditioned on the exchange. A free-text correction ("I prefer running games, stop suggesting primes") becomes a per-session preference signal that biases later turns within the same match. The signal is session-local UX adaptation; it expires when the session ends and does **not** feed agent training.
 
 | Endpoint | Body | Purpose |
 | --- | --- | --- |
 | `POST /chat` | `ChatRequest{kind, match_id, turn_index, position_id, dice, candidates, dialogue, preferences, ...}` | Turn-by-turn dialogue. Three message kinds: `open_turn` (initial take after dice roll), `human_reply` (response to the human's text), `move_committed` (acknowledgement after move commit). Returns `ChatResponse{message, backend, preferences_delta, latency_ms}`. |
 | `POST /hint` | (existing one-shot) | Single-sentence narration for users who don't want a back-and-forth. Stays for backwards-compat. |
 
-Full design: [docs/coach-dialogue.md](docs/coach-dialogue.md). Phase A (data shapes + endpoint stub) is in code now (`agent/coach_dialogue.py`, `agent/coach_service.py`); Phase B wires the LLM call, Phase C lands the frontend dialogue panel, Phase D persists per-session preferences across turns, Phase E feeds them into the next training round.
+Full design: [docs/coach-dialogue.md](docs/coach-dialogue.md). Phase A (data shapes + endpoint stub) is in code now (`agent/coach_dialogue.py`, `agent/coach_service.py`); Phase B wires the LLM call, Phase C lands the frontend dialogue panel, Phase D persists per-session preferences across turns within a match.
+
+### Team mode (the human-in-the-loop story)
+
+The actual *human-in-the-loop* feature is **team mode** — a human and an agent (or any 2v2 mix) playing as teammates against an opponent. Per turn the captain receives advisor signals from each teammate (`{teammate_id, proposed_move, confidence, optional_message}`); the captain decides; both contributions are logged into the match record. This is where humans enter the agent training loop: refereed team-vs-team match data feeds future training rounds. Design: [docs/team-mode.md](docs/team-mode.md) (forthcoming).
 
 ---
 
