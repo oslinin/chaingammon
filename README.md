@@ -2,14 +2,16 @@
 
 > **An open protocol for portable backgammon reputation.** Your wallet (or your AI agent) is your player profile. Your ENS subname is your portable identity. Your full match archive lives on 0G Storage, owned by you forever.
 
-Built for ETHGlobal Open Agents. Six sponsor primitives, no central server:
+Built for ETHGlobal Open Agents. The three sponsor protocols Chaingammon targets:
 
-- **ENS** — `<name>.chaingammon.eth` subnames carry verified ELO and a pointer to the match archive.
-- **Sepolia** — hosts the settlement contracts (`MatchEscrow`, `MatchRegistry`, `AgentRegistry`, the ENS subname registrar) and is KeeperHub-native.
-- **0G Storage** — full game records (Log), per-player style profiles (KV), encrypted agent weights (Blob, hash-committed to the iNFT).
-- **0G Compute** — TEE-attested agent NN inference (used when the owner is offline) and the LLM coach (Qwen 2.5 7B).
+- **0G** — full game records (Log), per-player style profiles (KV), encrypted agent weights (Blob, hash-committed to the iNFT) on **0G Storage**; TEE-attested agent NN inference and coach LLM (Qwen 2.5 7B) on **0G Compute**.
+- **ENS** — `<name>.chaingammon.eth` subnames carry verified ELO and a pointer to the match archive. Protocol-reserved text records cannot be self-claimed.
 - **KeeperHub** — orchestrates the per-match workflow: deposit verification, drand round pulls, WASM rules-engine validation, settlement broadcast, audit trail.
-- **drand** — verifiable dice randomness. Each turn's roll is derived from a public drand round; anyone replaying the match recovers the same dice.
+
+Other infrastructure (not sponsor-affiliated):
+
+- **Sepolia** — the settlement chain. KeeperHub-native, hosts the contracts (`MatchEscrow`, `MatchRegistry`, `AgentRegistry`, the ENS subname registrar). Mainnet move would be a chain swap; the design is identical.
+- **drand** — verifiable dice randomness. Each turn's roll is derived from a public drand round; anyone replaying the match recovers the same dice without trusting the server.
 
 ---
 
@@ -38,16 +40,23 @@ A decentralized, verifiable ELO ledger for backgammon — humans and agents shar
 
 ---
 
-## Sponsor primitives
+## Where each protocol fits
+
+**Sponsor protocols** (the three Chaingammon targets at ETHGlobal Open Agents):
 
 | Sponsor | Role | Where it lives |
 | --- | --- | --- |
-| **ENS** (real) | Portable identity. `<name>.chaingammon.eth` subnames; protocol-reserved text records carry ELO + style profile pointer. | `contracts/src/PlayerSubnameRegistrar.sol` |
-| **Sepolia** | Settlement chain. Hosts `MatchEscrow`, `MatchRegistry`, `AgentRegistry`, the ENS registrar; KeeperHub triggers and broadcasts here natively. | `contracts/`, `contracts/deployments/sepolia.json` |
-| **0G Storage** | Per-match game records (Log), per-player style profiles (KV), encrypted agent weights (Blob, hash-committed to iNFT), gnubg strategy docs (coach RAG context). | HTTP via the 0G Storage indexer SDK |
+| **0G Storage** | Per-match game records (Log), per-player style profiles (KV), encrypted agent weights (Blob, hash-committed to iNFT), gnubg strategy docs (coach RAG context). | HTTP via the 0G Storage indexer SDK; `og-bridge/` |
 | **0G Compute** | TEE-attested agent NN inference (offline play, autonomous tournaments) and coach LLM (Qwen 2.5 7B). | `og-compute-bridge/`, `agent/coach_compute_client.py` |
-| **KeeperHub** | Per-match workflow: deposit verification, drand round pulls, move validation via WASM rules engine, settlement broadcast on Sepolia, audit JSON on 0G Storage. | `docs/keeperhub-feedback.md` |
-| **drand** | Verifiable dice randomness. KeeperHub pulls a drand round per turn; the rules engine re-derives dice during validation. | KeeperHub workflow steps |
+| **ENS** (real) | Portable identity. `<name>.chaingammon.eth` subnames; protocol-reserved text records carry ELO + style profile pointer. | `contracts/src/PlayerSubnameRegistrar.sol` |
+| **KeeperHub** | Per-match workflow: deposit verification, drand round pulls, move validation via WASM rules engine, settlement broadcast, audit JSON on 0G Storage. | `docs/keeperhub-feedback.md` |
+
+**Other infrastructure** (chosen for fit, not a sponsor track):
+
+| Layer | Choice | Why |
+| --- | --- | --- |
+| Settlement chain | **Sepolia** | KeeperHub-native and the canonical home for real-ENS subnames. Mainnet move is a chain swap; design is identical. |
+| Dice randomness | **drand** | Public, verifiable randomness beacon. Each turn's dice are `keccak256(drand_round_digest, turn_index) mod 36` — anyone re-derives the same dice during replay. |
 
 ---
 
@@ -364,14 +373,32 @@ See [ROADMAP.md](ROADMAP.md) for the full version. Architecture: [ARCHITECTURE.m
 
 ## Submission Checklist
 
+**General:**
+
 - [x] Public repo + README with pitch and architecture
-- [x] ENS subname schema spec ([docs/ENS_SCHEMA.md](docs/ENS_SCHEMA.md)) + reserved keys enforced on-chain
 - [x] Session-key state channel (`MatchRegistry.settleWithSessionKeys`) — pre-authorized at game start, either side can submit
 - [x] Sample trainer (`agent/sample_trainer.py`) with TensorBoard
 - [ ] Contracts deployed on Sepolia (etherscan links)
-- [ ] At least one agent iNFT with hash-committed weights on 0G Storage
-- [ ] At least one `<name>.chaingammon.eth` minted with text records
-- [ ] KeeperHub workflow live (drand round → move validation → Sepolia settlement → audit)
 - [ ] Demo video < 3 min
+
+**0G** (`Storage`, `Compute`):
+
+- [ ] At least one agent iNFT with hash-committed weights on 0G Storage
+- [ ] Match game records visible on 0G Storage Log
+- [ ] Coach LLM running on 0G Compute (Qwen 2.5 7B) with TEE attestation surfaced
+- [ ] Write-up: which 0G features are used and where
+
+**ENS:**
+
+- [x] Subname schema spec ([docs/ENS_SCHEMA.md](docs/ENS_SCHEMA.md)) + reserved keys enforced on-chain
+- [ ] Subname registrar deployed (Sepolia explorer link)
+- [ ] At least one `<name>.chaingammon.eth` minted with text records
+- [ ] Write-up: text record schema and resolver flow
+
+**KeeperHub:**
+
+- [ ] Workflow live (drand round → move validation → Sepolia settlement → audit JSON to 0G Storage)
+- [ ] Write-up: workflow definition + audit trail UX
+- [ ] Feedback document ([docs/keeperhub-feedback.md](docs/keeperhub-feedback.md))
 
 Claude Code is enabled on this repo.
