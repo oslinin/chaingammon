@@ -367,6 +367,71 @@ async def test_chat_compute_only_raises_on_compute_failure(app):
 
 
 @pytest.mark.anyio
+async def test_chat_resolves_agent_weights_hash_to_persona(app):
+    """When agent_weights_hash is supplied, /chat must call
+    load_profile and surface the persona summary in the LLM prompt
+    so the agent's style grounds the reply."""
+    fake_summary = "After 17 matches this agent favors building primes."
+
+    class FakeProfile:
+        def summarize(self):
+            return fake_summary
+
+    with patch("coach_service.load_profile") as mock_load, \
+         patch("coach_service._generate_chat_compute") as mock_compute:
+        mock_load.return_value = FakeProfile()
+        mock_compute.return_value = "OK"
+        async with AsyncClient(transport=ASGITransport(app=app),
+                                base_url="http://test") as c:
+            await c.post("/chat", json=_request_body(
+                backend="compute",
+                agent_weights_hash="0xabc123",
+            ))
+    assert mock_load.called
+    assert mock_load.call_args[0][0] == "0xabc123"
+    # The persona must end up in the prompt that was shipped to compute.
+    prompt = mock_compute.call_args[0][0]
+    assert fake_summary in prompt
+
+
+@pytest.mark.anyio
+async def test_chat_omits_persona_when_hash_is_empty(app):
+    """Empty agent_weights_hash means no profile fetch — the prompt
+    must not include an Agent persona: line."""
+    with patch("coach_service.load_profile") as mock_load, \
+         patch("coach_service._generate_chat_compute") as mock_compute:
+        mock_compute.return_value = "OK"
+        async with AsyncClient(transport=ASGITransport(app=app),
+                                base_url="http://test") as c:
+            await c.post("/chat", json=_request_body(
+                backend="compute",
+                agent_weights_hash="",
+            ))
+    # load_profile should NOT have been called when hash is empty.
+    assert not mock_load.called
+    prompt = mock_compute.call_args[0][0]
+    assert "Agent persona:" not in prompt
+
+
+@pytest.mark.anyio
+async def test_chat_swallows_load_profile_errors(app):
+    """If load_profile raises (0G Storage down, malformed blob,
+    network blip), /chat must still produce a reply. Persona just
+    becomes empty."""
+    with patch("coach_service.load_profile", side_effect=RuntimeError("0G down")), \
+         patch("coach_service._generate_chat_compute") as mock_compute:
+        mock_compute.return_value = "Reply without persona."
+        async with AsyncClient(transport=ASGITransport(app=app),
+                                base_url="http://test") as c:
+            resp = await c.post("/chat", json=_request_body(
+                backend="compute",
+                agent_weights_hash="0xdeadbeef",
+            ))
+    assert resp.status_code == 200
+    assert resp.json()["message"]["text"] == "Reply without persona."
+
+
+@pytest.mark.anyio
 async def test_chat_preferences_update_runs_in_real_path_too(app):
     """Preference updates live outside the LLM call, so they must run
     on the LLM path identically to the stub path."""
