@@ -165,6 +165,20 @@ export function Sidebar() {
           </span>
         </Link>
 
+        {/* Entry 3.5: round-robin training (Phase F) */}
+        <Link
+          href="/training"
+          data-testid="sidebar-training"
+          className="flex flex-col gap-0.5 rounded-md px-3 py-3 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800"
+        >
+          <span className="font-semibold text-zinc-900 dark:text-zinc-50">
+            Training
+          </span>
+          <span className="text-xs text-zinc-500 dark:text-zinc-400">
+            Round-robin self-play
+          </span>
+        </Link>
+
         {/* Entry 4: 0G Storage log — live match record on 0G Storage */}
         <Link
           href={mounted && currentMatchId ? `/log/${currentMatchId}` : "/log/no-match"}
