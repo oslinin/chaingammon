@@ -190,3 +190,33 @@ def test_loaded_checkpoint_matches_original_forward_output(tmp_path):
     board = torch.randn(4, GNUBG_FEAT_DIM)
     extras = torch.randn(4, DEFAULT_EXTRAS_DIM)
     assert torch.equal(original(board, extras), loaded(board, extras))
+
+
+# ---------------------------------------------------------------------------
+# drand-derived dice mode is deterministic
+# ---------------------------------------------------------------------------
+
+
+def test_match_with_drand_digest_is_deterministic_in_dice():
+    """When `drand_round_digest` is supplied, two matches with identical
+    fresh nets MUST take the same sequence of turns (same length) —
+    every dice roll is derived from the digest, so randomness only
+    enters through the value-net, which is identically initialised."""
+    digest = bytes.fromhex("aa" * 32)
+    a_steps_list: list[int] = []
+    for _ in range(2):
+        torch.manual_seed(0)
+        agent = BackgammonNet(core_seed=0xBACC, extras_seed=1)
+        opponent = BackgammonNet(core_seed=0xBACC, extras_seed=2)
+        a_extras = torch.zeros(DEFAULT_EXTRAS_DIM)
+        o_extras = torch.zeros(DEFAULT_EXTRAS_DIM)
+        steps, _ = td_lambda_match(
+            agent, opponent, a_extras, o_extras,
+            gamma=1.0, lam=0.7, lr=0.0,   # lr=0 → no weight drift between runs
+            drand_round_digest=digest,
+        )
+        a_steps_list.append(steps)
+    assert a_steps_list[0] == a_steps_list[1], (
+        f"matches with same drand digest + identical nets should run "
+        f"the same number of turns, got {a_steps_list}"
+    )

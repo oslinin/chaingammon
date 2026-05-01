@@ -45,6 +45,8 @@ import torch
 from torch import nn
 from torch.utils.tensorboard import SummaryWriter
 
+from drand_dice import derive_dice
+
 
 # ---------------------------------------------------------------------------
 # Network
@@ -258,20 +260,31 @@ def td_lambda_match(
     lr: float = 1e-3,
     writer: SummaryWriter | None = None,
     global_step: int = 0,
+    drand_round_digest: bytes | None = None,
 ) -> tuple[int, int]:
     """Play a single self-play match. `agent` learns; `opponent` is frozen.
 
     Returns `(steps_taken, agent_won_int)`. Logs per-step TD error and
     eligibility-trace norm to TensorBoard when `writer` is provided.
+
+    `drand_round_digest`: when supplied, every turn's dice are derived
+    via `drand_dice.derive_dice(digest, turn_index)` — the same
+    deterministic mapping production code uses with KeeperHub's pulled
+    drand rounds. When None, falls back to local PRNG so the demo runs
+    standalone without a fixed digest.
     """
     state = RaceState()
     eligibility = {p: torch.zeros_like(p) for p in agent.parameters()}
 
     while not state.terminal():
-        # Roll dice — production replaces this with the drand-derived
-        # roll from the KeeperHub workflow's per-turn drand round.
-        d1 = random.randint(1, 6)
-        d2 = random.randint(1, 6)
+        # Dice: derive from the drand round digest in production-shaped
+        # mode, or fall back to local PRNG for the standalone demo.
+        if drand_round_digest is not None:
+            roll = derive_dice(drand_round_digest, turn_index=state.n_turns)
+            d1, d2 = roll.d1, roll.d2
+        else:
+            d1 = random.randint(1, 6)
+            d2 = random.randint(1, 6)
         state.dice = (d1, d2)
         cands = legal_successors(state, state.dice)
 
@@ -428,7 +441,16 @@ def main() -> None:
                         help="Path to a checkpoint to resume training from. "
                              "Bypasses the gnubg-init core; the opponent is "
                              "still freshly initialized with extras_seed=2.")
+    parser.add_argument("--drand-digest", type=str, default=None,
+                        help="Hex-encoded drand round digest. When set, "
+                             "every turn's dice are derived via "
+                             "drand_dice.derive_dice(digest, turn_index) "
+                             "— the same deterministic mapping production "
+                             "uses. Without this flag, dice come from the "
+                             "local PRNG (standalone demo mode).")
     args = parser.parse_args()
+
+    drand_digest = bytes.fromhex(args.drand_digest) if args.drand_digest else None
 
     random.seed(args.seed)
     torch.manual_seed(args.seed)
@@ -479,6 +501,7 @@ def main() -> None:
             agent, opponent, agent_extras, opponent_extras,
             gamma=args.gamma, lam=args.lam, lr=args.lr,
             writer=writer, global_step=global_step,
+            drand_round_digest=drand_digest,
         )
         global_step += steps
         rolling_outcomes.append(won)
