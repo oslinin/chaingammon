@@ -423,7 +423,24 @@ def post_chat(req: ChatRequest) -> ChatResponse:
     import time
     started = time.monotonic()
 
-    prompt = build_chat_prompt(req)
+    # Resolve the agent's persona from 0G Storage (if a weights hash is
+    # supplied) so the LLM can ground its replies in this specific
+    # agent's tendencies. Mirrors /hint's load_profile lookup. Empty
+    # hash → no persona section in the prompt (NullProfile would still
+    # produce a string but we want the prompt to compact when the
+    # agent has no profile yet, matching the existing behaviour).
+    agent_persona = ""
+    if req.agent_weights_hash:
+        try:
+            agent_persona = load_profile(req.agent_weights_hash).summarize()
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(
+                "load_profile failed for /chat (%s); proceeding without persona.", e
+            )
+            agent_persona = ""
+
+    prompt = build_chat_prompt(req, agent_persona=agent_persona)
 
     chosen = (req.backend or _BACKEND).lower()
     if chosen == "stub":
