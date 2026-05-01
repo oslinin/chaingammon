@@ -25,6 +25,43 @@ class PlayerRef(BaseModel):
     agent_id: Optional[int] = None  # ERC-7857 token id for agents
 
 
+class AdvisorSignal(BaseModel):
+    """One teammate's per-turn advice in team mode (see docs/team-mode.md).
+
+    Each non-captain teammate produces one of these per turn; the
+    captain sees them all and chooses which (if any) to follow. The
+    full set is archived on `MoveEntry.advisor_signals` so an audit
+    replayer can reconstruct what advice was on the table at each
+    turn without re-running the value net.
+    """
+
+    teammate_id: str = Field(
+        min_length=1,
+        description="PlayerRef-shaped id (address or 'agent:N') of the advisor",
+    )
+    proposed_move: str = Field(
+        min_length=1,
+        description="gnubg-format move string the teammate is proposing",
+    )
+    confidence: float = Field(ge=0.0, le=1.0)
+    message: Optional[str] = None  # free-text rationale; omitted when None
+
+
+class Team(BaseModel):
+    """A team's roster + captain rotation policy.
+
+    `members` is ordered (the order is significant for `fixed_first`
+    rotation and for stable display in the UI). `captain_rotation`
+    governs which member acts as captain on each turn — see
+    `docs/team-mode.md` for the per-policy semantics.
+    """
+
+    members: list[PlayerRef] = Field(min_length=1)
+    captain_rotation: Literal[
+        "alternating", "per_turn_vote", "fixed_first"
+    ] = "alternating"
+
+
 class MoveEntry(BaseModel):
     """One move in the play sequence."""
 
@@ -39,6 +76,10 @@ class MoveEntry(BaseModel):
     # drand round and re-derive the same dice via
     # `agent.drand_dice.derive_dice(round_digest, turn_index)`.
     drand_round: Optional[int] = None
+    # Team-mode only: the advisor signals received by the captain on
+    # this turn. None for solo matches (preserves byte-stable existing
+    # records via `exclude_none=True` in `serialize_record`).
+    advisor_signals: Optional[list[AdvisorSignal]] = None
 
 
 class SeriesEnvelope(BaseModel):
@@ -92,6 +133,14 @@ class GameRecord(BaseModel):
     # several played as a unit (best-of-N, tournament round). Left as
     # None for solo / one-off matches.
     series: Optional[SeriesEnvelope] = None
+
+    # Team-mode rosters. Populated for doubles / chouette / human+agent
+    # matches; left as None for solo 1v1 matches. By convention, side 0
+    # is `team_a` and side 1 is `team_b`. Audit replayers detect team
+    # mode via `team_a is not None`. `winner` / `loser` stay scalar
+    # PlayerRef and refer to the captain at game-end (see docs/team-mode.md).
+    team_a: Optional[Team] = None
+    team_b: Optional[Team] = None
 
     # Reserved for v2: a literal `.mat` text export from gnubg's
     # `export match` command. Left as None for v1.
