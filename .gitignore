@@ -13,6 +13,11 @@ __pycache__/
 dist/
 .pytest_cache/
 
+# ML training artifacts
+runs/
+*.ckpt
+*.pt
+
 # Node / Next.js
 node_modules/
 .next/
