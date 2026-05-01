@@ -47,7 +47,10 @@ describe("Phase 31 — reserved keys, authorized minters, enumerable index", fun
       aliceNode = await registrar.subnameNode("alice");
     });
 
-    for (const key of ["elo", "match_count", "last_match_id", "kind", "inft_id"]) {
+    // "elo" is now a typed numeric record (setElo / eloOf), not a text record;
+    // it's still a reserved write but goes through a different surface, exercised
+    // in the typed-elo block of phase10_PlayerSubnameRegistrar.test.js.
+    for (const key of ["match_count", "last_match_id", "kind", "inft_id"]) {
       it(`subname owner cannot setText("${key}", ...)`, async function () {
         let reverted = false;
         try {
@@ -60,7 +63,7 @@ describe("Phase 31 — reserved keys, authorized minters, enumerable index", fun
     }
   });
 
-  describe("reserved keys — contract owner CAN write", function () {
+  describe("reserved keys — contract owner ALSO cannot write (post-lockdown)", function () {
     let aliceNode;
 
     beforeEach(async function () {
@@ -68,17 +71,82 @@ describe("Phase 31 — reserved keys, authorized minters, enumerable index", fun
     });
 
     for (const [key, val] of [
-      ["elo", "1600"],
       ["match_count", "5"],
       ["last_match_id", "42"],
       ["kind", "human"],
-      ["inft_id", ""],
+      ["inft_id", "1"],
     ]) {
-      it(`contract owner can setText("${key}", ...)`, async function () {
-        await registrar.connect(owner).setText(aliceNode, key, val);
+      it(`contract owner without minter role CANNOT setText("${key}", ...)`, async function () {
+        let reverted = false;
+        try {
+          await registrar.connect(owner).setText(aliceNode, key, val);
+        } catch (e) {
+          reverted = true;
+        }
+        expect(reverted, `owner-as-EOA should be rejected for reserved key "${key}"`).to.be.true;
+      });
+    }
+  });
+
+  describe("reserved keys — authorized minter CAN write", function () {
+    let aliceNode;
+
+    beforeEach(async function () {
+      aliceNode = await registrar.subnameNode("alice");
+      // grant the test "minter" signer the authorized-minter role
+      await registrar.connect(owner).setAuthorizedMinter(minter.address, true);
+    });
+
+    for (const [key, val] of [
+      ["match_count", "5"],
+      ["last_match_id", "42"],
+      ["kind", "human"],
+      ["inft_id", "1"],
+    ]) {
+      it(`authorized minter can setText("${key}", ...)`, async function () {
+        await registrar.connect(minter).setText(aliceNode, key, val);
         expect(await registrar.text(aliceNode, key)).to.equal(val);
       });
     }
+  });
+
+  describe("setText with the elo key always reverts (use setElo)", function () {
+    let aliceNode;
+
+    beforeEach(async function () {
+      aliceNode = await registrar.subnameNode("alice");
+    });
+
+    it("rejects from contract owner", async function () {
+      let reverted = false;
+      try {
+        await registrar.connect(owner).setText(aliceNode, "elo", "9999");
+      } catch (e) {
+        reverted = true;
+      }
+      expect(reverted).to.be.true;
+    });
+
+    it("rejects from authorized minter", async function () {
+      await registrar.connect(owner).setAuthorizedMinter(minter.address, true);
+      let reverted = false;
+      try {
+        await registrar.connect(minter).setText(aliceNode, "elo", "9999");
+      } catch (e) {
+        reverted = true;
+      }
+      expect(reverted, "setText('elo') should be unconditionally rejected").to.be.true;
+    });
+
+    it("rejects from subname owner", async function () {
+      let reverted = false;
+      try {
+        await registrar.connect(alice).setText(aliceNode, "elo", "9999");
+      } catch (e) {
+        reverted = true;
+      }
+      expect(reverted).to.be.true;
+    });
   });
 
   describe("user-writable keys — subname owner CAN write", function () {

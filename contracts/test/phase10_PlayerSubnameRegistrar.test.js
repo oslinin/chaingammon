@@ -120,6 +120,26 @@ describe("Phase 10 — PlayerSubnameRegistrar", function () {
       await registrar.mintSubname("bob", bob.address);
       expect(await registrar.subnameCount()).to.equal(2n);
     });
+
+    it("seeds eloOf to 1500 immediately on mint (default invariant)", async function () {
+      await registrar.mintSubname("alice", alice.address);
+      const node = await registrar.subnameNode("alice");
+      expect(await registrar.eloOf(node)).to.equal(1500n);
+    });
+
+    it("text(node, 'elo') returns '1500' on a fresh mint (ENS-compat shim)", async function () {
+      await registrar.mintSubname("alice", alice.address);
+      const node = await registrar.subnameNode("alice");
+      expect(await registrar.text(node, "elo")).to.equal("1500");
+    });
+
+    it("emits EloSet(node, 1500) on mint", async function () {
+      const tx = await registrar.mintSubname("alice", alice.address);
+      const receipt = await tx.wait();
+      const evt = receipt.logs.find((l) => l.fragment?.name === "EloSet");
+      expect(evt, "EloSet event should fire on mint").to.not.be.undefined;
+      expect(evt.args.value).to.equal(1500n);
+    });
   });
 
   describe("text records", function () {
@@ -130,23 +150,23 @@ describe("Phase 10 — PlayerSubnameRegistrar", function () {
       aliceNode = await registrar.subnameNode("alice");
     });
 
-    it("text() returns empty string for unset key", async function () {
-      expect(await registrar.text(aliceNode, "elo")).to.equal("");
+    it("text() returns empty string for unset non-reserved key", async function () {
+      expect(await registrar.text(aliceNode, "bio")).to.equal("");
     });
 
-    it("setText stores and text() returns the value", async function () {
-      await registrar.setText(aliceNode, "elo", "1547");
-      expect(await registrar.text(aliceNode, "elo")).to.equal("1547");
+    it("setText stores and text() returns the value (non-reserved key)", async function () {
+      await registrar.connect(alice).setText(aliceNode, "bio", "hello world");
+      expect(await registrar.text(aliceNode, "bio")).to.equal("hello world");
     });
 
     it("setText emits TextRecordSet", async function () {
-      const tx = await registrar.setText(aliceNode, "elo", "1547");
+      const tx = await registrar.connect(alice).setText(aliceNode, "bio", "hello");
       const receipt = await tx.wait();
       const evt = receipt.logs.find((l) => l.fragment?.name === "TextRecordSet");
       expect(evt).to.not.be.undefined;
       expect(evt.args.node).to.equal(aliceNode);
-      expect(evt.args.key).to.equal("elo");
-      expect(evt.args.value).to.equal("1547");
+      expect(evt.args.key).to.equal("bio");
+      expect(evt.args.value).to.equal("hello");
     });
 
     it("subname owner can update their own text record", async function () {
@@ -155,17 +175,15 @@ describe("Phase 10 — PlayerSubnameRegistrar", function () {
       expect(await registrar.text(aliceNode, "bio")).to.equal("hello world");
     });
 
-    it("contract owner can update any text record", async function () {
-      // owner is the deployer (server). Server needs to push ELO updates
-      // after every match.
-      await registrar.connect(owner).setText(aliceNode, "elo", "1612");
-      expect(await registrar.text(aliceNode, "elo")).to.equal("1612");
+    it("contract owner can write non-reserved text records", async function () {
+      await registrar.connect(owner).setText(aliceNode, "bio", "owner wrote this");
+      expect(await registrar.text(aliceNode, "bio")).to.equal("owner wrote this");
     });
 
     it("strangers cannot update text records", async function () {
       let reverted = false;
       try {
-        await registrar.connect(bob).setText(aliceNode, "elo", "9999");
+        await registrar.connect(bob).setText(aliceNode, "bio", "hacked");
       } catch (e) {
         reverted = true;
       }
@@ -176,7 +194,7 @@ describe("Phase 10 — PlayerSubnameRegistrar", function () {
       const fake = namehash("nonexistent.chaingammon.eth");
       let reverted = false;
       try {
-        await registrar.connect(owner).setText(fake, "elo", "1500");
+        await registrar.connect(owner).setText(fake, "bio", "anything");
       } catch (e) {
         reverted = true;
       }
@@ -184,18 +202,100 @@ describe("Phase 10 — PlayerSubnameRegistrar", function () {
     });
 
     it("multiple keys per subname coexist", async function () {
-      await registrar.setText(aliceNode, "elo", "1547");
-      await registrar.setText(aliceNode, "match_count", "12");
-      await registrar.setText(aliceNode, "archive_uri", "0g://abc...");
-      expect(await registrar.text(aliceNode, "elo")).to.equal("1547");
-      expect(await registrar.text(aliceNode, "match_count")).to.equal("12");
+      await registrar.connect(alice).setText(aliceNode, "bio", "a player");
+      await registrar.connect(alice).setText(aliceNode, "archive_uri", "0g://abc...");
+      expect(await registrar.text(aliceNode, "bio")).to.equal("a player");
       expect(await registrar.text(aliceNode, "archive_uri")).to.equal("0g://abc...");
     });
 
     it("overwriting a text record replaces the old value", async function () {
-      await registrar.setText(aliceNode, "elo", "1500");
-      await registrar.setText(aliceNode, "elo", "1547");
-      expect(await registrar.text(aliceNode, "elo")).to.equal("1547");
+      await registrar.connect(alice).setText(aliceNode, "bio", "first");
+      await registrar.connect(alice).setText(aliceNode, "bio", "second");
+      expect(await registrar.text(aliceNode, "bio")).to.equal("second");
+    });
+
+    it("setText with the elo key reverts (must use setElo)", async function () {
+      let reverted = false;
+      try {
+        await registrar.connect(owner).setText(aliceNode, "elo", "9999");
+      } catch (e) {
+        reverted = true;
+      }
+      expect(reverted, "setText for elo key should be unconditionally rejected").to.be.true;
+    });
+  });
+
+  describe("typed elo (setElo / eloOf)", function () {
+    let aliceNode;
+
+    beforeEach(async function () {
+      await registrar.mintSubname("alice", alice.address);
+      aliceNode = await registrar.subnameNode("alice");
+    });
+
+    it("authorized minter can write elo", async function () {
+      // Owner grants minter role to the bob signer for this test.
+      await registrar.connect(owner).setAuthorizedMinter(bob.address, true);
+      await registrar.connect(bob).setElo(aliceNode, 1612n);
+      expect(await registrar.eloOf(aliceNode)).to.equal(1612n);
+    });
+
+    it("emits EloSet on setElo", async function () {
+      await registrar.connect(owner).setAuthorizedMinter(bob.address, true);
+      const tx = await registrar.connect(bob).setElo(aliceNode, 1612n);
+      const receipt = await tx.wait();
+      const evt = receipt.logs.find((l) => l.fragment?.name === "EloSet");
+      expect(evt).to.not.be.undefined;
+      expect(evt.args.node).to.equal(aliceNode);
+      expect(evt.args.value).to.equal(1612n);
+    });
+
+    it("text(node, 'elo') reflects the new value via the ENS-compat shim", async function () {
+      await registrar.connect(owner).setAuthorizedMinter(bob.address, true);
+      await registrar.connect(bob).setElo(aliceNode, 1612n);
+      expect(await registrar.text(aliceNode, "elo")).to.equal("1612");
+    });
+
+    it("contract owner without minter role cannot setElo", async function () {
+      let reverted = false;
+      try {
+        await registrar.connect(owner).setElo(aliceNode, 9999n);
+      } catch (e) {
+        reverted = true;
+      }
+      expect(reverted, "owner without minter role should be rejected").to.be.true;
+    });
+
+    it("subname owner cannot setElo on their own subname", async function () {
+      let reverted = false;
+      try {
+        await registrar.connect(alice).setElo(aliceNode, 9999n);
+      } catch (e) {
+        reverted = true;
+      }
+      expect(reverted).to.be.true;
+    });
+
+    it("random EOA cannot setElo", async function () {
+      let reverted = false;
+      try {
+        await registrar.connect(bob).setElo(aliceNode, 9999n);
+      } catch (e) {
+        reverted = true;
+      }
+      expect(reverted).to.be.true;
+    });
+
+    it("setElo reverts for non-existent subname", async function () {
+      await registrar.connect(owner).setAuthorizedMinter(bob.address, true);
+      const fake = namehash("ghost.chaingammon.eth");
+      let reverted = false;
+      try {
+        await registrar.connect(bob).setElo(fake, 1500n);
+      } catch (e) {
+        reverted = true;
+      }
+      expect(reverted).to.be.true;
     });
   });
 

@@ -80,9 +80,12 @@ contract AgentRegistry is ERC721, Ownable {
     /// @notice Mint a new agent iNFT. Returns the agentId (starts at 1).
     ///         If a subnameRegistrar is configured, also mints a corresponding
     ///         subname with `kind="agent"` and `inft_id=<id>` text records.
-    ///         The subname label is the metadataURI with the scheme prefix
-    ///         stripped (e.g. "ipfs://gnubg-tier1" → "gnubg-tier1").
-    function mintAgent(address to, string calldata metadataURI, uint8 tier_)
+    ///
+    ///         The subname label is `label_` when non-empty (caller-chosen,
+    ///         e.g. "cleopatra"), otherwise the metadataURI with the scheme
+    ///         prefix stripped via `_cleanLabel` (e.g. "ipfs://gnubg-tier1"
+    ///         → "gnubg-tier1"). Pass `""` to preserve legacy behaviour.
+    function mintAgent(address to, string calldata metadataURI, uint8 tier_, string calldata label_)
         external
         onlyOwner
         returns (uint256 agentId)
@@ -98,8 +101,8 @@ contract AgentRegistry is ERC721, Ownable {
 
         // Atomic subname mint — only when a registrar is wired.
         if (address(subnameRegistrar) != address(0)) {
-            string memory label = _cleanLabel(metadataURI);
-            bytes32 node = subnameRegistrar.mintSubname(label, to);
+            string memory finalLabel = bytes(label_).length > 0 ? label_ : _cleanLabel(metadataURI);
+            bytes32 node = subnameRegistrar.mintSubname(finalLabel, to);
             subnameRegistrar.setText(node, "kind", "agent");
             subnameRegistrar.setText(node, "inft_id", _toString(agentId));
         }

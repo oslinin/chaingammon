@@ -2,6 +2,7 @@
 pragma solidity ^0.8.24;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/utils/Strings.sol";
 
 /// @title PlayerSubnameRegistrar — ENS-shaped subname registrar for
 ///        chaingammon player profiles.
@@ -9,25 +10,36 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 /// @notice v1 is a self-contained registrar (deployed alongside the rest
 ///         of the protocol on 0G testnet). Each player gets a subname
 ///         like `alice.chaingammon.eth` whose ENS-format namehash is
-///         derived from the parent node passed at construction. Text
-///         records carry the player's reputation: `elo`,
-///         `match_count`, `last_match_id`, `style_uri`, `archive_uri`.
+///         derived from the parent node passed at construction. Reputation
+///         is split between a typed `eloOf(node)` numeric record (default
+///         1500 at mint, writable only by authorized minters) and ENS-style
+///         text records for everything else: `match_count`, `last_match_id`,
+///         `style_uri`, `archive_uri`, `kind`, `inft_id`.
 ///
 ///         A v2 deployment can mirror this state to real ENS on
 ///         Sepolia/Linea: the contract is ENS-shaped (namehash, text
 ///         records, owner-of resolver semantics) and any ENS resolver
-///         can be pointed at it.
+///         can be pointed at it. ELO is exposed via the standard
+///         `text(node, "elo")` getter as a string (decimal of the typed
+///         value) for ENS-resolver compatibility.
 ///
-/// @dev    Permissioning (Phase 31):
-///          - Contract owner (the server post-match) can mint subnames.
-///          - Authorized minters (e.g. AgentRegistry) can also mint
-///            subnames so that agent minting is atomic.
-///          - Reserved keys (`elo`, `match_count`, `last_match_id`,
-///            `kind`, `inft_id`) can only be written by the contract
-///            owner — this is what makes ELO a verified protocol claim,
-///            not a user-asserted value.
-///          - All other keys remain dual-auth: subname owner or contract
-///            owner.
+/// @dev    Permissioning:
+///          - Contract owner mints subnames + manages the authorized-
+///            minter allowlist. Owner alone CANNOT write reserved fields.
+///          - Authorized minters (e.g. AgentRegistry, MatchRegistry post-
+///            settlement) are the only writers of reserved fields:
+///            `elo` via `setElo`, and the remaining text-record reserved
+///            keys (`match_count`, `last_match_id`, `kind`, `inft_id`)
+///            via `setText`.
+///          - `setText(node, "elo", ...)` reverts unconditionally — use
+///            `setElo` instead. This sidesteps "what does setText with
+///            the elo key mean" rather than leaving it ambiguous.
+///          - Default `elo == 1500` is written inline at mint time (both
+///            `mintSubname` and `selfMintSubname`) so every subname has
+///            the right rating from creation; no UI fallback needed.
+///          - All non-reserved keys remain dual-auth: subname owner or
+///            authorized minter (NOT the bare contract owner — owner has
+///            to use the explicit minter allowlist for parity).
 ///          - `subnameAt(uint256)` exposes an enumerable index so
 ///            frontends can walk every registered identity in one query.
 contract PlayerSubnameRegistrar is Ownable {
@@ -49,10 +61,19 @@ contract PlayerSubnameRegistrar is Ownable {
     /// @notice node → key → text record value (ENS resolver shape).
     mapping(bytes32 => mapping(string => string)) private _textRecords;
 
+    /// @notice node → typed ELO rating. Default 1500 written inline at mint
+    ///         (both `mintSubname` and `selfMintSubname`). Writable only by
+    ///         authorized minters via `setElo`. Read via `eloOf` (typed) or
+    ///         `text(node, "elo")` (string-encoded for ENS-resolver compat).
+    mapping(bytes32 => uint256) private _elo;
+
+    /// @notice Default ELO assigned to every newly-minted subname.
+    uint256 public constant INITIAL_ELO = 1500;
+
     /// @notice Ordered list of all minted nodes — enables enumeration.
     bytes32[] private _subnameIndex;
 
-    /// @notice keccak256(key) → true when only the contract owner may write
+    /// @notice keccak256(key) → true when only an authorized minter may write
     ///         that key. Populated in the constructor; never mutated after.
     mapping(bytes32 => bool) private _reservedKey;
 
@@ -63,6 +84,7 @@ contract PlayerSubnameRegistrar is Ownable {
     event SubnameMinted(string indexed labelHashed, string label, bytes32 indexed node, address indexed subnameOwner);
     event TextRecordSet(bytes32 indexed node, string key, string value);
     event AuthorizedMinterSet(address indexed minter, bool authorized);
+    event EloSet(bytes32 indexed node, uint256 value);
 
     error EmptyLabel();
     error SubnameAlreadyExists();
@@ -70,13 +92,16 @@ contract PlayerSubnameRegistrar is Ownable {
     error NotAuthorized();
     error ZeroAddressOwner();
     error IndexOutOfRange();
+    /// @notice setText cannot be used for the elo key — use setElo instead.
+    error UseSetElo();
 
     constructor(bytes32 _parentNode) Ownable(msg.sender) {
         parentNode = _parentNode;
 
-        // Reserve the five protocol-written keys. Hash once here so the
-        // auth check in setText compares hashes, not variable-length strings.
-        _reservedKey[keccak256(bytes("elo"))]           = true;
+        // Reserve the four remaining protocol-written text keys. ELO is
+        // handled separately as a typed numeric record (see `setElo`).
+        // Hash once here so the auth check in setText compares hashes, not
+        // variable-length strings.
         _reservedKey[keccak256(bytes("match_count"))]   = true;
         _reservedKey[keccak256(bytes("last_match_id"))] = true;
         _reservedKey[keccak256(bytes("kind"))]          = true;
@@ -123,6 +148,7 @@ contract PlayerSubnameRegistrar is Ownable {
         _subnameIndex.push(node);
         subnameCount += 1;
         emit SubnameMinted(label, label, node, subnameOwner_);
+        _seedDefaults(node);
     }
 
     /// @notice Open self-registration: anyone can claim a subname for their own
@@ -137,6 +163,15 @@ contract PlayerSubnameRegistrar is Ownable {
         _subnameIndex.push(node);
         subnameCount += 1;
         emit SubnameMinted(label, label, node, msg.sender);
+        _seedDefaults(node);
+    }
+
+    /// @dev Write protocol-default fields on a freshly minted subname.
+    ///      Currently just `_elo[node] = 1500`. New defaults belong here so
+    ///      every mint path picks them up automatically.
+    function _seedDefaults(bytes32 node) internal {
+        _elo[node] = INITIAL_ELO;
+        emit EloSet(node, INITIAL_ELO);
     }
 
     // -------------------------------------------------------------------------
@@ -159,9 +194,36 @@ contract PlayerSubnameRegistrar is Ownable {
         return _subnames[node].subnameOwner;
     }
 
-    /// @notice ENS resolver-style text record read. Returns "" if unset.
+    /// @notice ENS resolver-style text record read. Returns "" for unset
+    ///         non-reserved keys. The `elo` key is special-cased: it's not a
+    ///         text record at all (use `setElo` to write), but readers of the
+    ///         standard ENS resolver shape get the decimal-encoded current
+    ///         value via this getter for compatibility.
     function text(bytes32 node, string calldata key) external view returns (string memory) {
+        if (keccak256(bytes(key)) == keccak256(bytes("elo"))) {
+            return Strings.toString(_elo[node]);
+        }
         return _textRecords[node][key];
+    }
+
+    /// @notice Typed ELO read.
+    function eloOf(bytes32 node) external view returns (uint256) {
+        return _elo[node];
+    }
+
+    // -------------------------------------------------------------------------
+    // ELO write (typed)
+    // -------------------------------------------------------------------------
+
+    /// @notice Update a subname's ELO. Only authorized minters may call —
+    ///         neither the contract owner (without minter role) nor the
+    ///         subname owner can set ELO directly. Match settlement contracts
+    ///         on the minter allowlist are the canonical writers.
+    function setElo(bytes32 node, uint256 value) external {
+        if (!_subnames[node].exists) revert SubnameDoesNotExist();
+        if (!_authorizedMinters[msg.sender]) revert NotAuthorized();
+        _elo[node] = value;
+        emit EloSet(node, value);
     }
 
     // -------------------------------------------------------------------------
@@ -170,26 +232,37 @@ contract PlayerSubnameRegistrar is Ownable {
 
     /// @notice Set a text record.
     ///
-    ///         Reserved keys (`elo`, `match_count`, `last_match_id`, `kind`,
-    ///         `inft_id`) can only be written by the contract owner or an
-    ///         authorized minter — both are protocol-controlled, so ELO in a
-    ///         subname is always a protocol claim, never a user assertion.
+    ///         The `elo` key is rejected unconditionally — use `setElo`
+    ///         (typed numeric writer) instead.
     ///
-    ///         All other keys can be written by either the subname owner or the
-    ///         contract owner.
+    ///         Reserved text keys (`match_count`, `last_match_id`, `kind`,
+    ///         `inft_id`) can be written ONLY by an address on the
+    ///         authorized-minter allowlist. The contract owner does not get
+    ///         an override on these; closing the branch keeps reputation
+    ///         fields unforgeable by an EOA admin.
+    ///
+    ///         Non-reserved keys (bio, avatar, archive_uri, ...) can be
+    ///         written by the subname owner, the contract owner, or any
+    ///         authorized minter — the looser auth here is fine because
+    ///         these keys don't carry rated-play state.
     function setText(bytes32 node, string calldata key, string calldata value) external {
         if (!_subnames[node].exists) revert SubnameDoesNotExist();
 
+        bytes32 keyHash = keccak256(bytes(key));
+        if (keyHash == keccak256(bytes("elo"))) revert UseSetElo();
+
         bool isOwner = msg.sender == owner();
-        bool isProtocol = isOwner || _authorizedMinters[msg.sender];
+        bool isAuthorized = _authorizedMinters[msg.sender];
         bool isSubnameOwner = msg.sender == _subnames[node].subnameOwner;
 
-        if (_reservedKey[keccak256(bytes(key))]) {
-            // Reserved keys: contract owner or authorized minter (protocol-controlled)
-            if (!isProtocol) revert NotAuthorized();
+        if (_reservedKey[keyHash]) {
+            // Reserved text keys: authorized minter only — owner does NOT
+            // get a bypass here (this is the ELO-class lockdown).
+            if (!isAuthorized) revert NotAuthorized();
         } else {
-            // User-writable keys: subname owner or contract owner
-            if (!isOwner && !isSubnameOwner) revert NotAuthorized();
+            // Non-reserved keys: subname owner, contract owner, or
+            // authorized minter. These are stylistic / informational fields.
+            if (!isOwner && !isAuthorized && !isSubnameOwner) revert NotAuthorized();
         }
 
         _textRecords[node][key] = value;

@@ -103,4 +103,16 @@ describe("Phase 22 — selfMintSubname", function () {
     expect(await registrar.ownerOf(await registrar.subnameNode("bob"))).to.equal(bob.address);
     expect(await registrar.subnameCount()).to.equal(2n);
   });
+
+  it("self-minted subname has eloOf == 1500 immediately (default invariant)", async function () {
+    await registrar.connect(alice).selfMintSubname("alice");
+    const node = await registrar.subnameNode("alice");
+    expect(await registrar.eloOf(node)).to.equal(1500n);
+  });
+
+  it("self-minted subname's text(node, 'elo') returns '1500' (ENS-compat shim)", async function () {
+    await registrar.connect(alice).selfMintSubname("alice");
+    const node = await registrar.subnameNode("alice");
+    expect(await registrar.text(node, "elo")).to.equal("1500");
+  });
 });

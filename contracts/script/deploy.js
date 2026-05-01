@@ -74,7 +74,9 @@ async function main() {
   const agentAddr = await agentRegistry.getAddress();
   console.log(`AgentRegistry deployed: ${agentAddr} (initial baseWeightsHash ${INITIAL_BASE_WEIGHTS_HASH})`);
 
-  const tx = await agentRegistry.mintAgent(deployer.address, SEED_AGENT_METADATA, SEED_AGENT_TIER);
+  // Pass empty label so the existing _cleanLabel(metadataURI) path picks the
+  // subname label. Commit 3 swaps in an explicit "gnubg-default-1" label.
+  const tx = await agentRegistry.mintAgent(deployer.address, SEED_AGENT_METADATA, SEED_AGENT_TIER, "");
   const receipt = await tx.wait();
   console.log(`Seed agent #1 minted to ${deployer.address} at tier ${SEED_AGENT_TIER} (tx ${receipt.hash})`);
 

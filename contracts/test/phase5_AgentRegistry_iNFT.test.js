@@ -63,13 +63,13 @@ describe("Phase 5 — AgentRegistry iNFT (ERC-7857 shape)", function () {
 
   describe("mintAgent (now takes tier)", function () {
     it("stores tier on the agent", async function () {
-      await agentRegistry.mintAgent(alice.address, "ipfs://x", TIER_ADVANCED);
+      await agentRegistry.mintAgent(alice.address, "ipfs://x", TIER_ADVANCED, "");
       expect(await agentRegistry.tier(1)).to.equal(BigInt(TIER_ADVANCED));
     });
 
     it("agents at different tiers are independent", async function () {
-      await agentRegistry.mintAgent(alice.address, "ipfs://b", TIER_BEGINNER);
-      await agentRegistry.mintAgent(alice.address, "ipfs://w", TIER_WORLD_CLASS);
+      await agentRegistry.mintAgent(alice.address, "ipfs://b", TIER_BEGINNER, "");
+      await agentRegistry.mintAgent(alice.address, "ipfs://w", TIER_WORLD_CLASS, "");
       expect(await agentRegistry.tier(1)).to.equal(BigInt(TIER_BEGINNER));
       expect(await agentRegistry.tier(2)).to.equal(BigInt(TIER_WORLD_CLASS));
     });
@@ -77,7 +77,7 @@ describe("Phase 5 — AgentRegistry iNFT (ERC-7857 shape)", function () {
     it("rejects tier > 3", async function () {
       let reverted = false;
       try {
-        await agentRegistry.mintAgent(alice.address, "ipfs://x", 4);
+        await agentRegistry.mintAgent(alice.address, "ipfs://x", 4, "");
       } catch (e) {
         reverted = true;
       }
@@ -85,7 +85,7 @@ describe("Phase 5 — AgentRegistry iNFT (ERC-7857 shape)", function () {
     });
 
     it("agent's initial dataHashes are [baseWeightsHash, ZERO]", async function () {
-      await agentRegistry.mintAgent(alice.address, "ipfs://x", TIER_ADVANCED);
+      await agentRegistry.mintAgent(alice.address, "ipfs://x", TIER_ADVANCED, "");
       const hashes = await agentRegistry.dataHashes(1);
       expect(hashes.length).to.equal(2);
       expect(hashes[0]).to.equal(BASE_HASH);
@@ -93,7 +93,7 @@ describe("Phase 5 — AgentRegistry iNFT (ERC-7857 shape)", function () {
     });
 
     it("agent's matchCount and experienceVersion start at 0", async function () {
-      await agentRegistry.mintAgent(alice.address, "ipfs://x", TIER_ADVANCED);
+      await agentRegistry.mintAgent(alice.address, "ipfs://x", TIER_ADVANCED, "");
       expect(await agentRegistry.matchCount(1)).to.equal(0n);
       expect(await agentRegistry.experienceVersion(1)).to.equal(0n);
     });
@@ -101,7 +101,7 @@ describe("Phase 5 — AgentRegistry iNFT (ERC-7857 shape)", function () {
 
   describe("updateOverlayHash (server updates after each match)", function () {
     beforeEach(async function () {
-      await agentRegistry.mintAgent(alice.address, "ipfs://x", TIER_ADVANCED);
+      await agentRegistry.mintAgent(alice.address, "ipfs://x", TIER_ADVANCED, "");
     });
 
     it("updates dataHashes[1] to the new overlay hash", async function () {
@@ -157,8 +157,8 @@ describe("Phase 5 — AgentRegistry iNFT (ERC-7857 shape)", function () {
 
   describe("two iNFTs diverge after independent matches", function () {
     it("same tier, different overlay history → different dataHashes[1]", async function () {
-      await agentRegistry.mintAgent(alice.address, "ipfs://a", TIER_ADVANCED);
-      await agentRegistry.mintAgent(alice.address, "ipfs://b", TIER_ADVANCED);
+      await agentRegistry.mintAgent(alice.address, "ipfs://a", TIER_ADVANCED, "");
+      await agentRegistry.mintAgent(alice.address, "ipfs://b", TIER_ADVANCED, "");
 
       // same tier, same base hash, same initial overlay
       const before1 = await agentRegistry.dataHashes(1);
