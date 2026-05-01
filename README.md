@@ -125,99 +125,147 @@ Two reasons:
 
 The overlay is the right primitive for "this agent learned": it's cheap to compute (no backprop, no gradient descent), bounded (each entry clipped to [-1, 1]), explainable (you can read off "this agent prefers slot openings"), and it gives every iNFT a unique, monotonically-growing piece of state that's cryptographically tied to the token through `dataHashes[1]`. That's what makes the iNFT meaningful as an asset rather than a label.
 
-### How the overlay learns — the update rule in detail
+### How agents are trained — backprop, self-play, and refereed matches
 
-We don't run backpropagation. We don't sample from a corpus of expert games. We don't run a self-play loop in the background. The overlay update is a tiny, closed-form arithmetic step that runs **once per completed match, for the agent that played it**. Implementation lives in `server/app/agent_overlay.py:268` (`update_overlay`).
+**Why we dropped gnubg as a runtime dependency.** gnubg shipped as a single C subprocess driven via its External Player socket. Running it server-side made one cloud endpoint a liveness chokepoint for every agent in the protocol, and porting it to the browser meant a WASM rebuild of decades of C code (the bearoff databases alone are hundreds of MB). The pivot: each agent owns its own neural network, the weights live on 0G Storage, training and inference run locally (or on 0G Compute when the owner is offline). gnubg becomes an *initialization* and *baseline-strength check*, not a runtime dependency.
 
-**Where the training signal comes from.** Every completed match generates exactly one update for that match's agent. The inputs are (a) the agent's own moves from the match (parsed from the `GameRecord` archived to 0G Storage) and (b) a binary win/loss label. The overlay learns *only* from games the iNFT actually played — never from a static corpus, never from agent-vs-agent self-play. This makes each iNFT's learning trajectory exactly its lived match history, which is also why two iNFTs that started identical drift into measurably different styles.
+**Where the training signal comes from.** Two streams, combined:
 
-**The five steps that turn one match into one weight update.**
+1. **Self-play.** The agent plays full matches against a frozen copy of itself (or against an older checkpoint of itself) inside a local rollout loop. Every match yields a sequence of `(state, action, next_state)` triples ending in a terminal win/loss reward. This is the canonical backgammon-RL setup pioneered by Tesauro's TD-Gammon and how gnubg's own weights were originally trained.
+2. **Refereed matches against other agents and humans.** Every match settled on-chain via `MatchRegistry` produces a `GameRecord` archived to 0G Storage (full move sequence + dice + final outcome). Those records are training data with a verifiable provenance — the agent learns from games whose outcomes are cryptographically attested, not just claimed. An owner running a training session can pull every refereed match the agent played and replay it as a supervised / TD target.
 
-1. **Exposure** — for each of the 20 categories in `CATEGORIES`, sum `classify_move(move)[c]` across the agent's moves, then L1-normalize so per-category exposure sums to 1. `classify_move` is a hand-coded heuristic (e.g. `dst == "5"` → `build_5_point`).
-2. **Outcome** — `+1` for a win, `-1` for a loss. One scalar per match, broadcast across categories.
-3. **Proposed delta** — `LEARNING_RATE * outcome * exposure[c]`, per category. With `LEARNING_RATE = 0.05`, full exposure on a winning match nudges that category by `+0.05`.
-4. **Damping** — `alpha = DAMPING_N / (DAMPING_N + match_count)` blends the proposed value back toward the old. With `DAMPING_N = 20`, the 20th match has `alpha = 0.5` (half-strength); the 100th has `alpha ≈ 0.17`. Early matches move the overlay; later matches stabilize it.
-5. **Clip** — every value is clipped to `[-1, 1]` so no single category can run away.
+There is **no static corpus** in the loop. The only corpus-shaped step is one-time initialization: extract gnubg's published weights and copy them into the new agent's value-network backbone so training starts from gnubg-equivalent play instead of random.
 
-**Pseudocode** (mirrors `update_overlay` in `server/app/agent_overlay.py:268`):
+**How weights are updated — TD(λ) backprop.** The agent's value network `V(s; θ)` predicts the equity of a board position. After each move the network is updated via temporal-difference backprop:
+
+- **Forward pass:** compute `V(s_t; θ)` for the current and next position.
+- **TD target:** `target = r_{t+1} + γ · V(s_{t+1}; θ)` — bootstraps from the network's own next-state prediction except at terminal states, where `target = r_{terminal}` (1 for win, 0 for loss).
+- **TD error:** `δ_t = target − V(s_t; θ)`.
+- **Gradient step:** `θ ← θ + α · δ_t · e_t`, where `e_t` is the **eligibility trace** `e_t = γλ · e_{t-1} + ∇_θ V(s_t; θ)` — a running sum of past gradients that lets a terminal reward propagate back to all positions in the trajectory at once. This is `TD(λ)`; setting `λ=0` reduces to standard one-step TD, `λ=1` reduces to Monte-Carlo regression on the final outcome.
+
+The career-mode head (described above) adds contextual feature inputs (teammate style, opponent profile, tournament position, stake size) and optimizes a longer-horizon return; the same backprop machinery applies, just with a different reward signal.
+
+**Pseudocode — one self-play training match.**
 
 ```python
-def update_overlay(overlay, agent_moves, won, match_count):
-    # 1. Exposure: how often did the agent's moves trigger each category?
-    exposure = {c: 0.0 for c in CATEGORIES}
-    for move in agent_moves:
-        scores = classify_move(move)            # heuristic, scores in [0, 1]
-        for c in CATEGORIES:
-            exposure[c] += scores[c]
-    total = sum(exposure.values())
-    if total > 0:
-        exposure = {c: x / total for c, x in exposure.items()}
+def self_play_training_match(net, opponent_net, gamma=1.0, lam=0.7, lr=1e-3):
+    state = initial_position()
+    eligibility = {p: torch.zeros_like(p) for p in net.parameters()}
 
-    # 2. Outcome signal — one scalar per match
-    outcome = +1.0 if won else -1.0
+    while not terminal(state):
+        # Roll dice, enumerate legal moves, pick highest-equity successor.
+        dice = roll_dice()
+        candidates = legal_successors(state, dice)
+        next_state = argmax(candidates, key=lambda s: net(features(s)).item())
 
-    # 3 & 4. Damped reinforcement
-    alpha = DAMPING_N / (DAMPING_N + match_count)
-    new_values = {}
-    for c in CATEGORIES:
-        proposed = overlay.values[c] + LEARNING_RATE * outcome * exposure[c]
-        blended  = (1.0 - alpha) * overlay.values[c] + alpha * proposed
-        new_values[c] = max(-1.0, min(1.0, blended))   # 5. clip
+        v_now  = net(features(state))                    # autograd ON
+        with torch.no_grad():
+            v_next = net(features(next_state))
+        reward = terminal_reward(next_state)              # 0 except at game end
+        target = reward + gamma * v_next * (0 if terminal(next_state) else 1)
+        td_error = (target - v_now).item()
 
-    return Overlay(values=new_values, match_count=match_count + 1)
+        # Update eligibility trace with the gradient of v_now, then step.
+        net.zero_grad()
+        v_now.backward()
+        for p in net.parameters():
+            eligibility[p] = gamma * lam * eligibility[p] + p.grad
+            p.data += lr * td_error * eligibility[p]
+
+        state = opponent_move(opponent_net, next_state)   # opponent plays its turn
+
+    return net   # weights now reflect this match's outcome via TD(λ) updates
 ```
 
-**Visualization — the lifecycle of one update.**
+**Visualization — agent training lifecycle.**
 
 ```mermaid
 flowchart TD
-    A[Match ends:<br/>frontend builds GameRecord] --> B[Server pulls agent's moves<br/>+ win/loss label]
-    B --> C[classify_move per move<br/>→ per-category scores in 0,1]
-    C --> D[Sum + L1-normalize<br/>→ exposure vector]
-    D --> E[outcome = +1 win / -1 loss]
-    E --> F[proposed = old + LR · outcome · exposure]
-    F --> G[α = N / N + match_count<br/>damping factor]
-    G --> H[new = 1−α · old + α · proposed,<br/>clip to −1, 1]
-    H --> I[Serialize JSON,<br/>upload bytes to 0G Storage]
-    I --> J[Indexer returns<br/>32-byte Merkle root]
-    J --> K[KeeperHub workflow:<br/>iNFT.dataHashes 1 = root]
+    subgraph Birth[Agent birth]
+      G[gnubg published weights] --> I[Initialize value net θ₀<br/>encrypted blob → 0G Storage<br/>hash → iNFT.dataHashes 0]
+    end
+
+    subgraph Train[Per-owner training loop, local or 0G Compute]
+      I --> SP[Self-play match:<br/>net vs frozen older checkpoint]
+      RM[Refereed match records<br/>pulled from 0G Storage] --> RP[Replay buffer]
+      SP --> RP
+      RP --> TD[TD-λ backprop step:<br/>δ = r + γ V s' − V s<br/>θ ← θ + α · δ · eligibility]
+      TD --> CK{Improved vs<br/>baseline?}
+      CK -- yes --> NEW[New checkpoint θ_k+1]
+      CK -- no --> SP
+    end
+
+    subgraph Settle[Settlement]
+      NEW --> ENC[AES-GCM encrypt weights]
+      ENC --> S[Upload blob to 0G Storage<br/>→ Merkle root]
+      S --> KH[KeeperHub workflow:<br/>update iNFT.dataHashes 0<br/>= new weights root]
+    end
+
+    subgraph Play[Inference]
+      KH --> INF[0G Compute or browser:<br/>V s θ scores legal moves<br/>argmax = chosen move]
+      INF --> RM
+    end
 ```
 
-**PyTorch analogue.** We don't use PyTorch in v1 — the update is a few lines of vanilla Python — but readers familiar with gradient-step formulations may find this mapping useful. The exposure vector plays the role of a "gradient", and outcome plays the role of a sign-only scalar reward; there is no autograd graph because there is no differentiable forward pass.
+**PyTorch snippet — the value network and training step.** Architecture mirrors TD-Gammon / gnubg's contact net (≈198-input encoded board → small MLP → scalar equity):
 
 ```python
 import torch
+from torch import nn
 
-class OverlayLearner(torch.nn.Module):
-    """Equivalent of update_overlay expressed as a manual SGD step.
+class BackgammonNet(nn.Module):
+    """Per-agent value network. Predicts win equity for the side to move.
 
-    Differences from real RL:
-      - No value or policy network; no Bellman target.
-      - One scalar reward per match, broadcast across all moves.
-      - The "gradient" is the exposure vector — chosen by hand, not autograd.
+    Input encoding mirrors gnubg's 'contact' net features (~198 dims):
+    24 points × 4 unary indicators per side, plus bar / borne-off counts,
+    pip count, dice, and contextual features for career mode.
     """
-    def __init__(self, num_categories: int = 20):
+    def __init__(self, in_dim: int = 198, hidden: int = 80, ctx_dim: int = 0):
         super().__init__()
-        self.bias = torch.nn.Parameter(torch.zeros(num_categories))
-        self.match_count = 0
+        self.backbone = nn.Sequential(
+            nn.Linear(in_dim, hidden),
+            nn.Sigmoid(),                 # TD-Gammon used sigmoid; modern variants try ReLU
+        )
+        self.ctx = nn.Linear(ctx_dim, hidden) if ctx_dim else None
+        self.head = nn.Linear(hidden, 1)
 
-    def forward(self, exposure: torch.Tensor) -> torch.Tensor:
-        # Score added on top of gnubg's equity when re-ranking candidates.
-        return (self.bias * exposure).sum(dim=-1)
+    def forward(self, board_feat, ctx_feat=None):
+        h = self.backbone(board_feat)
+        if self.ctx is not None and ctx_feat is not None:
+            h = h + self.ctx(ctx_feat)    # career-mode context adds, doesn't replace
+        return torch.sigmoid(self.head(h)).squeeze(-1)   # equity in [0, 1]
 
-    @torch.no_grad()
-    def update(self, exposure: torch.Tensor, won: bool,
-               lr: float = 0.05, damping_n: int = 20) -> None:
-        outcome = 1.0 if won else -1.0
-        alpha = damping_n / (damping_n + self.match_count)
 
-        proposed = self.bias + lr * outcome * exposure
-        self.bias.copy_((1 - alpha) * self.bias + alpha * proposed)
-        self.bias.clamp_(-1.0, 1.0)
-        self.match_count += 1
+def td_lambda_step(net, state_feat, next_state_feat, reward, terminal,
+                   eligibility, gamma=1.0, lam=0.7, lr=1e-3):
+    """Single TD(λ) update. Mutates `net` parameters and `eligibility` in place."""
+    v_now = net(state_feat)
+    with torch.no_grad():
+        v_next = net(next_state_feat) if not terminal else torch.tensor(0.0)
+    target = reward + gamma * v_next
+    td_error = (target - v_now).detach()
+
+    net.zero_grad()
+    v_now.backward()
+    with torch.no_grad():
+        for p in net.parameters():
+            eligibility[p].mul_(gamma * lam).add_(p.grad)
+            p.add_(lr * td_error * eligibility[p])
+    return td_error.item()
 ```
 
-This is not backpropagation: there is no loss function, no autograd graph, no gradient descent through a value or policy network. It is an outcome-weighted, exposure-driven, damped moving average over a fixed feature dictionary. Calling the result "learned" is accurate; calling it "trained" in the deep-learning sense would be a stretch.
+**Pretrain → fine-tune.** The training pipeline is two phases:
+
+1. **Pretrain on the single-game objective.** Initialize from gnubg's weights, run self-play with `ctx_dim = 0`, optimize for win/loss only. Convergence target: near-identical move choice to gnubg on a held-out test set.
+2. **Fine-tune on the long-game objective.** Unfreeze the same network, attach the context head (`ctx_dim > 0`), and continue training on refereed multi-match sessions where the reward signal is cumulative payout / tournament result, not just per-game outcome. The gnubg-derived backbone is preserved; the context pathway is what learns. At inference, zeroing the context inputs makes the network behave exactly like the pretrained single-game net — same weights, two behaviors.
+
+**Where the gradient steps run.** Three options, owner's choice:
+
+- **Locally** on the owner's machine. Trivial for v1 — backgammon nets are small (~10K parameters); a laptop trains a meaningful checkpoint overnight.
+- **On 0G Compute** with TEE attestation. The attestation is the substantive bit: it lets a buyer of the iNFT cryptographically verify "every weight update came from refereed match data," which is exactly the provenance an open reputation protocol needs.
+- **Hybrid** — local for development, 0G Compute for production training runs that get committed to the iNFT.
+
+In every case the resulting weights are AES-256-GCM-encrypted, uploaded to 0G Storage, and the new Merkle root replaces `iNFT.dataHashes[0]` via a settlement transaction. The encryption key is gated by ownership of the iNFT, so selling the agent transfers the brain along with the reputation history.
 
 ---
 
