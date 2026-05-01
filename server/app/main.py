@@ -247,17 +247,18 @@ class AgentMoveRequest(BaseModel):
 
 
 class AgentMoveResponse(GameState):
-    """Phase I.2: extends GameState with optional `inference_meta`.
+    """Phase I.2 + K.4: extends GameState with optional `inference_meta`
+    (0G cost caption) and `advisor_signals` (team-mode per-turn voices).
 
     Subclassing GameState (not wrapping it) preserves byte-stable
     back-compat: every existing /agent-move caller can still read
-    `resp.json()["position_id"]`, `["dice"]`, etc. New callers that
-    care about the 0G cost meter read `resp.json()["inference_meta"]`.
-    With `exclude_none=True` serialization, solo / non-0G calls don't
-    even surface the field.
+    `resp.json()["position_id"]`, `["dice"]`, etc. With `exclude_none=True`
+    serialization, solo / non-0G calls don't surface the new fields.
     """
 
     inference_meta: Optional[Dict[str, object]] = None
+    advisor_signals: Optional[List[AdvisorSignal]] = None
+    captain_id: Optional[str] = None
 
 
 @app.post("/games/{game_id}/agent-move", response_model=AgentMoveResponse)
@@ -304,12 +305,24 @@ def agent_move(game_id: str, req: AgentMoveRequest = AgentMoveRequest()):
 
     state = _build_game_state(game_id, res["position_id"], res["match_id"])
     games[game_id] = state
+
+    # Phase K.4: in team mode, every non-captain teammate publishes one
+    # AdvisorSignal per turn. Captain still picks alone (its own pick
+    # via gnubg+overlay is final for the K MVP); the signals are
+    # archived to MoveEntry.advisor_signals so an audit replayer can
+    # reconstruct what advice was on the table. Vote fusion is a
+    # follow-up phase.
+    advisor_signals, captain_id = _maybe_collect_advisor_signals(
+        game_id, turn_before, candidates
+    )
+
     _move_history.setdefault(game_id, []).append(
         MoveEntry(
             turn=turn_before,
             dice=dice_before,
             move=chosen_move,
             position_id_after=state.position_id,
+            advisor_signals=advisor_signals,
         )
     )
 
@@ -318,6 +331,176 @@ def agent_move(game_id: str, req: AgentMoveRequest = AgentMoveRequest()):
     return AgentMoveResponse(
         **state.model_dump(),
         inference_meta=inference_meta,
+        advisor_signals=advisor_signals,
+        captain_id=captain_id,
+    )
+
+
+@app.get("/games/{game_id}/last-advisor-signals")
+def get_last_advisor_signals(game_id: str):
+    """Phase K.5: returns the most recent move's advisor signals + the
+    captain who decided that turn. The frontend's AdvisorSignalsPanel
+    polls this so it can render the latest signals without driving
+    /agent-move directly. Returns empty arrays when no move has been
+    recorded yet — the live match page uses gnubg_service for moves,
+    not /agent-move, so this stays empty unless the operator drives
+    moves through the main backend (e.g. team-mode integration tests
+    or a future end-to-end UI cutover)."""
+    history = _move_history.get(game_id, [])
+    if not history:
+        return {"signals": [], "captain_id": None, "move_idx": -1, "team_mode": game_id in _game_teams}
+    last = history[-1]
+    if not last.advisor_signals:
+        return {"signals": [], "captain_id": None, "move_idx": len(history) - 1,
+                "team_mode": game_id in _game_teams}
+    # Resolve captain for this move.
+    if game_id not in _game_teams:
+        captain_id = None
+    else:
+        team_a, team_b = _game_teams[game_id]
+        team = team_a if last.turn == 0 else team_b
+        moves_for_team = sum(1 for m in history if m.turn == last.turn)
+        from .team_mode import captain_member
+        cap_ref = captain_member(team, max(0, moves_for_team - 1))
+        captain_id = (
+            f"agent:{cap_ref.agent_id}" if cap_ref.kind == "agent"
+            else (cap_ref.address or "").lower()
+        )
+    return {
+        "signals": [s.model_dump() for s in last.advisor_signals],
+        "captain_id": captain_id,
+        "move_idx": len(history) - 1,
+        "team_mode": True,
+    }
+
+
+def _maybe_collect_advisor_signals(
+    game_id: str,
+    turn_before: int,
+    candidates: List[Dict],
+) -> "tuple[Optional[List[AdvisorSignal]], Optional[str]]":
+    """K.4 helper: when this game is in team mode, enumerate the
+    non-captain teammates on the side that just moved and produce one
+    AdvisorSignal each. Returns (signals, captain_id) or (None, None)
+    for solo games."""
+    if game_id not in _game_teams:
+        return None, None
+    if not candidates:
+        # Auto-played turn (bar dance) — no candidates means nothing for
+        # advisors to score; caller's record carries None for this turn.
+        return None, None
+
+    team_a, team_b = _game_teams[game_id]
+    # Side 0 = "human" / left team; side 1 = "agent" / right team. The
+    # team whose member just moved is the side equal to `turn_before`.
+    team = team_a if turn_before == 0 else team_b
+
+    # Move count for THIS team only — captain rotation must respect
+    # per-team turn count, not the global game count.
+    moves_for_this_team = sum(
+        1 for m in _move_history.get(game_id, []) if m.turn == turn_before
+    )
+
+    from .team_mode import captain_index, captain_member, non_captain_members
+    from .teammate_advisor import AdvisorScoring, score_advisor_move
+
+    cap_idx = captain_index(team, moves_for_this_team)
+    cap_ref = team.members[cap_idx]
+    captain_id = (
+        f"agent:{cap_ref.agent_id}" if cap_ref.kind == "agent"
+        else (cap_ref.address or "").lower()
+    )
+
+    advisors: List[AdvisorSignal] = []
+    for advisor_ref in non_captain_members(team, moves_for_this_team):
+        scoring = _resolve_advisor_scoring(advisor_ref, candidates, team)
+        if scoring is None:
+            continue
+        sig = score_advisor_move(scoring)
+        if sig is not None:
+            advisors.append(sig)
+    return advisors or None, captain_id
+
+
+def _resolve_advisor_scoring(
+    advisor_ref: PlayerRef,
+    candidates: List[Dict],
+    team: Team,
+) -> "Optional[AdvisorScoring]":
+    """Build the AdvisorScoring inputs for `advisor_ref`. For agent
+    advisors we resolve their on-chain dataHashes[1] → load_profile →
+    OverlayProfile (or ModelProfile when Phase J ships). For human
+    advisors we have no profile to score with, so skip them — the K
+    MVP only scores agent teammates."""
+    from .teammate_advisor import AdvisorScoring
+
+    if advisor_ref.kind != "agent" or advisor_ref.agent_id is None:
+        return None  # human advisors out of scope for K MVP
+
+    aid = advisor_ref.agent_id
+    try:
+        chain = ChainClient.from_env()
+        if chain.agent_registry is None:
+            return None
+        hashes = chain.agent_data_hashes(aid)
+    except ChainError:
+        return None
+
+    weights_hash = hashes[1] if len(hashes) >= 2 else ""
+    if not weights_hash or weights_hash == "0x" + "00" * 32:
+        return AdvisorScoring(
+            teammate=advisor_ref,
+            candidates=candidates,
+            profile_kind="null",
+        )
+
+    from agent_profile import (   # noqa: E402 — agent/ on sys.path at module top
+        ModelProfile,
+        NullProfile,
+        OverlayProfile,
+        load_profile,
+    )
+    try:
+        profile = load_profile(weights_hash, fetch=get_blob)
+    except Exception:
+        return AdvisorScoring(
+            teammate=advisor_ref,
+            candidates=candidates,
+            profile_kind="null",
+        )
+
+    if isinstance(profile, OverlayProfile):
+        # Reconstruct an Overlay from the profile's metric values for
+        # apply_overlay's signature. Start with an all-zero default
+        # (carries the canonical CATEGORIES list), then merge the
+        # profile's known values. Unknown categories from a future
+        # profile version are dropped silently.
+        from .agent_overlay import CATEGORIES as _CATS, CURRENT_OVERLAY_VERSION
+        raw_values = dict(profile.metrics().get("values", {}))
+        values = {c: float(raw_values.get(c, 0.0)) for c in _CATS}
+        overlay = Overlay(
+            version=CURRENT_OVERLAY_VERSION,
+            values=values,
+            match_count=int(profile.metrics().get("match_count", 0)),
+        )
+        return AdvisorScoring(
+            teammate=advisor_ref,
+            candidates=candidates,
+            overlay=overlay,
+            profile_kind="overlay",
+        )
+    if isinstance(profile, ModelProfile):
+        encoder = str(profile.metrics().get("feature_encoder", "race"))
+        return AdvisorScoring(
+            teammate=advisor_ref,
+            candidates=candidates,
+            profile_kind="model",
+            model_encoder=encoder,
+        )
+    return AdvisorScoring(
+        teammate=advisor_ref,
+        candidates=candidates,
+        profile_kind="null",
     )
 
 
