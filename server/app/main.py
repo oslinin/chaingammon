@@ -285,6 +285,23 @@ def agent_move(game_id: str, req: AgentMoveRequest = AgentMoveRequest()):
 
     candidates = gnubg.get_candidate_moves(game.position_id, game.match_id)
 
+    # Phase J.5: when use_per_agent_nn is set AND the agent has a
+    # gnubg_full checkpoint registered, route the move-selection
+    # through the per-agent neural net. Each candidate's successor is
+    # decoded → encoded with gnubg_encoder → scored against
+    # net(features, extras); argmax wins. Latency: ~N gnubg
+    # subprocess calls per move (one submit_move + decode per
+    # candidate), so this branch is opt-in. When the agent doesn't
+    # have a gnubg_full checkpoint, the function falls back to the
+    # gnubg+overlay path with a note explaining why.
+    nn_pick: Optional[Dict[str, object]] = None
+    if req.use_per_agent_nn and candidates:
+        nn_pick = _try_per_agent_nn_pick(
+            game_id=game_id,
+            game=game,
+            candidates=candidates,
+        )
+
     if not candidates:
         # No legal candidates — auto-play (bar dance, etc.). Overlay can't
         # help here since there's nothing to choose between.
@@ -292,6 +309,12 @@ def agent_move(game_id: str, req: AgentMoveRequest = AgentMoveRequest()):
         if not res["position_id"] or not res["match_id"]:
             raise HTTPException(status_code=500, detail="gnubg agent move failed")
         chosen_move = res.get("best_move") or "(auto-played)"
+    elif nn_pick is not None and nn_pick.get("chosen_res") is not None:
+        # Per-agent NN drove the choice; the helper already submitted
+        # the move and stashed the gnubg result so we don't pay another
+        # subprocess hop here.
+        chosen_move = nn_pick["chosen_move"]
+        res = nn_pick["chosen_res"]
     else:
         overlay = _ensure_overlay_loaded(game_id)
         ranked = apply_overlay(candidates, overlay)
@@ -502,6 +525,121 @@ def _resolve_advisor_scoring(
         candidates=candidates,
         profile_kind="null",
     )
+
+
+def _try_per_agent_nn_pick(
+    *, game_id: str, game: GameState, candidates: List[Dict],
+) -> Optional[Dict[str, object]]:
+    """Phase J.5: if the agent attached to this game has a
+    `gnubg_full` ModelProfile, score every candidate's successor
+    position through `net(features, extras)` and pick argmax. Returns
+    a dict with the chosen move + gnubg's submit response when the NN
+    drove the pick, or None to signal the caller should fall back to
+    the gnubg+overlay path.
+
+    Failure modes that fall through silently to overlay:
+      - no agent_id stashed for this game
+      - chain client unavailable (no AGENT_REGISTRY_ADDRESS)
+      - profile is null / overlay / race-only
+      - encoder import fails (agent/ not on path)
+      - any candidate score path raises
+
+    Each candidate adds one gnubg.submit_move call; for a typical
+    backgammon position with 5-10 candidates that's ~500-1000ms of
+    subprocess time per /agent-move call.
+    """
+    agent_id = _game_agent_id.get(game_id)
+    if not agent_id:
+        return None
+    try:
+        chain = ChainClient.from_env()
+        if chain.agent_registry is None:
+            return None
+        hashes = chain.agent_data_hashes(agent_id)
+    except ChainError:
+        return None
+    weights_hash = hashes[1] if len(hashes) >= 2 else ""
+    if not weights_hash or weights_hash == "0x" + "00" * 32:
+        return None
+
+    try:
+        from agent_profile import ModelProfile, load_profile  # noqa: E402
+    except ImportError:
+        return None
+
+    try:
+        profile = load_profile(weights_hash, fetch=get_blob)
+    except Exception:
+        return None
+
+    if not isinstance(profile, ModelProfile) or profile.net is None:
+        return None
+    encoder_tag = str(profile.metrics().get("feature_encoder", "race"))
+    if encoder_tag != "gnubg_full":
+        # Race-only weights can't score full-board positions.
+        return None
+
+    # Score each candidate. We need each candidate's successor
+    # position, which means submit_move + decode_board per candidate.
+    # The chosen one's gnubg result is reused to advance the game,
+    # avoiding a second submit pass.
+    try:
+        import torch
+        from gnubg_encoder import encode_full_board  # noqa: E402
+        from gnubg_state import decode_position_id  # noqa: E402
+    except ImportError:
+        return None
+
+    extras = torch.zeros(profile.net.extras.in_features) \
+        if profile.net.extras is not None else None
+
+    best_idx = -1
+    best_eq = -float("inf")
+    best_move = ""
+    best_res = None
+    perspective = 1 - game.turn   # the agent just played for `game.turn`;
+                                  # successors are scored from the side that
+                                  # would move next, but for picking the
+                                  # current player's best move we score from
+                                  # game.turn's perspective. After
+                                  # submit_move, gnubg flips the turn
+                                  # automatically.
+    for idx, cand in enumerate(candidates):
+        move_str = cand.get("move", "")
+        if not move_str:
+            continue
+        try:
+            res = gnubg.submit_move(game.position_id, game.match_id, move_str)
+        except Exception:
+            continue
+        succ_pos = res.get("position_id")
+        if not succ_pos:
+            continue
+        try:
+            board, bar, off = decode_position_id(succ_pos)
+            feat = encode_full_board(board, bar, off,
+                                     perspective=game.turn).unsqueeze(0)
+            with torch.no_grad():
+                if extras is not None:
+                    eq = profile.net(feat, extras.unsqueeze(0)).item()
+                else:
+                    eq = profile.net(feat).item()
+        except Exception:
+            continue
+        if eq > best_eq:
+            best_eq = eq
+            best_idx = idx
+            best_move = move_str
+            best_res = res
+
+    if best_idx < 0 or best_res is None:
+        return None
+    return {
+        "chosen_move": best_move,
+        "chosen_idx": best_idx,
+        "chosen_eq": best_eq,
+        "chosen_res": best_res,
+    }
 
 
 def _maybe_probe_0g_inference(use_0g_inference: bool) -> Optional[Dict[str, object]]:
