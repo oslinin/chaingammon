@@ -448,6 +448,14 @@ def main() -> None:
                              "— the same deterministic mapping production "
                              "uses. Without this flag, dice come from the "
                              "local PRNG (standalone demo mode).")
+    parser.add_argument("--upload-to-0g", action="store_true",
+                        help="After saving the checkpoint, AES-256-GCM-"
+                             "encrypt it (with a fresh key, also written "
+                             "next to the checkpoint as <ckpt>.key) and "
+                             "upload the sealed blob to 0G Storage via "
+                             "og-bridge. Requires --save-checkpoint and "
+                             "the OG_STORAGE_{RPC,INDEXER,PRIVATE_KEY} "
+                             "env triple (see server/.env.example).")
     args = parser.parse_args()
 
     drand_digest = bytes.fromhex(args.drand_digest) if args.drand_digest else None
@@ -539,6 +547,35 @@ def main() -> None:
                         match_count=starting_match_count + args.matches,
                         extras_dim=args.extras_dim)
         print(f"Saved checkpoint: {ckpt_path}")
+
+        if args.upload_to_0g:
+            # Locally-imported so the trainer works without the
+            # cryptography lib for users who don't intend to upload.
+            from checkpoint_encryption import encrypt_blob, generate_key
+            from og_storage_upload import OgUploadError, upload_checkpoint
+
+            key = generate_key()
+            sealed = encrypt_blob(ckpt_path.read_bytes(), key)
+            key_path = ckpt_path.with_suffix(ckpt_path.suffix + ".key")
+            key_path.write_bytes(key)
+            print(f"Wrote AES-256-GCM key alongside checkpoint: {key_path} "
+                  f"(keep this; without it the uploaded blob is unreadable)")
+
+            try:
+                result = upload_checkpoint(sealed)
+                print(f"Uploaded encrypted checkpoint to 0G Storage:")
+                print(f"  rootHash = {result.root_hash}")
+                print(f"  txHash   = {result.tx_hash}")
+                print(f"This rootHash is what KeeperHub commits to "
+                      f"iNFT.dataHashes[1] in production.")
+            except OgUploadError as e:
+                print(f"Upload failed: {e}", file=sys.stderr)
+                # Don't raise — the local checkpoint is still on disk and
+                # the user can retry the upload manually.
+
+    elif args.upload_to_0g:
+        print("--upload-to-0g requires --save-checkpoint; skipping upload.",
+              file=sys.stderr)
 
     writer.close()
 
