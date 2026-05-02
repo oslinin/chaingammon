@@ -149,6 +149,23 @@ _MATCH_REGISTRY_ABI = [
     },
     {
         "type": "function",
+        "name": "recordMatchAndSplit",
+        "stateMutability": "nonpayable",
+        "inputs": [
+            {"name": "winnerAgentId", "type": "uint256"},
+            {"name": "winnerHuman", "type": "address"},
+            {"name": "loserAgentId", "type": "uint256"},
+            {"name": "loserHuman", "type": "address"},
+            {"name": "matchLength", "type": "uint16"},
+            {"name": "gameRecordHash", "type": "bytes32"},
+            {"name": "escrowMatchId", "type": "bytes32"},
+            {"name": "winners", "type": "address[]"},
+            {"name": "shares", "type": "uint256[]"},
+        ],
+        "outputs": [{"name": "matchId", "type": "uint256"}],
+    },
+    {
+        "type": "function",
         "name": "getMatch",
         "stateMutability": "view",
         "inputs": [{"name": "matchId", "type": "uint256"}],
@@ -358,6 +375,73 @@ class ChainClient:
             raise ChainError("MatchRecorded event missing from receipt")
         match_id = int(logs[0]["args"]["matchId"])
         # web3.py's HexBytes.hex() omits the "0x" prefix; add it for consistency.
+        tx_hash_hex = tx_hash.hex()
+        if not tx_hash_hex.startswith("0x"):
+            tx_hash_hex = "0x" + tx_hash_hex
+        return FinalizedMatch(match_id=match_id, tx_hash=tx_hash_hex)
+
+    def record_match_and_split(
+        self,
+        *,
+        winner_agent_id: int,
+        winner_human: str,
+        loser_agent_id: int,
+        loser_human: str,
+        match_length: int,
+        game_record_hash: str,
+        escrow_match_id: str,
+        winners: list,
+        shares: list,
+    ) -> FinalizedMatch:
+        """Send a recordMatchAndSplit tx (record + atomic escrow payout)
+        and wait for inclusion. Returns the new matchId. `winners` and
+        `shares` align: winners[i] receives shares[i] wei, sum(shares)
+        must equal the escrow pot."""
+        if not game_record_hash.startswith("0x"):
+            raise ChainError(f"game_record_hash must start with 0x: {game_record_hash!r}")
+        if not escrow_match_id.startswith("0x"):
+            raise ChainError(f"escrow_match_id must start with 0x: {escrow_match_id!r}")
+        if len(winners) != len(shares):
+            raise ChainError("winners/shares length mismatch")
+
+        zero_addr = "0x0000000000000000000000000000000000000000"
+        winner_h = Web3.to_checksum_address(winner_human) if winner_human != zero_addr else zero_addr
+        loser_h = Web3.to_checksum_address(loser_human) if loser_human != zero_addr else zero_addr
+        winners_checked = [Web3.to_checksum_address(w) for w in winners]
+
+        nonce = self.w3.eth.get_transaction_count(self.account.address)
+        tx = self.match_registry.functions.recordMatchAndSplit(
+            winner_agent_id,
+            winner_h,
+            loser_agent_id,
+            loser_h,
+            match_length,
+            self.w3.to_bytes(hexstr=game_record_hash),
+            self.w3.to_bytes(hexstr=escrow_match_id),
+            winners_checked,
+            [int(s) for s in shares],
+        ).build_transaction(
+            {
+                "from": self.account.address,
+                "nonce": nonce,
+                "chainId": self.w3.eth.chain_id,
+                # Higher than recordMatch — also writes to MatchEscrow and
+                # makes N transfers in the loop.
+                "gas": 800_000,
+            }
+        )
+        signed = self.account.sign_transaction(tx)
+        tx_hash = self.w3.eth.send_raw_transaction(signed.raw_transaction)
+        receipt: TxReceipt = self.w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
+        if receipt.status != 1:
+            raise ChainError(f"recordMatchAndSplit tx reverted: {tx_hash.hex()}")
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", category=UserWarning)
+            logs = self.match_registry.events.MatchRecorded().process_receipt(receipt)
+        if not logs:
+            raise ChainError("MatchRecorded event missing from receipt")
+        match_id = int(logs[0]["args"]["matchId"])
         tx_hash_hex = tx_hash.hex()
         if not tx_hash_hex.startswith("0x"):
             tx_hash_hex = "0x" + tx_hash_hex

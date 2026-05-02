@@ -75,6 +75,7 @@ interface DeploymentRecord {
     MatchRegistry: string;
     AgentRegistry: string;
     PlayerSubnameRegistrar?: string;
+    MatchEscrow?: string;
   };
   // Captured by deploy.js as the chain head right before the first
   // deploy tx. Used by log-scan hooks (e.g. useChaingammonName) to
@@ -96,6 +97,7 @@ export interface ChainEntry {
     matchRegistry: `0x${string}`;
     agentRegistry: `0x${string}`;
     playerSubnameRegistrar?: `0x${string}`;
+    matchEscrow?: `0x${string}`;
   };
   /** Block at which the contracts were deployed. Optional for older records. */
   deployedBlock?: number;
@@ -123,6 +125,7 @@ function buildEntry(dep: DeploymentRecord, def: ChainDef): ChainEntry {
       playerSubnameRegistrar: dep.contracts.PlayerSubnameRegistrar as
         | `0x${string}`
         | undefined,
+      matchEscrow: dep.contracts.MatchEscrow as `0x${string}` | undefined,
     },
     deployedBlock: dep.deployedBlock,
   };
