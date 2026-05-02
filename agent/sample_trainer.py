@@ -1,0 +1,893 @@
+"""sample_trainer.py — runnable demo of agent NN training.
+
+Trains a per-agent BackgammonNet via self-play TD(lambda), starting from
+gnubg-style published weights for the shared "core" feature backbone and
+randomly initialized weights for each agent's "extra" contextual head.
+Writes TensorBoard event files (scalars, histograms, model graph) under
+`./runs/<run_name>` and optionally launches the TensorBoard dashboard.
+
+Two networks share the same gnubg-derived `core` backbone:
+  - `agent`     — being trained, owns its own random `extras` head.
+  - `opponent`  — frozen, owns a *different* random `extras` head.
+
+This file is the runnable counterpart of the README's "How agents are
+trained" section. The environment here is a deliberately tiny pip-race
+abstraction (single integer per side, dice subtract, first to zero
+wins) — enough to give the value network a real learnable signal
+without re-implementing backgammon's full rule set. Production training
+swaps `RaceEnv` for a full backgammon engine driving the same encoder
+shape; the training mechanics (TD(lambda) eligibility traces, gnubg
+init, per-agent random extras, TensorBoard logging) stay identical.
+
+Usage:
+
+    python sample_trainer.py --matches 200 --launch-tensorboard
+
+then open http://localhost:6006 to watch loss, win-rate, and parameter
+histograms evolve. Without --launch-tensorboard the script just writes
+events; run `tensorboard --logdir runs` separately to view them.
+
+Two trainer modes:
+
+  Default (single-game-mode demo):
+    `extras` is a deterministic per-agent random projection (see
+    `encode_extras`). The architecture works; the encoder is a
+    placeholder.
+
+  Career mode (`--career-mode`):
+    `extras` is `career_features.encode_career_context(ctx)` over a
+    fresh `CareerContext` per match — opponent style, teammate style,
+    stake size, tournament position, team-match flag. The value net
+    learns to use these contextual inputs across the training
+    distribution. Requires `--extras-dim >= 16`. Eval extras stay
+    fixed across the run so `eval/win_rate_vs_frozen` is comparable
+    match to match.
+"""
+
+from __future__ import annotations
+
+from __future__ import annotations
+
+import argparse
+import json
+import math
+import os
+import random
+import shutil
+import signal
+import subprocess
+import sys
+import time
+from dataclasses import dataclass, field
+from pathlib import Path
+
+import torch
+from torch import nn
+
+# Tensorboard is only needed by the trainer's main() loop. Guarding the
+# import lets lightweight consumers (e.g. server/app/main.py importing
+# `BackgammonNet` for the recommend-teammate endpoint, or
+# agent_profile.ModelProfile.from_bytes deserializing a checkpoint) load
+# this module without pulling in `tensorboard` and its transitive deps.
+# `main()` re-imports SummaryWriter directly and surfaces a clear error
+# if tensorboard isn't installed.
+try:
+    from torch.utils.tensorboard import SummaryWriter  # type: ignore
+except ImportError:
+    SummaryWriter = None  # type: ignore
+
+from career_features import (
+    CareerContext,
+    encode_career_context,
+    sample_career_context,
+)
+from drand_dice import derive_dice
+
+
+# ---------------------------------------------------------------------------
+# Network
+# ---------------------------------------------------------------------------
+
+# gnubg's contact net is documented to use ~198 inputs (24 points x 4 unary
+# indicators per side, plus bar / borne-off counts, pip count, and a few
+# extras). We mirror that input dim so feature encoders ported from gnubg
+# slot in unmodified. The "extras" head is whatever per-agent context the
+# career-mode policy wants — opponent-style profile, teammate signals,
+# tournament position, stake size, etc.
+GNUBG_FEAT_DIM = 198
+DEFAULT_HIDDEN = 80
+DEFAULT_EXTRAS_DIM = 16
+
+
+def gnubg_published_core_init(in_dim: int, hidden: int, *, seed: int = 0xBACC) -> nn.Linear:
+    """Return a Linear(in_dim, hidden) layer whose weights stand in for
+    gnubg's published feedforward weights.
+
+    In production the caller would load the actual gnubg weights file
+    (`weights` / `gnubg.weights` from the gnubg source distribution),
+    convert it to a torch state_dict, and load it here. For the runnable
+    demo we deterministically initialize from a fixed seed — what
+    matters for the rest of the pipeline is that *every agent* starts
+    from the *same* core weights, which a shared deterministic init
+    captures exactly.
+    """
+    g = torch.Generator().manual_seed(seed)
+    layer = nn.Linear(in_dim, hidden)
+    with torch.no_grad():
+        # Xavier-uniform stand-in for the published gnubg distribution.
+        bound = math.sqrt(6.0 / (in_dim + hidden))
+        layer.weight.uniform_(-bound, bound, generator=g)
+        layer.bias.zero_()
+    return layer
+
+
+class BackgammonNet(nn.Module):
+    """Per-agent value network: predicts win equity from (board, extras).
+
+    Architecture mirrors TD-Gammon / gnubg's contact net (small MLP with
+    sigmoid output) with one addition: an `extras` linear head that
+    consumes per-agent contextual features (opponent style, team
+    signals, tournament position, stake size — anything that should
+    affect the policy in career mode but not in single-game mode).
+
+    Weight layout:
+      core  : Linear(GNUBG_FEAT_DIM, hidden)  — initialized from gnubg.
+      extras: Linear(extras_dim,   hidden)    — randomly initialized.
+      head  : Linear(hidden,       1)         — randomly initialized.
+
+    When `extras_dim == 0` or the extras input is zero, the network's
+    behaviour reduces to the gnubg-equivalent single-game head.
+    """
+
+    def __init__(
+        self,
+        in_dim: int = GNUBG_FEAT_DIM,
+        hidden: int = DEFAULT_HIDDEN,
+        extras_dim: int = DEFAULT_EXTRAS_DIM,
+        *,
+        core_seed: int = 0xBACC,
+        extras_seed: int | None = None,
+    ) -> None:
+        super().__init__()
+        self.core = gnubg_published_core_init(in_dim, hidden, seed=core_seed)
+        if extras_dim > 0:
+            self.extras = nn.Linear(extras_dim, hidden)
+            if extras_seed is not None:
+                # Each agent gets its own random extras head — same core,
+                # different "personality." Two agents minted from the same
+                # gnubg weights with different extras_seed will diverge in
+                # play after enough training.
+                g = torch.Generator().manual_seed(extras_seed)
+                bound = math.sqrt(6.0 / (extras_dim + hidden))
+                with torch.no_grad():
+                    self.extras.weight.uniform_(-bound, bound, generator=g)
+                    self.extras.bias.zero_()
+        else:
+            self.extras = None
+        self.head = nn.Linear(hidden, 1)
+        with torch.no_grad():
+            nn.init.xavier_uniform_(self.head.weight)
+            self.head.bias.zero_()
+
+    def forward(self, board: torch.Tensor, extras: torch.Tensor | None = None) -> torch.Tensor:
+        h = torch.sigmoid(self.core(board))
+        if self.extras is not None and extras is not None:
+            h = h + torch.sigmoid(self.extras(extras))
+        # Equity in [0, 1] — probability the side to move wins.
+        return torch.sigmoid(self.head(h)).squeeze(-1)
+
+
+# ---------------------------------------------------------------------------
+# Environment — minimal pip-race abstraction
+# ---------------------------------------------------------------------------
+
+START_PIP = 60   # 15 checkers x ~4 average pips, rounded for the demo.
+MAX_TURNS = 200  # Force termination if the race somehow stalls.
+
+
+@dataclass
+class RaceState:
+    """State of a two-player pip race.
+
+    `pip[0]` / `pip[1]` are pip counts for sides 0 and 1. Lower = closer
+    to winning. Side 0 starts on roll. `dice` is set when it's the
+    side-to-move's turn to commit a move.
+    """
+    pip: list[int] = field(default_factory=lambda: [START_PIP, START_PIP])
+    turn: int = 0
+    dice: tuple[int, int] | None = None
+    n_turns: int = 0
+
+    def terminal(self) -> bool:
+        return self.pip[0] <= 0 or self.pip[1] <= 0 or self.n_turns >= MAX_TURNS
+
+    def winner(self) -> int | None:
+        if self.pip[0] <= 0:
+            return 0
+        if self.pip[1] <= 0:
+            return 1
+        if self.n_turns >= MAX_TURNS:
+            # Tiebreak by smaller remaining pip count.
+            return 0 if self.pip[0] < self.pip[1] else 1
+        return None
+
+
+def encode_state(state, perspective: int) -> torch.Tensor:
+    """Encode `state` into a GNUBG_FEAT_DIM-shaped vector from
+    `perspective`'s point of view.
+
+    Phase J.1: dispatches by state type. RaceState → simplified
+    pip-race thermometer (the original encoder). FullBoardState → real
+    Tesauro 198-dim contact-net encoding via gnubg_encoder. Both
+    produce shape [198], float32.
+    """
+    # Lazy import to avoid pulling gnubg_encoder unless full-board mode
+    # is actually exercised.
+    try:
+        from full_board_state import FullBoardState
+    except ImportError:
+        FullBoardState = None  # type: ignore[assignment]
+    if FullBoardState is not None and isinstance(state, FullBoardState):
+        from gnubg_encoder import encode_full_board
+        return encode_full_board(
+            state.board, state.bar, state.off, perspective=perspective,
+        )
+    # Original race-encoder path.
+    feat = torch.zeros(GNUBG_FEAT_DIM)
+    me = max(0, min(99, state.pip[perspective]))
+    op = max(0, min(99, state.pip[1 - perspective]))
+    feat[:me] = 1.0
+    feat[99:99 + op] = 1.0
+    return feat
+
+
+def encode_extras(extras_dim: int, agent_id: int, *, seed: int) -> torch.Tensor:
+    """Placeholder per-agent extras for the standalone-demo path.
+
+    A deterministic per-agent random projection so the extras head
+    has *something* to learn when the trainer is invoked without
+    `--career-mode`. The career-mode path computes extras through
+    `career_features.encode_career_context` over a freshly-sampled
+    `CareerContext` per match — that's the real encoder.
+    """
+    g = torch.Generator().manual_seed(seed + agent_id)
+    return torch.randn(extras_dim, generator=g)
+
+
+# Module-level gnubg client used by legal_successors when the state is
+# a FullBoardState. Set by sample_trainer.main() when --full-board is
+# enabled. Never written from elsewhere; staying None means the legacy
+# RaceState path is the only one exercised.
+_GNUBG_CLIENT_FOR_FULL_BOARD = None
+
+
+def legal_successors(state, dice: tuple[int, int]) -> list:
+    """Enumerate candidate successor states.
+
+    Phase J.2: dispatches on state type. FullBoardState → calls
+    legal_successors_full driven by the module-level gnubg client.
+    RaceState → original fabricated-variants path below.
+    """
+    try:
+        from full_board_state import FullBoardState, legal_successors_full
+    except ImportError:
+        FullBoardState = None  # type: ignore[assignment]
+        legal_successors_full = None  # type: ignore[assignment]
+    if FullBoardState is not None and isinstance(state, FullBoardState):
+        if _GNUBG_CLIENT_FOR_FULL_BOARD is None:
+            raise RuntimeError(
+                "FullBoardState passed to legal_successors but "
+                "_GNUBG_CLIENT_FOR_FULL_BOARD is unset. "
+                "sample_trainer.main() should set it when --full-board is enabled."
+            )
+        return legal_successors_full(state, dice, _GNUBG_CLIENT_FOR_FULL_BOARD)
+    # Original race-env path: fabricate up to 4 plausible variants.
+    d1, d2 = dice
+    side = state.turn
+    new_pips = list(state.pip)
+    candidates: list[RaceState] = []
+
+    def _make(advance: int) -> RaceState:
+        nxt = list(state.pip)
+        nxt[side] = max(0, nxt[side] - advance)
+        return RaceState(pip=nxt, turn=1 - side, dice=None, n_turns=state.n_turns + 1)
+
+    seen: set[int] = set()
+    for advance in (d1 + d2, max(d1, d2), min(d1, d2), d1, d2):
+        if advance in seen:
+            continue
+        seen.add(advance)
+        candidates.append(_make(advance))
+        if len(candidates) >= 4:
+            break
+    return candidates
+
+
+# ---------------------------------------------------------------------------
+# Self-play training loop with TD(lambda)
+# ---------------------------------------------------------------------------
+
+
+def pick_move(net: BackgammonNet, candidates: list[RaceState], extras: torch.Tensor,
+              perspective: int, *, infer_fn=None) -> tuple[RaceState, torch.Tensor]:
+    """Greedily pick the candidate that maximizes net's predicted equity
+    for `perspective`. Returns the (chosen state, V-tensor for chosen).
+
+    `infer_fn(features, extras) -> equities` is an optional override of
+    the no-grad evaluation step. When None (default) the per-candidate
+    forward pass runs locally (`net(feats, ext)`); when set, the call
+    routes through the supplied function. Phase I uses this to send
+    candidate evaluation through the 0G compute eval bridge.
+    """
+    feats = torch.stack([encode_state(c, perspective) for c in candidates])
+    with torch.no_grad():
+        ext = extras.unsqueeze(0).expand(len(candidates), -1) if net.extras is not None else None
+        if infer_fn is not None:
+            equities = infer_fn(feats, ext)
+        else:
+            equities = net(feats, ext)
+    best = int(equities.argmax().item())
+    return candidates[best], equities[best:best + 1]
+
+
+def td_lambda_match(
+    agent: BackgammonNet,
+    opponent: BackgammonNet,
+    agent_extras: torch.Tensor,
+    opponent_extras: torch.Tensor,
+    *,
+    gamma: float = 1.0,
+    lam: float = 0.7,
+    lr: float = 1e-3,
+    writer: SummaryWriter | None = None,
+    global_step: int = 0,
+    drand_round_digest: bytes | None = None,
+    infer_fn=None,
+    state_factory=None,
+) -> tuple[int, int]:
+    """Play a single self-play match. `agent` learns; `opponent` is frozen.
+
+    Returns `(steps_taken, agent_won_int)`. Logs per-step TD error and
+    eligibility-trace norm to TensorBoard when `writer` is provided.
+
+    `drand_round_digest`: when supplied, every turn's dice are derived
+    via `drand_dice.derive_dice(digest, turn_index)` — the same
+    deterministic mapping production code uses with KeeperHub's pulled
+    drand rounds. When None, falls back to local PRNG so the demo runs
+    standalone without a fixed digest.
+
+    `infer_fn`: optional override for the no-grad equity calls in
+    pick_move + the agent's bootstrap V(s') eval. Backprop, TD-λ, and
+    optimizer steps stay local — only the evaluation step routes through
+    `infer_fn`. Used by Phase I to dispatch per-move forward passes
+    through the 0G compute eval bridge while keeping autograd local.
+
+    `state_factory`: zero-arg callable returning the initial state.
+    Defaults to `RaceState` (race-env training). Phase J.3 uses
+    `lambda: FullBoardState.initial(gnubg_client)` to drive a real
+    backgammon game per match.
+    """
+    state = state_factory() if state_factory is not None else RaceState()
+    eligibility = {p: torch.zeros_like(p) for p in agent.parameters()}
+
+    while not state.terminal():
+        # Dice: derive from the drand round digest in production-shaped
+        # mode, or fall back to local PRNG for the standalone demo.
+        if drand_round_digest is not None:
+            roll = derive_dice(drand_round_digest, turn_index=state.n_turns)
+            d1, d2 = roll.d1, roll.d2
+        else:
+            d1 = random.randint(1, 6)
+            d2 = random.randint(1, 6)
+        state.dice = (d1, d2)
+        cands = legal_successors(state, state.dice)
+
+        if state.turn == 0:
+            # Agent's turn — selects a successor and learns from the transition.
+            board_now = encode_state(state, perspective=0)
+            v_now = agent(board_now.unsqueeze(0),
+                          agent_extras.unsqueeze(0)) if agent.extras is not None else \
+                    agent(board_now.unsqueeze(0))
+
+            chosen, _ = pick_move(agent, cands, agent_extras, perspective=0,
+                                  infer_fn=infer_fn)
+            with torch.no_grad():
+                board_next = encode_state(chosen, perspective=0)
+                if infer_fn is not None:
+                    ext_next = (agent_extras.unsqueeze(0)
+                                if agent.extras is not None else None)
+                    v_next_t = infer_fn(board_next.unsqueeze(0), ext_next)
+                else:
+                    v_next_t = agent(board_next.unsqueeze(0),
+                                     agent_extras.unsqueeze(0)) if agent.extras is not None else \
+                              agent(board_next.unsqueeze(0))
+                v_next = v_next_t.item() if hasattr(v_next_t, "item") else float(v_next_t)
+
+            # Terminal reward is observed when the chosen state is terminal
+            # for the agent's side; otherwise we bootstrap from V(s').
+            done_after_move = chosen.terminal()
+            if done_after_move:
+                reward = 1.0 if chosen.winner() == 0 else 0.0
+                target = reward
+            else:
+                target = gamma * v_next
+
+            td_error = target - v_now.item()
+
+            # Backprop the *value* prediction (not the TD error itself):
+            # eligibility traces accumulate ∇V(s_t), and the parameter
+            # update is `+lr * td_error * eligibility`. This is the
+            # canonical TD(lambda) gradient step.
+            agent.zero_grad()
+            v_now.sum().backward()
+            with torch.no_grad():
+                grad_norm_sq = 0.0
+                for p in agent.parameters():
+                    if p.grad is None:
+                        continue
+                    eligibility[p].mul_(gamma * lam).add_(p.grad)
+                    p.add_(lr * td_error * eligibility[p])
+                    grad_norm_sq += float(p.grad.pow(2).sum().item())
+
+            if writer is not None:
+                step = global_step + state.n_turns
+                writer.add_scalar("train/td_error", td_error, step)
+                writer.add_scalar("train/v_now", v_now.item(), step)
+                writer.add_scalar("train/v_next", v_next, step)
+                writer.add_scalar("train/grad_norm", math.sqrt(grad_norm_sq), step)
+                elig_norm = math.sqrt(sum(float(e.pow(2).sum().item())
+                                          for e in eligibility.values()))
+                writer.add_scalar("train/eligibility_norm", elig_norm, step)
+
+            state = chosen
+        else:
+            # Opponent's turn — frozen network picks greedily; no learning.
+            chosen, _ = pick_move(opponent, cands, opponent_extras,
+                                  perspective=1, infer_fn=infer_fn)
+            state = chosen
+
+    winner = state.winner() or 0
+    return state.n_turns, int(winner == 0)
+
+
+# ---------------------------------------------------------------------------
+# Driver
+# ---------------------------------------------------------------------------
+
+
+def evaluate(agent: BackgammonNet, opponent: BackgammonNet,
+             agent_extras: torch.Tensor, opponent_extras: torch.Tensor,
+             n_matches: int = 20, *, infer_fn=None,
+             state_factory=None) -> float:
+    """Win rate of `agent` vs `opponent` over `n_matches` greedy games.
+
+    `infer_fn` matches td_lambda_match's signature — when supplied, the
+    candidate-evaluation step routes through it instead of `net(...)`.
+    `state_factory` matches td_lambda_match's signature — defaults to
+    RaceState; full-board mode passes a FullBoardState factory.
+    """
+    wins = 0
+    for _ in range(n_matches):
+        state = state_factory() if state_factory is not None else RaceState()
+        while not state.terminal():
+            d1, d2 = random.randint(1, 6), random.randint(1, 6)
+            cands = legal_successors(state, (d1, d2))
+            if state.turn == 0:
+                state, _ = pick_move(agent, cands, agent_extras,
+                                     perspective=0, infer_fn=infer_fn)
+            else:
+                state, _ = pick_move(opponent, cands, opponent_extras,
+                                     perspective=1, infer_fn=infer_fn)
+        if state.winner() == 0:
+            wins += 1
+    return wins / n_matches
+
+
+def maybe_launch_tensorboard(logdir: Path) -> subprocess.Popen | None:
+    """Spawn `tensorboard --logdir <logdir>` as a child process if the
+    binary is on PATH. Returns the Popen handle so the caller can wait
+    for Ctrl+C, or None if the binary is missing."""
+    binary = shutil.which("tensorboard")
+    if binary is None:
+        print("tensorboard binary not on PATH — skipping dashboard launch.", file=sys.stderr)
+        print("Install with: uv add tensorboard  (or pip install tensorboard)", file=sys.stderr)
+        return None
+    print(f"Launching TensorBoard at http://localhost:6006 (logdir={logdir})")
+    return subprocess.Popen(
+        [binary, "--logdir", str(logdir), "--port", "6006", "--bind_all"],
+        stdout=sys.stdout, stderr=sys.stderr,
+    )
+
+
+def save_checkpoint(net: BackgammonNet, path: Path, *, match_count: int,
+                    extras_dim: int,
+                    feature_encoder: str = "race") -> None:
+    """Persist the agent's state_dict + the metadata needed to rebuild
+    the network shape on load. Production code wraps this with
+    AES-256-GCM and uploads to 0G Storage; the local file format here
+    is the same shape, just unencrypted.
+
+    Phase J.4: `feature_encoder` is the new field telling readers which
+    encoder produced the training inputs:
+       "race"        — pip-race thermometer (the original encoder;
+                       checkpoints written before J.3 default to this).
+       "gnubg_full"  — Tesauro 198-dim contact-net (J.1's encoder).
+    A reader that wants to score a full-board position with a "race"
+    checkpoint must refuse the call (the weights weren't trained on
+    full-board features). agent_profile.ModelProfile exposes the
+    field via metrics()["feature_encoder"]."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save({
+        "state_dict": net.state_dict(),
+        "match_count": match_count,
+        "extras_dim": extras_dim,
+        "in_dim": GNUBG_FEAT_DIM,
+        "hidden": DEFAULT_HIDDEN,
+        "feature_encoder": feature_encoder,
+    }, path)
+
+
+def load_checkpoint(path: Path) -> tuple[BackgammonNet, int]:
+    """Load a checkpoint written by `save_checkpoint`. Returns
+    `(net, match_count)`. The net is rebuilt with the shape recorded
+    in the checkpoint metadata, then the state_dict is loaded into it.
+    `weights_only=True` keeps load safe against malicious pickles."""
+    blob = torch.load(path, weights_only=True)
+    net = BackgammonNet(
+        in_dim=blob["in_dim"],
+        hidden=blob["hidden"],
+        extras_dim=blob["extras_dim"],
+    )
+    net.load_state_dict(blob["state_dict"])
+    return net, int(blob["match_count"])
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--matches", type=int, default=100,
+                        help="Number of self-play training matches (default: 100).")
+    parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate.")
+    parser.add_argument("--lam", type=float, default=0.7, help="TD(lambda) trace decay.")
+    parser.add_argument("--gamma", type=float, default=1.0, help="Discount factor.")
+    parser.add_argument("--logdir", type=str, default="runs/sample_trainer",
+                        help="TensorBoard log directory (default: runs/sample_trainer).")
+    parser.add_argument("--launch-tensorboard", action="store_true",
+                        help="Spawn `tensorboard --logdir <logdir>` after training.")
+    parser.add_argument("--seed", type=int, default=42, help="Python+torch RNG seed.")
+    parser.add_argument("--extras-dim", type=int, default=DEFAULT_EXTRAS_DIM,
+                        help="Per-agent contextual feature dim (0 = single-game head).")
+    parser.add_argument("--save-checkpoint", type=str, default=None,
+                        help="Path to write the trained agent's checkpoint "
+                             "(.pt). Skipped if unset.")
+    parser.add_argument("--load-checkpoint", type=str, default=None,
+                        help="Path to a checkpoint to resume training from. "
+                             "Bypasses the gnubg-init core; the opponent is "
+                             "still freshly initialized with extras_seed=2.")
+    parser.add_argument("--drand-digest", type=str, default=None,
+                        help="Hex-encoded drand round digest. When set, "
+                             "every turn's dice are derived via "
+                             "drand_dice.derive_dice(digest, turn_index) "
+                             "— the same deterministic mapping production "
+                             "uses. Without this flag, dice come from the "
+                             "local PRNG (standalone demo mode).")
+    parser.add_argument("--upload-to-0g", action="store_true",
+                        help="After saving the checkpoint, AES-256-GCM-"
+                             "encrypt it (with a fresh key, also written "
+                             "next to the checkpoint as <ckpt>.key) and "
+                             "upload the sealed blob to 0G Storage via "
+                             "og-bridge. Requires --save-checkpoint and "
+                             "the OG_STORAGE_{RPC,INDEXER,PRIVATE_KEY} "
+                             "env triple (see server/.env.example).")
+    parser.add_argument("--no-encrypt", action="store_true",
+                        help="Demo modifier for --upload-to-0g: upload the "
+                             "raw torch.save bytes (no AES-256-GCM seal, "
+                             "no .key file). Used by the recommend-teammate "
+                             "demo path so a server with no key can fetch "
+                             "and content-sniff the checkpoint via "
+                             "agent_profile.load_profile. Production agents "
+                             "should leave this off.")
+    parser.add_argument("--init-from-0g", type=str, default=None,
+                        metavar="ROOT_HASH",
+                        help="Fetch a sealed checkpoint by 0G Storage "
+                             "Merkle root, decrypt it with the key at "
+                             "--init-key, and resume training from it. "
+                             "Mutually exclusive with --load-checkpoint.")
+    parser.add_argument("--init-key", type=str, default=None,
+                        metavar="PATH",
+                        help="Path to the AES-256-GCM key file written by "
+                             "an earlier --upload-to-0g run (the .key file "
+                             "alongside the checkpoint). Required with "
+                             "--init-from-0g.")
+    parser.add_argument("--full-board", action="store_true",
+                        help="Phase J.3: train against full backgammon "
+                             "positions driven by gnubg subprocess instead "
+                             "of the simplified RaceState pip race. Uses "
+                             "the Tesauro 198-dim contact-net encoder from "
+                             "agent/gnubg_encoder.py + FullBoardState from "
+                             "agent/full_board_state.py. Each match plays a "
+                             "real backgammon game; ~100x slower per match "
+                             "than --race because each move shells out to "
+                             "gnubg. The resulting checkpoint carries "
+                             "feature_encoder='gnubg_full' and is the only "
+                             "kind /games/{id}/agent-move with "
+                             "use_per_agent_nn=true can score.")
+    parser.add_argument("--status-file", type=str, default=None,
+                        metavar="PATH",
+                        help="Append JSONL training events to this path so "
+                             "the FastAPI /training/status endpoint (or any "
+                             "subscriber) can read live progress. Events: "
+                             "started, match (one per match), done | "
+                             "aborted. Empty by default; the trainer is "
+                             "silent when unset, identical to pre-flag "
+                             "behavior.")
+    parser.add_argument("--career-mode", action="store_true",
+                        help="Replace the placeholder per-agent random "
+                             "extras with `career_features.encode_career_"
+                             "context(...)` over a freshly-sampled "
+                             "CareerContext per match (opponent style, "
+                             "teammate style, stake, tournament position, "
+                             "team-match flag). The value-net's extras "
+                             "head learns to use these contextual inputs "
+                             "instead of memorizing one random projection.")
+    args = parser.parse_args()
+
+    if args.init_from_0g and args.load_checkpoint:
+        parser.error("--init-from-0g and --load-checkpoint are mutually exclusive")
+    if args.init_from_0g and not args.init_key:
+        parser.error("--init-from-0g requires --init-key")
+
+    drand_digest = bytes.fromhex(args.drand_digest) if args.drand_digest else None
+
+    # SIGTERM-safe: the FastAPI /training/abort endpoint sends SIGTERM
+    # and expects a final 'aborted' event so the status reader can tell
+    # graceful completion from kill. Raising SystemExit lets the
+    # try/finally below emit the event and close the file.
+    def _on_sigterm(signum, frame):
+        sys.exit(0)
+    signal.signal(signal.SIGTERM, _on_sigterm)
+
+    # Line-buffered append so the status reader sees events live.
+    status_fh = open(args.status_file, "a", buffering=1) if args.status_file else None
+
+    def _emit(event: str, **fields) -> None:
+        if status_fh is None:
+            return
+        fields["event"] = event
+        fields.setdefault("ts", time.time())
+        status_fh.write(json.dumps(fields) + "\n")
+        status_fh.flush()
+
+    random.seed(args.seed)
+    torch.manual_seed(args.seed)
+
+    # Both nets share core weights (gnubg-init); each has its own extras head.
+    starting_match_count = 0
+    if args.load_checkpoint:
+        agent, starting_match_count = load_checkpoint(Path(args.load_checkpoint))
+        print(f"Resumed from {args.load_checkpoint} (match_count={starting_match_count}).")
+    elif args.init_from_0g:
+        # Fetch the sealed checkpoint from 0G Storage, decrypt it with
+        # the local key file, write the plaintext checkpoint to a temp
+        # path, and load it. Locally imported so the trainer works
+        # without the cryptography / og-bridge deps when not needed.
+        import tempfile
+        from checkpoint_encryption import decrypt_blob
+        from og_storage_download import fetch_checkpoint
+
+        key = Path(args.init_key).read_bytes()
+        sealed = fetch_checkpoint(args.init_from_0g)
+        plaintext = decrypt_blob(sealed, key)
+        with tempfile.NamedTemporaryFile(suffix=".pt", delete=False) as tf:
+            tf.write(plaintext)
+            tmp_path = Path(tf.name)
+        try:
+            agent, starting_match_count = load_checkpoint(tmp_path)
+        finally:
+            tmp_path.unlink(missing_ok=True)
+        print(f"Resumed from 0G Storage {args.init_from_0g} "
+              f"(match_count={starting_match_count}).")
+    else:
+        agent = BackgammonNet(extras_dim=args.extras_dim, core_seed=0xBACC, extras_seed=1)
+    opponent = BackgammonNet(extras_dim=args.extras_dim, core_seed=0xBACC, extras_seed=2)
+
+    if args.career_mode and args.extras_dim < 16:
+        parser.error("--career-mode requires --extras-dim >= 16 "
+                     "(career_features.encode_career_context slot layout)")
+
+    # Career-mode samples a fresh context per match (see the loop below);
+    # the placeholder path is a single deterministic projection per agent.
+    career_rng = random.Random(args.seed) if args.career_mode else None
+
+    if args.career_mode:
+        # Eval contexts are fixed across the run so the win-rate-vs-frozen
+        # scalar is comparable from match to match. The contexts are
+        # asymmetric (agent has a teammate, opponent does not) to give
+        # the extras head a non-trivial signal in eval as well.
+        eval_agent_ctx = sample_career_context(random.Random(args.seed + 1001),
+                                                force_team=True)
+        eval_opponent_ctx = sample_career_context(random.Random(args.seed + 1002),
+                                                   force_team=False)
+        agent_extras = encode_career_context(eval_agent_ctx, dim=args.extras_dim)
+        opponent_extras = encode_career_context(eval_opponent_ctx, dim=args.extras_dim)
+    elif args.extras_dim > 0:
+        agent_extras = encode_extras(args.extras_dim, agent_id=1, seed=args.seed)
+        opponent_extras = encode_extras(args.extras_dim, agent_id=2, seed=args.seed)
+    else:
+        agent_extras = torch.zeros(0)
+        opponent_extras = torch.zeros(0)
+
+    # Sanity check: at fresh init both nets share the gnubg-init core.
+    # Skip when loading from a checkpoint or 0G Storage — the agent's
+    # core has already diverged from the gnubg init through prior
+    # training.
+    if not args.load_checkpoint and not args.init_from_0g:
+        assert torch.allclose(agent.core.weight, opponent.core.weight), \
+            "core weights should be identical at init (both seeded from gnubg published init)"
+
+    logdir = Path(args.logdir)
+    logdir.mkdir(parents=True, exist_ok=True)
+    writer = SummaryWriter(log_dir=str(logdir))
+
+    # Log model architecture to the TensorBoard "Graphs" tab.
+    sample_board = torch.zeros(1, GNUBG_FEAT_DIM)
+    if args.extras_dim > 0:
+        writer.add_graph(agent, (sample_board, agent_extras.unsqueeze(0)))
+    else:
+        writer.add_graph(agent, sample_board)
+
+    # Phase J.3: when --full-board is on, swap the state factory + set
+    # the module-level gnubg client so legal_successors dispatches to
+    # the gnubg-driven path. encode_state's dispatch is type-based and
+    # needs no setup. Latency here is dominated by gnubg subprocess
+    # cost (see full_board_state.py docstring).
+    state_factory = None
+    if args.full_board:
+        global _GNUBG_CLIENT_FOR_FULL_BOARD
+        # Add server/ to sys.path so we can import GnubgClient.
+        import sys
+        from pathlib import Path as _P
+        _server_root = _P(__file__).resolve().parents[1]
+        if str(_server_root) not in sys.path:
+            sys.path.insert(0, str(_server_root))
+        from server.app.gnubg_client import GnubgClient
+
+        from full_board_state import FullBoardState
+
+        client = GnubgClient()
+        _GNUBG_CLIENT_FOR_FULL_BOARD = client
+        state_factory = lambda: FullBoardState.initial(client)
+        print("Full-board mode active — each match drives gnubg subprocess; "
+              "expect ~100x slower per match than --race.", file=sys.stderr)
+
+    # Baseline win rate before training.
+    baseline_wr = evaluate(agent, opponent, agent_extras, opponent_extras,
+                           n_matches=20, state_factory=state_factory)
+    writer.add_scalar("eval/win_rate_vs_frozen", baseline_wr, 0)
+    print(f"Baseline win rate (untrained): {baseline_wr:.2%}")
+    # Note: in career mode `agent_extras`/`opponent_extras` get re-bound
+    # per match below; `eval_agent_extras`/`eval_opponent_extras` (set
+    # just below) stay frozen so eval is comparable across matches.
+
+    global_step = 0
+    rolling_outcomes: list[int] = []
+
+    # Eval extras stay frozen for the run so eval/win_rate_vs_frozen is
+    # comparable across matches; only training extras vary in career mode.
+    eval_agent_extras = agent_extras
+    eval_opponent_extras = opponent_extras
+
+    t0 = time.time()
+    _emit("started", total=args.matches, career_mode=bool(args.career_mode))
+    for match_idx in range(args.matches):
+        if career_rng is not None:
+            agent_ctx = sample_career_context(career_rng)
+            opponent_ctx = sample_career_context(career_rng)
+            agent_extras = encode_career_context(agent_ctx, dim=args.extras_dim)
+            opponent_extras = encode_career_context(opponent_ctx, dim=args.extras_dim)
+
+        steps, won = td_lambda_match(
+            agent, opponent, agent_extras, opponent_extras,
+            gamma=args.gamma, lam=args.lam, lr=args.lr,
+            writer=writer, global_step=global_step,
+            drand_round_digest=drand_digest,
+            state_factory=state_factory,
+        )
+        _emit("match", match_idx=match_idx, total=args.matches,
+              winner="agent" if won else "opponent",
+              plies=int(steps))
+        global_step += steps
+        rolling_outcomes.append(won)
+        if len(rolling_outcomes) > 50:
+            rolling_outcomes.pop(0)
+
+        writer.add_scalar("match/won", won, match_idx)
+        writer.add_scalar("match/length", steps, match_idx)
+        writer.add_scalar("match/rolling_win_rate",
+                          sum(rolling_outcomes) / len(rolling_outcomes), match_idx)
+
+        # Periodic histograms — let the user see weights and gradients drift
+        # over training in the TensorBoard "Distributions" / "Histograms" tabs.
+        if (match_idx + 1) % 25 == 0 or match_idx == args.matches - 1:
+            for name, p in agent.named_parameters():
+                writer.add_histogram(f"params/{name}", p, match_idx)
+                if p.grad is not None:
+                    writer.add_histogram(f"grads/{name}", p.grad, match_idx)
+            wr = evaluate(agent, opponent, eval_agent_extras, eval_opponent_extras,
+                          n_matches=20, state_factory=state_factory)
+            writer.add_scalar("eval/win_rate_vs_frozen", wr, match_idx + 1)
+            print(f"  match {match_idx + 1:>4}/{args.matches}  "
+                  f"rolling win-rate {sum(rolling_outcomes)/len(rolling_outcomes):.2%}  "
+                  f"eval vs frozen {wr:.2%}")
+
+    final_wr = evaluate(agent, opponent, eval_agent_extras, eval_opponent_extras,
+                        n_matches=50, state_factory=state_factory)
+    elapsed = time.time() - t0
+    print(f"\nDone. {args.matches} matches in {elapsed:.1f}s. "
+          f"Final win rate vs frozen opponent: {final_wr:.2%}")
+    print(f"TensorBoard events: {logdir}")
+    print(f"View with: tensorboard --logdir {logdir}")
+
+    if args.save_checkpoint:
+        ckpt_path = Path(args.save_checkpoint)
+        save_checkpoint(agent, ckpt_path,
+                        match_count=starting_match_count + args.matches,
+                        extras_dim=args.extras_dim,
+                        feature_encoder="gnubg_full" if args.full_board else "race")
+        print(f"Saved checkpoint: {ckpt_path}")
+
+        if args.upload_to_0g:
+            # Locally-imported so the trainer works without the
+            # cryptography lib for users who don't intend to upload.
+            from og_storage_upload import OgUploadError, upload_checkpoint
+
+            raw = ckpt_path.read_bytes()
+            if args.no_encrypt:
+                sealed = raw
+                print("WARNING: --no-encrypt set; uploading PLAINTEXT "
+                      "checkpoint to 0G Storage. The blob will be readable "
+                      "by anyone who fetches the rootHash. This is the "
+                      "demo path for recommend-teammate end-to-end; "
+                      "production agents must leave --no-encrypt off.")
+            else:
+                from checkpoint_encryption import encrypt_blob, generate_key
+                key = generate_key()
+                sealed = encrypt_blob(raw, key)
+                key_path = ckpt_path.with_suffix(ckpt_path.suffix + ".key")
+                key_path.write_bytes(key)
+                print(f"Wrote AES-256-GCM key alongside checkpoint: {key_path} "
+                      f"(keep this; without it the uploaded blob is unreadable)")
+
+            try:
+                result = upload_checkpoint(sealed)
+                kind = "plaintext" if args.no_encrypt else "encrypted"
+                print(f"Uploaded {kind} checkpoint to 0G Storage:")
+                print(f"  rootHash = {result.root_hash}")
+                print(f"  txHash   = {result.tx_hash}")
+                print(f"This rootHash is what KeeperHub commits to "
+                      f"iNFT.dataHashes[1] in production.")
+            except OgUploadError as e:
+                print(f"Upload failed: {e}", file=sys.stderr)
+                # Don't raise — the local checkpoint is still on disk and
+                # the user can retry the upload manually.
+
+    elif args.upload_to_0g:
+        print("--upload-to-0g requires --save-checkpoint; skipping upload.",
+              file=sys.stderr)
+
+    writer.close()
+    _emit("done", total=args.matches, final_win_rate=float(final_wr))
+    if status_fh is not None:
+        status_fh.close()
+
+    if args.launch_tensorboard:
+        proc = maybe_launch_tensorboard(logdir)
+        if proc is not None:
+            try:
+                proc.wait()
+            except KeyboardInterrupt:
+                proc.terminate()
+                proc.wait()
+
+
+if __name__ == "__main__":
+    main()

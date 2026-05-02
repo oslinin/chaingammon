@@ -32,6 +32,7 @@ EXPECTED_STEP_IDS = [
     "vrf_rolls",
     "og_storage_fetch",
     "gnubg_replay",
+    "agent_move_replay",   # Phase 38
     "settlement_signed",
     "relay_tx",
     "ens_update",
@@ -54,12 +55,15 @@ def test_response_shape():
     assert data["status"] in VALID_STATUSES
 
 
-def test_exactly_eight_steps():
-    """The workflow must surface exactly the 8 canonical KeeperHub steps."""
+def test_exactly_nine_steps():
+    """Phase 38 extends the workflow from 8 to 9 canonical steps —
+    `agent_move_replay` slots between `gnubg_replay` (legality) and
+    `settlement_signed` (settle). Phase 36's locked shape (per-step
+    fields, status enum, deterministic-same-id) is preserved."""
     resp = client.get("/keeper-workflow/test-match-abc123")
     assert resp.status_code == 200
     steps = resp.json()["steps"]
-    assert len(steps) == 8, f"Expected 8 steps, got {len(steps)}"
+    assert len(steps) == 9, f"Expected 9 steps after Phase 38, got {len(steps)}"
 
 
 def test_all_eight_step_ids_present():

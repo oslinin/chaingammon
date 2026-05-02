@@ -5,11 +5,11 @@
 # you with a working deployment that anyone in the world can verify:
 #
 #   1. Compile + run hardhat tests (ensures we don't deploy broken contracts)
-#   2. Deploy MatchRegistry + AgentRegistry to 0G testnet, mint seed agent #1
-#      (writes contracts/deployments/0g-testnet.json)
+#   2. Deploy MatchRegistry + AgentRegistry to Sepolia, mint seed agent #1
+#      (writes contracts/deployments/sepolia.json)
 #   3. Encrypt /usr/lib/gnubg/gnubg.wd, upload to 0G Storage, and pin the
 #      resulting Merkle rootHash on AgentRegistry via setBaseWeightsHash
-#   4. Verify the deployed contracts on chainscan-galileo (source code visible)
+#   4. Verify the deployed contracts on Etherscan / Sepolia (source code visible)
 #
 # Run from the repo root:
 #
@@ -65,10 +65,10 @@ echo "==> 1/4  Compile + run hardhat tests"
 pnpm contracts:test
 
 echo
-echo "==> 2/4  Deploy MatchRegistry + AgentRegistry to 0G testnet"
+echo "==> 2/4  Deploy MatchRegistry + AgentRegistry to Sepolia"
 pnpm contracts:deploy
 
-DEPLOYMENTS_JSON="contracts/deployments/0g-testnet.json"
+DEPLOYMENTS_JSON="contracts/deployments/sepolia.json"
 if [[ ! -f "$DEPLOYMENTS_JSON" ]]; then
     echo "error: $DEPLOYMENTS_JSON not found after deploy" >&2
     exit 1
@@ -86,7 +86,7 @@ echo "==> 3/4  Encrypt /usr/lib/gnubg/gnubg.wd and pin its 0G Storage hash on $N
 )
 
 echo
-echo "==> 4/4  Verify deployed contracts on chainscan-galileo"
+echo "==> 4/4  Verify deployed contracts on Etherscan (Sepolia)"
 pnpm contracts:verify
 
 cat <<EOF

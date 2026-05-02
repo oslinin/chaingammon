@@ -167,23 +167,30 @@ class OverlayProfile(AgentProfile):
 
 
 class ModelProfile(AgentProfile):
-    """Stub for the `learn` branch's PyTorch BackgammonNet checkpoints.
+    """Trained `BackgammonNet` checkpoint loaded from 0G Storage.
 
-    @notice Not implemented in master. The intent is documented here so
-            the coach interface is stable when the agent migrates: the
-            checkpoint metadata (training matches played, win rate vs
-            random, weight statistics) gets parsed and rendered as a
-            short prompt-friendly description.
-    @dev    A future commit will:
-              1. Parse the checkpoint envelope (metadata header + state_dict).
-              2. Pull match_count, win_rate, opening_repertoire_summary.
-              3. Format as "Trained for N matches; wins X% vs random; tends to <opening>."
-            Until then, instantiating this class returns a placeholder
-            summary so the coach doesn't 500.
+    @notice The checkpoint envelope is the dict written by
+            `sample_trainer.save_checkpoint`:
+              {"model": state_dict, "match_count": int,
+               "extras_dim": int, "in_dim": int}
+            wrapped by `torch.save` (zip-format since PyTorch 1.6).
+    @dev    `from_bytes` is the entry point — it `torch.load`s with
+            `weights_only=True` (safe against pickle-RCE on hostile
+            blobs) and reconstructs a `BackgammonNet` ready for
+            inference. The loaded net is stored on `self.net` so
+            downstream consumers (e.g. teammate_selection.recommend_teammate)
+            can run it without a second deserialize.
     """
 
-    def __init__(self, metadata: Mapping[str, object]) -> None:
+    def __init__(
+        self,
+        metadata: Mapping[str, object],
+        *,
+        net: Optional["object"] = None,
+    ) -> None:
         self._metadata = dict(metadata)
+        self.net = net  # `BackgammonNet | None`; None when this profile
+                        # was constructed without a checkpoint blob.
 
     def summarize(self) -> str:
         match_count = self._metadata.get("match_count", "?")
@@ -194,6 +201,67 @@ class ModelProfile(AgentProfile):
 
     def metrics(self) -> Mapping[str, object]:
         return {"kind": "model", **self._metadata}
+
+    @classmethod
+    def from_bytes(cls, blob: bytes) -> "ModelProfile":
+        """Deserialize a `torch.save`-format checkpoint into a usable
+        `ModelProfile` whose `.net` is a `BackgammonNet` ready for
+        forward passes.
+
+        @raises AgentProfileError on malformed / unsafe / wrong-shape
+                input — callers (e.g. `load_profile`) catch this and
+                fall back to NullProfile.
+        """
+        import io  # local — keeps module-level imports light
+
+        try:
+            import torch  # local — agent_profile is imported by lightweight callers
+        except ImportError as e:
+            raise AgentProfileError(
+                "ModelProfile.from_bytes requires torch — install agent/ deps"
+            ) from e
+
+        try:
+            buf = io.BytesIO(blob)
+            # weights_only=True blocks the pickle-RCE class of attacks
+            # (a hostile checkpoint blob can't execute arbitrary
+            # Python during deserialization).
+            state = torch.load(buf, weights_only=True, map_location="cpu")
+        except Exception as e:  # torch raises a wide variety on bad input
+            raise AgentProfileError(f"malformed checkpoint blob: {e}") from e
+
+        if not isinstance(state, dict):
+            raise AgentProfileError(
+                f"checkpoint must deserialize to dict, got {type(state).__name__}"
+            )
+        for required in ("model", "extras_dim"):
+            if required not in state:
+                raise AgentProfileError(
+                    f"checkpoint missing required key: {required!r}"
+                )
+
+        try:
+            # Local import — sample_trainer pulls torch.nn at import
+            # time, so we do it inside from_bytes rather than at the
+            # top of agent_profile.py.
+            from sample_trainer import BackgammonNet
+        except ImportError as e:
+            raise AgentProfileError(
+                "ModelProfile.from_bytes requires sample_trainer on PYTHONPATH"
+            ) from e
+
+        try:
+            net = BackgammonNet(extras_dim=int(state["extras_dim"]))
+            net.load_state_dict(state["model"])
+            net.eval()
+        except Exception as e:
+            raise AgentProfileError(f"checkpoint state_dict mismatch: {e}") from e
+
+        metadata = {
+            k: v for k, v in state.items()
+            if k not in ("model",)  # model is on .net, not in metadata
+        }
+        return cls(metadata, net=net)
 
 
 # ─── factory ─────────────────────────────────────────────────────────────────
@@ -235,13 +303,23 @@ def load_profile(
         return NullProfile()
     if not blob:
         return NullProfile()
-    # Content-sniff: overlay is JSON, future checkpoints will be tagged.
-    # If the first non-whitespace byte is `{`, treat as overlay JSON.
-    head = blob.lstrip()[:1]
+    # Content-sniff:
+    #   `{`              → Phase 9 overlay JSON
+    #   `PK\x03\x04`     → torch.save checkpoint (zip format since
+    #                       PyTorch 1.6) — see ModelProfile.from_bytes
+    #   anything else    → NullProfile (cold start / unrecognized)
+    # The two formats are visually distinct, so a byte-level sniff is
+    # robust without parsing.
+    stripped = blob.lstrip()
+    head = stripped[:1]
     if head == b"{":
         try:
             return OverlayProfile.from_bytes(blob)
         except AgentProfileError:
             return NullProfile()
-    # Future: detect model checkpoint magic bytes here.
+    if stripped[:4] == b"PK\x03\x04":
+        try:
+            return ModelProfile.from_bytes(blob)
+        except AgentProfileError:
+            return NullProfile()
     return NullProfile()

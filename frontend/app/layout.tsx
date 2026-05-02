@@ -4,6 +4,7 @@
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
+import { ComputeBackendsPill } from "./ComputeBackendsPill";
 import { Providers } from "./providers";
 import { Sidebar } from "./Sidebar";
 import { MobileNav } from "./MobileNav";
@@ -46,7 +47,14 @@ export default function RootLayout({
           <div className="flex flex-1">
             <Sidebar />
             {/* pb-16 md:pb-0 reserves space for the fixed mobile bottom nav */}
-            <div className="flex flex-1 flex-col min-w-0 pb-16 md:pb-0">{children}</div>
+            <div className="flex flex-1 flex-col min-w-0 pb-16 md:pb-0">
+              {/* Compute-backends pill: pinned at the top so the three
+                  operations × two backends story is visible on every page. */}
+              <div className="flex justify-end border-b border-zinc-200 px-4 py-2 dark:border-zinc-800">
+                <ComputeBackendsPill />
+              </div>
+              {children}
+            </div>
           </div>
           <MobileNav />
         </Providers>

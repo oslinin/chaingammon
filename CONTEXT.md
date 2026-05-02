@@ -24,58 +24,52 @@ Chaingammon is an **open protocol for portable backgammon reputation**. Every pl
 
 ## Architecture
 
+Sponsor mix per ETHGlobal Open Agents (the three Chaingammon targets): **0G** (Storage + Compute), **ENS**, **KeeperHub**. Settlement chain is **Sepolia** (KeeperHub-native, hosts real ENS); dice randomness is **drand** (public beacon). See README for the canonical architecture diagram and sponsor table.
+
 ```
                        ┌──────────────────────────┐
                        │    Frontend (Next.js)    │
-                       │    - matchmaking         │
-                       │    - profile (ENS)       │
-                       │    - match replay        │
-                       │    - audit trail         │
+                       │  matchmaking, profile,   │
+                       │  replay, live game,      │
+                       │  LLM coach panel         │
                        └────────────┬─────────────┘
+                                    │ HTTP fetch (no central server)
+        ┌───────────────────────────┼────────────────────────────┐
+        ▼                           ▼                            ▼
+ ┌───────────────┐       ┌───────────────────┐         ┌───────────────────┐
+ │ Browser-side  │       │  0G Compute       │         │ Local agent       │
+ │ value-net     │       │  TEE-attested     │         │ process (dev):    │
+ │ forward pass  │       │  coach LLM +      │         │ gnubg :8001       │
+ │ (per-agent NN)│       │  offline NN       │         │ coach  :8002      │
+ └───────────────┘       └───────────────────┘         └───────────────────┘
                                     │
-            ┌───────────────────────┼───────────────────────┐
-            │                       │                       │
-            ▼                       ▼                       ▼
-   ┌───────────────┐       ┌───────────────┐       ┌───────────────┐
-   │  Game Server  │       │  ENS resolver │       │  0G Storage   │
-   │  (FastAPI)    │       │  text records │       │  (read game   │
-   │  - gnubg      │       │  per player   │       │   records and │
-   │  - dice (v1)  │       │               │       │   styles)     │
-   │  - serializes │       └───────────────┘       └───────────────┘
-   │     games     │
-   └──────┬────────┘
-          │ on game-end
-          ▼
-   ┌─────────────────────────────────────┐
-   │  KeeperHub workflow                 │
-   │   1. recordMatch on MatchRegistry   │
-   │   2. update ENS text records        │
-   │   3. commit gameRecordHash on-chain │
-   │   4. emit audit JSON                │
-   └────┬────────────────┬───────────────┘
-        │                │
-        ▼                ▼
- ┌──────────────┐ ┌──────────────────────────────┐
- │   0G Chain   │ │       0G Storage             │
- │ AgentRegistry│ │  Log (per match): game record│
- │ MatchRegistry│ │  Log (per match): audit data │
- │ EloMath      │ │  KV (per player): style      │
- │ ENS subname  │ │  Blob (per agent): encrypted │
- │   registrar  │ │    gnubg weights             │
- └──────────────┘ └──────────────────────────────┘
+                                    │ KeeperHub workflow
+                                    ▼
+        ┌───────────────────────────────────────────────────┐
+        │  Per-turn:  drand round → dice → move → 0G Log    │
+        │  Per-game:  rules-engine validation → settle      │
+        │             → ENS text records → audit JSON       │
+        └───────────────┬───────────────────────────────────┘
+                        ▼
+ ┌──────────────────────────────────────────────────────────────────┐
+ │  Sepolia                          0G Storage                     │
+ │  MatchEscrow                      Log: per-match game records    │
+ │  MatchRegistry                    KV : per-player style profile  │
+ │  AgentRegistry (ERC-7857)         Blob: encrypted agent weights  │
+ │  PlayerSubnameRegistrar (ENS)           gnubg strategy RAG docs  │
+ └──────────────────────────────────────────────────────────────────┘
 ```
 
 **Key data flows:**
 
-- Player connects wallet → frontend resolves their `<name>.chaingammon.eth` (issues new subname if missing)
-- Player picks an agent → frontend reads agent iNFT data hashes → server fetches encrypted gnubg weights from 0G Storage, decrypts, runs inference
-- Each turn → server (or future VRF) rolls dice → records moves
-- Game over → server serializes full game record to 0G Storage Log → triggers KeeperHub workflow with the resulting hash
-- Workflow runs: `recordMatch` (with `gameRecordHash` field) → ENS text record updates (`elo`, `last_match_id`, `style_uri`, `archive_uri`) → audit JSON emitted
-- Server pulls audit data, appends to the match's 0G Storage record
-- Frontend match-details page reads game record + audit from 0G Storage and renders both
+- Player connects wallet → frontend resolves their `<name>.chaingammon.eth` on Sepolia (issues new subname if missing).
+- Player picks an agent → frontend reads agent iNFT data hashes → fetches encrypted weights from 0G Storage, decrypts, runs inference (browser by default; 0G Compute for offline play).
+- Each turn → KeeperHub pulls a drand round; dice = `keccak256(drand_round_digest, turn_index) mod 36` → active side runs a value-net forward pass → records move.
+- Game over → frontend serializes the full game record to 0G Storage Log → triggers KeeperHub workflow with the resulting hash.
+- Workflow runs: validate moves via WASM rules engine → `MatchRegistry.settleWithSessionKeys(...)` on Sepolia → ENS text records updated (`elo`, `last_match_id`, `style_uri`, `archive_uri`) → audit JSON mirrored to 0G Storage.
+- Frontend match-details page reads game record + audit from 0G Storage and renders both.
 
-The server is the trusted dice roller in v1 (commit-reveal is v2 roadmap). Game state is in-memory.
+The browser holds game state and signs the result with an in-browser session key authorised once per match by the wallet — no server-side game store, no operator key in the trust path.
 
 ## Sub-project Commands
 
@@ -85,7 +79,7 @@ Root-level workspace scripts (run from repo root):
 pnpm contracts:compile             # compile contracts
 pnpm contracts:test                # run Hardhat tests
 pnpm contracts:deploy              # deploy to 0G testnet (writes deployments/0g-testnet.json)
-pnpm contracts:verify              # verify deployed contracts on chainscan-galileo
+pnpm contracts:verify              # verify deployed contracts on the explorer
 pnpm contracts:deploy-and-verify   # both in one shot
 pnpm frontend:dev                  # Next.js dev server
 pnpm frontend:build      # production build
@@ -108,8 +102,11 @@ uv run uvicorn coach_service:app --port 8002
 # Start both at once (recommended)
 bash start.sh
 
-# Run all tests
+# Run all tests (includes sample_trainer + agent_profile + service tests)
 uv run pytest
+
+# Run the sample value-network trainer (TD(λ) self-play with TensorBoard)
+uv run python sample_trainer.py --matches 200 --launch-tensorboard
 
 # Run a single test file
 uv run pytest tests/test_gnubg_service.py -v

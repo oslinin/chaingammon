@@ -44,6 +44,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from agent_profile import AgentProfile, NullProfile, load_profile
+from coach_dialogue import (
+    ChatRequest,
+    ChatResponse,
+    DialogueMessage,
+    build_chat_prompt,
+    derive_preferences_delta,
+    now_iso,
+    update_preferences,
+)
 
 app = FastAPI(title="Chaingammon Coach Agent")
 
@@ -259,3 +268,208 @@ def get_hint(req: HintRequest) -> dict:
         req.dice, req.candidates, docs_context, profile, backend=req.backend
     )
     return {"hint": hint, "backend": backend}
+
+
+# ─── /chat endpoint ─────────────────────────────────────────────────────────
+#
+# Phase A landed the deterministic stub. Phase B (this commit) wires the
+# real LLM path: build_chat_prompt → 0G Compute (Qwen 2.5 7B) with flan-
+# t5 local fallback, mirroring `/hint`'s _generate_compute / _generate_
+# local / _generate selector. The stub stays callable so tests that
+# assert on deterministic output keep working — they pass
+# `backend="stub"` in the request.
+
+
+_CHAT_SYSTEM_PROMPT = (
+    "You are a backgammon coach embedded in a live match. The user "
+    "message contains the full position context, dialogue history "
+    "and a per-turn framing instruction; respect the framing and "
+    "produce ONLY the reply text the player will see. Keep replies "
+    "to 1-2 sentences unless the framing explicitly asks for more."
+)
+
+
+def _generate_chat_compute(prompt: str) -> str:
+    """0G Compute path for /chat — Qwen 2.5 7B Instruct via the Node bridge.
+
+    The full assembled prompt (`build_chat_prompt(req)`) is the user
+    message; per-kind framing lives inside the prompt so the system
+    prompt stays generic.
+    """
+    from coach_compute_client import chat
+    result = chat(
+        [{"role": "user", "content": prompt}],
+        system=_CHAT_SYSTEM_PROMPT,
+    )
+    return result.content.strip()
+
+
+def _generate_chat_local(prompt: str) -> str:
+    """Local fallback for /chat — flan-t5-base seq2seq on the same prompt.
+
+    flan-t5 is a single-prompt seq2seq model; concatenate the system
+    prompt and the user message into one input sequence. Mirrors the
+    existing `_generate_local` for /hint.
+    """
+    _load_local_model()
+    text = _CHAT_SYSTEM_PROMPT + "\n\n" + prompt
+    inputs = _local_tokenizer(
+        text, return_tensors="pt", max_length=1024, truncation=True
+    )
+    outputs = _local_model.generate(**inputs, max_new_tokens=160)
+    return _local_tokenizer.decode(
+        outputs[0], skip_special_tokens=True
+    ).strip()
+
+
+def _generate_chat(
+    prompt: str, backend: Optional[str] = None
+) -> tuple[str, str]:
+    """Run /chat inference with the requested backend (or the server default).
+
+    Selection rules mirror `_generate` for /hint:
+      - backend == "local"        → local flan-t5 only
+      - backend == "compute-only" → 0G Compute; raise on failure
+      - backend in ("compute", None) → 0G Compute, fall back to local on error
+    `backend == "stub"` is handled by `post_chat` directly and never
+    reaches this function.
+    """
+    chosen = (backend or _BACKEND).lower()
+    if chosen == "local":
+        return _generate_chat_local(prompt), "local"
+    try:
+        return _generate_chat_compute(prompt), "compute"
+    except Exception as e:
+        if chosen == "compute-only":
+            raise
+        import logging
+        logging.getLogger(__name__).warning(
+            "0G Compute /chat failed (%s); falling back to local flan-t5.", e
+        )
+        return _generate_chat_local(prompt), "local"
+
+
+def _stub_chat_reply(req: ChatRequest) -> str:
+    """Phase-A placeholder for the LLM call. Echoes the assembled
+    prompt context so the frontend can integrate against a known shape
+    while Phase B wires the actual LLM backend (`_generate_chat`).
+
+    The text returned here is intentionally bland — it's not what the
+    user will see in production, just a deterministic acknowledgement
+    that the request was understood."""
+    if req.kind == "open_turn":
+        if not req.candidates:
+            return "No legal moves on this roll — the turn passes."
+        top = req.candidates[0]
+        return (f"For the {req.dice[0]}-{req.dice[1]}, the top candidate "
+                f"is {top.move} (eq {top.equity:+.3f}). Want to talk "
+                f"through the alternatives?")
+    if req.kind == "human_reply":
+        last_human = next(
+            (m for m in reversed(req.dialogue) if m.role == "human"),
+            None,
+        )
+        if last_human is None:
+            return "Acknowledged — let me know which line you want to take."
+        return (f"You said: '{last_human.text}'. (LLM-driven reply lands "
+                f"in Phase B; this is the Phase-A stub.)")
+    if req.kind == "move_committed":
+        return f"Got it — recording {req.move_committed}."
+    if req.kind == "teammate_propose":
+        if not req.candidates:
+            return "No legal moves on this roll — I have nothing to propose."
+        top = req.candidates[0]
+        return (f"I propose {top.move}. Confidence: 0.70. The eq is "
+                f"{top.equity:+.3f} which is the strongest line on the "
+                f"board.")
+    if req.kind == "teammate_advise":
+        last_human = next(
+            (m for m in reversed(req.dialogue) if m.role == "human"),
+            None,
+        )
+        if last_human is None:
+            return ("Happy to elaborate — what specifically do you want me "
+                    "to address?")
+        return (f"On '{last_human.text}': (LLM-driven elaboration lands "
+                f"in Phase B; this is the Phase-A stub.)")
+    if req.kind == "captain_decide":
+        move = req.move_committed or "(no move recorded)"
+        if req.chosen_advisor_id:
+            return (f"Got it — captain committed {move}, following "
+                    f"{req.chosen_advisor_id}.")
+        return f"Got it — captain committed {move}."
+    return "(unknown chat kind)"
+
+
+@app.post("/chat")
+def post_chat(req: ChatRequest) -> ChatResponse:
+    """Turn-by-turn dialogue endpoint. See docs/coach-dialogue.md.
+
+    @notice Builds the prompt via `build_chat_prompt`, dispatches to
+            `_generate_chat` (0G Compute → flan-t5 local fallback)
+            or, when `backend == "stub"`, to the deterministic
+            `_stub_chat_reply` used by tests. Same backend-selection
+            shape as the existing `/hint` endpoint.
+
+    @dev    Pipeline:
+              1. build_chat_prompt(req) — pure function, deterministic.
+              2. dispatch to LLM (compute → local fallback) or stub.
+              3. Update per-session preferences from the human's last
+                 message (if any) and emit the delta in the response.
+            The pipeline lives entirely outside the LLM call so the
+            preference-update logic is testable without a model.
+    @return ChatResponse(message, backend, preferences_delta, latency_ms)
+    """
+    import time
+    started = time.monotonic()
+
+    # Resolve the agent's persona from 0G Storage (if a weights hash is
+    # supplied) so the LLM can ground its replies in this specific
+    # agent's tendencies. Mirrors /hint's load_profile lookup. Empty
+    # hash → no persona section in the prompt (NullProfile would still
+    # produce a string but we want the prompt to compact when the
+    # agent has no profile yet, matching the existing behaviour).
+    agent_persona = ""
+    if req.agent_weights_hash:
+        try:
+            agent_persona = load_profile(req.agent_weights_hash).summarize()
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(
+                "load_profile failed for /chat (%s); proceeding without persona.", e
+            )
+            agent_persona = ""
+
+    prompt = build_chat_prompt(req, agent_persona=agent_persona)
+
+    chosen = (req.backend or _BACKEND).lower()
+    if chosen == "stub":
+        reply_text = _stub_chat_reply(req)
+        backend_used = "stub"
+    else:
+        reply_text, backend_used = _generate_chat(prompt, req.backend)
+
+    # Per-session preference update: only the most recent human
+    # message contributes; agent messages don't move prefs (per
+    # update_preferences semantics).
+    new_prefs = dict(req.preferences)
+    last_human = next(
+        (m for m in reversed(req.dialogue) if m.role == "human"),
+        None,
+    )
+    if last_human is not None:
+        new_prefs = update_preferences(new_prefs, last_human)
+    delta = derive_preferences_delta(req.preferences, new_prefs)
+
+    elapsed_ms = int((time.monotonic() - started) * 1000)
+    return ChatResponse(
+        message=DialogueMessage(
+            role="agent",
+            text=reply_text,
+            turn_index=req.turn_index,
+            timestamp=now_iso(),
+        ),
+        backend=backend_used,
+        preferences_delta=delta,
+        latency_ms=elapsed_ms,
+    )

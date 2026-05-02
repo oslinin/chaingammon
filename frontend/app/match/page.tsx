@@ -40,6 +40,7 @@
 // agent/gnubg_service.py or the agent test suite for examples.
 "use client";
 
+import { useQuery } from "@tanstack/react-query";
 import { Suspense, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
@@ -53,6 +54,7 @@ import { DiceRoll } from "../DiceRoll";
 import { rollDice } from "../dice";
 import { recordExpense } from "../expenses";
 import { useActiveChain } from "../chains";
+import { useComputeBackends } from "../ComputeBackendsContext";
 import { MatchRegistryABI, useChainContracts } from "../contracts";
 
 // ── Types matching agent/gnubg_state.py:MatchStateDict ────────────────────
@@ -226,9 +228,32 @@ export default function MatchPage() {
   );
 }
 
+// Default candidate pool for the team-mode teammate-recommendation chip.
+// Read from `?candidates=2,3,4` if present; otherwise fall back to a small
+// demo list. The requester (agentId) is filtered out before the call.
+const DEFAULT_TEAMMATE_CANDIDATES = [1, 2, 3, 4, 5];
+
+interface TeammateRec {
+  best_teammate_id: number;
+  equities: Record<string, number>;
+  spread: number;
+  requester_kind: "model" | "overlay" | "null";
+  candidate_kinds: Record<string, "model" | "overlay" | "null">;
+}
+
 function MatchInner() {
   const params = useSearchParams();
   const agentId = Number(params.get("agentId") ?? "1");
+
+  // Read team-mode + candidates from the URL. `?teamMode=1` enables the
+  // teammate-recommendation chip; `?candidates=2,3,4` overrides the
+  // default candidate pool. Both are optional — without `?teamMode=1`
+  // the chip never renders so existing match flows are unaffected.
+  const teamMode = params.get("teamMode") === "1";
+  const candidatesParam = params.get("candidates");
+  const teammateCandidates = candidatesParam
+    ? candidatesParam.split(",").map((s) => Number(s.trim())).filter((n) => Number.isFinite(n))
+    : DEFAULT_TEAMMATE_CANDIDATES;
 
   // Phase 28: persist the most-recently-played agentId so the sidebar can
   // link back to this agent on subsequent visits.
@@ -236,13 +261,53 @@ function MatchInner() {
     window.localStorage.setItem("lastAgentId", String(agentId));
   }, [agentId]);
 
+  // Career-mode teammate recommendation. Fires once on mount when team
+  // mode is on; result feeds the read-only chip in the main column.
+  // Failures are silent — the chip is a hint, not the page's reason
+  // for existing.
+  const [teammateRec, setTeammateRec] = useState<TeammateRec | null>(null);
+  useEffect(() => {
+    if (!teamMode) return;
+    const filtered = teammateCandidates.filter((c) => c !== agentId);
+    if (filtered.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`${COACH}/agents/${agentId}/recommend-teammate`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ candidates: filtered }),
+        });
+        if (!res.ok) return;
+        const data = (await res.json()) as TeammateRec;
+        if (!cancelled) setTeammateRec(data);
+      } catch {
+        // Endpoint unreachable — keep teammateRec null so the chip
+        // renders nothing.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // teamMode + agentId change → page is effectively re-loaded; the
+    // candidate list is derived once per mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [teamMode, agentId]);
+
   // Phase 36: write a stable UUID for this match session so the sidebar's
   // 0G Storage log / ENS / KeeperHub entries deep-link to the current match.
   // A new UUID is generated on each page load (= each new game session).
   // The archive URI (set after keeper settlement) is stored separately under
   // "currentMatchArchiveUri" and keyed by this UUID.
   useEffect(() => {
-    const matchSessionId = crypto.randomUUID();
+    // crypto.randomUUID exists only in secure contexts (HTTPS / localhost),
+    // so it's undefined when the dev server is reached over plain-HTTP via
+    // a LAN IP (e.g. 192.168.x.x:3000). Fall back to a non-cryptographic
+    // unique-enough id — this only keys local match-session state.
+    const matchSessionId =
+      typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+        ? crypto.randomUUID()
+        : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
     window.localStorage.setItem("currentMatchId", matchSessionId);
     // Clear any archive URI from a previous match so the log page correctly
     // shows "in progress" until this match is settled.
@@ -279,16 +344,22 @@ function MatchInner() {
   // User's coach-backend pick. Default to the free local path so no 0G tokens
   // are charged without the user explicitly opting in. Persisted to
   // localStorage so a user who switches to "compute" stays on it across
-  // page loads. SSR-safe: `useEffect` reads localStorage after mount; before
-  // then the server-rendered HTML matches the initial client render ("local").
-  const [coachBackend, setCoachBackend] = useState<CoachBackend>("local");
-  useEffect(() => {
-    const saved = window.localStorage.getItem("coachBackend");
-    if (saved === "local" || saved === "compute") setCoachBackend(saved);
-  }, []);
-  useEffect(() => {
-    window.localStorage.setItem("coachBackend", coachBackend);
-  }, [coachBackend]);
+  // page loads. SSR-safe: ComputeBackendsContext defers localStorage
+  // reads behind a `hydrated` flag so the server-rendered HTML matches
+  // the initial client render ("local").
+  //
+  // Phase I.4: derive coachBackend from the global ComputeBackendsContext
+  // (the pill in layout.tsx) so flipping Coach in the pill updates this
+  // page's coach calls — and vice versa via the per-match buttons below.
+  // The context value is "local" | "0g"; the coach API's wire format is
+  // "local" | "compute"; we adapt at the boundary.
+  const { backends: computeBackends, setBackend: setComputeBackend } =
+    useComputeBackends();
+  const coachBackend: CoachBackend =
+    computeBackends.coach === "0g" ? "compute" : "local";
+  const setCoachBackend = (value: CoachBackend) => {
+    setComputeBackend("coach", value === "compute" ? "0g" : "local");
+  };
 
   // Always carry the latest pick into fire-and-forget callbacks without
   // re-creating closures (which would force every move handler to depend
@@ -888,6 +959,33 @@ function MatchInner() {
 
       {/* Main */}
       <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-6 px-3 py-6 sm:px-8 sm:py-8">
+        {/* Phase F: inference-backend chip. Mirrors the global Compute
+            pill so the user can see at a glance which backend the
+            agent's per-move equity calls run on. Currently decorative
+            — /agent-move uses gnubg, not the per-agent NN. Phase G
+            wires the flag through to og_compute_eval_client.evaluate. */}
+        <InferenceChip />
+
+        {/* Career-mode teammate-preference chip. Renders only when the
+            page is loaded with ?teamMode=1 AND the endpoint returned
+            a recommendation. Read-only — clicking does nothing in this
+            phase; swap-to-teammate is a follow-up. */}
+        {teamMode && teammateRec && (
+          <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm text-emerald-900 dark:border-emerald-700/40 dark:bg-emerald-900/10 dark:text-emerald-200">
+            <span className="mr-2" aria-hidden>🤝</span>
+            <span className="font-medium">
+              Agent prefers teammate #{teammateRec.best_teammate_id}
+            </span>
+            <span className="ml-2 font-mono text-xs text-emerald-700 dark:text-emerald-400">
+              (+{teammateRec.spread.toFixed(3)} eq · vs {Object.keys(teammateRec.equities).length - 1} other{Object.keys(teammateRec.equities).length === 2 ? "" : "s"})
+            </span>
+            {teammateRec.requester_kind === "overlay" && (
+              <span className="ml-2 italic text-xs text-emerald-700/80 dark:text-emerald-400/80">
+                (based on style only — agent not yet trained)
+              </span>
+            )}
+          </div>
+        )}
         {game.game_over && (
           <div
             className={`rounded-lg border p-4 ${
@@ -1144,6 +1242,86 @@ function MatchInner() {
           </div>
         )}
       </main>
+    </div>
+  );
+}
+
+// Phase I.3: chip mirroring the global Compute pill's inference
+// backend. When 0G is on, fetches a one-shot probe from
+// /training/estimate so the chip can render real provider state +
+// per-inference cost when a backgammon-net provider is registered.
+// When local, the chip is a static label.
+//
+// The match flow today goes through gnubg_service (port 8001) which
+// doesn't know about 0G; per-move billing through /agent-move is
+// part of Phase J's per-agent-NN cutover. For now the chip surfaces
+// the standing 0G availability + cost so judges can see the matrix
+// is wired, even though each in-flight move doesn't tick the meter.
+function InferenceChip() {
+  const { backends, hydrated } = useComputeBackends();
+  const is0G = hydrated && backends.inference === "0g";
+
+  // One-shot probe via /training/estimate (epochs=1, agent_ids=1,2 ->
+  // per_inference_og + available). Cheap; backed by React Query so
+  // re-renders don't re-fetch.
+  const probe = useQuery({
+    enabled: is0G,
+    queryKey: ["inference-probe"],
+    staleTime: 60_000,
+    queryFn: async () => {
+      const url = new URL(`${COACH}/training/estimate`);
+      url.searchParams.set("epochs", "1");
+      url.searchParams.set("agent_ids", "1,2");
+      url.searchParams.set("use_0g_inference", "true");
+      const r = await fetch(url.toString());
+      if (!r.ok) throw new Error(`${r.status}`);
+      return (await r.json()) as {
+        available: boolean;
+        per_inference_og: number;
+        gas_og: number;
+        note?: string;
+      };
+    },
+  });
+
+  if (!hydrated) return null;
+
+  let label: string;
+  let title: string;
+  let className: string;
+  if (!is0G) {
+    label = "Inference: local";
+    title = "Agent inference runs locally";
+    className =
+      "border-zinc-300 text-zinc-600 dark:border-zinc-700 dark:text-zinc-400";
+  } else if (probe.isLoading) {
+    label = "Inference: 0G (probing…)";
+    title = "Checking the 0G eval bridge for a backgammon-net provider";
+    className =
+      "border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-300";
+  } else if (probe.error || !probe.data?.available) {
+    const note = probe.data?.note ?? "provider unavailable";
+    label = "Inference: 0G · provider unavailable";
+    title = `0G eval bridge: ${note}. Local inference will be used during play.`;
+    className =
+      "border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-300";
+  } else {
+    const cost = probe.data.per_inference_og.toFixed(6);
+    label = `Inference: 0G · ~${cost} OG/move`;
+    title = `0G compute provider live; per-move cost ≈ ${cost} OG`;
+    className =
+      "border-emerald-300 bg-emerald-50 text-emerald-800 dark:border-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300";
+  }
+
+  return (
+    <div
+      className={[
+        "self-start rounded-md border px-2 py-1 text-xs font-mono",
+        className,
+      ].join(" ")}
+      title={title}
+    >
+      {label}
     </div>
   );
 }
