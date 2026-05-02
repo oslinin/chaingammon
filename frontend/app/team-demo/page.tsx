@@ -18,7 +18,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
-const SERVER = process.env.NEXT_PUBLIC_COACH_URL ?? "http://localhost:8002";
+// /games/* lives on the FastAPI backend (server/app/main.py, port 8000),
+// not the coach service (port 8002, which only serves /hint and /chat).
+const SERVER = process.env.NEXT_PUBLIC_SERVER_URL ?? "http://localhost:8000";
 
 interface AdvisorSignal {
   teammate_id: string;
