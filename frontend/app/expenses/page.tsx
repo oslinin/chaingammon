@@ -18,6 +18,23 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { getExpenses, type ExpenseEntry } from "../expenses";
+import { CHAIN_REGISTRY } from "../chains";
+
+/** Returns an Etherscan/block-explorer URL for a transaction, or null if the chain has no explorer. */
+function explorerTxUrl(txHash: string, chainId: number): string | null {
+  const explorerUrl =
+    CHAIN_REGISTRY[chainId]?.chain.blockExplorers?.default?.url;
+  return explorerUrl ? `${explorerUrl}/tx/${txHash}` : null;
+}
+
+/**
+ * Returns the ENS app URL for a name.
+ * ENS on Sepolia (11155111) requires ?chain=sepolia; other chains fall back to mainnet resolution.
+ */
+function ensAppUrl(ensName: string, chainId: number): string {
+  const chain = chainId === 11155111 ? "sepolia" : "mainnet";
+  return `https://app.ens.domains/${ensName}?chain=${chain}`;
+}
 
 const TYPE_LABELS: Record<ExpenseEntry["type"], string> = {
   coach_hint: "Coach hint",
@@ -115,7 +132,34 @@ export default function ExpensesPage() {
                       <TypeBadge type={entry.type} />
                     </td>
                     <td className="px-4 py-3 text-zinc-700 dark:text-zinc-300">
-                      {entry.description}
+                      <span>{entry.description}</span>
+                      {(entry.txHash && entry.chainId) || entry.ensName ? (
+                        <span className="mt-1 flex flex-wrap gap-2">
+                          {entry.txHash && entry.chainId && (() => {
+                            const url = explorerTxUrl(entry.txHash, entry.chainId);
+                            return url ? (
+                              <a
+                                href={url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-0.5 text-xs text-blue-500 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-200"
+                              >
+                                ↗ Explorer
+                              </a>
+                            ) : null;
+                          })()}
+                          {entry.ensName && entry.chainId != null && (
+                            <a
+                              href={ensAppUrl(entry.ensName, entry.chainId)}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-0.5 text-xs text-teal-500 hover:text-teal-700 dark:text-teal-400 dark:hover:text-teal-200"
+                            >
+                              ↗ ENS
+                            </a>
+                          )}
+                        </span>
+                      ) : null}
                     </td>
                   </tr>
                 ))}

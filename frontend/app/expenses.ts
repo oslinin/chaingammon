@@ -21,6 +21,12 @@ export interface ExpenseEntry {
   type: "coach_hint" | "game_settlement" | "ens_subname" | "agent_mint";
   /** Human-readable summary shown in the Expenses ledger. */
   description: string;
+  /** Full transaction hash (hex) when the event produced an on-chain tx. Used to build block-explorer links. */
+  txHash?: string;
+  /** EIP-155 chain ID the transaction was submitted on. Paired with txHash to select the right explorer URL. */
+  chainId?: number;
+  /** Fully-qualified ENS name (e.g. "alice.chaingammon.eth") for ens_subname entries. Used to build ENS app links. */
+  ensName?: string;
 }
 
 const STORAGE_KEY = "chaingammon_expenses";

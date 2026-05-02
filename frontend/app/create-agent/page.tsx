@@ -7,6 +7,7 @@ import { useRouter } from "next/navigation";
 import { useAccount, useWriteContract, useWaitForTransactionReceipt } from "wagmi";
 
 import { useChainContracts } from "../contracts";
+import { useActiveChainId } from "../chains";
 import { recordExpense } from "../expenses";
 
 // Inline ABI fragment — same as the one that was in Sidebar.tsx.
@@ -28,6 +29,7 @@ export default function CreateAgentPage() {
   const router = useRouter();
   const { address } = useAccount();
   const { agentRegistry } = useChainContracts();
+  const chainId = useActiveChainId();
 
   const [agentLabel, setAgentLabel] = useState("");
   const [agentTier, setAgentTier] = useState<number>(0);
@@ -50,10 +52,12 @@ export default function CreateAgentPage() {
       recordExpense({
         type: "agent_mint",
         description: `Agent minted: "${agentLabel}" (Tier ${agentTier})`,
+        txHash,
+        chainId,
       });
       router.push("/");
     }
-  }, [isSuccess, agentLabel, agentTier, router]);
+  }, [isSuccess, agentLabel, agentTier, router, txHash, chainId]);
 
   const creating = signing || confirming;
 

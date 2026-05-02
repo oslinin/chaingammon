@@ -86,6 +86,7 @@ export function ClaimForm({ address: _address }: { address: `0x${string}` }) {
   const submittedLabelRef = useRef<string>("");
 
   const { playerSubnameRegistrar } = useChainContracts();
+  const chainId = useActiveChainId();
 
   const {
     writeContract,
@@ -103,13 +104,17 @@ export function ClaimForm({ address: _address }: { address: `0x${string}` }) {
   // re-runs its subname lookup with the newly registered name.
   useEffect(() => {
     if (isSuccess) {
+      const fullName = `${submittedLabelRef.current}.chaingammon.eth`;
       recordExpense({
         type: "ens_subname",
-        description: `ENS subname registered: ${submittedLabelRef.current}.chaingammon.eth`,
+        description: `ENS subname registered: ${fullName}`,
+        txHash,
+        chainId,
+        ensName: fullName,
       });
       window.location.reload();
     }
-  }, [isSuccess]);
+  }, [isSuccess, txHash, chainId]);
 
   // Show fallback suggestion when the name is already taken.
   useEffect(() => {
