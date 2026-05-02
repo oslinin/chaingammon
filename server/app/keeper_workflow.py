@@ -67,6 +67,7 @@ STEP_IDS: tuple[str, ...] = (
     "escrow_deposit",
     "vrf_rolls",
     "og_storage_fetch",
+    "rules_check",         # Phase 68: pure-Python backgammon rules validation
     "gnubg_replay",
     "agent_move_replay",   # Phase 38: deterministic move-selection audit
     "settlement_signed",
@@ -79,6 +80,7 @@ STEP_NAMES: dict[str, str] = {
     "escrow_deposit":     "Escrow deposit confirmation",
     "vrf_rolls":          "VRF rolls (drand)",
     "og_storage_fetch":   "Game-record fetch from 0G Storage",
+    "rules_check":        "Backgammon rules validation (pure-Python)",
     "gnubg_replay":       "gnubg replay validation",
     "agent_move_replay":  "Agent move-selection replay (deterministic NN argmax)",
     "settlement_signed":  "Settlement payload signed",
@@ -301,6 +303,66 @@ def step_og_storage_fetch(ctx: WorkflowContext, step: WorkflowStep) -> None:
     step.detail = (
         f"GameRecord fetched ({len(blob)} bytes); {len(record.get('moves', []))} moves "
         f"+ final_position_id={ctx.final_position_id[:12] if ctx.final_position_id else 'unknown'}…"
+    )
+
+
+def step_rules_check(ctx: WorkflowContext, step: WorkflowStep) -> None:
+    """Validate every recorded move against the pure-Python backgammon rules engine.
+
+    Walks the game record from the canonical opening position, checks each
+    move with `rules_engine.is_legal`, then advances the board with
+    `rules_engine.apply_move`. A single illegal move fails the step and
+    halts the workflow so the match cannot settle.
+
+    This check runs independently of gnubg — it validates rule compliance
+    using the self-contained Python rules engine (agent/rules_engine.py).
+    The gnubg_replay step that follows verifies positional accuracy on top.
+    Auto-played moves (recorded as `(auto-played)`) are skipped; moves
+    without dice are rejected as malformed.
+    """
+    if not ctx.game_record:
+        raise RuntimeError("game_record not loaded (og_storage_fetch must succeed first)")
+
+    import sys
+    from pathlib import Path as _P
+
+    _agent_dir = _P(__file__).resolve().parents[2] / "agent"
+    if str(_agent_dir) not in sys.path:
+        sys.path.insert(0, str(_agent_dir))
+
+    from rules_engine import OPENING_BOARD, apply_move, is_legal  # noqa: E402
+
+    board = OPENING_BOARD
+    moves = ctx.game_record.get("moves", [])
+    validated = 0
+    skipped = 0
+
+    for i, move_entry in enumerate(moves):
+        move_str = move_entry.get("move", "")
+        if not move_str or move_str == "(auto-played)":
+            skipped += 1
+            continue
+
+        dice_list = move_entry.get("dice", [])
+        if len(dice_list) < 2:
+            raise RuntimeError(
+                f"move #{i} has no dice field: {move_entry!r}"
+            )
+        dice = (int(dice_list[0]), int(dice_list[1]))
+        side = int(move_entry.get("turn", 0))
+
+        if not is_legal(board, dice, side, move_str):
+            raise RuntimeError(
+                f"move #{i} violates backgammon rules — "
+                f"side {side}, dice {dice}, move {move_str!r}"
+            )
+
+        board = apply_move(board, side, move_str)
+        validated += 1
+
+    step.detail = (
+        f"Rules check passed: {validated} move(s) validated, "
+        f"{skipped} auto-played skip(s)."
     )
 
 
@@ -758,6 +820,7 @@ _STEP_RUNNERS: dict[str, Callable[..., None]] = {
     "escrow_deposit":    step_escrow_deposit,
     "vrf_rolls":         step_vrf_rolls,
     "og_storage_fetch":  step_og_storage_fetch,
+    "rules_check":       step_rules_check,
     "gnubg_replay":      step_gnubg_replay,
     "agent_move_replay": step_agent_move_replay,
     "settlement_signed": step_settlement_signed,
