@@ -1,21 +1,15 @@
 // Phase 28: global sidebar navigation. Phase 35: hidden on mobile (md:flex).
-// Phase 36: adds three settlement-visualization entries below "Expenses".
 //
 // Navigation entries:
+//   0. "Home" — lobby and agent list.
 //   1. "Play with agent" — links to /match with the most recently played
-//      agentId (read from localStorage, set by the match page on mount).
-//      Falls back to agentId=1 when no prior game exists.
-//   2. "Create new agent" — links to /create-agent, a dedicated page with
-//      the mint form (AgentRegistry.mintAgent).
-//   3. "Expenses" (Phase 30) — links to /expenses, the 0G token spending
-//      ledger. Shows coach-hint and game-settlement charges.
-//   4. "0G Storage log" (Phase 36) — links to /log/{currentMatchId}, the live
-//      match record on 0G Storage. currentMatchId is written to localStorage
-//      by the match page on game start. Falls back to /log/no-match.
-//   5. "ENS updates" (Phase 36) — links to /ens/{currentMatchId}, showing
-//      both players' ENS text records before/after keeper settlement.
-//   6. "KeeperHub steps" (Phase 36) — links to /keeper/{currentMatchId}, the
-//      KeeperHub workflow step view (escrow, VRF, replay, settlement, ENS).
+//      agentId (read from localStorage). Falls back to agentId=1.
+//   2. "Create new agent" — links to /create-agent (AgentRegistry.mintAgent).
+//   3. "Transactions" — links to /transactions, the gas/KeeperHub/0G ledger.
+//      Short summaries of all protocol events (0G storage, ENS, KeeperHub,
+//      agent ops) are recorded here.
+//   4. "Training" — round-robin self-play training.
+//   5. "Play with team" — team-mode advisor demo (per-turn advisor signals).
 //
 // The component is SSR-safe: localStorage is read inside useEffect after
 // hydration so the server-rendered HTML never diverges from the initial
@@ -29,15 +23,12 @@ export function Sidebar() {
   // Defer localStorage access until after hydration to avoid SSR mismatch.
   const [mounted, setMounted] = useState(false);
   const [lastAgentId, setLastAgentId] = useState<number | null>(null);
-  const [currentMatchId, setCurrentMatchId] = useState<string | null>(null);
 
-  // Read last active agentId and current match ID from localStorage after hydration.
+  // Read last active agentId from localStorage after hydration.
   useEffect(() => {
     setMounted(true);
     const stored = window.localStorage.getItem("lastAgentId");
     if (stored) setLastAgentId(Number(stored));
-    const matchId = window.localStorage.getItem("currentMatchId");
-    if (matchId) setCurrentMatchId(matchId);
   }, []);
 
   // Before hydration, render only the structural shell so the server HTML
@@ -137,56 +128,12 @@ export function Sidebar() {
           className="flex flex-col gap-0.5 rounded-md px-3 py-3 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800"
         >
           <span className="font-semibold text-zinc-900 dark:text-zinc-50">
-            Team demo
+            Play with team
           </span>
           <span className="text-xs text-zinc-500 dark:text-zinc-400">
             Per-turn advisor signals
           </span>
         </Link>
-
-        {/* Entry 4: 0G Storage log — live match record on 0G Storage */}
-        <Link
-          href={mounted && currentMatchId ? `/log/${currentMatchId}` : "/log/no-match"}
-          data-testid="sidebar-log"
-          className="flex flex-col gap-0.5 rounded-md px-3 py-3 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800"
-        >
-          <span className="font-semibold text-zinc-900 dark:text-zinc-50">
-            0G Storage log
-          </span>
-          <span className="text-xs text-zinc-500 dark:text-zinc-400">
-            Live match record
-          </span>
-        </Link>
-
-        {/* Entry 5: ENS text records before/after keeper settlement */}
-        <Link
-          href={mounted && currentMatchId ? `/ens/${currentMatchId}` : "/ens/no-match"}
-          data-testid="sidebar-ens"
-          className="flex flex-col gap-0.5 rounded-md px-3 py-3 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800"
-        >
-          <span className="font-semibold text-zinc-900 dark:text-zinc-50">
-            ENS updates
-          </span>
-          <span className="text-xs text-zinc-500 dark:text-zinc-400">
-            Reputation writes
-          </span>
-        </Link>
-
-        {/* Entry 6: KeeperHub workflow step view — escrow, VRF, replay, settlement */}
-        <Link
-          href={mounted && currentMatchId ? `/keeper/${currentMatchId}` : "/keeper/no-match"}
-          data-testid="sidebar-keeper"
-          className="flex flex-col gap-0.5 rounded-md px-3 py-3 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800"
-        >
-          <span className="font-semibold text-zinc-900 dark:text-zinc-50">
-            KeeperHub steps
-          </span>
-          <span className="text-xs text-zinc-500 dark:text-zinc-400">
-            Workflow + escrow
-          </span>
-        </Link>
-
-
       </nav>
     </aside>
   );

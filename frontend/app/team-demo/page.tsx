@@ -103,13 +103,22 @@ export default function TeamDemoPage() {
           Team-mode advisor demo
         </h1>
         <p className="text-sm text-zinc-600 dark:text-zinc-400">
-          Click <em>Create team game</em> to spawn a 2v1 game (Team A:
+          Click <em>Play with team</em> to spawn a 2v1 game (Team A:
           agents 1+2 alternating; Team B: agent 3). Click <em>Play next move</em>{" "}
           to advance one turn — each move's non-captain teammates publish an
           AdvisorSignal, archived to MoveEntry.advisor_signals and the on-chain
           commitment.
         </p>
       </header>
+
+      {error && (
+        <div className="rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-700 dark:border-red-700 dark:bg-red-900/20 dark:text-red-300">
+          <strong>Error:</strong> {error}
+          <p className="mt-1 text-xs text-red-600 dark:text-red-400">
+            Make sure the backend server is running at {SERVER}.
+          </p>
+        </div>
+      )}
 
       <div className="flex gap-3">
         <button
@@ -118,7 +127,7 @@ export default function TeamDemoPage() {
           disabled={createGame.isPending}
           className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-40"
         >
-          {createGame.isPending ? "Creating…" : "Create team game"}
+          {createGame.isPending ? "Creating…" : "Play with team"}
         </button>
         <button
           type="button"
@@ -134,12 +143,6 @@ export default function TeamDemoPage() {
           </span>
         )}
       </div>
-
-      {error && (
-        <div className="rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-700 dark:border-red-700 dark:bg-red-900/20 dark:text-red-300">
-          {error}
-        </div>
-      )}
 
       {snapshot.data && (
         <SnapshotPanel snapshot={snapshot.data} />
