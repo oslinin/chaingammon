@@ -21,7 +21,8 @@ Status JSONL events (one event per line):
     {"event":"match",         "epoch":i, "agent_a":a, "agent_b":b,
                               "winner":a|b, "plies":n, "ts":...}
     {"event":"epoch_end",     "epoch":i, "ts":...}
-    {"event":"agent_saved",   "agent_id":a, "path":..., "root_hash":..., "ts":...}
+    {"event":"agent_saved",      "agent_id":a, "path":..., "root_hash":..., "ts":...}
+    {"event":"agent_save_error", "agent_id":a, "detail":..., "ts":...}
     {"event":"done"|"aborted","ts":...}
 
 Pairing is `itertools.combinations(agent_ids, 2)` — each unordered pair
@@ -385,17 +386,27 @@ def run_round_robin(
         # for the on-chain match_count.
         matches_per_agent = max(1, epochs * (n - 1) // 2)
         for aid, state in agents.items():
-            local_path, root_hash = save_and_upload_checkpoint(
-                state,
-                checkpoint_dir=Path(checkpoint_dir),
-                upload=upload,
-                encrypt=encrypt,
-                matches_played=matches_per_agent,
-            )
-            _emit(
-                status_fh, "agent_saved",
-                agent_id=aid, path=str(local_path), root_hash=root_hash,
-            )
+            try:
+                local_path, root_hash = save_and_upload_checkpoint(
+                    state,
+                    checkpoint_dir=Path(checkpoint_dir),
+                    upload=upload,
+                    encrypt=encrypt,
+                    matches_played=matches_per_agent,
+                )
+                _emit(
+                    status_fh, "agent_saved",
+                    agent_id=aid, path=str(local_path), root_hash=root_hash,
+                )
+            except Exception as exc:
+                # Upload failure (e.g. missing OG_STORAGE_* env vars or
+                # network timeout) must not abort the run — the local
+                # checkpoint may still have been written. Surface the
+                # error in the status JSONL so the frontend can render it.
+                _emit(
+                    status_fh, "agent_save_error",
+                    agent_id=aid, detail=str(exc),
+                )
 
     return agents
 

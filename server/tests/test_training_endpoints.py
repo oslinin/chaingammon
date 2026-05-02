@@ -243,6 +243,50 @@ def test_start_422_too_few_agents(monkeypatch):
     assert r.status_code == 422
 
 
+def test_start_upload_to_0g_passes_checkpoint_flags(monkeypatch):
+    """When upload_to_0g=True is requested, the trainer subprocess
+    receives --checkpoint-dir and --upload-to-0g. The response also
+    surfaces upload_to_0g=True."""
+    _install_fake_popen(monkeypatch)
+    r = client.post("/training/start", json={
+        "epochs": 1, "agent_ids": [1, 2], "upload_to_0g": True,
+    })
+    assert r.status_code == 200, r.text
+    assert r.json()["upload_to_0g"] is True
+    trainer = next(i for i in _FakePopen.instances if not i.is_tensorboard)
+    assert "--checkpoint-dir" in trainer.cmd
+    assert "--upload-to-0g" in trainer.cmd
+
+
+def test_start_use_0g_inference_auto_derives_upload(monkeypatch):
+    """When use_0g_inference=True is set (but upload_to_0g not explicitly
+    sent), the endpoint auto-derives upload_to_0g=True so trained weights
+    are persisted to 0G after the run."""
+    _install_fake_popen(monkeypatch)
+    r = client.post("/training/start", json={
+        "epochs": 1, "agent_ids": [1, 2], "use_0g_inference": True,
+    })
+    assert r.status_code == 200, r.text
+    assert r.json()["upload_to_0g"] is True
+    trainer = next(i for i in _FakePopen.instances if not i.is_tensorboard)
+    assert "--checkpoint-dir" in trainer.cmd
+    assert "--upload-to-0g" in trainer.cmd
+
+
+def test_start_local_only_no_checkpoint_flags(monkeypatch):
+    """When all backends are local and upload_to_0g is False (the default),
+    --checkpoint-dir and --upload-to-0g are NOT passed to the trainer."""
+    _install_fake_popen(monkeypatch)
+    r = client.post("/training/start", json={
+        "epochs": 1, "agent_ids": [1, 2],
+        "use_0g_inference": False, "use_0g_coaching": False,
+    })
+    assert r.status_code == 200, r.text
+    assert r.json()["upload_to_0g"] is False
+    trainer = next(i for i in _FakePopen.instances if not i.is_tensorboard)
+    assert "--upload-to-0g" not in trainer.cmd
+
+
 # ─── /training/status ───────────────────────────────────────────────────────
 
 
@@ -288,6 +332,50 @@ def test_status_done_event_marks_ended(monkeypatch):
     body = r.json()
     assert body["running"] is False
     assert body["ended"] == "done"
+
+
+def test_status_agent_saved_surfaced_in_checkpoints(monkeypatch):
+    """agent_saved events emitted by the trainer appear in the
+    checkpoints list with agent_id, path, and root_hash."""
+    _install_fake_popen(monkeypatch)
+    client.post("/training/start", json={"epochs": 1, "agent_ids": [1, 2]})
+    fake = next(i for i in reversed(_FakePopen.instances) if not i.is_tensorboard)
+    fake.emit_match(epoch=0, agent_a=1, agent_b=2, winner=1)
+    fake._emit("agent_saved", agent_id=1, path="/tmp/ckpt/agent-1.pt",
+               root_hash="0x" + "aa" * 32)
+    fake._emit("agent_saved", agent_id=2, path="/tmp/ckpt/agent-2.pt",
+               root_hash="0x" + "bb" * 32)
+    fake.emit_done()
+
+    r = client.get("/training/status")
+    body = r.json()
+    ckpts = body["checkpoints"]
+    assert len(ckpts) == 2
+    assert ckpts[0]["agent_id"] == 1
+    assert ckpts[0]["root_hash"] == "0x" + "aa" * 32
+    assert ckpts[0]["error"] is None
+    assert ckpts[1]["agent_id"] == 2
+    assert ckpts[1]["root_hash"] == "0x" + "bb" * 32
+
+
+def test_status_agent_save_error_surfaces_in_checkpoints(monkeypatch):
+    """agent_save_error events (upload failed, e.g. missing env vars)
+    appear in the checkpoints list with the error string."""
+    _install_fake_popen(monkeypatch)
+    client.post("/training/start", json={"epochs": 1, "agent_ids": [1, 2]})
+    fake = next(i for i in reversed(_FakePopen.instances) if not i.is_tensorboard)
+    fake.emit_match(epoch=0, agent_a=1, agent_b=2, winner=1)
+    fake._emit("agent_save_error", agent_id=1,
+               detail="Missing env vars for 0G Storage upload: ['OG_STORAGE_RPC']")
+    fake.emit_done()
+
+    r = client.get("/training/status")
+    body = r.json()
+    ckpts = body["checkpoints"]
+    assert len(ckpts) == 1
+    assert ckpts[0]["agent_id"] == 1
+    assert ckpts[0]["root_hash"] is None
+    assert "OG_STORAGE_RPC" in ckpts[0]["error"]
 
 
 def test_status_dead_process_no_done_marks_aborted(monkeypatch):
