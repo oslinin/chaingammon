@@ -606,10 +606,17 @@ Fund the deployer wallet with Sepolia ETH from any public faucet.
 # 1. deploy + verify settlement contracts on Sepolia (one shot)
 ./scripts/bootstrap-network.sh
 
-# 2. start the local agent processes
+# 2. start the local agent processes (terminal A)
 cd agent && ./start.sh           # gnubg :8001, coach :8002
 
-# 3. start the frontend (separate terminal, from repo root)
+# 3. start the FastAPI backend (terminal B, from repo root)
+#    Serves /agents, /agents/{id}/profile, /training/*, /games/*, etc.
+#    The frontend reads NEXT_PUBLIC_SERVER_URL (defaults to :8000) for these.
+#    --host 0.0.0.0 so a browser on a LAN address (not just localhost) can
+#    reach it — matches what agent/start.sh does for gnubg + coach.
+cd server && uv run uvicorn app.main:app --host 0.0.0.0 --port 8000
+
+# 4. start the frontend (terminal C, from repo root)
 pnpm frontend:dev                # Next.js on :3000
 ```
 

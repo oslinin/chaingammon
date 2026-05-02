@@ -193,11 +193,9 @@ class ModelProfile(AgentProfile):
                         # was constructed without a checkpoint blob.
 
     def summarize(self) -> str:
-        match_count = self._metadata.get("match_count", "?")
-        return (
-            f"This agent is a trained value network "
-            f"(checkpoint after {match_count} self-play matches)."
-        )
+        # Round-robin training pairs distinct agents (agent_A vs agent_B),
+        # not "self vs self" — keep the wording neutral.
+        return "This agent is a trained value network."
 
     def metrics(self) -> Mapping[str, object]:
         return {"kind": "model", **self._metadata}
@@ -234,7 +232,7 @@ class ModelProfile(AgentProfile):
             raise AgentProfileError(
                 f"checkpoint must deserialize to dict, got {type(state).__name__}"
             )
-        for required in ("model", "extras_dim"):
+        for required in ("state_dict", "extras_dim"):
             if required not in state:
                 raise AgentProfileError(
                     f"checkpoint missing required key: {required!r}"
@@ -252,15 +250,25 @@ class ModelProfile(AgentProfile):
 
         try:
             net = BackgammonNet(extras_dim=int(state["extras_dim"]))
-            net.load_state_dict(state["model"])
+            net.load_state_dict(state["state_dict"])
             net.eval()
         except Exception as e:
             raise AgentProfileError(f"checkpoint state_dict mismatch: {e}") from e
 
         metadata = {
             k: v for k, v in state.items()
-            if k not in ("model",)  # model is on .net, not in metadata
+            if k not in ("state_dict",)  # weights live on .net, not in metadata
         }
+        # Back-fill style_values for older checkpoints written before
+        # sample_trainer started embedding them. Probes the loaded net
+        # so the bars panel works for already-uploaded agents without
+        # forcing a re-train.
+        if "style_values" not in metadata:
+            try:
+                from sample_trainer import _compute_style_values
+                metadata["style_values"] = _compute_style_values(net)
+            except Exception:
+                metadata["style_values"] = {}
         return cls(metadata, net=net)
 
 

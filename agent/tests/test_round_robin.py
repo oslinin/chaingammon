@@ -313,7 +313,7 @@ def test_resolver_routes_to_load_or_seed_branch():
     net = BackgammonNet(extras_dim=16, core_seed=0xBACC, extras_seed=42)
     blob_buf = _io.BytesIO()
     torch.save(
-        {"model": net.state_dict(), "match_count": 7, "extras_dim": 16, "in_dim": 198},
+        {"state_dict": net.state_dict(), "match_count": 7, "extras_dim": 16, "in_dim": 198},
         blob_buf,
     )
     blob_bytes = blob_buf.getvalue()

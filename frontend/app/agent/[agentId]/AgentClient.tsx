@@ -29,6 +29,7 @@ import {
   MatchRegistryABI,
   useChainContracts,
 } from "../../contracts";
+import { useAgentMatchSummary } from "../../useAgentMatchSummary";
 
 const SERVER = process.env.NEXT_PUBLIC_SERVER_URL ?? "http://localhost:8000";
 
@@ -125,13 +126,29 @@ export default function AgentClient() {
         chainId,
       },
     ],
-    query: { enabled: mounted && agentId > 0 && !!agentRegistry },
+    query: {
+      enabled: mounted && agentId > 0 && !!agentRegistry,
+      // Poll so matchCount / experienceVersion / overlay hash tick up
+      // after a training run finishes (chain writes happen async via
+      // /training/start's post-trainer hook). Without this the page
+      // holds the values it had at mount until manual reload.
+      refetchInterval: 4000,
+    },
   });
 
   const metadataUri = chainData?.[0]?.result as string | undefined;
   const tier = chainData?.[1]?.result as number | undefined;
   const matchCount = chainData?.[2]?.result as number | undefined;
   const experienceVersion = chainData?.[3]?.result as number | undefined;
+
+  // On-chain "matches played" — derived from MatchRegistry.MatchRecorded
+  // event log (one event per recordMatch / recordMatchAndSplit /
+  // settleWithSessionKeys call). The other "Games trained" counter
+  // shown alongside it lives off-chain in the trained checkpoint blob's
+  // `match_count` field; see test_counter_separation.py for why the
+  // two paths must not contaminate each other.
+  const matchSummary = useAgentMatchSummary(agentId);
+  const matchesPlayed = matchSummary.summary?.matches;
   const dataHashes = chainData?.[4]?.result as
     | readonly [`0x${string}`, `0x${string}`]
     | undefined;
@@ -232,7 +249,12 @@ export default function AgentClient() {
     return () => {
       cancelled = true;
     };
-  }, [agentId, mounted]);
+    // Re-fetch when experienceVersion ticks up — that's the on-chain
+    // signal that updateOverlayHash just landed for this agent and the
+    // server-side profile (style values + match_count) should be re-
+    // resolved against the new overlay blob. Without this, finishing a
+    // training round leaves the bars panel showing the pre-run values.
+  }, [agentId, mounted, experienceVersion]);
 
   // Derive display name from metadataURI — same logic as AgentCard.
   const cleanedLabel = metadataUri
@@ -282,9 +304,23 @@ export default function AgentClient() {
           <span className="shrink-0 rounded bg-zinc-100 px-2 py-0.5 font-mono text-sm text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
             #{agentId}
           </span>
-          {matchCount !== undefined && matchCount > 0 && (
-            <span className="shrink-0 rounded bg-emerald-100 px-2 py-0.5 font-mono text-sm text-emerald-800 dark:bg-emerald-900 dark:text-emerald-200">
-              {matchCount} trained
+          {/* Two counters, two sources — see test_counter_separation.py.
+              0G "games trained" (off-chain, set by training); on-chain
+              "matches played" (MatchRecorded events, set by recordMatch). */}
+          {profile && profile.match_count > 0 && (
+            <span
+              className="shrink-0 rounded bg-emerald-100 px-2 py-0.5 font-mono text-sm text-emerald-800 dark:bg-emerald-900 dark:text-emerald-200"
+              title="Games trained — match_count embedded in the 0G Storage checkpoint blob"
+            >
+              {profile.match_count} trained
+            </span>
+          )}
+          {matchesPlayed !== undefined && matchesPlayed > 0 && (
+            <span
+              className="shrink-0 rounded bg-indigo-100 px-2 py-0.5 font-mono text-sm text-indigo-800 dark:bg-indigo-900 dark:text-indigo-200"
+              title="Matches played — derived from MatchRegistry.MatchRecorded events"
+            >
+              {matchesPlayed} played
             </span>
           )}
         </div>
@@ -323,28 +359,16 @@ export default function AgentClient() {
               tooltip="Agent tier (0 = Bronze, 1 = Silver, 2 = Gold). Unlocks at ELO milestones and may gate access to higher-stakes matches."
             />
             <InfoField
-              label="Games trained"
+              label="Matches played"
               value={
-                chainLoading
+                matchSummary.isLoading
                   ? "…"
-                  : matchCount !== undefined
-                  ? String(matchCount)
+                  : matchesPlayed !== undefined
+                  ? String(matchesPlayed)
                   : "—"
               }
               mono
-              tooltip="Number of completed on-chain matches recorded for this agent. Each game updates ELO and may trigger a neural-network training round."
-            />
-            <InfoField
-              label="Exp. version"
-              value={
-                chainLoading
-                  ? "…"
-                  : experienceVersion !== undefined
-                  ? String(experienceVersion)
-                  : "—"
-              }
-              mono
-              tooltip="Increments each time the agent's overlay weights are retrained after a batch of matches. Higher = more training rounds completed."
+              tooltip="On-chain count — one MatchRegistry.MatchRecorded event per finished match. Bumped by recordMatch / recordMatchAndSplit / settleWithSessionKeys; never by training."
             />
             <InfoField
               label="Owner"
@@ -450,23 +474,29 @@ export default function AgentClient() {
             <>
               <div className="mb-3 flex flex-wrap gap-2">
                 <KindBadge kind={profile.kind} />
-                <span className="rounded-md bg-zinc-100 px-2 py-0.5 font-mono text-xs text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400">
-                  {profile.match_count} games trained
-                </span>
+                {/* This panel is the 0G side of the agent's progression,
+                    so the trained count comes from the checkpoint blob's
+                    own `match_count` field (the value the trainer
+                    embeds when it saves). The on-chain "matches played"
+                    counter is shown separately in the header pill. */}
+                {profile.match_count > 0 && (
+                  <span className="rounded-md bg-zinc-100 px-2 py-0.5 font-mono text-xs text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400">
+                    {profile.match_count} games trained
+                  </span>
+                )}
               </div>
 
               <p className="mb-4 text-sm italic text-zinc-600 dark:text-zinc-400">
                 {profile.summary}
               </p>
 
-              {profile.kind === "overlay" &&
-                Object.keys(profile.values).length > 0 && (
-                  <OverlayWeightsTable values={profile.values} />
-                )}
+              {Object.keys(profile.values).length > 0 && (
+                <OverlayWeightsTable values={profile.values} />
+              )}
 
               {profile.kind === "model" &&
                 Object.keys(profile.model_meta).length > 0 && (
-                  <div className="space-y-1 font-mono text-xs text-zinc-500">
+                  <div className="mt-4 space-y-1 font-mono text-xs text-zinc-500">
                     {Object.entries(profile.model_meta).map(([k, v]) => (
                       <div key={k} className="flex gap-2">
                         <span className="text-zinc-400">{k}:</span>

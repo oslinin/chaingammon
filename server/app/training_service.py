@@ -28,6 +28,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -187,6 +188,14 @@ def start_job(
         "--seed", str(seed),
         "--logdir", str(tb_logdir),
     ]
+    # When the caller wants 0G uploads but didn't pin a checkpoint dir,
+    # auto-create one in tmp. The trainer skips its end-of-run save block
+    # entirely if --checkpoint-dir is missing, so without this default
+    # `upload_to_0g=True` would silently no-op (Phase 66 root cause).
+    if checkpoint_dir is None and upload_to_0g:
+        checkpoint_dir = Path(
+            tempfile.mkdtemp(prefix="chaingammon-training-checkpoints-")
+        )
     if checkpoint_dir is not None:
         cmd.extend(["--checkpoint-dir", str(checkpoint_dir)])
     if upload_to_0g:
@@ -239,7 +248,124 @@ def start_job(
         tensorboard_process=tb_proc,
     )
     _current_job = job
+
+    # Phase 66: spawn a daemon watcher that, after the trainer exits with
+    # status 0, walks its JSONL for `agent_saved` events and writes each
+    # new `root_hash` on-chain via `AgentRegistry.updateOverlayHash`.
+    # Bumps `experienceVersion` per agent and updates `dataHashes[1]` so
+    # the on-chain training count reflects the run that just happened.
+    # Failures per agent are logged into the same JSONL as `chain_write`
+    # events so /training/status surfaces them; one bad write doesn't
+    # block the others.
+    if upload_to_0g:
+        watcher = threading.Thread(
+            target=_post_training_chain_writes,
+            args=(process, status_file),
+            daemon=True,
+            name=f"chaingammon-training-watcher-{process.pid}",
+        )
+        watcher.start()
+
     return job
+
+
+def _post_training_chain_writes(
+    process: subprocess.Popen, status_file: Path
+) -> None:
+    """Wait for the trainer subprocess to exit, then write every
+    `agent_saved` event's `root_hash` on-chain.
+
+    Runs in a daemon thread spawned by `start_job`. Pure best-effort:
+    any failure is appended to the JSONL as a `chain_write` event with
+    an `error` field but never raised. Skipped silently if the trainer
+    was aborted (non-zero return code) — partial training shouldn't
+    move the on-chain state.
+    """
+    try:
+        returncode = process.wait()
+    except Exception as e:
+        _emit_chain_write(status_file, agent_id=None, error=f"wait failed: {e}")
+        return
+    if returncode != 0:
+        _emit_chain_write(
+            status_file,
+            agent_id=None,
+            error=f"trainer exited {returncode}; skipping chain writes",
+        )
+        return
+
+    # Parse the JSONL for `agent_saved` events. Each carries `agent_id`
+    # and `root_hash`. `root_hash` is empty when the trainer didn't
+    # actually upload (e.g. og-bridge missing), so skip those.
+    saved: list[dict[str, Any]] = []
+    try:
+        for line in status_file.read_text().splitlines():
+            if not line.strip():
+                continue
+            try:
+                evt = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if evt.get("event") == "agent_saved":
+                saved.append(evt)
+    except FileNotFoundError:
+        return
+
+    if not saved:
+        return
+
+    # Lazy import to keep the test path (which mocks Popen) free of the
+    # web3 + ChainClient construction cost.
+    try:
+        from .chain_client import ChainClient, ChainError
+    except ImportError as e:
+        _emit_chain_write(status_file, agent_id=None, error=f"chain_client import: {e}")
+        return
+
+    try:
+        chain = ChainClient.from_env()
+    except (ChainError, KeyError, OSError) as e:
+        _emit_chain_write(status_file, agent_id=None, error=f"chain client unavailable: {e}")
+        return
+    if chain.agent_registry is None:
+        _emit_chain_write(
+            status_file,
+            agent_id=None,
+            error="AGENT_REGISTRY_ADDRESS not configured",
+        )
+        return
+
+    for evt in saved:
+        agent_id = evt.get("agent_id")
+        root_hash = evt.get("root_hash")
+        if agent_id is None or not root_hash:
+            continue
+        try:
+            tx_hash = chain.update_overlay_hash(int(agent_id), root_hash)
+            _emit_chain_write(
+                status_file,
+                agent_id=int(agent_id),
+                root_hash=root_hash,
+                tx_hash=tx_hash,
+            )
+        except Exception as e:  # noqa: BLE001 — surface every chain-write failure
+            _emit_chain_write(
+                status_file,
+                agent_id=int(agent_id),
+                root_hash=root_hash,
+                error=str(e),
+            )
+
+
+def _emit_chain_write(status_file: Path, **fields: Any) -> None:
+    """Append a `chain_write` event to the trainer's JSONL. Best-effort —
+    swallow any I/O error so the watcher thread never crashes the
+    process."""
+    try:
+        with status_file.open("a") as fh:
+            fh.write(json.dumps({"event": "chain_write", "ts": time.time(), **fields}) + "\n")
+    except OSError:
+        pass
 
 
 def _maybe_spawn_tensorboard(

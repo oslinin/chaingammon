@@ -499,6 +499,54 @@ def maybe_launch_tensorboard(logdir: Path) -> subprocess.Popen | None:
     )
 
 
+def _compute_style_values(net: "BackgammonNet") -> dict[str, float]:
+    """Probe the trained net's extras head along each named
+    `career_features.STYLE_AXES` slot and report the signed equity
+    delta as a per-axis style value. Slots [0:6] in the extras vector
+    are the opponent_style projection (see career_features.py); slot
+    15 is the bias-ones channel, so the probe holds it at 1.0 to
+    match training-time inputs.
+
+    Returns the full `career_features.ALL_CATEGORIES` set (mirrors
+    `server/app/agent_overlay.CATEGORIES`) so this profile-kind
+    presents the same axis list as the Phase-9 overlay path. The 6
+    probable axes carry their probed delta (normalized so max |value|
+    = 1.0, matching `OverlayWeightsTable`'s [−1, +1] range); the
+    remaining 14 categories aren't encoded as inputs to this network
+    and stay at 0.0. Returns {} when the net has no extras head."""
+    if net.extras is None:
+        return {}
+    try:
+        from career_features import ALL_CATEGORIES, STYLE_AXES
+    except ImportError:
+        return {}
+
+    extras_dim = net.extras.in_features
+    if extras_dim < len(STYLE_AXES):
+        return {}
+
+    net.eval()
+    board = torch.zeros(1, net.core.in_features)
+    base = torch.zeros(1, extras_dim)
+    if extras_dim >= 16:
+        base[0, 15] = 1.0  # matches encode_career_context's bias channel
+
+    probed: dict[str, float] = {}
+    with torch.no_grad():
+        for i, axis in enumerate(STYLE_AXES):
+            up = base.clone(); up[0, i] = 1.0
+            dn = base.clone(); dn[0, i] = -1.0
+            probed[axis] = float((net(board, up) - net(board, dn)).item()) / 2.0
+
+    max_abs = max((abs(v) for v in probed.values()), default=0.0)
+    if max_abs > 1e-9:
+        probed = {k: round(v / max_abs, 6) for k, v in probed.items()}
+    else:
+        probed = {k: 0.0 for k in probed}
+
+    return {axis: probed.get(axis, 0.0) for axis in ALL_CATEGORIES}
+
+
 def save_checkpoint(net: BackgammonNet, path: Path, *, match_count: int,
                     extras_dim: int,
                     feature_encoder: str = "race") -> None:
@@ -524,6 +572,7 @@ def save_checkpoint(net: BackgammonNet, path: Path, *, match_count: int,
         "in_dim": GNUBG_FEAT_DIM,
         "hidden": DEFAULT_HIDDEN,
         "feature_encoder": feature_encoder,
+        "style_values": _compute_style_values(net),
     }, path)
 
 

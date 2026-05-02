@@ -11,6 +11,7 @@
 "use client";
 
 import Link from "next/link";
+import { useQuery } from "@tanstack/react-query";
 import { useReadContracts } from "wagmi";
 
 import { useActiveChainId } from "./chains";
@@ -24,8 +25,14 @@ import {
   useAgentMatchSummary,
 } from "./useAgentMatchSummary";
 
+const SERVER = process.env.NEXT_PUBLIC_SERVER_URL ?? "http://localhost:8000";
+
 interface AgentCardProps {
   agentId: number;
+}
+
+interface ProfileResponse {
+  match_count: number;
 }
 
 export function AgentCard({ agentId }: AgentCardProps) {
@@ -48,21 +55,31 @@ export function AgentCard({ agentId }: AgentCardProps) {
         args: [BigInt(agentId)],
         chainId,
       },
-      {
-        address: agentRegistry,
-        abi: AgentRegistryABI,
-        functionName: "matchCount",
-        args: [BigInt(agentId)],
-        chainId,
-      },
     ],
+    // Sepolia block time is ~12s and ELO bumps once recordMatch lands.
+    // Without a poll the card stays frozen until manual refresh.
+    query: { refetchInterval: 8000 },
   });
 
   const metadataUri = data?.[0]?.result as string | undefined;
   const elo = data?.[1]?.result as bigint | undefined;
-  // matchCount from AgentRegistry tracks how many times updateOverlayHash
-  // was called — i.e. the number of training matches completed.
-  const trainedCount = data?.[2]?.result as number | undefined;
+
+  // 0G "games trained" — read from the trained checkpoint metadata via
+  // the FastAPI /profile endpoint. Bumped only by training rounds, never
+  // by single matches. Pairs with the on-chain "matches played" derived
+  // from MatchRecorded events below; together they're the two sides of
+  // the agent's progression. Polled at 8s to pick up freshly-finished
+  // training without forcing a manual reload.
+  const profileQuery = useQuery({
+    queryKey: ["agent-profile", agentId],
+    refetchInterval: 8000,
+    queryFn: async (): Promise<ProfileResponse> => {
+      const r = await fetch(`${SERVER}/agents/${agentId}/profile`);
+      if (!r.ok) throw new Error(`/agents/${agentId}/profile → ${r.status}`);
+      return r.json();
+    },
+  });
+  const trainedCount = profileQuery.data?.match_count;
 
   // Phase 15: format the agent identity as `<label>.chaingammon.eth` for
   // visual parity with player names. metadataUri is the string passed at
@@ -116,16 +133,36 @@ export function AgentCard({ agentId }: AgentCardProps) {
         </span>
       </div>
 
-      {/* Training count — how many overlay updates the agent has received,
-          i.e. how many games it has been trained on (AgentRegistry.matchCount). */}
-      {trainedCount !== undefined && (
-        <p className="font-mono text-xs text-zinc-500 dark:text-zinc-400">
-          {trainedCount} trained
-        </p>
-      )}
+      {/* Two counters, two sources — see test_counter_separation.py.
+          • games trained  — match_count embedded in the trained
+            checkpoint blob on 0G Storage (bumped only by training).
+          • matches played — derived from MatchRegistry.MatchRecorded
+            event log (bumped only by recordMatch). */}
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 text-xs">
+        {trainedCount !== undefined && (
+          <p
+            className="font-mono text-zinc-500 dark:text-zinc-400"
+            title="0G — embedded in the trained checkpoint blob"
+          >
+            <span className="font-semibold text-zinc-700 dark:text-zinc-200">
+              {trainedCount}
+            </span>{" "}
+            games trained
+          </p>
+        )}
+        {matchQuery.summary && (
+          <p
+            className="font-mono text-zinc-500 dark:text-zinc-400"
+            title="On-chain — MatchRegistry.MatchRecorded events"
+          >
+            <span className="font-semibold text-zinc-700 dark:text-zinc-200">
+              {matchQuery.summary.matches}
+            </span>{" "}
+            matches played
+          </p>
+        )}
+      </div>
 
-      {/* Inline match record — chain-derived from MatchRegistry.MatchRecorded
-          event scan via useAgentMatchSummary. */}
       <div className="text-xs">
         {matchQuery.isLoading ? (
           <p className="text-zinc-400 dark:text-zinc-500">Reading chain…</p>
@@ -136,8 +173,7 @@ export function AgentCard({ agentId }: AgentCardProps) {
         ) : matchQuery.summary ? (
           <>
             <p className="font-mono text-zinc-700 dark:text-zinc-300">
-              {matchQuery.summary.matches} played · {matchQuery.summary.wins}{" "}
-              won · {matchQuery.summary.losses} lost
+              {matchQuery.summary.wins} won · {matchQuery.summary.losses} lost
             </p>
             <p className="mt-0.5 text-zinc-500 dark:text-zinc-400">
               {matchProse}

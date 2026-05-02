@@ -22,7 +22,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useComputeBackends } from "../ComputeBackendsContext";
 
@@ -137,7 +137,7 @@ export default function TrainingPage() {
   }, [agentsQuery.data, selectedIds.length]);
 
   // Slider position + derived epochs.
-  const [sliderPos, setSliderPos] = useState(20); // ~10 epochs default
+  const [sliderPos, setSliderPos] = useState(0); // 1 epoch default
   const epochs = useMemo(
     () => positionToEpochs(sliderPos, use0gInference),
     [sliderPos, use0gInference]
@@ -163,22 +163,32 @@ export default function TrainingPage() {
     },
   });
 
-  // Training status poll. Polling enables on Play, disables on running:false.
+  // Training status poll. Polling enables on Play, disables once we
+  // see a `running:false` status whose `last_update_ts` is >= the
+  // Play click. The timestamp guard kills the race where the very
+  // first refetch (kicked off by `invalidateQueries` in onSuccess)
+  // returns the PRIOR run's terminal state before the trainer
+  // subprocess has flipped `running:true` — without it, polling
+  // would stop on stale data and the UI would freeze on "running 0/0"
+  // or the prior "done" until the user manually reloaded.
   const [polling, setPolling] = useState(false);
+  const playedAtRef = useRef<number | null>(null);
   const statusQuery = useQuery({
     queryKey: ["training-status"],
-    refetchInterval: polling ? 2000 : false,
+    refetchInterval: polling ? 1000 : false,
     queryFn: async (): Promise<StatusResponse> => {
       const r = await fetch(`${SERVER}/training/status`);
       if (!r.ok) throw new Error(`/training/status → ${r.status}`);
       return r.json();
     },
   });
-  // When the trainer announces it's done, stop polling.
   useEffect(() => {
-    if (polling && statusQuery.data && statusQuery.data.running === false) {
-      setPolling(false);
-    }
+    if (!polling || !statusQuery.data) return;
+    const data = statusQuery.data;
+    const playedAt = playedAtRef.current;
+    if (data.running) return;
+    if (playedAt !== null && data.last_update_ts < playedAt) return;
+    setPolling(false);
   }, [polling, statusQuery.data]);
 
   const queryClient = useQueryClient();
@@ -205,6 +215,10 @@ export default function TrainingPage() {
       return r.json();
     },
     onSuccess: () => {
+      // Stamp the click time (server-side seconds, matching
+      // last_update_ts on /training/status). Polling won't stop
+      // until a status update produced AFTER this stamp lands.
+      playedAtRef.current = Date.now() / 1000;
       setPolling(true);
       queryClient.invalidateQueries({ queryKey: ["training-status"] });
     },
@@ -539,6 +553,11 @@ function StatusPanel({ status }: { status: StatusResponse | undefined }) {
       <p className="mb-3 text-xs text-zinc-500">
         {status.completed_games} / {status.total_games} games · epoch{" "}
         {status.current_epoch} / {status.total_epochs}
+        {status.last_update_ts ? (
+          <span className="ml-2 font-mono text-[10px] text-zinc-400">
+            · updated {new Date(status.last_update_ts * 1000).toLocaleTimeString()}
+          </span>
+        ) : null}
       </p>
 
       {Object.keys(status.per_agent).length > 0 && (
