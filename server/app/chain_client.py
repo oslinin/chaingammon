@@ -269,16 +269,37 @@ class ChainClient:
 
     @classmethod
     def from_env(cls) -> "ChainClient":
-        """Construct from RPC_URL, MATCH_REGISTRY_ADDRESS, DEPLOYER_PRIVATE_KEY,
-        and (optionally) AGENT_REGISTRY_ADDRESS."""
-        for k in ("RPC_URL", "MATCH_REGISTRY_ADDRESS", "DEPLOYER_PRIVATE_KEY"):
+        """Construct from RPC_URL, DEPLOYER_PRIVATE_KEY, and contract addresses.
+
+        Contract addresses are sourced in this order, per name:
+          1. Env var (e.g. MATCH_REGISTRY_ADDRESS) — explicit override.
+          2. contracts/deployments/<network>.json keyed by CHAIN_ID — the
+             single source of truth written by deploy.js. Lets a fresh
+             redeploy take effect without editing server/.env.
+        """
+        from .deployments import address_from_deployment
+
+        for k in ("RPC_URL", "DEPLOYER_PRIVATE_KEY"):
             if not os.environ.get(k):
                 raise ChainError(f"Missing env var {k}")
+        match_registry = (
+            os.environ.get("MATCH_REGISTRY_ADDRESS")
+            or address_from_deployment("MatchRegistry")
+        )
+        if not match_registry:
+            raise ChainError(
+                "Missing MATCH_REGISTRY_ADDRESS — set it in server/.env or "
+                "ensure CHAIN_ID matches a contracts/deployments/*.json"
+            )
+        agent_registry = (
+            os.environ.get("AGENT_REGISTRY_ADDRESS")
+            or address_from_deployment("AgentRegistry")
+        )
         return cls(
             rpc_url=os.environ["RPC_URL"],
-            match_registry_address=os.environ["MATCH_REGISTRY_ADDRESS"],
+            match_registry_address=match_registry,
             private_key=os.environ["DEPLOYER_PRIVATE_KEY"],
-            agent_registry_address=os.environ.get("AGENT_REGISTRY_ADDRESS"),
+            agent_registry_address=agent_registry,
         )
 
     @property

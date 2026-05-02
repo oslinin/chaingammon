@@ -121,13 +121,27 @@ class EnsClient:
 
     @classmethod
     def from_env(cls) -> "EnsClient":
-        """Construct from RPC_URL, PLAYER_SUBNAME_REGISTRAR_ADDRESS, DEPLOYER_PRIVATE_KEY."""
-        for k in ("RPC_URL", "PLAYER_SUBNAME_REGISTRAR_ADDRESS", "DEPLOYER_PRIVATE_KEY"):
+        """Construct from RPC_URL, DEPLOYER_PRIVATE_KEY, and a registrar
+        address sourced from PLAYER_SUBNAME_REGISTRAR_ADDRESS or, when
+        unset, from contracts/deployments/<network>.json keyed by CHAIN_ID."""
+        from .deployments import address_from_deployment
+
+        for k in ("RPC_URL", "DEPLOYER_PRIVATE_KEY"):
             if not os.environ.get(k):
                 raise EnsError(f"Missing env var {k}")
+        registrar = (
+            os.environ.get("PLAYER_SUBNAME_REGISTRAR_ADDRESS")
+            or address_from_deployment("PlayerSubnameRegistrar")
+        )
+        if not registrar:
+            raise EnsError(
+                "Missing PLAYER_SUBNAME_REGISTRAR_ADDRESS — set it in "
+                "server/.env or ensure CHAIN_ID matches a "
+                "contracts/deployments/*.json"
+            )
         return cls(
             rpc_url=os.environ["RPC_URL"],
-            registrar_address=os.environ["PLAYER_SUBNAME_REGISTRAR_ADDRESS"],
+            registrar_address=registrar,
             private_key=os.environ["DEPLOYER_PRIVATE_KEY"],
         )
 
