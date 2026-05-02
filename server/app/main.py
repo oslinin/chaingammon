@@ -1592,12 +1592,23 @@ def get_match_dice(match_id: str):
     """Return a fresh drand round + derived dice for `match_id`.
 
     Used by the KeeperHub YAML per-turn-drand step. Pulls the latest round
-    from the drand League of Entropy mainnet HTTP endpoint, then derives
-    two dice as `keccak256(round_digest ‖ turn_index_be8) mod 36` (unpacked
-    into d1, d2 ∈ [1, 6]).
+    from the drand League of Entropy mainnet HTTP endpoint, derives two
+    dice as `sha3_256(round_digest ‖ turn_index_be8) mod 36` (unpacked
+    into d1, d2 ∈ [1, 6]), and returns the round metadata + BLS signature
+    so auditors can independently verify on-platform.
 
-    Returns {dice: [d1, d2], round: int, digest: hex} or 503 if drand is
-    unreachable.
+    The server does NOT verify the BLS signature itself — it threads
+    drand's response through verbatim. To make a round verifiable an
+    auditor:
+      1. Fetches drand's group public key from https://api.drand.sh/info
+         (or pins the 48-byte G1 hex constant).
+      2. Computes `msg = sha256(previous_signature ‖ round_be8)` for the
+         legacy chained mainnet chain `/public/latest` falls through to.
+      3. Verifies the BLS12-381 signature (G2) against (pubkey, msg).
+      4. Re-derives the dice locally and asserts they match.
+
+    Returns {dice, round, digest, signature, previous_signature, chain}
+    or 503 if drand is unreachable.
     """
     import hashlib as _hashlib
     try:
@@ -1609,6 +1620,8 @@ def get_match_dice(match_id: str):
 
     round_num = int(data.get("round", 0))
     randomness = data.get("randomness", "")
+    signature = data.get("signature", "")
+    previous_signature = data.get("previous_signature", "")
     # Derive turn index from stored state if available, else use round_num.
     turn_index = 0
     digest_bytes = bytes.fromhex(randomness) if randomness else b""
@@ -1617,7 +1630,14 @@ def get_match_dice(match_id: str):
     val = int.from_bytes(raw, "big") % 36
     d1 = (val // 6) + 1
     d2 = (val % 6) + 1
-    return {"dice": [d1, d2], "round": round_num, "digest": randomness}
+    return {
+        "dice": [d1, d2],
+        "round": round_num,
+        "digest": randomness,
+        "signature": signature,
+        "previous_signature": previous_signature,
+        "chain": "https://api.drand.sh/public/latest",
+    }
 
 
 @app.post("/matches/{match_id}/forfeit-check")

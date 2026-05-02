@@ -22,7 +22,8 @@ A decentralized, verifiable ELO ledger for backgammon — humans and agents shar
 - **Open identity.** ENS subnames written only by the protocol. Reserved text records (`elo`, `match_count`, `kind`, `inft_id`, `style_uri`, `archive_uri`) cannot be self-claimed; any third-party tool reads them without coordinating with us.
 - **Verifiable.** Every match settles to `MatchRegistry` on Sepolia. The on-chain record carries a 32-byte 0G Storage hash of the full archive (every move, every dice roll) — anyone can audit any rating change end-to-end.
 - **Living agents.** Each AI agent _is_ an ERC-7857 iNFT (with ERC-721 fallback). It pins two `dataHashes`: a starter NN initialized from gnubg's published weights, and a per-agent trained checkpoint that grows match by match. Transfer the token, transfer the brain.
-- **Trustless dice.** Each turn's dice are `keccak256(drand_round_digest, turn_index) mod 36`. No server PRNG, no commit-reveal coordination, fully reproducible.
+- **Trustless dice.** Each turn's dice are `sha3_256(drand_round_digest, turn_index) mod 36`. No server PRNG, no commit-reveal coordination, fully reproducible. The server passes drand's BLS12-381 signature through to the client (`signature` and `previous_signature` fields on `/games/{matchId}/dice`) so an auditor can independently verify the round against drand's published group public key.
+- **Optional stakes.** A match can be free (ELO-only) or staked (per-side ETH deposit, winner takes the pot). Agents stake via a dedicated server-managed session-key wallet that the owner pre-funds; settlement is atomic (`MatchRegistry.recordMatchAndSplit` records the result and pays the winner in the same transaction).
 - **No central server.** Move evaluation runs in the browser (small NN forward pass) or on 0G Compute (TEE-attested for offline play). The coach LLM runs on 0G Compute (Qwen 2.5 7B) with a local flan-t5-base fallback. KeeperHub workflows orchestrate settlement.
 
 ---
@@ -510,6 +511,38 @@ Two agents on the same team now publish per-turn signals. **Phase K** (commit `1
 
 **MVP captain decision rule:** the captain ignores advisors at pick time — its own move (gnubg+overlay, or per-agent NN under Phase J's flag) is final. Signals are *archived*, not *consumed*. Vote fusion / confidence-weighted rank fusion is a follow-up: every signal is on the on-chain record, so a future endpoint that re-ranks captain picks against archived advisors lights up retroactively.
 
+## Staked matches (Phase 58–61)
+
+A match can be **free** (ELO-only) or **staked** (per-side ETH deposit, winner takes the pot). The two paths share the same `MatchRegistry` write — only the escrow wiring differs.
+
+**Contracts (Phase 58).** `MatchRegistry.recordMatch` and `recordMatchAndSplit` are gated by `onlyOwnerOrSettler` rather than `onlyOwner`, so a hosted orchestrator (e.g. KeeperHub's Para MPC wallet) can submit settlements without holding the deployer key. Owner-only `setSettler(address)` grants and revokes that role; zero-address default keeps the original v1 behaviour. `MatchEscrow.settler` is `immutable` so its constructor pins it to the active MatchRegistry — a fresh MatchRegistry deploy requires a fresh MatchEscrow deploy too (`contracts/script/deploy_matchregistry_only.js` and `deploy_matchescrow_only.js` cover the pair).
+
+**Agent wallets (Phase 60).** Each agent (an ERC-7857 iNFT) gets a dedicated EOA whose private key is generated server-side, encrypted as a v3 JSON keystore at `server/data/agent_keys/<agentId>.json` (passphrase from `AGENT_KEYSTORE_PASSPHRASE`, 0600 file perms), and used to sign `MatchEscrow.deposit` on the agent's behalf. The owner pre-funds the wallet by sending ETH to its address; after the match the owner withdraws the balance back via `POST /agents/{id}/withdraw`. Trust model is K2-minimal per [docs/keeperhub-feedback.md](docs/keeperhub-feedback.md): the server holds the key for the agent's lifetime; on-chain owner authorization (EIP-712) is a follow-up.
+
+**End-to-end flow (Phase 61).**
+
+1. Match-page user picks a stake amount on the pre-game card. Empty / `0` keeps the existing free-match path.
+2. Frontend generates a random `bytes32` `escrowMatchId`, the human's wallet calls `MatchEscrow.deposit(matchId, stakeWei)` via wagmi, then the frontend `POST`s `/agents/{agentId}/deposit` so the server signs the matching deposit from the agent's session-key wallet. Both deposits land before "Start Game" enables.
+3. Game plays out exactly like a free match.
+4. At game-end the frontend `POST`s `/finalize-direct-staked` (instead of `/finalize-direct`) with `escrow_match_id` and `stake_wei` attached. The server's `ChainClient.record_match_and_split` builds a single `recordMatchAndSplit` transaction that writes the match record AND pays the pot to the winner's address (the agent's session-key wallet when the agent wins, the human's wallet when the human wins).
+5. Owner reclaims the agent's pot via the **AgentWalletPanel** ("Withdraw all" button on the match pre-game card, calls `POST /agents/{id}/withdraw`).
+
+**Endpoints** (`server/app/main.py`):
+
+| Endpoint | Body | Purpose |
+| --- | --- | --- |
+| `GET  /agents/{id}/wallet` | — | Read address + balance. 404 if wallet not yet provisioned. |
+| `POST /agents/{id}/wallet` | — | Idempotent create. Returns `{address}`. |
+| `POST /agents/{id}/deposit` | `{match_id, stake_wei}` | Server signs `MatchEscrow.deposit` from the agent's wallet. |
+| `POST /agents/{id}/withdraw` | `{to, amount_wei?}` | Drains the agent's wallet to `to`. `amount_wei` omitted → drain everything minus 21k gas. |
+| `POST /finalize-direct-staked` | `DirectFinalizeRequest + {escrow_match_id, stake_wei}` | Atomic settle + payout via `recordMatchAndSplit`. |
+
+**Frontend** (`frontend/app/match/page.tsx`, `AgentWalletPanel.tsx`): the pre-game card embeds the `AgentWalletPanel` when stake > 0 — agent address (click-to-copy), live balance, "Fund X ETH" (computes shortfall, sends from connected wallet), "Withdraw all". A `depositStatus` state machine (`idle → human-pending → agent-pending → ready`) drives the Start button label across both deposits.
+
+**Operator note:** set `AGENT_KEYSTORE_PASSPHRASE=<something>` in `server/.env` before starting the server, otherwise `AgentWalletManager.from_env()` raises and the wallet endpoints 503.
+
+**Hardhat smoke test.** End-to-end staked flow runs against a local hardhat node — see `/tmp/staked_smoke.py` (this repo's smoke harness): provisions the agent wallet, funds it from a hardhat dev account, both sides deposit, `/finalize-direct-staked` calls `recordMatchAndSplit`, escrow drains to the winner. Useful for iterating without burning Sepolia ETH.
+
 ## KeeperHub workflow (Phase 37)
 
 The keeper-orchestrated settlement workflow is real, not a Phase-36 mock. `server/app/keeper_workflow.py` runs 8 sequential steps for any matchId that's been finalized on-chain:
@@ -633,7 +666,7 @@ See [ROADMAP.md](ROADMAP.md) for the full version. Architecture: [ARCHITECTURE.m
 - [x] Session-key state channel (`MatchRegistry.settleWithSessionKeys`) — pre-authorized at game start, either side can submit
 - [x] Sample trainer (`agent/sample_trainer.py`) with TensorBoard
 - [x] Round-robin multi-agent trainer + `/training` page with live TensorBoard panel (per-agent picker)
-- [x] Contracts deployed on Sepolia: [MatchRegistry](https://sepolia.etherscan.io/address/0x8708C6DaA55F9B322f6d83c5D89774febeEff2da) · [AgentRegistry](https://sepolia.etherscan.io/address/0xaBbC7484A444967a6B7b1752416B8d2ee516B81c) · [PlayerSubnameRegistrar](https://sepolia.etherscan.io/address/0x077a62a6aA3f28E8f2Ef586411613a55639BA734) (deployed 2026-04-28; full deployment record at `contracts/deployments/sepolia.json`)
+- [x] Contracts deployed on Sepolia: [MatchRegistry](https://sepolia.etherscan.io/address/0x507d78149AE2092a5438825B1BA3F12737FAeC0C) · [MatchEscrow](https://sepolia.etherscan.io/address/0x1206A93a9B76652382BC1F5164a8383a9F2A2e16) · [AgentRegistry](https://sepolia.etherscan.io/address/0xE23B83cE16B292e420cd8820ac9d303A45333D17) · [PlayerSubnameRegistrar](https://sepolia.etherscan.io/address/0x48285B8C9B04C6a3D61bBA067a4DE4399A5a4aEb) (latest redeploy 2026-05-02 to add Phase 58's settler role on `MatchRegistry`; full deployment record + provenance at `contracts/deployments/sepolia.json`)
 - [x] Contracts also deployed on 0G testnet: [MatchRegistry](https://chainscan-galileo.0g.ai/address/0x60E52e2d9Ea7b4A851Dd63365222c7d102A11eaE) · [AgentRegistry](https://chainscan-galileo.0g.ai/address/0xCb0a562fa9079184922754717BB3035C0F7A983E) · [PlayerSubnameRegistrar](https://chainscan-galileo.0g.ai/address/0xf260aE6b2958623fC4e865433201050DC2Ed1ccC) (deployed 2026-04-27)
 - [ ] Demo video < 3 min
 
