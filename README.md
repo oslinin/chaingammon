@@ -510,6 +510,25 @@ Two agents on the same team now publish per-turn signals. **Phase K** (commit `1
 
 **MVP captain decision rule:** the captain ignores advisors at pick time — its own move (gnubg+overlay, or per-agent NN under Phase J's flag) is final. Signals are *archived*, not *consumed*. Vote fusion / confidence-weighted rank fusion is a follow-up: every signal is on the on-chain record, so a future endpoint that re-ranks captain picks against archived advisors lights up retroactively.
 
+## KeeperHub workflow (Phase 37)
+
+The keeper-orchestrated settlement workflow is real, not a Phase-36 mock. `server/app/keeper_workflow.py` runs 8 sequential steps for any matchId that's been finalized on-chain:
+
+| # | Step ID | What it does |
+| - | --- | --- |
+| 1 | `escrow_deposit` | Reads MatchInfo from MatchRegistry; fails if the match isn't on-chain (i.e. `/finalize-game` was never called). |
+| 2 | `vrf_rolls` | Probes the drand mainnet HTTP endpoint to confirm the VRF source the trainer uses (`agent/drand_dice.py`) is reachable. |
+| 3 | `og_storage_fetch` | Pulls the GameRecord blob from 0G Storage by the rootHash in MatchInfo. |
+| 4 | `gnubg_replay` | Walks every recorded move through `gnubg.submit_move` from the canonical opening; asserts the final `position_id` matches the recorded value. A mismatch means the GameRecord doesn't faithfully describe play and the match shouldn't settle. |
+| 5 | `settlement_signed` | Confirms the MatchInfo presence (session-key flow pre-authorizes; the relay tx itself is the proof). |
+| 6 | `relay_tx` | Surfaces `gameRecordHash` as the canonical audit anchor — the same value KeeperHub commits to its run-audit log. |
+| 7 | `ens_update` | Cross-checks elo + last_match_id text records on each labelled subname; cleanly skips for unnamed / agent-vs-agent matches. |
+| 8 | `audit_append` | Serializes the entire workflow run to JSON, uploads to 0G Storage, and surfaces the rootHash as the audit-trail anchor. |
+
+Trigger via `POST /keeper-workflow/{matchId}/run` (the Run button on `/keeper/[matchId]` does this). The workflow runs on a background thread; `GET /keeper-workflow/{matchId}` polls return live mid-run progress, persisted to `/tmp/chaingammon-keeper-workflows/<matchId>.json` so navigating away and back during a long-running step doesn't lose state. A step failure marks itself "failed" with the exception message in `error`, the workflow status flips to "failed", and remaining steps stay "pending" — an audit reader can immediately see *which* step broke and *why*.
+
+The 8 step IDs and the response shape (`{matchId, status, steps: [{id, name, status, duration_ms, retry_count, tx_hash, error, detail}]}`) are the same canonical contract Phase 36 locked in for the frontend, so existing `/keeper/[matchId]` rendering works unchanged against the real orchestrator.
+
 ## Live training visualization (Phase L)
 
 Round-robin training runs spawned from the `/training` page are observable in real time via an embedded TensorBoard panel — judges can watch the network learn while it learns.
@@ -632,8 +651,8 @@ See [ROADMAP.md](ROADMAP.md) for the full version. Architecture: [ARCHITECTURE.m
 
 **KeeperHub:**
 
-- [ ] Workflow live (drand round → move validation → Sepolia settlement → audit JSON to 0G Storage)
-- [ ] Write-up: workflow definition + audit trail UX
+- [x] Workflow live (Phase 37): 8-step orchestrator at `server/app/keeper_workflow.py` runs sequentially — escrow_deposit (on-chain MatchInfo lookup), vrf_rolls (drand reachability), og_storage_fetch (GameRecord blob from 0G Storage), gnubg_replay (re-walk every move + assert final position), settlement_signed (MatchInfo presence proof), relay_tx (audit anchor surfaced as gameRecordHash), ens_update (cross-check ENS text records on labelled subnames), audit_append (workflow JSON pinned to 0G Storage). Triggered via `POST /keeper-workflow/{matchId}/run`; live progress via `GET /keeper-workflow/{matchId}` polled every 1.5s by `/keeper/[matchId]` page.
+- [x] Write-up: workflow definition + audit trail UX (this section + module docstring at `server/app/keeper_workflow.py:1-50`).
 - [ ] Feedback document ([docs/keeperhub-feedback.md](docs/keeperhub-feedback.md))
 
 Claude Code is enabled on this repo.
