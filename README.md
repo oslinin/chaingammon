@@ -632,27 +632,28 @@ See [ROADMAP.md](ROADMAP.md) for the full version. Architecture: [ARCHITECTURE.m
 - [x] Session-key state channel (`MatchRegistry.settleWithSessionKeys`) — pre-authorized at game start, either side can submit
 - [x] Sample trainer (`agent/sample_trainer.py`) with TensorBoard
 - [x] Round-robin multi-agent trainer + `/training` page with live TensorBoard panel (per-agent picker)
-- [ ] Contracts deployed on Sepolia (etherscan links)
+- [x] Contracts deployed on Sepolia: [MatchRegistry](https://sepolia.etherscan.io/address/0x8708C6DaA55F9B322f6d83c5D89774febeEff2da) · [AgentRegistry](https://sepolia.etherscan.io/address/0xaBbC7484A444967a6B7b1752416B8d2ee516B81c) · [PlayerSubnameRegistrar](https://sepolia.etherscan.io/address/0x077a62a6aA3f28E8f2Ef586411613a55639BA734) (deployed 2026-04-28; full deployment record at `contracts/deployments/sepolia.json`)
+- [x] Contracts also deployed on 0G testnet: [MatchRegistry](https://chainscan-galileo.0g.ai/address/0x60E52e2d9Ea7b4A851Dd63365222c7d102A11eaE) · [AgentRegistry](https://chainscan-galileo.0g.ai/address/0xCb0a562fa9079184922754717BB3035C0F7A983E) · [PlayerSubnameRegistrar](https://chainscan-galileo.0g.ai/address/0xf260aE6b2958623fC4e865433201050DC2Ed1ccC) (deployed 2026-04-27)
 - [ ] Demo video < 3 min
 
 **0G** (`Storage`, `Compute`):
 
-- [ ] At least one agent iNFT with hash-committed weights on 0G Storage
-- [ ] Match game records visible on 0G Storage Log
-- [ ] Coach LLM running on 0G Compute (Qwen 2.5 7B) with TEE attestation surfaced
-- [ ] Write-up: which 0G features are used and where
+- [x] At least one agent iNFT with hash-committed weights on 0G Storage — agent #1 minted on both Sepolia and 0G testnet at deployment time (see `seedAgent` in the deployments JSONs); Sepolia's `initialBaseWeightsHash` is `0x989ba07766cc35aa0011cf3f764831d9d1a7e11495db78c310d764b4478409ad` (non-zero, references a 0G Storage blob). Producing a real *trained* `gnubg_full` checkpoint is a one-shot offline step (Phase J runbook in this README); the v1 commitment-hash mechanism is already wired and on-chain.
+- [ ] Match game records visible on 0G Storage Log — code path live (`/finalize-game` uploads + `/log/[matchId]` renders; `/game-records/{root_hash}` decodes), pending the first end-to-end finalized match on testnet to populate it
+- [ ] Coach LLM running on 0G Compute (Qwen 2.5 7B) with TEE attestation surfaced — coach 0G inference is live (see Compute Backends section); TEE attestation provenance isn't surfaced on the frontend yet (the broker SDK exposes it but the chip in `/match` only shows backend, not attestation)
+- [x] Write-up: which 0G features are used and where — covered by the [Compute Backends](#compute-backends--three-operations--two-backends), [Full-board training](#full-board-training-phase-j), [Live training visualization](#live-training-visualization-phase-l), and [KeeperHub workflow](#keeperhub-workflow-phase-37) sections above
 
 **ENS:**
 
 - [x] Subname schema spec ([docs/ENS_SCHEMA.md](docs/ENS_SCHEMA.md)) + reserved keys enforced on-chain
-- [ ] Subname registrar deployed (Sepolia explorer link)
-- [ ] At least one `<name>.chaingammon.eth` minted with text records
-- [ ] Write-up: text record schema and resolver flow
+- [x] Subname registrar deployed: [Sepolia](https://sepolia.etherscan.io/address/0x077a62a6aA3f28E8f2Ef586411613a55639BA734) · [0G testnet](https://chainscan-galileo.0g.ai/address/0xf260aE6b2958623fC4e865433201050DC2Ed1ccC)
+- [ ] At least one `<name>.chaingammon.eth` minted with text records — `server/tests/test_phase11_ens_live.py` mints + sets text records on every live-network test run; a permanent demo subname (for the deck / video) is a separate one-off step
+- [x] Write-up: text record schema and resolver flow — [docs/ENS_SCHEMA.md](docs/ENS_SCHEMA.md) covers the keys (`elo`, `match_count`, `last_match_id`, `style_uri`, `archive_uri`) + the deterministic-namehash resolution path; the on-chain enforcement of reserved keys is in `PlayerSubnameRegistrar.sol`
 
 **KeeperHub:**
 
 - [x] Workflow live (Phase 37): 8-step orchestrator at `server/app/keeper_workflow.py` runs sequentially — escrow_deposit (on-chain MatchInfo lookup), vrf_rolls (drand reachability), og_storage_fetch (GameRecord blob from 0G Storage), gnubg_replay (re-walk every move + assert final position), settlement_signed (MatchInfo presence proof), relay_tx (audit anchor surfaced as gameRecordHash), ens_update (cross-check ENS text records on labelled subnames), audit_append (workflow JSON pinned to 0G Storage). Triggered via `POST /keeper-workflow/{matchId}/run`; live progress via `GET /keeper-workflow/{matchId}` polled every 1.5s by `/keeper/[matchId]` page.
 - [x] Write-up: workflow definition + audit trail UX (this section + module docstring at `server/app/keeper_workflow.py:1-50`).
-- [ ] Feedback document ([docs/keeperhub-feedback.md](docs/keeperhub-feedback.md))
+- [ ] Feedback document (`docs/keeperhub-feedback.md` — referenced in the codebase but not yet written)
 
 Claude Code is enabled on this repo.
