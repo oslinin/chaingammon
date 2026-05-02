@@ -44,12 +44,17 @@ import { useQuery } from "@tanstack/react-query";
 import { Suspense, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { useAccount, useChainId, useWalletClient, usePublicClient, useWriteContract } from "wagmi";
+import {
+  useAccount,
+  useChainId,
+  useWalletClient,
+  usePublicClient,
+  useWriteContract,
+} from "wagmi";
 import { encodeAbiParameters, keccak256 } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 
 import { Board } from "../Board";
-import { ConnectButton } from "../ConnectButton";
 import { DiceRoll } from "../DiceRoll";
 import { rollDice } from "../dice";
 import { recordExpense } from "../expenses";
@@ -134,10 +139,9 @@ async function fetchHint(
 ): Promise<HintResult | null> {
   try {
     // Step 1: get ranked candidates from gnubg_service.
-    const { candidates } = await gnubgPost<{ candidates: { move: string; equity: number }[] }>(
-      "/evaluate",
-      { position_id: positionId, match_id: matchId, dice },
-    );
+    const { candidates } = await gnubgPost<{
+      candidates: { move: string; equity: number }[];
+    }>("/evaluate", { position_id: positionId, match_id: matchId, dice });
     if (!candidates || candidates.length === 0) return null;
 
     // Step 2: ask coach_service to narrate the top move.
@@ -156,7 +160,8 @@ async function fetchHint(
     if (!res.ok) return null;
     const data = (await res.json()) as { hint?: string; backend?: string };
     if (!data.hint) return null;
-    const served: CoachBackend = data.backend === "compute" ? "compute" : "local";
+    const served: CoachBackend =
+      data.backend === "compute" ? "compute" : "local";
     return { hint: data.hint, backend: served };
   } catch {
     // Coach offline or unreachable — game continues without hint.
@@ -253,7 +258,10 @@ function MatchInner() {
   const teamMode = params.get("teamMode") === "1";
   const candidatesParam = params.get("candidates");
   const teammateCandidates = candidatesParam
-    ? candidatesParam.split(",").map((s) => Number(s.trim())).filter((n) => Number.isFinite(n))
+    ? candidatesParam
+        .split(",")
+        .map((s) => Number(s.trim()))
+        .filter((n) => Number.isFinite(n))
     : DEFAULT_TEAMMATE_CANDIDATES;
 
   // Phase 28: persist the most-recently-played agentId so the sidebar can
@@ -274,11 +282,14 @@ function MatchInner() {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch(`${COACH}/agents/${agentId}/recommend-teammate`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ candidates: filtered }),
-        });
+        const res = await fetch(
+          `${COACH}/agents/${agentId}/recommend-teammate`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ candidates: filtered }),
+          },
+        );
         if (!res.ok) return;
         const data = (await res.json()) as TeammateRec;
         if (!cancelled) setTeammateRec(data);
@@ -412,14 +423,18 @@ function MatchInner() {
   // Current visual board — optimistic while moves are staged, otherwise
   // the authoritative server state.
   const currentBoard = displayBoardState?.board ?? game?.board ?? [];
-  const currentBar = (displayBoardState?.bar ?? game?.bar ?? [0, 0]) as [number, number];
-  const currentOff = (displayBoardState?.off ?? game?.off ?? [0, 0]) as [number, number];
+  const currentBar = (displayBoardState?.bar ?? game?.bar ?? [0, 0]) as [
+    number,
+    number,
+  ];
+  const currentOff = (displayBoardState?.off ?? game?.off ?? [0, 0]) as [
+    number,
+    number,
+  ];
 
   // How many move segments we expect before auto-submitting.
   // Doubles → 4 moves; any other roll → 2 moves.
-  const diceCount = game?.dice
-    ? game.dice[0] === game.dice[1] ? 4 : 2
-    : 0;
+  const diceCount = game?.dice ? (game.dice[0] === game.dice[1] ? 4 : 2) : 0;
 
   // ── Coach hint after each move ─────────────────────────────────────────
 
@@ -545,7 +560,7 @@ function MatchInner() {
     // Small delay so the human sees the agent's dice land before its move.
     const timer = setTimeout(step, 400);
     return () => clearTimeout(timer);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [game, fastForward]);
 
   // ── Fast-forward (server-side) ────────────────────────────────────────────
@@ -580,7 +595,7 @@ function MatchInner() {
     return () => {
       cancelled = true;
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fastForward]);
 
   // ── Auto-skip the human's turn when they have no legal moves ──────────────
@@ -621,7 +636,7 @@ function MatchInner() {
     return () => {
       cancelled = true;
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [game, fastForward]);
 
   // ── Human actions ──────────────────────────────────────────────────────
@@ -633,7 +648,7 @@ function MatchInner() {
       setStagedMoves([]);
       setDisplayBoardState(null);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [game?.turn]);
 
   /**
@@ -723,7 +738,8 @@ function MatchInner() {
     } else if (selectedSource === point) {
       setSelectedSource(null); // deselect
     } else {
-      const from: number | "bar" = selectedSource === 25 ? "bar" : selectedSource;
+      const from: number | "bar" =
+        selectedSource === 25 ? "bar" : selectedSource;
       stageMove(from, point);
     }
   };
@@ -738,7 +754,8 @@ function MatchInner() {
 
   /** Click the bear-off zone when a source is already selected. */
   const handleOffClick = () => {
-    if (!game || !game.dice || game.turn !== 0 || selectedSource === null) return;
+    if (!game || !game.dice || game.turn !== 0 || selectedSource === null)
+      return;
     const from: number | "bar" = selectedSource === 25 ? "bar" : selectedSource;
     stageMove(from, "off");
   };
@@ -754,7 +771,8 @@ function MatchInner() {
 
   /** Phase 31: drop — stage the move from selectedSource to the dropped point. */
   const handleDrop = (point: number) => {
-    if (selectedSource === null || !game || !game.dice || game.turn !== 0) return;
+    if (selectedSource === null || !game || !game.dice || game.turn !== 0)
+      return;
     const from: number | "bar" = selectedSource === 25 ? "bar" : selectedSource;
     stageMove(from, point);
   };
@@ -809,12 +827,12 @@ function MatchInner() {
       const sessAccount = privateKeyToAccount(privKey);
 
       // Step 2 — read the human's current nonce from MatchRegistry.
-      const nonce = await publicClient.readContract({
+      const nonce = (await publicClient.readContract({
         address: matchRegistry,
         abi: MatchRegistryABI,
         functionName: "nonces",
         args: [address],
-      }) as bigint;
+      })) as bigint;
 
       // Step 3 — human signs "Chaingammon:open" (MetaMask popup #1).
       // Encoding mirrors the contract's abi.encode call exactly:
@@ -1049,34 +1067,31 @@ function MatchInner() {
   const needsMove = !!game.dice && isHumanTurn;
 
   // Show the Undo button whenever there is something to undo.
-  const canUndo = stagedMoves.length > 0 || moveInput.trim() !== "" || selectedSource !== null;
+  const canUndo =
+    stagedMoves.length > 0 ||
+    moveInput.trim() !== "" ||
+    selectedSource !== null;
 
   // Show Apply button when moves are staged but not all dice are used (player
   // can't use remaining dice — let them submit a partial move for gnubg to validate).
-  const canApplyPartial = stagedMoves.length > 0 && diceCount > 0 && stagedMoves.length < diceCount;
+  const canApplyPartial =
+    stagedMoves.length > 0 && diceCount > 0 && stagedMoves.length < diceCount;
 
   const winnerLabel =
     game.winner === 0 ? "You win!" : game.winner === 1 ? "Agent wins." : "Draw";
 
   return (
     <div className="flex min-h-screen flex-col bg-zinc-50 dark:bg-black">
-      {/* Header */}
-      <header className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-200 px-4 py-3 sm:gap-4 sm:px-8 sm:py-4 dark:border-zinc-800">
-        <Link
-          href="/"
-          className="shrink-0 text-sm text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-50"
-        >
-          ← Agents
-        </Link>
-        <div className="flex min-w-0 flex-1 items-center justify-center gap-2 sm:gap-4">
-          <span className="truncate font-mono text-xs text-zinc-500 sm:text-sm dark:text-zinc-400">
-            Agent #{agentId} · {game.match_length}-pt match
-          </span>
-          <span className="shrink-0 font-mono text-xs text-zinc-900 sm:text-sm dark:text-zinc-50">
-            {game.score[0]} – {game.score[1]}
-          </span>
-        </div>
-        <ConnectButton />
+      {/* Header — sidebar Home link and the global navbar's ConnectButton
+          already cover navigation + wallet, so the match page only renders
+          the match metadata strip here. */}
+      <header className="flex flex-wrap items-center justify-center gap-2 border-b border-zinc-200 px-4 py-3 sm:gap-4 sm:px-8 sm:py-4 dark:border-zinc-800">
+        <span className="truncate font-mono text-xs text-zinc-500 sm:text-sm dark:text-zinc-400">
+          Agent #{agentId} · {game.match_length}-pt match
+        </span>
+        <span className="shrink-0 font-mono text-xs text-zinc-900 sm:text-sm dark:text-zinc-50">
+          {game.score[0]} – {game.score[1]}
+        </span>
       </header>
 
       {/* Main */}
@@ -1094,12 +1109,16 @@ function MatchInner() {
             phase; swap-to-teammate is a follow-up. */}
         {teamMode && teammateRec && (
           <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm text-emerald-900 dark:border-emerald-700/40 dark:bg-emerald-900/10 dark:text-emerald-200">
-            <span className="mr-2" aria-hidden>🤝</span>
+            <span className="mr-2" aria-hidden>
+              🤝
+            </span>
             <span className="font-medium">
               Agent prefers teammate #{teammateRec.best_teammate_id}
             </span>
             <span className="ml-2 font-mono text-xs text-emerald-700 dark:text-emerald-400">
-              (+{teammateRec.spread.toFixed(3)} eq · vs {Object.keys(teammateRec.equities).length - 1} other{Object.keys(teammateRec.equities).length === 2 ? "" : "s"})
+              (+{teammateRec.spread.toFixed(3)} eq · vs{" "}
+              {Object.keys(teammateRec.equities).length - 1} other
+              {Object.keys(teammateRec.equities).length === 2 ? "" : "s"})
             </span>
             {teammateRec.requester_kind === "overlay" && (
               <span className="ml-2 italic text-xs text-emerald-700/80 dark:text-emerald-400/80">
@@ -1221,7 +1240,9 @@ function MatchInner() {
           turn={game.turn}
           onPointClick={needsMove ? handlePointClick : undefined}
           onBarClick={needsMove ? handleBarClick : undefined}
-          onOffClick={needsMove && selectedSource !== null ? handleOffClick : undefined}
+          onOffClick={
+            needsMove && selectedSource !== null ? handleOffClick : undefined
+          }
           selectedPoint={selectedSource}
           onDragStart={needsMove ? handleDragStart : undefined}
           onDrop={needsMove ? handleDrop : undefined}
@@ -1246,19 +1267,25 @@ function MatchInner() {
           <div className="flex flex-col gap-3">
             {/* Instruction */}
             <p className="text-xs text-zinc-500 dark:text-zinc-400">
-              <span className="font-medium text-zinc-700 dark:text-zinc-300">Drag or click</span>{" "}
-              a blue checker to select it (amber highlight), then drag or click a destination point.
-              The checker moves immediately — after using all dice the move is submitted automatically.
-              Use the{" "}
-              <span className="font-medium text-zinc-700 dark:text-zinc-300">Bear off →</span>{" "}
+              <span className="font-medium text-zinc-700 dark:text-zinc-300">
+                Drag or click
+              </span>{" "}
+              a blue checker to select it (amber highlight), then drag or click
+              a destination point. The checker moves immediately — after using
+              all dice the move is submitted automatically. Use the{" "}
+              <span className="font-medium text-zinc-700 dark:text-zinc-300">
+                Bear off →
+              </span>{" "}
               button to bear off. Or type the notation directly below.
             </p>
 
             {/* Staged-move status */}
             {stagedMoves.length > 0 && (
               <p className="text-xs text-indigo-600 dark:text-indigo-400">
-                {stagedMoves.length}/{diceCount} move{stagedMoves.length !== 1 ? "s" : ""} staged
-                {stagedMoves.length < diceCount && " — click the next checker to continue"}
+                {stagedMoves.length}/{diceCount} move
+                {stagedMoves.length !== 1 ? "s" : ""} staged
+                {stagedMoves.length < diceCount &&
+                  " — click the next checker to continue"}
               </p>
             )}
 
@@ -1360,23 +1387,28 @@ function MatchInner() {
               </p>
             ) : coachHint ? (
               <>
-                <p className="text-sm text-amber-900 dark:text-amber-200">{coachHint}</p>
+                <p className="text-sm text-amber-900 dark:text-amber-200">
+                  {coachHint}
+                </p>
                 {coachServedBy && (
                   <p className="mt-1 text-[10px] uppercase tracking-wide text-amber-600/80 dark:text-amber-400/70">
                     Served by{" "}
                     {coachServedBy === "compute"
                       ? "0G Compute · Qwen 2.5 7B"
                       : "local flan-t5-base"}
-                    {coachBackend === "compute" && coachServedBy === "local" && (
-                      <span> (0G Compute unreachable — fell back)</span>
-                    )}
+                    {coachBackend === "compute" &&
+                      coachServedBy === "local" && (
+                        <span> (0G Compute unreachable — fell back)</span>
+                      )}
                   </p>
                 )}
               </>
             ) : (
               <p className="text-sm text-amber-500 dark:text-amber-600">
                 Start the coach node to get per-turn hints:{" "}
-                <code className="font-mono text-xs">cd agent &amp;&amp; ./start.sh</code>
+                <code className="font-mono text-xs">
+                  cd agent &amp;&amp; ./start.sh
+                </code>
               </p>
             )}
           </div>
