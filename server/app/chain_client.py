@@ -551,7 +551,13 @@ class ChainClient:
         if not new_overlay_hash.startswith("0x"):
             raise ChainError(f"new_overlay_hash must start with 0x: {new_overlay_hash!r}")
         contract = self._require_agent_registry()
-        nonce = self.w3.eth.get_transaction_count(self.account.address)
+        # Use "pending" so back-to-back calls (e.g. the post-training
+        # chain-writer loop, which writes one updateOverlayHash per
+        # agent in sequence) get a nonce that already accounts for any
+        # tx broadcast moments earlier — "latest" can lag the
+        # mempool/RPC propagation and produce a "nonce too low" reject
+        # on the second tx, leaving that agent's matchCount stale.
+        nonce = self.w3.eth.get_transaction_count(self.account.address, "pending")
         tx = contract.functions.updateOverlayHash(
             agent_id,
             self.w3.to_bytes(hexstr=new_overlay_hash),
