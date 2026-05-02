@@ -46,6 +46,13 @@ _AGENT_REGISTRY_ABI = [
     },
     {
         "type": "function",
+        "name": "ownerOf",
+        "stateMutability": "view",
+        "inputs": [{"name": "tokenId", "type": "uint256"}],
+        "outputs": [{"name": "", "type": "address"}],
+    },
+    {
+        "type": "function",
         "name": "tier",
         "stateMutability": "view",
         "inputs": [{"name": "agentId", "type": "uint256"}],
@@ -419,6 +426,11 @@ class ChainClient:
     def agent_match_count(self, agent_id: int) -> int:
         contract = self._require_agent_registry()
         return int(contract.functions.matchCount(agent_id).call())
+
+    def agent_owner(self, agent_id: int) -> str:
+        """Return the ERC-721 owner address of the agent NFT."""
+        contract = self._require_agent_registry()
+        return str(contract.functions.ownerOf(agent_id).call())
 
     def agent_experience_version(self, agent_id: int) -> int:
         contract = self._require_agent_registry()
