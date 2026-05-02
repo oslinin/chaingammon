@@ -654,6 +654,6 @@ See [ROADMAP.md](ROADMAP.md) for the full version. Architecture: [ARCHITECTURE.m
 
 - [x] Workflow live (Phase 37): 8-step orchestrator at `server/app/keeper_workflow.py` runs sequentially — escrow_deposit (on-chain MatchInfo lookup), vrf_rolls (drand reachability), og_storage_fetch (GameRecord blob from 0G Storage), gnubg_replay (re-walk every move + assert final position), settlement_signed (MatchInfo presence proof), relay_tx (audit anchor surfaced as gameRecordHash), ens_update (cross-check ENS text records on labelled subnames), audit_append (workflow JSON pinned to 0G Storage). Triggered via `POST /keeper-workflow/{matchId}/run`; live progress via `GET /keeper-workflow/{matchId}` polled every 1.5s by `/keeper/[matchId]` page.
 - [x] Write-up: workflow definition + audit trail UX (this section + module docstring at `server/app/keeper_workflow.py:1-50`).
-- [ ] Feedback document (`docs/keeperhub-feedback.md` — referenced in the codebase but not yet written)
+- [x] Feedback document ([docs/keeperhub-feedback.md](docs/keeperhub-feedback.md)) — concrete pain points (no `kh` SDK, recordMatch tx not in MatchInfo, match_id type mismatch between gnubg and chain, per-move drand round not in GameRecord, session-key signature verification has no on-chain query) + suggestions for a future KeeperHub Python client / workflow-definition format / reference per-step protocol.
 
 Claude Code is enabled on this repo.
