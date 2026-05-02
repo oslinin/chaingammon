@@ -136,7 +136,7 @@ export function AgentCard({ agentId }: AgentCardProps) {
         {profileQuery.isLoading ? (
           <p className="text-zinc-500">Loading profile…</p>
         ) : profileQuery.error ? (
-          <p className="text-red-600">Profile unavailable.</p>
+          <p className="text-zinc-400 dark:text-zinc-500">Profile unavailable.</p>
         ) : profileQuery.data ? (
           <>
             <p className="mb-1 text-zinc-700 dark:text-zinc-300">

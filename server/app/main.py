@@ -1447,7 +1447,9 @@ def get_agent_profile(agent_id: int):
     Mirrors the resolver path /games/{id}/agent-move (overlay) and
     /agents/{id}/recommend-teammate (model) already use. Returns the
     NullProfile shape for cold-start agents (frontend renders a
-    'no measurable style yet' chip)."""
+    'no measurable style yet' chip), and also returns NullProfile when
+    the chain client is not configured (AGENT_REGISTRY_ADDRESS unset)
+    so the card popover shows a meaningful state instead of a 503."""
     from agent_profile import (
         ModelProfile,
         NullProfile,
@@ -1460,8 +1462,17 @@ def get_agent_profile(agent_id: int):
         if chain.agent_registry is None:
             raise ChainError("AGENT_REGISTRY_ADDRESS not set")
         hashes = chain.agent_data_hashes(agent_id)
-    except ChainError as e:
-        raise HTTPException(status_code=503, detail=f"chain unavailable: {e}")
+    except ChainError:
+        # Chain not configured or unreachable — fall back to NullProfile so
+        # the AgentCard popover shows "no measurable style yet" rather than
+        # a red "Profile unavailable" error from a 503 response.
+        profile = NullProfile()
+        return {
+            "agent_id": agent_id,
+            "kind": "null",
+            "match_count": 0,
+            "summary": profile.summarize(),
+        }
 
     weights_hash = hashes[1] if len(hashes) >= 2 else ""
     profile = (
