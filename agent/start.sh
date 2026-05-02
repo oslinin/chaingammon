@@ -7,10 +7,16 @@
 #
 # The browser hits these services directly on localhost (8001 + 8002).
 # No relay or P2P layer in front of them.
+#
+# HOST defaults to 0.0.0.0 so a browser on a different machine on the
+# same LAN (e.g. http://192.168.x.y:8001) can reach the services. Set
+# AGENT_HOST=127.0.0.1 to lock to loopback only.
 set -e
 
-uv run uvicorn gnubg_service:app --port 8001 &
-uv run uvicorn coach_service:app --port 8002 &
+HOST="${AGENT_HOST:-0.0.0.0}"
+
+uv run uvicorn gnubg_service:app --host "$HOST" --port 8001 &
+uv run uvicorn coach_service:app --host "$HOST" --port 8002 &
 
 # Keep the script alive so its child uvicorn processes stay running and
 # Ctrl+C terminates the whole group. Without `wait`, `set -e` lets the
