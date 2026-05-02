@@ -26,7 +26,7 @@ import {
 import { decodeEventLog, parseEther } from "viem";
 
 import { useChainContracts } from "../contracts";
-import { recordExpense } from "../expenses";
+import { recordTransaction } from "../transactions";
 
 const SERVER = process.env.NEXT_PUBLIC_SERVER_URL ?? "http://localhost:8000";
 
@@ -129,7 +129,7 @@ export default function CreateAgentPage() {
         }
       }
 
-      recordExpense({
+      recordTransaction({
         type: "agent_mint",
         description: `Agent minted${newAgentId !== null ? ` (id ${newAgentId})` : ""}: "${agentLabel}" (Tier ${agentTier})`,
       });
@@ -188,7 +188,7 @@ export default function CreateAgentPage() {
         if (publicClient) {
           await publicClient.waitForTransactionReceipt({ hash: fundTx });
         }
-        recordExpense({
+        recordTransaction({
           type: "agent_funding",
           description: `Funded agent #${newAgentId} with ${fundingEth} ETH (tx ${fundTx.slice(0, 10)}…)`,
         });

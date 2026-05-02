@@ -102,17 +102,17 @@ export function Sidebar() {
           </span>
         </Link>
 
-        {/* Entry 3: 0G token expense ledger */}
+        {/* Entry 3: transaction ledger */}
         <Link
-          href="/expenses"
-          data-testid="sidebar-expenses"
+          href="/transactions"
+          data-testid="sidebar-transactions"
           className="flex flex-col gap-0.5 rounded-md px-3 py-3 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800"
         >
           <span className="font-semibold text-zinc-900 dark:text-zinc-50">
-            Expenses
+            Transactions
           </span>
           <span className="text-xs text-zinc-500 dark:text-zinc-400">
-            0G token ledger
+            Gas, KeeperHub, 0G ledger
           </span>
         </Link>
 

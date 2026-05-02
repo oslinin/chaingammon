@@ -20,7 +20,7 @@ import { useChaingammonName } from "./useChaingammonName";
 import { useChaingammonProfile } from "./useChaingammonProfile";
 import { useActiveChainId } from "./chains";
 import { MatchRegistryABI, useChainContracts } from "./contracts";
-import { recordExpense } from "./expenses";
+import { recordTransaction } from "./transactions";
 
 // Inline ABI fragment for selfMintSubname. Kept here instead of relying
 // on the artifact so the component builds independently of the compile
@@ -103,7 +103,7 @@ export function ClaimForm({ address: _address }: { address: `0x${string}` }) {
   // re-runs its subname lookup with the newly registered name.
   useEffect(() => {
     if (isSuccess) {
-      recordExpense({
+      recordTransaction({
         type: "ens_subname",
         description: `ENS subname registered: ${submittedLabelRef.current}.chaingammon.eth`,
       });
