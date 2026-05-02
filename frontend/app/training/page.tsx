@@ -16,8 +16,9 @@
 //   ended     → status panel shows ended state until the user clicks Play again
 //   abort     → POST /training/abort → polling=false
 //
-// All backend calls hit NEXT_PUBLIC_COACH_URL (FastAPI), same env the
-// match page already uses.
+// All backend calls hit NEXT_PUBLIC_SERVER_URL (FastAPI on port 8000),
+// where /agents and /training/* are served (server/app/main.py). The
+// coach service on 8002 only exposes /hint and /chat.
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -25,7 +26,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { useComputeBackends } from "../ComputeBackendsContext";
 
-const SERVER = process.env.NEXT_PUBLIC_COACH_URL ?? "http://localhost:8002";
+const SERVER = process.env.NEXT_PUBLIC_SERVER_URL ?? "http://localhost:8000";
 
 // Logarithmic slider helpers. Slider position p ∈ [0, 100] maps to
 // epochs ∈ [1, MAX] via 10**(p/100 * log10(MAX)). Round to a snap
