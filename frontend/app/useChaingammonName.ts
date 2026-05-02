@@ -16,7 +16,7 @@ import { useEffect, useState } from "react";
 import { parseAbiItem } from "viem";
 import { usePublicClient } from "wagmi";
 
-import { useActiveChainId } from "./chains";
+import { useActiveChain, useActiveChainId } from "./chains";
 import { useChainContracts } from "./contracts";
 
 const SUBNAME_MINTED_EVENT = parseAbiItem(
@@ -30,6 +30,7 @@ export function useChaingammonName(address: `0x${string}` | undefined) {
   // is currently on at the wagmi level (in case those drift).
   const client = usePublicClient({ chainId });
   const { playerSubnameRegistrar } = useChainContracts();
+  const deployedBlock = useActiveChain()?.deployedBlock;
 
   const [label, setLabel] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -46,13 +47,35 @@ export function useChaingammonName(address: `0x${string}` | undefined) {
     }
     let cancelled = false;
     setIsLoading(true);
-    client
-      .getLogs({
-        address: playerSubnameRegistrar,
-        event: SUBNAME_MINTED_EVENT,
-        args: { subnameOwner: address },
-        fromBlock: "earliest",
-      })
+
+    // Public testnet RPCs cap eth_getLogs to a fixed block range
+    // (publicnode Sepolia: 50000 blocks; many providers: 10000). A
+    // `fromBlock: "earliest"` request crosses that cap and gets
+    // rejected, which the old code swallowed silently — leaving the
+    // wallet looking subname-less even after a successful claim.
+    // Preferred path: read `deployedBlock` from the deployment record
+    // (written by deploy.js) so the scan covers exactly the contract's
+    // lifetime. Fallback for older records: a sliding 49k-block window
+    // (under the 50k cap; sees ~1 week of Sepolia history). Localhost
+    // / hardhat keeps "earliest" since the chain is short.
+    const isLocalChain = chainId === 31337;
+    const computeFromBlock = async (): Promise<bigint | "earliest"> => {
+      if (isLocalChain) return "earliest";
+      if (typeof deployedBlock === "number") return BigInt(deployedBlock);
+      const tip = await client.getBlockNumber();
+      const WINDOW = BigInt(49_000);
+      return tip > WINDOW ? tip - WINDOW : BigInt(0);
+    };
+
+    computeFromBlock()
+      .then((fromBlock) =>
+        client.getLogs({
+          address: playerSubnameRegistrar,
+          event: SUBNAME_MINTED_EVENT,
+          args: { subnameOwner: address },
+          fromBlock,
+        }),
+      )
       .then((logs) => {
         if (cancelled) return;
         if (logs.length > 0) {
@@ -73,7 +96,7 @@ export function useChaingammonName(address: `0x${string}` | undefined) {
     return () => {
       cancelled = true;
     };
-  }, [address, client, playerSubnameRegistrar]);
+  }, [address, client, playerSubnameRegistrar, chainId, deployedBlock]);
 
   const name = label ? `${label}.chaingammon.eth` : null;
   return { label, name, isLoading };

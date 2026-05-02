@@ -51,6 +51,13 @@ async function main() {
   const [deployer] = await ethers.getSigners();
   console.log(`Deploying from ${deployer.address} on network ${network.name}`);
 
+  // Capture the chain head *before* the first deploy tx so the
+  // recorded `deployedBlock` is guaranteed to be ≤ the block the
+  // first contract is mined into. The frontend log-scan uses this
+  // value as `fromBlock` to stay inside public-RPC eth_getLogs caps
+  // (Sepolia publicnode caps at 50k blocks).
+  const deployedBlock = await ethers.provider.getBlockNumber();
+
   const MatchRegistry = await ethers.getContractFactory("MatchRegistry");
   const matchRegistry = await MatchRegistry.deploy();
   await matchRegistry.waitForDeployment();
@@ -131,6 +138,7 @@ async function main() {
       owner: deployer.address,
     },
     deployedAt: new Date().toISOString(),
+    deployedBlock,
   };
 
   const outDir = path.join(__dirname, "..", "deployments");
