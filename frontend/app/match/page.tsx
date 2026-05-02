@@ -51,16 +51,17 @@ import {
   usePublicClient,
   useWriteContract,
 } from "wagmi";
-import { encodeAbiParameters, keccak256 } from "viem";
+import { encodeAbiParameters, keccak256, parseEther } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 
+import { AgentWalletPanel } from "../AgentWalletPanel";
 import { Board } from "../Board";
 import { DiceRoll } from "../DiceRoll";
 import { rollDice } from "../dice";
 import { recordExpense } from "../expenses";
 import { useActiveChain } from "../chains";
 import { useComputeBackends } from "../ComputeBackendsContext";
-import { MatchRegistryABI, useChainContracts } from "../contracts";
+import { MatchEscrowABI, MatchRegistryABI, useChainContracts } from "../contracts";
 
 // ── Types matching agent/gnubg_state.py:MatchStateDict ────────────────────
 
@@ -83,6 +84,23 @@ interface MatchState {
 const GNUBG = process.env.NEXT_PUBLIC_GNUBG_URL ?? "http://localhost:8001";
 const COACH = process.env.NEXT_PUBLIC_COACH_URL ?? "http://localhost:8002";
 const SERVER = process.env.NEXT_PUBLIC_SERVER_URL ?? "http://localhost:8000";
+
+const ZERO_ADDR = "0x0000000000000000000000000000000000000000" as `0x${string}`;
+
+const ZERO_BIG = BigInt(0);
+
+/** Lenient parseEther that returns 0 on empty / unparseable input —
+ * the stake input field is free-form text and we don't want a rogue
+ * keystroke to throw mid-render. */
+function safeParseEther(value: string): bigint {
+  try {
+    const trimmed = value.trim();
+    if (!trimmed) return ZERO_BIG;
+    return parseEther(trimmed as `${number}`);
+  } catch {
+    return ZERO_BIG;
+  }
+}
 
 /**
  * POST helper for gnubg_service. All endpoints use POST with a JSON
@@ -403,13 +421,25 @@ function MatchInner() {
   const [keeperMatchId, setKeeperMatchId] = useState<number | null>(null);
   const [keeperRunning, setKeeperRunning] = useState(false);
 
+  // Staked-match state. `stakeEth` is the per-side stake the user typed in
+  // (empty / "0" → free match). `escrowMatchId` is the bytes32 the human
+  // and the agent both deposited under; null until both deposits land.
+  // `depositStatus` drives the pre-game UI through human-deposit then
+  // agent-deposit before the game can start.
+  const [stakeEth, setStakeEth] = useState("");
+  const [escrowMatchId, setEscrowMatchId] = useState<`0x${string}` | null>(null);
+  const [depositStatus, setDepositStatus] = useState<
+    "idle" | "human-pending" | "agent-pending" | "ready" | "error"
+  >("idle");
+  const [depositError, setDepositError] = useState<string | null>(null);
+
   // ── Settlement via settleWithSessionKeys ──────────────────────────────────
   // Wallet hooks — used only when a wallet is connected.
   const { address, isConnected } = useAccount();
   const { data: walletClient } = useWalletClient();
   const publicClient = usePublicClient();
   const chainId = useChainId();
-  const { matchRegistry } = useChainContracts();
+  const { matchRegistry, matchEscrow } = useChainContracts();
   const { writeContractAsync } = useWriteContract();
   const activeChain = useActiveChain();
   const explorerUrl = activeChain?.chain.blockExplorers?.default?.url;
@@ -500,7 +530,7 @@ function MatchInner() {
     return () => {
       cancelled = true;
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gameStarted]);
 
   // ── Auto-drive the agent when it's their turn (normal pace) ──────────────
@@ -941,19 +971,34 @@ function MatchInner() {
     try {
       const humanWins = game.winner === 0;
       const ZERO = "0x0000000000000000000000000000000000000000";
-      const res = await fetch(`${SERVER}/finalize-direct`, {
+      // Staked matches go through /finalize-direct-staked so the ELO
+      // update and the escrow payout happen atomically on-chain. Free
+      // matches (no escrowMatchId) keep the existing /finalize-direct
+      // path that only writes the registry record.
+      const isStakedSettlement =
+        escrowMatchId !== null && depositStatus === "ready";
+      const stakeWei = stakeEth.trim() ? safeParseEther(stakeEth) : ZERO_BIG;
+      const endpoint = isStakedSettlement
+        ? "/finalize-direct-staked"
+        : "/finalize-direct";
+      const body: Record<string, unknown> = {
+        winner_agent_id: humanWins ? 0 : agentId,
+        winner_human_address: humanWins && address ? address : ZERO,
+        loser_agent_id: humanWins ? agentId : 0,
+        loser_human_address: !humanWins && address ? address : ZERO,
+        match_length: game.match_length,
+        position_id: game.position_id,
+        gnubg_match_id: game.match_id,
+        score: game.score,
+      };
+      if (isStakedSettlement && escrowMatchId) {
+        body.escrow_match_id = escrowMatchId;
+        body.stake_wei = stakeWei.toString();
+      }
+      const res = await fetch(`${SERVER}${endpoint}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          winner_agent_id: humanWins ? 0 : agentId,
-          winner_human_address: humanWins && address ? address : ZERO,
-          loser_agent_id: humanWins ? agentId : 0,
-          loser_human_address: !humanWins && address ? address : ZERO,
-          match_length: game.match_length,
-          position_id: game.position_id,
-          gnubg_match_id: game.match_id,
-          score: game.score,
-        }),
+        body: JSON.stringify(body),
       });
       if (!res.ok) {
         const text = await res.text().catch(() => res.statusText);
@@ -961,7 +1006,9 @@ function MatchInner() {
         try {
           const parsed = JSON.parse(text);
           if (parsed?.detail) detail = String(parsed.detail);
-        } catch { /* keep raw */ }
+        } catch {
+          /* keep raw */
+        }
         throw new Error(detail);
       }
       const data = (await res.json()) as { match_id: number };
@@ -969,9 +1016,11 @@ function MatchInner() {
       setKeeperMatchId(mid);
       // Trigger the audit workflow in the background.
       setKeeperRunning(true);
-      fetch(`${SERVER}/keeper-workflow/${mid}/run`, { method: "POST" }).finally(() => {
-        setKeeperRunning(false);
-      });
+      fetch(`${SERVER}/keeper-workflow/${mid}/run`, { method: "POST" }).finally(
+        () => {
+          setKeeperRunning(false);
+        },
+      );
     } catch (e: unknown) {
       setFinalizeError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -985,8 +1034,8 @@ function MatchInner() {
     if (game?.game_over && agentId > 0) {
       void doFinalizeAndTriggerKeeper();
     }
-  // Intentional: only re-run when game_over transitions to true.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // Intentional: only re-run when game_over transitions to true.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [game?.game_over]);
 
   // ── Render ─────────────────────────────────────────────────────────────
@@ -995,14 +1044,76 @@ function MatchInner() {
   // active when playing against an agent — this card makes that visible before
   // the first move so the user understands settlement is automatic.
   if (!gameStarted && agentId > 0) {
+    const stakeWei = stakeEth.trim() ? safeParseEther(stakeEth) : ZERO_BIG;
+    const isStaked = stakeWei > ZERO_BIG;
+    const isDepositing =
+      depositStatus === "human-pending" || depositStatus === "agent-pending";
+    const canStart = !isStaked || depositStatus === "ready";
+
+    const onClickStart = async () => {
+      if (!isStaked) {
+        setGameStarted(true);
+        return;
+      }
+      if (!isConnected || !address) {
+        setDepositError("Connect your wallet to stake.");
+        setDepositStatus("error");
+        return;
+      }
+      if (matchEscrow === ZERO_ADDR) {
+        setDepositError("MatchEscrow not deployed on this chain.");
+        setDepositStatus("error");
+        return;
+      }
+      try {
+        setDepositError(null);
+        setDepositStatus("human-pending");
+        const newMatchId = generatePrivateKey() as `0x${string}`;
+        // Human deposits side A.
+        const humanTxHash = await writeContractAsync({
+          abi: MatchEscrowABI,
+          address: matchEscrow,
+          functionName: "deposit",
+          args: [newMatchId, stakeWei],
+          value: stakeWei,
+        });
+        if (publicClient) {
+          await publicClient.waitForTransactionReceipt({ hash: humanTxHash });
+        }
+        // Agent (server-managed wallet) deposits side B.
+        setDepositStatus("agent-pending");
+        const res = await fetch(`${SERVER}/agents/${agentId}/deposit`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            match_id: newMatchId,
+            stake_wei: stakeWei.toString(),
+          }),
+        });
+        if (!res.ok) {
+          const detail = await res.text().catch(() => res.statusText);
+          throw new Error(`agent deposit failed: ${detail}`);
+        }
+        setEscrowMatchId(newMatchId);
+        setDepositStatus("ready");
+      } catch (err) {
+        setDepositError(err instanceof Error ? err.message : String(err));
+        setDepositStatus("error");
+      }
+    };
+
     return (
       <div className="flex min-h-screen flex-col bg-zinc-50 dark:bg-black">
         <header className="flex items-center justify-between border-b border-zinc-200 px-8 py-4 dark:border-zinc-800">
-          <Link href="/" className="text-sm text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-50">
+          <Link
+            href="/"
+            className="text-sm text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-50"
+          >
             ← Agents
           </Link>
-          <span className="font-mono text-sm text-zinc-500 dark:text-zinc-400">Agent #{agentId}</span>
-          <ConnectButton />
+          <span className="font-mono text-sm text-zinc-500 dark:text-zinc-400">
+            Agent #{agentId}
+          </span>
         </header>
         <main className="mx-auto flex w-full max-w-lg flex-1 flex-col items-center justify-center gap-6 px-4 py-16">
           <div className="w-full rounded-xl border border-emerald-200 bg-emerald-50 p-6 dark:border-emerald-700/40 dark:bg-emerald-900/10">
@@ -1010,22 +1121,83 @@ function MatchInner() {
               KeeperHub mode
             </h2>
             <p className="text-sm leading-6 text-emerald-800 dark:text-emerald-300">
-              When you click <strong>Start Game</strong>, KeeperHub takes over settlement.
-              Your result is recorded on 0G Chain and your ELO is updated automatically —
-              even if you close the tab before the game ends.
+              When you click <strong>Start Game</strong>, KeeperHub takes over
+              settlement. Your result is recorded on 0G Chain and your ELO is
+              updated automatically — even if you close the tab before the game
+              ends.
             </p>
             <ul className="mt-3 space-y-1 text-xs text-emerald-700 dark:text-emerald-400">
               <li>✓ drand dice — publicly verifiable randomness each turn</li>
               <li>✓ gnubg move validation — every move audited on-chain</li>
-              <li>✓ automatic ELO settlement — no manual "Settle on-chain" click</li>
+              <li>
+                ✓ automatic ELO settlement — no manual "Settle on-chain" click
+              </li>
             </ul>
+          </div>
+          <div className="w-full rounded-xl border border-zinc-200 bg-white p-6 dark:border-zinc-800 dark:bg-zinc-900">
+            <label
+              htmlFor="stake-eth"
+              className="mb-2 block text-sm font-medium text-zinc-700 dark:text-zinc-300"
+            >
+              Stake per side (ETH) — leave 0 for a free match
+            </label>
+            <input
+              id="stake-eth"
+              type="number"
+              min="0"
+              step="0.001"
+              placeholder="0"
+              disabled={isDepositing || depositStatus === "ready"}
+              value={stakeEth}
+              onChange={(e) => setStakeEth(e.target.value)}
+              className="w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm font-mono dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+            />
+            {isStaked && (
+              <>
+                <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
+                  You and the agent each deposit {stakeEth} ETH; winner takes
+                  the pot. Agent funds come from its server-managed wallet
+                  below — top it up before staking.
+                </p>
+                <div className="mt-3">
+                  <AgentWalletPanel agentId={agentId} stakeWei={stakeWei} />
+                </div>
+              </>
+            )}
+            {depositStatus === "human-pending" && (
+              <p className="mt-3 text-xs text-amber-600 dark:text-amber-400">
+                Confirm the deposit in your wallet…
+              </p>
+            )}
+            {depositStatus === "agent-pending" && (
+              <p className="mt-3 text-xs text-amber-600 dark:text-amber-400">
+                Agent depositing…
+              </p>
+            )}
+            {depositStatus === "ready" && (
+              <p className="mt-3 text-xs text-emerald-600 dark:text-emerald-400">
+                Both sides funded. Click Start to play.
+              </p>
+            )}
+            {depositStatus === "error" && depositError && (
+              <p className="mt-3 text-xs text-red-600 dark:text-red-400">
+                {depositError}
+              </p>
+            )}
           </div>
           <button
             type="button"
-            onClick={() => setGameStarted(true)}
-            className="w-full rounded-lg bg-indigo-600 px-6 py-3 text-base font-semibold text-white shadow hover:bg-indigo-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600"
+            onClick={onClickStart}
+            disabled={isDepositing || (isStaked && !canStart && depositStatus !== "idle" && depositStatus !== "error")}
+            className="w-full rounded-lg bg-indigo-600 px-6 py-3 text-base font-semibold text-white shadow hover:bg-indigo-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 disabled:cursor-not-allowed disabled:bg-zinc-400"
           >
-            Start Game vs Agent #{agentId}
+            {isStaked
+              ? canStart
+                ? `Start Game vs Agent #${agentId}`
+                : isDepositing
+                  ? "Staking…"
+                  : `Stake ${stakeEth} ETH & Start`
+              : `Start Game vs Agent #${agentId}`}
           </button>
         </main>
       </div>
@@ -1184,50 +1356,50 @@ function MatchInner() {
                   </button>
                 </div>
               ) : null
-            ) : (
-              /* Human-vs-human: keep the manual settle path */
-              isConnected ? (
-                settleTxHash ? (
-                  <div className="mt-3">
-                    <p className="text-sm font-semibold text-green-700 dark:text-green-400">
-                      Settled on-chain — ELO updated!
-                    </p>
-                    {explorerUrl && (
-                      <a
-                        href={`${explorerUrl}/tx/${settleTxHash}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="mt-1 block text-xs text-indigo-600 underline dark:text-indigo-400"
-                      >
-                        View transaction ↗
-                      </a>
-                    )}
-                  </div>
-                ) : (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => void doSettle()}
-                      disabled={settling}
-                      className="mt-3 rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-60"
-                      title="Record result and update ELO on-chain (2 wallet interactions)"
+            ) : /* Human-vs-human: keep the manual settle path */
+            isConnected ? (
+              settleTxHash ? (
+                <div className="mt-3">
+                  <p className="text-sm font-semibold text-green-700 dark:text-green-400">
+                    Settled on-chain — ELO updated!
+                  </p>
+                  {explorerUrl && (
+                    <a
+                      href={`${explorerUrl}/tx/${settleTxHash}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="mt-1 block text-xs text-indigo-600 underline dark:text-indigo-400"
                     >
-                      {settling ? "Settling…" : "Settle on-chain"}
-                    </button>
-                    {settleError && (
-                      <p className="mt-2 text-xs text-red-600 dark:text-red-400">{settleError}</p>
-                    )}
-                  </>
-                )
+                      View transaction ↗
+                    </a>
+                  )}
+                </div>
               ) : (
-                <button
-                  disabled
-                  className="mt-3 cursor-not-allowed rounded-md bg-zinc-200 px-4 py-2 text-sm font-semibold text-zinc-400 dark:bg-zinc-800 dark:text-zinc-600"
-                  title="Connect wallet to settle on-chain"
-                >
-                  Settle on-chain (connect wallet)
-                </button>
+                <>
+                  <button
+                    type="button"
+                    onClick={() => void doSettle()}
+                    disabled={settling}
+                    className="mt-3 rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-60"
+                    title="Record result and update ELO on-chain (2 wallet interactions)"
+                  >
+                    {settling ? "Settling…" : "Settle on-chain"}
+                  </button>
+                  {settleError && (
+                    <p className="mt-2 text-xs text-red-600 dark:text-red-400">
+                      {settleError}
+                    </p>
+                  )}
+                </>
               )
+            ) : (
+              <button
+                disabled
+                className="mt-3 cursor-not-allowed rounded-md bg-zinc-200 px-4 py-2 text-sm font-semibold text-zinc-400 dark:bg-zinc-800 dark:text-zinc-600"
+                title="Connect wallet to settle on-chain"
+              >
+                Settle on-chain (connect wallet)
+              </button>
             )}
           </div>
         )}

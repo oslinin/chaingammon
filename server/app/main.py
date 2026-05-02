@@ -1137,6 +1137,19 @@ class DirectFinalizeRequest(BaseModel):
     moves: list[dict] = []
 
 
+class StakedFinalizeRequest(DirectFinalizeRequest):
+    """Same as DirectFinalizeRequest plus the escrow context.
+
+    Routes through `recordMatchAndSplit` so the on-chain match record and
+    the escrow payout happen in the same tx. Single-winner only — the pot
+    goes to the winning side's address (the agent's session-key wallet
+    when an agent wins, the human's wallet when the human wins).
+    """
+
+    escrow_match_id: str  # bytes32 the human + agent both deposited under
+    stake_wei: str  # per-side stake; pot = stake_wei * 2. Stringified to fit JSON's int range.
+
+
 @app.post("/finalize-direct", response_model=FinalizeResponse)
 def finalize_direct(req: DirectFinalizeRequest):
     """Finalize a match from the match page without a pre-registered game_id.
@@ -1211,6 +1224,157 @@ def finalize_direct(req: DirectFinalizeRequest):
         )
     except ChainError as e:
         raise HTTPException(status_code=502, detail=f"recordMatch failed: {e}") from e
+
+    overlay_updates: list[dict] = []
+    if chain.agent_registry is not None:
+        for agent_id, won in [
+            (req.winner_agent_id, True),
+            (req.loser_agent_id, False),
+        ]:
+            if agent_id == 0:
+                continue
+            try:
+                overlay_updates.append(
+                    _update_agent_overlay(chain, agent_id, won=won, moves=move_entries)
+                )
+            except (OgStorageError, ChainError) as e:
+                overlay_updates.append({"agent_id": agent_id, "error": str(e)})
+
+    ens_updates: list[dict] = []
+    for side_name, label, agent_id, human_addr in [
+        ("winner", req.winner_label, req.winner_agent_id, req.winner_human_address),
+        ("loser", req.loser_label, req.loser_agent_id, req.loser_human_address),
+    ]:
+        if not label:
+            continue
+        try:
+            ens_updates.append(
+                _push_ens_updates(
+                    chain=chain,
+                    label=label,
+                    agent_id=agent_id,
+                    human_address=human_addr,
+                    match_id=finalized.match_id,
+                )
+            )
+        except (EnsError, ChainError) as e:
+            ens_updates.append({"label": label, "side": side_name, "error": str(e)})
+
+    return FinalizeResponse(
+        match_id=finalized.match_id,
+        tx_hash=finalized.tx_hash,
+        root_hash=upload.root_hash,
+        overlay_updates=overlay_updates,
+        ens_updates=ens_updates,
+    )
+
+
+@app.post("/finalize-direct-staked", response_model=FinalizeResponse)
+def finalize_direct_staked(req: StakedFinalizeRequest):
+    """Staked variant of /finalize-direct. Routes through
+    `MatchRegistry.recordMatchAndSplit` so the ELO update and the escrow
+    payout happen atomically — no orphan matches if the payout reverts.
+
+    Single-winner only: the pot (stake_wei × 2) goes to the winning
+    side's address. When the agent wins, the recipient is the agent's
+    server-managed session-key wallet — the agent's owner withdraws
+    from there via /agents/{id}/withdraw.
+    """
+    try:
+        stake_wei = int(req.stake_wei)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"stake_wei must be an integer, got {req.stake_wei!r}")
+    if stake_wei <= 0:
+        raise HTTPException(status_code=400, detail="stake_wei must be positive")
+    if not req.escrow_match_id.startswith("0x") or len(req.escrow_match_id) != 66:
+        raise HTTPException(status_code=400, detail=f"escrow_match_id must be 0x + 64 hex chars: {req.escrow_match_id!r}")
+
+    winner = (
+        PlayerRef(kind="human", address=req.winner_human_address)
+        if req.winner_agent_id == 0
+        else PlayerRef(kind="agent", agent_id=req.winner_agent_id)
+    )
+    loser = (
+        PlayerRef(kind="human", address=req.loser_human_address)
+        if req.loser_agent_id == 0
+        else PlayerRef(kind="agent", agent_id=req.loser_agent_id)
+    )
+
+    synthetic_state = GameState(
+        game_id="direct-staked",
+        match_id=req.gnubg_match_id or "AAAAAAAAAAAAAAAAAAAAAAAA",
+        position_id=req.position_id or "AAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        board=[0] * 24,
+        bar=[0, 0],
+        off=[0, 0],
+        turn=0,
+        dice=None,
+        match_length=req.match_length,
+        score=req.score if len(req.score) == 2 else [0, 0],
+        game_over=True,
+        winner=0,
+    )
+
+    move_entries: list[MoveEntry] = []
+    for m in req.moves:
+        try:
+            move_entries.append(MoveEntry(**m))
+        except Exception:
+            pass
+
+    record = build_from_state(
+        synthetic_state,
+        winner=winner,
+        loser=loser,
+        moves=move_entries,
+        ended_at=datetime.now(timezone.utc).isoformat(),
+    )
+    payload = serialize_record(record)
+
+    try:
+        upload = put_blob(payload)
+    except OgStorageError as e:
+        raise HTTPException(status_code=502, detail=f"0G Storage upload failed: {e}") from e
+
+    # Determine the pot recipient. Agent wins → agent's session-key
+    # wallet (owner withdraws from there). Human wins → their wallet.
+    if req.winner_agent_id > 0:
+        try:
+            wallets = AgentWalletManager.from_env()
+        except AgentWalletError as e:
+            raise HTTPException(status_code=503, detail=f"agent wallets unavailable: {e}")
+        if not wallets.has_wallet(req.winner_agent_id):
+            raise HTTPException(
+                status_code=400,
+                detail=f"agent {req.winner_agent_id} has no wallet — provision via POST /agents/{{id}}/wallet first",
+            )
+        winner_payout_addr = wallets.get_address(req.winner_agent_id)
+    else:
+        if req.winner_human_address == "0x0000000000000000000000000000000000000000":
+            raise HTTPException(status_code=400, detail="winner_human_address required when human wins")
+        winner_payout_addr = req.winner_human_address
+
+    pot_wei = stake_wei * 2
+
+    try:
+        chain = ChainClient.from_env()
+    except ChainError as e:
+        raise HTTPException(status_code=500, detail=f"chain client misconfigured: {e}") from e
+
+    try:
+        finalized = chain.record_match_and_split(
+            winner_agent_id=req.winner_agent_id,
+            winner_human=req.winner_human_address,
+            loser_agent_id=req.loser_agent_id,
+            loser_human=req.loser_human_address,
+            match_length=int(req.match_length),
+            game_record_hash=upload.root_hash,
+            escrow_match_id=req.escrow_match_id,
+            winners=[winner_payout_addr],
+            shares=[pot_wei],
+        )
+    except ChainError as e:
+        raise HTTPException(status_code=502, detail=f"recordMatchAndSplit failed: {e}") from e
 
     overlay_updates: list[dict] = []
     if chain.agent_registry is not None:
