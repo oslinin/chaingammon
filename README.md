@@ -141,7 +141,11 @@ Each agent's brain is a small per-agent value network. Two pieces, both stored a
 
 Inference at game time runs in the browser (default — small forward pass, ~10K parameters) or on 0G Compute (TEE-attested, used when the owner's machine is offline so other players can still challenge the agent).
 
-### How agents are trained — backprop, self-play, and refereed matches
+### How agents are trained — TD-Gammon RL with opponent awareness
+
+**The RL design rationale.** gnubg's weights were produced by the canonical TD-Gammon algorithm: temporal-difference learning with eligibility traces (TD(λ)), millions of self-play positions, exactly the approach Tesauro described in 1994. gnubg plays at expert level — essentially matching the best human grandmasters on a pure-backgammon metric. There is no practical path to a meaningfully stronger *pure backgammon* agent by repeating that exercise; the gains would be noise, and gnubg's published weights are already our initialization.
+
+Our RL objective is orthogonal to gnubg's original training. We train agents that make **optimal moves given knowledge of the opponent** — a goal gnubg's self-play loop never pursued. An agent that consistently faces a prime-builder should weight equity estimates differently than one facing a running-game specialist. That opponent-context signal requires additional feature inputs and a training distribution grounded in real match history. We use the *same* TD-Gammon algorithm — identical TD(λ) update rule, identical eligibility traces — but extend the input to include the opponent's style vector, stake size, and team context (the `extras` head described below). **In training mode, this is the algorithm in use: TD-Gammon RL conditioned on opponent knowledge.**
 
 **Why we dropped gnubg as a runtime dependency.** gnubg shipped as a single C subprocess driven via its External Player socket. Running it server-side made one cloud endpoint a liveness chokepoint for every agent; porting it to the browser meant a WASM rebuild of decades of C code (the bearoff databases alone are hundreds of MB). The pivot: each agent owns its own neural network, the weights live on 0G Storage, training and inference run locally (or on 0G Compute when the owner is offline). gnubg becomes an *initialization* and *baseline-strength check*, not a runtime dependency.
 

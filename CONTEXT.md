@@ -204,6 +204,12 @@ Required envs by phase:
 
 **KeeperHub:** Settlement workflow (`recordMatch` → ENS text records → on-chain hash commit → audit). Server triggers via HTTP POST. Audit pulled via `kh run status --json` and mirrored to 0G Storage so it's publicly viewable through our app.
 
+## Training approach — TD-Gammon RL with opponent awareness
+
+gnubg was trained by the canonical TD-Gammon RL algorithm (TD(λ) self-play) and plays at expert level. **We do not try to improve on gnubg's pure-backgammon skill** — there is no practical upside. gnubg's weights are our *initialization only*.
+
+Our RL goal is different: train agents that make **optimal moves given knowledge of the opponent** (opponent style, stake, team context). We use the exact same TD-Gammon algorithm — TD(λ) eligibility traces, same update rule — but extend the input with the `extras` context vector (`career_features.encode_career_context`). **Training mode = TD-Gammon RL conditioned on opponent knowledge.** See the "How agents are trained" section in `README.md` for the full rationale and pseudocode.
+
 ## gnubg External Player Protocol
 
 gnubg is driven via its socket-based External Player interface. Install with `sudo apt install gnubg`. `gnubg_client.py` manages the subprocess; do not bypass it.
