@@ -21,7 +21,11 @@ import {
   useChainContracts,
 } from "./contracts";
 
-const SERVER = process.env.NEXT_PUBLIC_COACH_URL ?? "http://localhost:8002";
+// /agents/{id}/profile lives on the backend FastAPI server (port 8000),
+// not on coach_service (port 8002). Earlier this constant pointed at
+// the coach URL by mistake, which 404'd every profile fetch and surfaced
+// "Profile unavailable" on every agent-card hover popover.
+const SERVER = process.env.NEXT_PUBLIC_SERVER_URL ?? "http://localhost:8000";
 
 interface AgentProfile {
   agent_id: number;
