@@ -1,13 +1,14 @@
-// Phase 30: Expenses page — ledger of 0G token–spending events.
+// Phase 30: Expenses page — ledger of gas and 0G token–spending events.
 //
 // Shows one row per charge:
 //   - Coach hint via 0G Compute (Qwen 2.5 7B Instruct)
 //   - On-chain game settlement via KeeperHub + 0G Chain
+//   - ENS subname registered via selfMintSubname (gas)
+//   - Agent iNFT minted via mintAgent (gas)
 //
-// The table is populated from localStorage (written by the match page whenever
-// the paid coach serves a hint, or when a game is settled on-chain). The empty
-// state is shown when no entries exist — i.e. the user has only ever used the
-// free local coach and has not settled any games.
+// The table is populated from localStorage (written whenever an on-chain or
+// paid-compute event completes). The empty state is shown when no entries
+// exist.
 //
 // SSR note: `getExpenses()` returns [] on the server, so the empty-state card
 // is always the server-rendered HTML. The client replaces it after hydration if
@@ -18,21 +19,29 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { getExpenses, type ExpenseEntry } from "../expenses";
 
-/**
- * Renders a badge for the expense type.
- * Coach hints use an amber palette; settlement charges use indigo.
- */
+const TYPE_LABELS: Record<ExpenseEntry["type"], string> = {
+  coach_hint: "Coach hint",
+  game_settlement: "Settlement",
+  ens_subname: "ENS claim",
+  agent_mint: "Agent mint",
+};
+
+const TYPE_CLASSES: Record<ExpenseEntry["type"], string> = {
+  coach_hint:
+    "inline-flex rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800 dark:bg-amber-900/30 dark:text-amber-300",
+  game_settlement:
+    "inline-flex rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-medium text-indigo-800 dark:bg-indigo-900/30 dark:text-indigo-300",
+  ens_subname:
+    "inline-flex rounded-full bg-teal-100 px-2 py-0.5 text-xs font-medium text-teal-800 dark:bg-teal-900/30 dark:text-teal-300",
+  agent_mint:
+    "inline-flex rounded-full bg-violet-100 px-2 py-0.5 text-xs font-medium text-violet-800 dark:bg-violet-900/30 dark:text-violet-300",
+};
+
+/** Renders a colour-coded badge for the expense type. */
 function TypeBadge({ type }: { type: ExpenseEntry["type"] }) {
-  const isHint = type === "coach_hint";
   return (
-    <span
-      className={
-        isHint
-          ? "inline-flex rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800 dark:bg-amber-900/30 dark:text-amber-300"
-          : "inline-flex rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-medium text-indigo-800 dark:bg-indigo-900/30 dark:text-indigo-300"
-      }
-    >
-      {isHint ? "Coach hint" : "Settlement"}
+    <span className={TYPE_CLASSES[type] ?? TYPE_CLASSES.game_settlement}>
+      {TYPE_LABELS[type] ?? type}
     </span>
   );
 }
@@ -67,9 +76,9 @@ export default function ExpensesPage() {
 
       <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-6 px-4 py-8 sm:px-8">
         <p className="text-sm text-zinc-500 dark:text-zinc-400">
-          One row per 0G token–spending event. Entries appear only when the
-          paid coach (0G Compute · Qwen 2.5 7B) is active or a game is settled
-          on-chain.
+          One row per gas or 0G token–spending event: ENS subname registration,
+          agent minting, game settlement, and paid coach hints (0G Compute ·
+          Qwen 2.5 7B).
         </p>
 
         {isEmpty ? (
@@ -78,8 +87,9 @@ export default function ExpensesPage() {
             className="rounded-lg border border-zinc-200 bg-white px-6 py-10 text-center dark:border-zinc-800 dark:bg-zinc-950"
           >
             <p className="text-sm text-zinc-400 dark:text-zinc-500">
-              No expenses yet. Enable the paid coach or settle a game to see
-              charges here.
+              No expenses yet. Gas charges appear here after registering an ENS
+              subname, minting an agent, settling a game, or using the paid
+              coach.
             </p>
           </div>
         ) : (

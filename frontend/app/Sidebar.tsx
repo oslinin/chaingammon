@@ -29,6 +29,7 @@ import Link from "next/link";
 import { useAccount, useWriteContract, useWaitForTransactionReceipt } from "wagmi";
 
 import { useChainContracts } from "./contracts";
+import { recordExpense } from "./expenses";
 
 // Inline ABI fragment for mintAgent. Kept here so the sidebar builds
 // independently of the Hardhat compile step (same pattern as ClaimForm
@@ -82,12 +83,17 @@ export function Sidebar() {
     if (matchId) setCurrentMatchId(matchId);
   }, []);
 
-  // Redirect to home after agent creation so the new agent appears in AgentsList.
+  // Record the gas expense then redirect to home after agent creation so the
+  // new agent appears in AgentsList immediately.
   useEffect(() => {
     if (isSuccess) {
+      recordExpense({
+        type: "agent_mint",
+        description: `Agent minted: "${agentLabel}" (Tier ${agentTier})`,
+      });
       window.location.href = "/";
     }
-  }, [isSuccess]);
+  }, [isSuccess, agentLabel, agentTier]);
 
   const creating = signing || confirming;
 

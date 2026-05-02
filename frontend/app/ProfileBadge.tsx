@@ -13,12 +13,13 @@
 // the contract to be redeployed with `selfMintSubname` (added in Phase 22).
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useWriteContract, useWaitForTransactionReceipt } from "wagmi";
 
 import { useChaingammonName } from "./useChaingammonName";
 import { useChaingammonProfile } from "./useChaingammonProfile";
 import { useChainContracts } from "./contracts";
+import { recordExpense } from "./expenses";
 
 // Inline ABI fragment for selfMintSubname. Kept here instead of relying
 // on the artifact so the component builds independently of the compile
@@ -79,6 +80,9 @@ function isSubnameAlreadyTaken(error: Error | null): boolean {
 export function ClaimForm({ address: _address }: { address: `0x${string}` }) {
   const [claimInput, setClaimInput] = useState("");
   const [suggestion, setSuggestion] = useState<string | null>(null);
+  // Track the label actually submitted so the expense description is accurate
+  // even when the suggestion button changes `claimInput` before confirming.
+  const submittedLabelRef = useRef<string>("");
 
   const { playerSubnameRegistrar } = useChainContracts();
 
@@ -94,9 +98,16 @@ export function ClaimForm({ address: _address }: { address: `0x${string}` }) {
     hash: txHash,
   });
 
-  // Reload so every component re-runs its subname lookup after the tx confirms.
+  // Record the gas expense and reload after the tx confirms so every component
+  // re-runs its subname lookup with the newly registered name.
   useEffect(() => {
-    if (isSuccess) window.location.reload();
+    if (isSuccess) {
+      recordExpense({
+        type: "ens_subname",
+        description: `ENS subname registered: ${submittedLabelRef.current}.chaingammon.eth`,
+      });
+      window.location.reload();
+    }
   }, [isSuccess]);
 
   // Show fallback suggestion when the name is already taken.
@@ -121,6 +132,7 @@ export function ClaimForm({ address: _address }: { address: `0x${string}` }) {
   const submit = (labelToUse?: string) => {
     const trimmed = (labelToUse ?? claimInput).trim();
     if (!trimmed || !isValidLabel(trimmed)) return;
+    submittedLabelRef.current = trimmed;
     resetWrite();
     setSuggestion(null);
     writeContract({

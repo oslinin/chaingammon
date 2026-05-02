@@ -883,6 +883,10 @@ function MatchInner() {
         ],
       });
       setSettleTxHash(txHash);
+      recordExpense({
+        type: "game_settlement",
+        description: `Match settled on-chain · Agent #${agentId} · tx ${txHash.slice(0, 10)}…`,
+      });
     } catch (e: unknown) {
       setSettleError(e instanceof Error ? e.message : String(e));
     } finally {
