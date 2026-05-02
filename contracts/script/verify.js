@@ -26,12 +26,16 @@ async function main() {
   // was actually deployed.
   const agentArgs = deployment.agentRegistryConstructorArgs;
   const registrarArgs = deployment.playerSubnameRegistrarConstructorArgs;
+  const escrowArgs = deployment.matchEscrowConstructorArgs;
   const constructorArgs = {
     MatchRegistry: [],
     AgentRegistry: agentArgs
       ? [agentArgs.matchRegistry, agentArgs.initialBaseWeightsHash]
       : [deployment.contracts.MatchRegistry], // legacy fallback for older deployments
     PlayerSubnameRegistrar: registrarArgs ? [registrarArgs.parentNode] : undefined,
+    MatchEscrow: escrowArgs
+      ? [escrowArgs.settler]
+      : [deployment.contracts.MatchRegistry], // legacy fallback: settler defaults to MatchRegistry
   };
 
   for (const [name, address] of Object.entries(deployment.contracts)) {

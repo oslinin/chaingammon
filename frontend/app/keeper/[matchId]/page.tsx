@@ -1,22 +1,21 @@
-// Phase 36: /keeper/[matchId] — KeeperHub workflow steps for the current match.
+// Phase 37: /keeper/[matchId] — KeeperHub workflow steps for the current match.
 //
 // Architecture:
 //   - matchId is read from the URL segment via useParams (SSR-safe mounted pattern).
-//   - Calls GET /keeper-workflow/{matchId} on the FastAPI server
-//     (server/app/main.py) which currently returns a deterministic mock keyed
-//     by matchId. The shape is the real KeeperHub API contract so the page
-//     needs no changes when Phase 37 replaces the mock with live data.
-//   - Each of the eight workflow steps is rendered as a row with status badge,
-//     duration, retry count, and tx hash link where applicable.
+//   - Calls GET /keeper-workflow/{matchId} on the FastAPI server. The
+//     endpoint reads the persisted workflow JSON from disk; if no run
+//     has happened the response is the canonical 8-step "all pending"
+//     shape so the UI always has something to render.
+//   - Each of the eight workflow steps is rendered as a row with status
+//     badge, duration, retry count, and audit-anchor link where applicable.
 //   - Failed steps surface the error/log field — this page is the primary
 //     debugging surface when keeper settlement breaks.
 //   - The sentinel matchId "no-match" renders the "no active match" state.
+//   - The "Run workflow" button POSTs /keeper-workflow/{matchId}/run to
+//     trigger a fresh run; the page polls every 1.5s while a run is
+//     in progress so judges see live mid-run progress.
 //
-// TODO(phase-37): Remove the mock from server/app/main.py and replace the
-// /keeper-workflow/{matchId} implementation with `kh run status --json` output
-// piped through the FastAPI server once the KeeperHub workflow is wired.
-//
-// Data source: deterministic mock from server/app/main.py (Phase 36).
+// Data source: real Phase 37 orchestrator at server/app/keeper_workflow.py.
 // Static export: generateStaticParams pre-builds placeholder shells.
 "use client";
 
@@ -67,19 +66,60 @@ export default function KeeperPage() {
   const matchId = mounted ? (params?.matchId as string) : null;
   const isNoMatch = matchId === NO_MATCH_SENTINEL || matchId === "placeholder";
 
+  // Initial fetch + polling while running. Phase 37: polls /keeper-workflow/{id}
+  // every 1.5s as long as the workflow is "running"; stops on terminal state
+  // (ok / failed) so finished runs don't waste round-trips.
   useEffect(() => {
     if (!matchId || isNoMatch) return;
-    setLoading(true);
-    setFetchError(null);
-    fetch(`${SERVER}/keeper-workflow/${encodeURIComponent(matchId)}`)
-      .then((res) => {
+    let cancelled = false;
+    let pollTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const fetchOnce = async () => {
+      try {
+        const res = await fetch(
+          `${SERVER}/keeper-workflow/${encodeURIComponent(matchId)}`,
+        );
         if (!res.ok) throw new Error(`Server responded ${res.status}`);
-        return res.json() as Promise<WorkflowRun>;
-      })
-      .then((data) => setRun(data))
-      .catch((e: unknown) => setFetchError(String(e)))
-      .finally(() => setLoading(false));
+        const data = (await res.json()) as WorkflowRun;
+        if (cancelled) return;
+        setRun(data);
+        setFetchError(null);
+        if (data.status === "running") {
+          pollTimer = setTimeout(fetchOnce, 1500);
+        }
+      } catch (e: unknown) {
+        if (!cancelled) setFetchError(String(e));
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+    setLoading(true);
+    fetchOnce();
+    return () => {
+      cancelled = true;
+      if (pollTimer) clearTimeout(pollTimer);
+    };
   }, [matchId, isNoMatch]);
+
+  const [running, setRunning] = useState(false);
+  const triggerRun = async () => {
+    if (!matchId || isNoMatch || running) return;
+    setRunning(true);
+    setFetchError(null);
+    try {
+      const res = await fetch(
+        `${SERVER}/keeper-workflow/${encodeURIComponent(matchId)}/run`,
+        { method: "POST" },
+      );
+      if (!res.ok) throw new Error(`Server responded ${res.status}`);
+      const data = (await res.json()) as WorkflowRun;
+      setRun(data);
+    } catch (e: unknown) {
+      setFetchError(String(e));
+    } finally {
+      setRunning(false);
+    }
+  };
 
   return (
     <div className="flex min-h-screen flex-col bg-zinc-50 dark:bg-black">
@@ -125,14 +165,22 @@ export default function KeeperPage() {
           </div>
         )}
 
-        {/* Mock notice */}
+        {/* Run button — Phase 37 trigger */}
         {mounted && !isNoMatch && (
-          <div className="rounded-lg border border-indigo-100 bg-indigo-50 px-4 py-2 dark:border-indigo-900/40 dark:bg-indigo-900/10">
-            <p className="text-xs text-indigo-600 dark:text-indigo-400">
-              <span className="font-semibold">Mock data (Phase 36)</span> — KeeperHub
-              workflow integration lands in Phase 37. This view shows the real
-              API shape with deterministic placeholder values keyed by matchId.
-            </p>
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={triggerRun}
+              disabled={running || run?.status === "running"}
+              className="rounded-md bg-emerald-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {running ? "Triggering…" : run?.status === "running"
+                ? "Workflow running…"
+                : "Run workflow"}
+            </button>
+            <span className="text-xs text-zinc-500 dark:text-zinc-400">
+              Triggers the 8-step orchestrator. Polls every 1.5 s while running.
+            </span>
           </div>
         )}
 

@@ -5,10 +5,13 @@
   "description": "Thin Node.js wrapper around 0G's @0glabs/0g-serving-broker SDK so the Python coach service can request Qwen 2.5 7B inference via subprocess. Mirrors og-bridge's stdin/stdout JSON contract.",
   "type": "module",
   "bin": {
-    "og-chat": "src/chat.mjs"
+    "og-chat": "src/chat.mjs",
+    "og-eval": "src/eval.mjs"
   },
   "scripts": {
-    "chat": "node src/chat.mjs"
+    "chat": "node src/chat.mjs",
+    "eval": "node src/eval.mjs",
+    "test": "node --test test/"
   },
   "dependencies": {
     "@0glabs/0g-serving-broker": "1.0.0-beta.8",

@@ -1,0 +1,111 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chaingammon.eth/docs/keeperhub-workflow.schema.json",
+  "title": "KeeperHub workflow run",
+  "description": "JSON shape returned by `kh run status --json <runId>` and mirrored to the frontend's /match/[matchId] route. The narrative spec lives in docs/keeperhub-workflow.md; this file is the machine-checkable counterpart.",
+  "type": "object",
+  "required": ["matchId", "status", "steps"],
+  "additionalProperties": true,
+  "properties": {
+    "matchId": {
+      "description": "off-chain keccak256(playerA || playerB || nonce) match identifier; the same value used by MatchEscrow",
+      "type": "string",
+      "pattern": "^0x[0-9a-fA-F]{64}$"
+    },
+    "runId": {
+      "description": "KeeperHub-assigned workflow-run identifier; passed back to `kh run status` for live polling",
+      "type": "string"
+    },
+    "status": {
+      "description": "Top-level workflow status; matches KeeperHub's enum",
+      "type": "string",
+      "enum": ["pending", "running", "succeeded", "failed", "halted", "forfeited"]
+    },
+    "started_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "ended_at": {
+      "anyOf": [
+        {"type": "string", "format": "date-time"},
+        {"type": "null"}
+      ]
+    },
+    "steps": {
+      "description": "Ordered list of workflow steps. Step IDs match the table in docs/keeperhub-workflow.md.",
+      "type": "array",
+      "items": {"$ref": "#/$defs/Step"}
+    }
+  },
+  "$defs": {
+    "Step": {
+      "type": "object",
+      "required": ["id", "status"],
+      "additionalProperties": true,
+      "properties": {
+        "id": {
+          "description": "Step identifier from docs/keeperhub-workflow.md (e.g. `pull_drand_round`, `submit_settlement`).",
+          "type": "string",
+          "enum": [
+            "verify_deposits",
+            "initialize_audit_log",
+            "pull_drand_round",
+            "derive_dice",
+            "request_move",
+            "validate_move",
+            "append_to_audit_log",
+            "check_terminal",
+            "build_game_record",
+            "upload_game_record",
+            "submit_settlement",
+            "payout_winner",
+            "update_ens_records",
+            "append_audit_summary"
+          ]
+        },
+        "name": {
+          "description": "Human-readable label for the step. Optional — clients can fall back to id.",
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["pending", "running", "ok", "error", "skipped", "halted"]
+        },
+        "duration_ms": {
+          "description": "Wall-clock duration in milliseconds; null while pending/running.",
+          "anyOf": [{"type": "integer", "minimum": 0}, {"type": "null"}]
+        },
+        "retry_count": {
+          "description": "Number of retry attempts already consumed.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "tx_hash": {
+          "description": "On-chain tx hash if this step submitted a transaction; null otherwise.",
+          "anyOf": [
+            {"type": "string", "pattern": "^0x[0-9a-fA-F]{64}$"},
+            {"type": "null"}
+          ]
+        },
+        "error": {
+          "description": "Error message if status == 'error' or 'halted'.",
+          "anyOf": [{"type": "string"}, {"type": "null"}]
+        },
+        "detail": {
+          "description": "Free-form per-step detail, e.g. drand round number for pull_drand_round, dice pair for derive_dice.",
+          "anyOf": [{"type": "string"}, {"type": "object"}, {"type": "null"}]
+        },
+        "turn_index": {
+          "description": "0-based per-turn step index; required for steps inside per_turn_loop.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "drand_round": {
+          "description": "drand round number; required for pull_drand_round and derive_dice steps.",
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    }
+  }
+}
