@@ -468,7 +468,15 @@ def _aggregate(events: list[dict], *, job: Optional[TrainingJob],
         "running": running,
         "completed_games": completed_games,
         "total_games": total_games,
-        "current_epoch": last_epoch_completed + 1 if running else last_epoch_completed,
+        # Show the 1-based epoch counter the user expects:
+        #   • while running: last_completed + 1 = current epoch number
+        #   • on "done": last_completed + 1 = total_epochs (all done)
+        #   • on abort / idle: last_completed (last completed epoch, or 0)
+        "current_epoch": (
+            last_epoch_completed + 1
+            if (running or ended == "done")
+            else max(0, last_epoch_completed)
+        ),
         "total_epochs": total_epochs,
         "agent_ids": agent_ids,
         "per_agent": {

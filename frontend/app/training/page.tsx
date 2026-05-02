@@ -163,9 +163,18 @@ export default function TrainingPage() {
       return r.json();
     },
   });
-  // When the trainer announces it's done, stop polling.
+  // Stop polling only once the job reaches a terminal state ("done" or
+  // "aborted"). Without the `ended !== null` guard the effect would fire
+  // immediately after Play is clicked, because the *previous* idle status
+  // already has running:false — which would kill the poll before the new
+  // run's first status event ever arrives.
   useEffect(() => {
-    if (polling && statusQuery.data && statusQuery.data.running === false) {
+    if (
+      polling &&
+      statusQuery.data &&
+      statusQuery.data.running === false &&
+      statusQuery.data.ended !== null
+    ) {
       setPolling(false);
     }
   }, [polling, statusQuery.data]);
