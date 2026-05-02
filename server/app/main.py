@@ -1890,12 +1890,26 @@ class StartTrainingRequest(BaseModel):
     use_0g_coaching: bool = False
     extras_dim: int = 16
     seed: int = 42
+    # When True, save a checkpoint per agent at end of run and upload to
+    # 0G Storage. Auto-derived as True when any 0G backend is selected
+    # (inference or coaching), because the user has signalled 0G intent.
+    # Requires OG_STORAGE_{RPC,INDEXER,PRIVATE_KEY} env vars in the
+    # server process; upload failure surfaces as an agent_save_error
+    # event in /training/status rather than aborting the whole run.
+    upload_to_0g: bool = False
+    # Skip AES-256-GCM encryption — demo path so a server with no key
+    # file can fetch the checkpoint via load_profile. Leave False for
+    # production agents; the uploaded blob will be publicly readable.
+    no_encrypt: bool = False
 
 
 @app.post("/training/start")
 def post_training_start(req: StartTrainingRequest):
     """Spawn a round-robin training subprocess. 409 if one is already
     running. Returns `{job_id, started_at, epochs, agent_ids}`."""
+    # Auto-derive: if any 0G backend is selected, default to uploading
+    # trained weights to 0G so the iNFT's dataHashes stay current.
+    upload_to_0g = req.upload_to_0g or req.use_0g_inference or req.use_0g_coaching
     try:
         job = start_job(
             epochs=req.epochs,
@@ -1904,6 +1918,8 @@ def post_training_start(req: StartTrainingRequest):
             use_0g_coaching=req.use_0g_coaching,
             extras_dim=req.extras_dim,
             seed=req.seed,
+            upload_to_0g=upload_to_0g,
+            no_encrypt=req.no_encrypt,
         )
     except RuntimeError as e:
         # Already running.
@@ -1917,6 +1933,7 @@ def post_training_start(req: StartTrainingRequest):
         "agent_ids": job.agent_ids,
         "use_0g_inference": job.use_0g_inference,
         "use_0g_coaching": job.use_0g_coaching,
+        "upload_to_0g": job.upload_to_0g,
         "status_file": str(job.status_file_path),
     }
 
