@@ -1,8 +1,9 @@
 // Phase 13: on-chain agent card with live ELO.
-// Phase F: hover popover surfaces the on-chain profile (match count +
-// summary) by lazy-fetching /agents/{id}/profile when the card is
-// hovered or focused — kept lazy so the home page doesn't fan out N
-// requests on mount.
+// Match record (played / won / lost) is derived chain-only from
+// MatchRegistry's MatchRecorded event log via useAgentMatchSummary —
+// always live, no server, no 0G fetch — and rendered inline on the card
+// (was an on-hover popover; the eth_getLogs round-trip was too slow to
+// only fire on hover, so it now resolves once at mount).
 //
 // Reads agentMetadata (label/URI) from AgentRegistry and agentElo from
 // MatchRegistry in a single batched call. The "Play" link navigates to
@@ -10,8 +11,6 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
 import { useReadContracts } from "wagmi";
 
 import { useActiveChainId } from "./chains";
@@ -20,20 +19,10 @@ import {
   MatchRegistryABI,
   useChainContracts,
 } from "./contracts";
-
-// /agents/{id}/profile lives on the backend FastAPI server (port 8000),
-// not on coach_service (port 8002). Earlier this constant pointed at
-// the coach URL by mistake, which 404'd every profile fetch and surfaced
-// "Profile unavailable" on every agent-card hover popover.
-const SERVER = process.env.NEXT_PUBLIC_SERVER_URL ?? "http://localhost:8000";
-
-interface AgentProfile {
-  agent_id: number;
-  kind: "model" | "overlay" | "null";
-  match_count: number;
-  summary: string;
-  owner_ens?: string | null;
-}
+import {
+  formatAgentMatchProse,
+  useAgentMatchSummary,
+} from "./useAgentMatchSummary";
 
 interface AgentCardProps {
   agentId: number;
@@ -81,28 +70,11 @@ export function AgentCard({ agentId }: AgentCardProps) {
 
   const eloDisplay = elo !== undefined ? elo.toString() : "—";
 
-  // Phase F: hover/focus → lazy-fetch the agent's profile from
-  // /agents/{id}/profile. Stale-time 60s so re-hovering the same card
-  // doesn't refetch; `enabled: hovered` keeps the home page from
-  // fanning out N requests when the user just lands on it.
-  const [hovered, setHovered] = useState(false);
-  const profileQuery = useQuery({
-    enabled: hovered,
-    staleTime: 60_000,
-    queryKey: ["agent-profile", agentId],
-    queryFn: async (): Promise<AgentProfile> => {
-      const r = await fetch(`${SERVER}/agents/${agentId}/profile`);
-      if (!r.ok) throw new Error(`/profile → ${r.status}`);
-      return r.json();
-    },
-  });
+  const matchQuery = useAgentMatchSummary(agentId);
+  const matchProse = formatAgentMatchProse(matchQuery.summary, elo);
 
   return (
-    <div
-      className="relative group flex flex-col gap-3 rounded-lg border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-900"
-      onMouseEnter={() => setHovered(true)}
-      onFocus={() => setHovered(true)}
-    >
+    <div className="flex flex-col gap-3 rounded-lg border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-900">
       <div className="flex items-start justify-between gap-2">
         <h3 className="font-mono text-sm font-semibold text-zinc-900 dark:text-zinc-50 break-all">
           {label}
@@ -121,49 +93,34 @@ export function AgentCard({ agentId }: AgentCardProps) {
         </span>
       </div>
 
+      {/* Inline match record — chain-derived from MatchRegistry.MatchRecorded
+          event scan via useAgentMatchSummary. */}
+      <div className="text-xs">
+        {matchQuery.isLoading ? (
+          <p className="text-zinc-400 dark:text-zinc-500">Reading chain…</p>
+        ) : matchQuery.error ? (
+          <p className="text-red-600 dark:text-red-400">
+            Could not read MatchRegistry.
+          </p>
+        ) : matchQuery.summary ? (
+          <>
+            <p className="font-mono text-zinc-700 dark:text-zinc-300">
+              {matchQuery.summary.matches} played · {matchQuery.summary.wins}{" "}
+              won · {matchQuery.summary.losses} lost
+            </p>
+            <p className="mt-0.5 text-zinc-500 dark:text-zinc-400">
+              {matchProse}
+            </p>
+          </>
+        ) : null}
+      </div>
+
       <Link
         href={`/match?agentId=${agentId}`}
         className="mt-1 rounded-md bg-indigo-600 px-4 py-2 text-center text-sm font-semibold text-white hover:bg-indigo-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600"
       >
         Play
       </Link>
-
-      {/* Hover popover — surfaces the profile loaded from the backend.
-          Hidden by default; revealed on hover/focus via Tailwind group. */}
-      <div className="invisible absolute left-full top-0 z-10 ml-2 w-64 rounded-lg border border-zinc-200 bg-white p-3 text-xs shadow-lg group-hover:visible group-focus-within:visible dark:border-zinc-700 dark:bg-zinc-950">
-        <div className="mb-1 font-mono uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-          Profile
-        </div>
-        {profileQuery.isLoading ? (
-          <p className="text-zinc-500">Loading profile…</p>
-        ) : profileQuery.error ? (
-          <p className="text-red-600">Profile unavailable.</p>
-        ) : profileQuery.data ? (
-          <>
-            {profileQuery.data.owner_ens && (
-              <p className="mb-1.5 font-mono text-[10px] text-zinc-500 dark:text-zinc-400 truncate">
-                <span className="uppercase tracking-wide">Owner</span>{" "}
-                <span className="text-zinc-700 dark:text-zinc-300">
-                  {profileQuery.data.owner_ens}
-                </span>
-              </p>
-            )}
-            <p className="mb-1 text-zinc-700 dark:text-zinc-300">
-              <span className="font-mono">
-                Matches: {profileQuery.data.match_count}
-              </span>
-              <span className="ml-2 rounded bg-zinc-100 px-1 py-0.5 font-mono text-[10px] uppercase text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
-                {profileQuery.data.kind}
-              </span>
-            </p>
-            <p className="text-zinc-600 dark:text-zinc-400">
-              {profileQuery.data.summary}
-            </p>
-          </>
-        ) : (
-          <p className="text-zinc-500">Hover to load.</p>
-        )}
-      </div>
     </div>
   );
 }
