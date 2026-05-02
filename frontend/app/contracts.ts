@@ -3,6 +3,8 @@
 // `useChainContracts()` hook below — they track the wallet's current
 // chain so reads always go to a deployment that exists on that chain.
 
+import type { Abi } from "viem";
+
 import AgentRegistryArtifact from "../../contracts/artifacts/src/AgentRegistry.sol/AgentRegistry.json";
 import MatchEscrowArtifact from "../../contracts/artifacts/src/MatchEscrow.sol/MatchEscrow.json";
 import MatchRegistryArtifact from "../../contracts/artifacts/src/MatchRegistry.sol/MatchRegistry.json";
@@ -28,7 +30,11 @@ export function useChainContracts() {
   };
 }
 
-export const AgentRegistryABI = AgentRegistryArtifact.abi;
-export const MatchEscrowABI = MatchEscrowArtifact.abi;
-export const MatchRegistryABI = MatchRegistryArtifact.abi;
-export const PlayerSubnameRegistrarABI = PlayerSubnameRegistrarArtifact.abi;
+// Cast each artifact's `abi` to viem's `Abi` so consumers can pass them
+// to wagmi / viem hooks without per-call-site casts. The JSON imports
+// otherwise come back as a wide structural type whose `type: string`
+// fields don't narrow to the discriminated-union viem expects.
+export const AgentRegistryABI = AgentRegistryArtifact.abi as Abi;
+export const MatchEscrowABI = MatchEscrowArtifact.abi as Abi;
+export const MatchRegistryABI = MatchRegistryArtifact.abi as Abi;
+export const PlayerSubnameRegistrarABI = PlayerSubnameRegistrarArtifact.abi as Abi;
