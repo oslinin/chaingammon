@@ -128,6 +128,20 @@ export function Sidebar() {
       </div>
 
       <nav className="flex flex-col gap-1 p-3">
+        {/* Entry 0: home page */}
+        <Link
+          href="/"
+          data-testid="sidebar-home"
+          className="flex flex-col gap-0.5 rounded-md px-3 py-3 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800"
+        >
+          <span className="font-semibold text-zinc-900 dark:text-zinc-50">
+            Home
+          </span>
+          <span className="text-xs text-zinc-500 dark:text-zinc-400">
+            Agents &amp; lobby
+          </span>
+        </Link>
+
         {/* Entry 1: current play with agent */}
         <Link
           href={playHref}

@@ -50,6 +50,17 @@ export function useChaingammonProfile(label: string | null) {
     query: { enabled: !!node },
   });
 
+  const { data: matchCount } = useReadContract({
+    address: playerSubnameRegistrar,
+    abi: PlayerSubnameRegistrarABI,
+    functionName: "text",
+    args: node ? [node, "match_count"] : undefined,
+    chainId,
+    query: { enabled: !!node },
+  });
+
   const eloValue = typeof elo === "string" && elo !== "" ? elo : undefined;
-  return { elo: eloValue, node, isLoading };
+  const matchCountValue =
+    typeof matchCount === "string" && matchCount !== "" ? matchCount : undefined;
+  return { elo: eloValue, matchCount: matchCountValue, node, isLoading };
 }

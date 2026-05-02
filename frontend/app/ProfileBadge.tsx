@@ -218,7 +218,7 @@ export function ClaimForm({ address: _address }: { address: `0x${string}` }) {
 
 export function ProfileBadge({ address }: { address: `0x${string}` }) {
   const { label, name, isLoading: nameLoading } = useChaingammonName(address);
-  const { elo } = useChaingammonProfile(label);
+  const { elo, matchCount } = useChaingammonProfile(label);
 
   if (nameLoading) {
     return (
@@ -235,11 +235,24 @@ export function ProfileBadge({ address }: { address: `0x${string}` }) {
     return (
       <span
         data-testid="profile-badge"
-        className="font-mono text-sm text-zinc-700 dark:text-zinc-300"
+        className="flex items-center gap-2 font-mono text-sm text-zinc-700 dark:text-zinc-300"
       >
         {name}
         {elo ? (
-          <span className="ml-1 text-zinc-500 dark:text-zinc-400">({elo})</span>
+          <span
+            title="ELO rating"
+            className="rounded bg-indigo-100 px-1.5 py-0.5 text-xs font-semibold text-indigo-700 dark:bg-indigo-900 dark:text-indigo-300"
+          >
+            ELO {elo}
+          </span>
+        ) : null}
+        {matchCount ? (
+          <span
+            title="Matches played"
+            className="rounded bg-zinc-100 px-1.5 py-0.5 text-xs font-semibold text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300"
+          >
+            {matchCount}M
+          </span>
         ) : null}
       </span>
     );

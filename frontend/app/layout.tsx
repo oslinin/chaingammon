@@ -1,10 +1,13 @@
 // Phase 28: root layout updated to include global sidebar.
 // Phase 35: responsive layout — viewport meta tag, sidebar hidden on mobile,
 // MobileNav fixed bottom bar for small screens.
+// Phase 57: consolidated top navbar — brand, compute-backends, and wallet
+// connect (with ELO + match count from ENS) in a single global header.
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { ComputeBackendsPill } from "./ComputeBackendsPill";
+import { ConnectButton } from "./ConnectButton";
 import { Providers } from "./providers";
 import { Sidebar } from "./Sidebar";
 import { MobileNav } from "./MobileNav";
@@ -48,11 +51,18 @@ export default function RootLayout({
             <Sidebar />
             {/* pb-16 md:pb-0 reserves space for the fixed mobile bottom nav */}
             <div className="flex flex-1 flex-col min-w-0 pb-16 md:pb-0">
-              {/* Compute-backends pill: pinned at the top so the three
-                  operations × two backends story is visible on every page. */}
-              <div className="flex justify-end border-b border-zinc-200 px-4 py-2 dark:border-zinc-800">
-                <ComputeBackendsPill />
-              </div>
+              {/* Global top navbar: brand on the left, compute backends
+                  + wallet connect (ELO, matches played) on the right.
+                  Visible on every page so users always see their stats. */}
+              <header className="flex items-center justify-between gap-4 border-b border-zinc-200 px-4 py-2 dark:border-zinc-800">
+                <span className="text-sm font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
+                  Chaingammon
+                </span>
+                <div className="flex flex-wrap items-center justify-end gap-3">
+                  <ComputeBackendsPill />
+                  <ConnectButton />
+                </div>
+              </header>
               {children}
             </div>
           </div>
