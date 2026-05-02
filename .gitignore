@@ -29,8 +29,15 @@ build/
 contracts/artifacts/
 contracts/cache/
 contracts/deployments/localhost/
+contracts/deployments/localhost.json
 contracts/deployments/hardhat*.json
 contracts/typechain-types/
+
+# Per-agent server-managed wallet keystores (Phase 60). Never commit
+# these — each file is an encrypted v3 keystore for an EOA holding real
+# (testnet) ETH; even encrypted, leaking them weakens the agent-wallet
+# threat model.
+server/data/
 
 # Misc
 .DS_Store
