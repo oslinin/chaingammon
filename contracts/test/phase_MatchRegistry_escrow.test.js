@@ -184,7 +184,7 @@ describe("MatchRegistry × MatchEscrow wiring", function () {
       expect(await registry.matchCount()).to.equal(countBefore);
     });
 
-    it("non-owner cannot call recordMatchAndSplit", async function () {
+    it("non-owner non-settler cannot call recordMatchAndSplit", async function () {
       const escrowAddr = await escrow.getAddress();
       await registry.connect(owner).setMatchEscrow(escrowAddr);
       await escrow.connect(alice).deposit(escrowMatchId, STAKE, { value: STAKE });
@@ -199,7 +199,7 @@ describe("MatchRegistry × MatchEscrow wiring", function () {
           [alice.address],
           [STAKE * 2n],
         )
-      ).to.be.revertedWithCustomError(registry, "OwnableUnauthorizedAccount");
+      ).to.be.revertedWithCustomError(registry, "NotOwnerOrSettler");
     });
 
     it("bubbles up ShareSumMismatch from the escrow", async function () {
