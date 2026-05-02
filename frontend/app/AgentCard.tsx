@@ -32,6 +32,7 @@ interface AgentProfile {
   kind: "model" | "overlay" | "null";
   match_count: number;
   summary: string;
+  owner_ens?: string | null;
 }
 
 interface AgentCardProps {
@@ -139,6 +140,14 @@ export function AgentCard({ agentId }: AgentCardProps) {
           <p className="text-red-600">Profile unavailable.</p>
         ) : profileQuery.data ? (
           <>
+            {profileQuery.data.owner_ens && (
+              <p className="mb-1.5 font-mono text-[10px] text-zinc-500 dark:text-zinc-400 truncate">
+                <span className="uppercase tracking-wide">Owner</span>{" "}
+                <span className="text-zinc-700 dark:text-zinc-300">
+                  {profileQuery.data.owner_ens}
+                </span>
+              </p>
+            )}
             <p className="mb-1 text-zinc-700 dark:text-zinc-300">
               <span className="font-mono">
                 Matches: {profileQuery.data.match_count}

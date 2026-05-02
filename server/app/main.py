@@ -1442,12 +1442,16 @@ def list_agents():
 @app.get("/agents/{agent_id}/profile")
 def get_agent_profile(agent_id: int):
     """Resolve `agent_id`'s on-chain `dataHashes[1]` → 0G storage blob
-    → `load_profile` content-sniff → `{match_count, summary, kind}`.
+    → `load_profile` content-sniff → `{match_count, summary, kind, owner_ens}`.
 
     Mirrors the resolver path /games/{id}/agent-move (overlay) and
     /agents/{id}/recommend-teammate (model) already use. Returns the
     NullProfile shape for cold-start agents (frontend renders a
-    'no measurable style yet' chip)."""
+    'no measurable style yet' chip).
+
+    `owner_ens` is the ENS name of the agent's ERC-721 owner, resolved
+    via web3 reverse lookup on Sepolia. Falls back to a truncated address
+    when ENS resolution is unavailable (e.g. on 0G testnet)."""
     from agent_profile import (
         ModelProfile,
         NullProfile,
@@ -1476,9 +1480,33 @@ def get_agent_profile(agent_id: int):
         kind = "overlay"
     else:
         kind = "null"
+
+    # Resolve the agent's ERC-721 owner and their ENS name.
+    # Best-effort: missing env vars or chain errors return None gracefully.
+    owner_ens: Optional[str] = None
+    try:
+        owner_addr = chain.agent_owner(agent_id)
+        # Try ENS reverse lookup on the connected network (works on Sepolia).
+        # Returns None if the address has no reverse record set.
+        try:
+            resolved = chain.w3.ens.name(owner_addr)
+            owner_ens = resolved if resolved else _truncate_address(owner_addr)
+        except Exception:
+            owner_ens = _truncate_address(owner_addr)
+    except ChainError:
+        pass
+
     return {
         "agent_id": agent_id,
         "kind": kind,
         "match_count": int(metrics.get("match_count", 0)),
         "summary": profile.summarize(),
+        "owner_ens": owner_ens,
     }
+
+
+def _truncate_address(addr: str) -> str:
+    """Return a short display form like `0x1234…abcd` for a hex address."""
+    if not addr or len(addr) < 10:
+        return addr
+    return f"{addr[:6]}…{addr[-4:]}"
