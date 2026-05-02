@@ -95,6 +95,21 @@ class Board:
         return c == 1
 
 
+# Standard backgammon opening position (player 0's perspective, player 0 moves 24→1):
+#   Player 0 (+): 2 on pt 24, 5 on pt 13, 3 on pt 8, 5 on pt 6
+#   Player 1 (−): 2 on pt 1,  5 on pt 12, 3 on pt 17, 5 on pt 19
+OPENING_BOARD = Board(
+    points=(
+        -2, 0, 0, 0, 0, 5,   # points 1-6
+        0, 3, 0, 0, 0, -5,   # points 7-12
+        5, 0, 0, 0, -3, 0,   # points 13-18
+        -5, 0, 0, 0, 0, 2,   # points 19-24
+    ),
+    bar=(0, 0),
+    off=(0, 0),
+)
+
+
 # ---------------------------------------------------------------------------
 # Move parsing
 # ---------------------------------------------------------------------------
@@ -295,3 +310,51 @@ def is_legal(board: Board, dice: tuple[int, int], side: int,
                     sim_points[dst_idx] = dst_count - 1
 
     return True
+
+
+def apply_move(board: Board, side: int, move_str: str) -> Board:
+    """Apply `move_str` to `board` for `side` and return the resulting board.
+
+    Caller is responsible for calling `is_legal` first; this function
+    does not re-validate. Hits (opponent blots) send the hit checker to
+    the bar. Bear-offs increment `off[side]`.
+    """
+    pieces = parse_move(move_str, side=side)
+    sim_points = list(board.points)
+    sim_bar = list(board.bar)
+    sim_off = list(board.off)
+
+    bar_src = BAR_SRC if side == 0 else BAR_SRC_P1
+    off_dst = OFF_DST if side == 0 else OFF_DST_P1
+
+    for piece in pieces:
+        # Lift the checker from its source.
+        if piece.src == bar_src:
+            sim_bar[side] -= 1
+        else:
+            src_idx = piece.src - 1
+            sim_points[src_idx] += -1 if side == 0 else 1
+
+        # Place the checker at its destination.
+        if piece.dst == off_dst:
+            sim_off[side] += 1
+        else:
+            dst_idx = piece.dst - 1
+            if side == 0:
+                if sim_points[dst_idx] == -1:   # hit — send opponent to bar
+                    sim_bar[1] += 1
+                    sim_points[dst_idx] = 1
+                else:
+                    sim_points[dst_idx] += 1
+            else:
+                if sim_points[dst_idx] == 1:    # hit — send opponent to bar
+                    sim_bar[0] += 1
+                    sim_points[dst_idx] = -1
+                else:
+                    sim_points[dst_idx] -= 1
+
+    return Board(
+        points=tuple(sim_points),
+        bar=tuple(sim_bar),
+        off=tuple(sim_off),
+    )
