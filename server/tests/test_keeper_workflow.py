@@ -52,7 +52,7 @@ def test_get_workflow_returns_all_pending_for_unrun_match():
     wf = kw.get_workflow("match-never-run")
     assert wf.match_id == "match-never-run"
     assert wf.status == "pending"
-    assert len(wf.steps) == 9   # Phase 38: +agent_move_replay
+    assert len(wf.steps) == 10   # Phase 68: +rules_check
     assert [s.id for s in wf.steps] == list(kw.STEP_IDS)
     assert all(s.status == "pending" for s in wf.steps)
     assert all(s.duration_ms is None for s in wf.steps)
@@ -326,7 +326,7 @@ def test_run_workflow_happy_path_marks_all_ok():
 
 
 def test_run_workflow_step_failure_aborts_remainder():
-    """Step 4 (gnubg_replay) raises; remaining steps stay pending."""
+    """gnubg_replay raises; remaining steps stay pending."""
     def _fail(ctx, step):
         raise RuntimeError("simulated mismatch")
 
@@ -336,11 +336,12 @@ def test_run_workflow_step_failure_aborts_remainder():
     wf = kw.run_workflow("42", runners=runners)
     assert wf.status == "failed"
     statuses = [s.status for s in wf.steps]
-    assert statuses[:3] == ["ok", "ok", "ok"]
-    assert statuses[3] == "failed"
-    assert wf.steps[3].error == "simulated mismatch"
+    gnubg_idx = list(kw.STEP_IDS).index("gnubg_replay")
+    assert all(s == "ok" for s in statuses[:gnubg_idx])
+    assert statuses[gnubg_idx] == "failed"
+    assert wf.steps[gnubg_idx].error == "simulated mismatch"
     # Remainder pending.
-    assert all(s == "pending" for s in statuses[4:])
+    assert all(s == "pending" for s in statuses[gnubg_idx + 1:])
 
 
 def test_run_workflow_persists_to_disk():
@@ -366,7 +367,7 @@ def test_run_workflow_records_step_durations():
 
 
 def test_endpoint_get_returns_canonical_shape_for_unrun_match():
-    """Phase 36 contract: 8 canonical step IDs in order, all valid statuses,
+    """Phase 36 contract: canonical step IDs in order, all valid statuses,
     every step has the required field set. Real orchestrator preserves
     this for matchIds that have never run."""
     r = client.get("/keeper-workflow/never-run-id")
@@ -403,7 +404,8 @@ def test_endpoint_run_post_triggers_workflow(monkeypatch):
     chain = _stub_chain_with_match()
     record = {
         "match_length": 1,
-        "moves": [{"move": "13/10 24/23"}],
+        # Include turn/dice so step_rules_check can validate the move.
+        "moves": [{"turn": 0, "dice": [3, 1], "move": "13/10 24/23"}],
         "final_position_id": "FINAL",
     }
     blob = json.dumps(record).encode()
@@ -428,7 +430,7 @@ def test_endpoint_run_post_triggers_workflow(monkeypatch):
 
     r = client.post("/keeper-workflow/42/run")
     assert r.status_code == 200
-    # Wait briefly for the background thread to complete (8 stubbed steps).
+    # Wait briefly for the background thread to complete (10 stubbed steps).
     deadline = time.time() + 5.0
     while time.time() < deadline:
         body = client.get("/keeper-workflow/42").json()
@@ -453,7 +455,7 @@ def test_phase36_response_shape_preserved():
     assert "matchId" in body
     assert "status" in body
     assert "steps" in body
-    assert len(body["steps"]) == 9   # Phase 38
+    assert len(body["steps"]) == 10   # Phase 68: +rules_check
     expected_fields = {"id", "name", "status", "duration_ms", "retry_count",
                        "tx_hash", "error", "detail"}
     for step in body["steps"]:
@@ -693,11 +695,11 @@ def test_step_agent_move_replay_argmax_consistent_mismatch_fails(monkeypatch):
     assert "inconclusive" in step.detail.lower() or "diverged" in step.detail.lower()
 
 
-def test_phase38_step_count_is_nine():
-    """Locked: workflow has 9 steps after Phase 38."""
+def test_phase68_step_count_is_ten():
+    """Locked: workflow has 10 steps after Phase 68 (+rules_check)."""
     r = client.get("/keeper-workflow/test-id")
     body = r.json()
-    assert len(body["steps"]) == 9
+    assert len(body["steps"]) == 10
 
 
 def test_phase38_includes_agent_move_replay_step():
@@ -709,3 +711,13 @@ def test_phase38_includes_agent_move_replay_step():
     i = step_ids.index("agent_move_replay")
     assert step_ids[i - 1] == "gnubg_replay"
     assert step_ids[i + 1] == "settlement_signed"
+
+
+def test_phase68_includes_rules_check_step():
+    """Locked: rules_check is in the canonical step list, between og_storage_fetch and gnubg_replay."""
+    r = client.get("/keeper-workflow/test-id")
+    step_ids = [s["id"] for s in r.json()["steps"]]
+    assert "rules_check" in step_ids
+    i = step_ids.index("rules_check")
+    assert step_ids[i - 1] == "og_storage_fetch"
+    assert step_ids[i + 1] == "gnubg_replay"

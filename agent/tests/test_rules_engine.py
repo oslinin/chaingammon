@@ -17,7 +17,9 @@ from rules_engine import (
     OFF_DST,
     Board,
     CheckerMove,
+    OPENING_BOARD,
     all_in_home,
+    apply_move,
     dice_pool,
     has_pieces_on_bar,
     is_legal,
@@ -268,3 +270,82 @@ def test_unparseable_move_returns_false():
 
 def test_empty_move_returns_false():
     assert not is_legal(_starting_board(), dice=(3, 5), side=0, move_str="")
+
+
+# ---------------------------------------------------------------------------
+# OPENING_BOARD
+# ---------------------------------------------------------------------------
+
+
+def test_opening_board_has_15_checkers_per_side():
+    p0 = OPENING_BOARD.for_side(0)
+    p1 = OPENING_BOARD.for_side(1)
+    assert sum(p0) == 15
+    assert sum(p1) == 15
+
+
+def test_opening_board_matches_starting_board():
+    """OPENING_BOARD must equal the _starting_board() helper used in the rest of
+    the test suite — they encode the same standard position."""
+    assert OPENING_BOARD == _starting_board()
+
+
+# ---------------------------------------------------------------------------
+# apply_move
+# ---------------------------------------------------------------------------
+
+
+def test_apply_move_simple_shift():
+    """13/10 on a 3-x roll: point 13 loses one checker, point 10 gains one."""
+    b = _starting_board()
+    result = apply_move(b, side=0, move_str="13/10")
+    assert result.points[12] == b.points[12] - 1   # 13-point lost one
+    assert result.points[9] == b.points[9] + 1     # 10-point gained one
+    # Total checker count unchanged.
+    assert sum(c for c in result.points if c > 0) + result.bar[0] + result.off[0] == 15
+
+
+def test_apply_move_two_checkers():
+    """8/5 6/5 (3-1 roll): both source points lose one, destination gains two."""
+    b = _starting_board()
+    result = apply_move(b, side=0, move_str="8/5 6/5")
+    assert result.points[7] == b.points[7] - 1    # 8-point
+    assert result.points[5] == b.points[5] - 1    # 6-point
+    assert result.points[4] == b.points[4] + 2    # 5-point
+
+
+def test_apply_move_hit_sends_opponent_to_bar():
+    """13/8* hits an opponent blot on the 8-point: blot goes to bar."""
+    pts = list(_starting_board().points)
+    pts[7] = -1   # lone opponent blot on 8-point
+    b = Board(points=tuple(pts))
+    result = apply_move(b, side=0, move_str="13/8*")
+    assert result.points[7] == 1        # player 0 now on the 8-point
+    assert result.bar[1] == 1           # opponent was sent to bar
+    assert result.points[12] == b.points[12] - 1  # 13-point lost one
+
+
+def test_apply_move_bar_entry():
+    """bar/22: player 0 enters from bar onto the 22-point."""
+    pts = [0] * NUM_POINTS
+    b = Board(points=tuple(pts), bar=(1, 0))
+    result = apply_move(b, side=0, move_str="bar/22")
+    assert result.bar[0] == 0           # bar cleared
+    assert result.points[21] == 1       # 22-point occupied
+
+
+def test_apply_move_bear_off():
+    """6/off: player 0 bears off from the 6-point."""
+    pts = [0] * NUM_POINTS
+    pts[5] = 15
+    b = Board(points=tuple(pts))
+    result = apply_move(b, side=0, move_str="6/off")
+    assert result.points[5] == 14
+    assert result.off[0] == 1
+
+
+def test_apply_move_preserves_immutability():
+    """apply_move must not mutate the input board (Board is frozen)."""
+    b = _starting_board()
+    _ = apply_move(b, side=0, move_str="13/10")
+    assert b.points[12] == 5   # original unchanged
