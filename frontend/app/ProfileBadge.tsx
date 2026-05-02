@@ -14,11 +14,12 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useWriteContract, useWaitForTransactionReceipt } from "wagmi";
+import { useReadContract, useWriteContract, useWaitForTransactionReceipt } from "wagmi";
 
 import { useChaingammonName } from "./useChaingammonName";
 import { useChaingammonProfile } from "./useChaingammonProfile";
-import { useChainContracts } from "./contracts";
+import { useActiveChainId } from "./chains";
+import { MatchRegistryABI, useChainContracts } from "./contracts";
 import { recordExpense } from "./expenses";
 
 // Inline ABI fragment for selfMintSubname. Kept here instead of relying
@@ -218,7 +219,22 @@ export function ClaimForm({ address: _address }: { address: `0x${string}` }) {
 
 export function ProfileBadge({ address }: { address: `0x${string}` }) {
   const { label, name, isLoading: nameLoading } = useChaingammonName(address);
-  const { elo, matchCount } = useChaingammonProfile(label);
+  const { elo: ensElo, matchCount } = useChaingammonProfile(label);
+  const [renaming, setRenaming] = useState(false);
+
+  // Fallback: read ELO directly from MatchRegistry.humanElo when the ENS
+  // text record hasn't been written yet (settlement flow omitted the label).
+  const chainId = useActiveChainId();
+  const { matchRegistry } = useChainContracts();
+  const { data: chainEloRaw } = useReadContract({
+    address: matchRegistry,
+    abi: MatchRegistryABI,
+    functionName: "humanElo",
+    args: [address],
+    chainId,
+    query: { enabled: !!address && !ensElo },
+  });
+  const elo = ensElo ?? (chainEloRaw != null ? String(chainEloRaw) : undefined);
 
   if (nameLoading) {
     return (
@@ -231,7 +247,7 @@ export function ProfileBadge({ address }: { address: `0x${string}` }) {
     );
   }
 
-  if (label) {
+  if (label && !renaming) {
     return (
       <span
         data-testid="profile-badge"
@@ -254,10 +270,17 @@ export function ProfileBadge({ address }: { address: `0x${string}` }) {
             {matchCount}M
           </span>
         ) : null}
+        <button
+          title="Claim a new name"
+          onClick={() => setRenaming(true)}
+          className="text-xs text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200"
+        >
+          ✎
+        </button>
       </span>
     );
   }
 
-  // No subname — show the claim form immediately; no extra button click needed.
+  // No subname (or rename requested) — show the claim form.
   return <ClaimForm address={address} />;
 }
