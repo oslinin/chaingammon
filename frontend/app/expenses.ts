@@ -1,21 +1,24 @@
-// Lightweight 0G-token expense ledger stored in localStorage.
+// Gas expense ledger stored in localStorage.
 //
-// Records one entry per event that charges 0G tokens:
-//   - coach_hint  — hint served by 0G Compute (Qwen 2.5 7B Instruct)
+// Records one entry per on-chain or paid-compute event that costs the user gas
+// or 0G tokens:
+//   - coach_hint      — hint served by 0G Compute (Qwen 2.5 7B Instruct)
 //   - game_settlement — on-chain match settlement via KeeperHub + 0G Chain
+//   - ens_subname     — ENS subname claimed via selfMintSubname on-chain
+//   - agent_mint      — iNFT agent minted via mintAgent on-chain
 //
 // The ledger is append-only and client-local; it is not synced anywhere.
 // Entries are stored newest-first so the Expenses page can render them in
 // insertion order without sorting.
 
-/** A single 0G-token spending event. */
+/** A single gas/token spending event. */
 export interface ExpenseEntry {
   /** Collision-resistant id: `${Date.now()}-${random}`. */
   id: string;
   /** ISO 8601 UTC timestamp of when the charge was incurred. */
   timestamp: string;
   /** Category of the spending event. */
-  type: "coach_hint" | "game_settlement";
+  type: "coach_hint" | "game_settlement" | "ens_subname" | "agent_mint";
   /** Human-readable summary shown in the Expenses ledger. */
   description: string;
 }
