@@ -83,6 +83,13 @@ interface EstimateResponse {
   note?: string;
 }
 
+interface CheckpointEntry {
+  agent_id: number;
+  path: string | null;
+  root_hash: string | null;
+  error: string | null;
+}
+
 interface StatusResponse {
   running: boolean;
   completed_games: number;
@@ -93,6 +100,7 @@ interface StatusResponse {
   per_agent: Record<string, { games: number; wins: number; losses: number }>;
   use_0g_inference: boolean;
   use_0g_coaching: boolean;
+  upload_to_0g: boolean;
   ended: "done" | "aborted" | null;
   last_update_ts: number;
   // Phase L.2: TensorBoard sidecar metadata. Frontend uses this to
@@ -100,6 +108,9 @@ interface StatusResponse {
   // tensorboard binary not on PATH on the operator's host).
   tensorboard_url?: string | null;
   logdir?: string | null;
+  // Per-agent checkpoint save/upload results. Populated after training
+  // completes; root_hash is the 0G Storage Merkle root when uploaded.
+  checkpoints?: CheckpointEntry[];
 }
 
 export default function TrainingPage() {
@@ -182,6 +193,9 @@ export default function TrainingPage() {
           agent_ids: selectedIds,
           use_0g_inference: use0gInference,
           use_0g_coaching: use0gCoaching,
+          // Auto-upload weights to 0G when any 0G backend is active so
+          // the iNFT's dataHashes[1] stays current after training.
+          upload_to_0g: use0gInference || use0gCoaching,
         }),
       });
       if (!r.ok) {
@@ -287,6 +301,8 @@ export default function TrainingPage() {
       </div>
 
       <StatusPanel status={statusQuery.data} />
+
+      <CheckpointsPanel status={statusQuery.data} />
 
       <TensorBoardPanel status={statusQuery.data} agentIds={selectedIds} />
     </main>
@@ -625,6 +641,62 @@ function formatBig(n: number): string {
   if (n >= 1_000_000) return `${n / 1_000_000}M`;
   if (n >= 1_000) return `${n / 1_000}k`;
   return String(n);
+}
+
+// CheckpointsPanel — shows per-agent checkpoint save/upload results
+// after the training run ends. Each entry shows the agent ID, the local
+// .pt path, and the 0G Storage Merkle root (root_hash) if uploaded. An
+// error field is shown instead when the upload failed (e.g. missing env
+// vars) but the local save may still have succeeded.
+function CheckpointsPanel({ status }: { status: StatusResponse | undefined }) {
+  const entries = status?.checkpoints;
+  if (!entries || entries.length === 0) return null;
+
+  return (
+    <section className="rounded-md border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
+      <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-500">
+        Checkpoints
+      </h2>
+      <table className="w-full text-xs">
+        <thead>
+          <tr className="border-b border-zinc-200 dark:border-zinc-800">
+            <th className="py-1 text-left font-mono uppercase text-zinc-500">Agent</th>
+            <th className="text-left font-mono uppercase text-zinc-500">0G root hash</th>
+            <th className="text-left font-mono uppercase text-zinc-500">Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {entries.map((ck, i) => (
+            <tr key={i} className="border-b border-zinc-100 dark:border-zinc-800">
+              <td className="py-1 font-mono">#{ck.agent_id}</td>
+              <td className="py-1 font-mono text-[10px] text-zinc-500 break-all">
+                {ck.root_hash ? (
+                  <span className="text-emerald-700 dark:text-emerald-400">
+                    {ck.root_hash.slice(0, 10)}…{ck.root_hash.slice(-8)}
+                  </span>
+                ) : ck.error ? (
+                  <span className="text-red-600 dark:text-red-400">upload failed</span>
+                ) : (
+                  <span className="text-zinc-400">local only</span>
+                )}
+              </td>
+              <td className="py-1 text-[10px]">
+                {ck.error ? (
+                  <span className="text-red-600 dark:text-red-400" title={ck.error}>
+                    ✗ {ck.error.slice(0, 60)}{ck.error.length > 60 ? "…" : ""}
+                  </span>
+                ) : ck.root_hash ? (
+                  <span className="text-emerald-700 dark:text-emerald-400">✓ saved to 0G</span>
+                ) : (
+                  <span className="text-zinc-500">✓ saved locally</span>
+                )}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </section>
+  );
 }
 
 // Phase L.3: TensorBoard panel — embeds the live tb dashboard so a

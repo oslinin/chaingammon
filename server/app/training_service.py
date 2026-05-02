@@ -74,6 +74,8 @@ class TrainingJob:
     log_path: Path
     use_0g_inference: bool
     use_0g_coaching: bool
+    upload_to_0g: bool = False
+    checkpoint_dir: Optional[Path] = None
     process: Optional[subprocess.Popen] = field(default=None, repr=False)
     # Phase L.2: TensorBoard sidecar — written when the trainer's
     # --logdir is set (the default for every job started via
@@ -167,6 +169,14 @@ def start_job(
     # the directory unique per run.
     tb_logdir = Path(tempfile.mkdtemp(prefix="chaingammon-training-tb-"))
 
+    # When 0G upload is requested and no explicit checkpoint dir is
+    # given, create a persistent temp dir so the trainer has somewhere
+    # to write the .pt files before uploading them to 0G Storage. The
+    # dir survives after the run so the key files (alongside .pt) are
+    # available for the next resume-from-0G cycle.
+    if upload_to_0g and checkpoint_dir is None:
+        checkpoint_dir = Path(tempfile.mkdtemp(prefix="chaingammon-training-ckpt-"))
+
     cmd = [
         sys.executable,
         str(_TRAINER),
@@ -220,6 +230,8 @@ def start_job(
         log_path=log_file,
         use_0g_inference=use_0g_inference,
         use_0g_coaching=use_0g_coaching,
+        upload_to_0g=upload_to_0g,
+        checkpoint_dir=checkpoint_dir,
         process=process,
         logdir=tb_logdir,
         tensorboard_pid=tb_proc.pid if tb_proc is not None else None,
@@ -378,6 +390,7 @@ def _empty_status() -> dict[str, Any]:
         "per_agent": {},
         "use_0g_inference": False,
         "use_0g_coaching": False,
+        "upload_to_0g": False,
         "ended": None,
         "last_update_ts": 0.0,
         # Phase L.2: TensorBoard sidecar metadata. Frontend reads these
@@ -386,6 +399,11 @@ def _empty_status() -> dict[str, Any]:
         # pointing at a dead URL.
         "tensorboard_url": None,
         "logdir": None,
+        # Per-agent checkpoint save/upload results. Each entry is
+        # {agent_id, path, root_hash, error} where root_hash is the
+        # 0G Storage Merkle root (None for local-only saves) and error
+        # is set when the upload failed but the local save succeeded.
+        "checkpoints": [],
     }
 
 
@@ -414,6 +432,7 @@ def _aggregate(events: list[dict], *, job: Optional[TrainingJob],
     last_epoch_completed = -1
     ended: Optional[str] = None
     last_ts = 0.0
+    checkpoints: list[dict] = []
 
     for e in events:
         kind = e.get("event")
@@ -431,6 +450,20 @@ def _aggregate(events: list[dict], *, job: Optional[TrainingJob],
             ended = "done"
         elif kind == "aborted":
             ended = "aborted"
+        elif kind == "agent_saved":
+            checkpoints.append({
+                "agent_id": int(e.get("agent_id", 0)),
+                "path": str(e.get("path", "")),
+                "root_hash": e.get("root_hash"),
+                "error": None,
+            })
+        elif kind == "agent_save_error":
+            checkpoints.append({
+                "agent_id": int(e.get("agent_id", 0)),
+                "path": None,
+                "root_hash": None,
+                "error": str(e.get("detail", "unknown error")),
+            })
 
     per_agent: dict[int, dict] = {}
     for m in matches:
@@ -451,6 +484,8 @@ def _aggregate(events: list[dict], *, job: Optional[TrainingJob],
             "last_update_ts": last_ts,
             "use_0g_inference": bool(job.use_0g_inference) if job else False,
             "use_0g_coaching": bool(job.use_0g_coaching) if job else False,
+            "upload_to_0g": bool(job.upload_to_0g) if job else False,
+            "checkpoints": checkpoints,
         }
 
     total_games = int(started.get("total_games", 0))
@@ -481,12 +516,16 @@ def _aggregate(events: list[dict], *, job: Optional[TrainingJob],
         },
         "use_0g_inference": bool(started.get("use_0g_inference", False)),
         "use_0g_coaching": bool(job.use_0g_coaching) if job else False,
+        "upload_to_0g": bool(job.upload_to_0g) if job else False,
         "ended": ended,
         "last_update_ts": last_ts,
         # Phase L.2: tensorboard sidecar — null when launch failed
         # (e.g. binary not on PATH) so the frontend can disclose state.
         "tensorboard_url": job.tensorboard_url if job else None,
         "logdir": str(job.logdir) if job and job.logdir else None,
+        # Per-agent checkpoint save/upload events. Populated by
+        # agent_saved and agent_save_error events from the trainer.
+        "checkpoints": checkpoints,
     }
 
 
