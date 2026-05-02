@@ -165,6 +165,9 @@ test("pieces are not displaced across multiple moves", async ({ page }) => {
 
   await page.goto("/match?agentId=1");
 
+  // Click "Start Game" on the pre-game landing to launch the match.
+  await page.getByTestId("start-game-button").click();
+
   // Opening position must render correctly before any input.
   await waitForBoard(page, OPENING_BOARD);
 

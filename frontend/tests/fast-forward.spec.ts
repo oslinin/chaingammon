@@ -165,6 +165,7 @@ test("ff-01: fast-forward completes — agent wins after 2 move/apply rounds", a
 }) => {
   await setupFF(page, { totalMoves: 2, gameOver: GAME_OVER_AGENT_WINS });
   await page.goto("/match?agentId=1");
+  await page.getByTestId("start-game-button").click();
 
   await page.getByRole("button", { name: /fast forward/i }).click();
 
@@ -179,6 +180,7 @@ test("ff-02: fast-forward completes — human wins after 2 move/apply rounds", a
 }) => {
   await setupFF(page, { totalMoves: 2, gameOver: GAME_OVER_HUMAN_WINS });
   await page.goto("/match?agentId=1");
+  await page.getByTestId("start-game-button").click();
 
   await page.getByRole("button", { name: /fast forward/i }).click();
 
@@ -196,6 +198,7 @@ test("ff-03: fast-forward ends in exactly one move/apply cycle", async ({
     gameOver: GAME_OVER_AGENT_WINS,
   });
   await page.goto("/match?agentId=1");
+  await page.getByTestId("start-game-button").click();
 
   await page.getByRole("button", { name: /fast forward/i }).click();
 
@@ -213,6 +216,7 @@ test("ff-04: fast-forward completes a long game with 8 move/apply cycles", async
     gameOver: GAME_OVER_HUMAN_WINS,
   });
   await page.goto("/match?agentId=1");
+  await page.getByTestId("start-game-button").click();
 
   await page.getByRole("button", { name: /fast forward/i }).click();
 
@@ -231,6 +235,7 @@ test("ff-05: fast-forward works when the opening turn belongs to the agent", asy
     gameOver: GAME_OVER_AGENT_WINS,
   });
   await page.goto("/match?agentId=1");
+  await page.getByTestId("start-game-button").click();
 
   await page.getByRole("button", { name: /fast forward/i }).click();
 
@@ -244,6 +249,7 @@ test("ff-06: banner shows 'Final score: 1 – 0' when human wins", async ({
 }) => {
   await setupFF(page, { gameOver: GAME_OVER_HUMAN_WINS });
   await page.goto("/match?agentId=1");
+  await page.getByTestId("start-game-button").click();
 
   await page.getByRole("button", { name: /fast forward/i }).click();
 
@@ -259,6 +265,7 @@ test("ff-07: banner shows 'Final score: 0 – 1' when agent wins", async ({
 }) => {
   await setupFF(page, { gameOver: GAME_OVER_AGENT_WINS });
   await page.goto("/match?agentId=1");
+  await page.getByTestId("start-game-button").click();
 
   await page.getByRole("button", { name: /fast forward/i }).click();
 
@@ -279,6 +286,7 @@ test("ff-08: mid-match score (1–0) is visible in header during and after fast-
   });
   await setupFF(page, { openingScore: [1, 0], totalMoves: 2, gameOver });
   await page.goto("/match?agentId=1");
+  await page.getByTestId("start-game-button").click();
 
   // Header shows the opening score before fast-forward.
   await expect(page.getByText("1 – 0")).toBeVisible({ timeout: 5_000 });
@@ -320,6 +328,7 @@ test("ff-09: fast-forward button text changes to 'Fast forwarding…' after clic
   });
 
   await page.goto("/match?agentId=1");
+  await page.getByTestId("start-game-button").click();
 
   const ffButton = page.getByRole("button", { name: /fast forward/i });
   await expect(ffButton).toBeVisible({ timeout: 5_000 });
@@ -362,6 +371,7 @@ test("ff-10: fast-forward button is disabled after it is clicked", async ({
   });
 
   await page.goto("/match?agentId=1");
+  await page.getByTestId("start-game-button").click();
   const ffButton = page.getByRole("button", { name: /fast forward/i });
   await expect(ffButton).toBeEnabled({ timeout: 5_000 });
   await ffButton.click();
@@ -400,6 +410,7 @@ test("ff-11: animated 'Fast forwarding…' status paragraph appears during play"
   });
 
   await page.goto("/match?agentId=1");
+  await page.getByTestId("start-game-button").click();
   await page.getByRole("button", { name: /fast forward/i }).click();
 
   // The animated status paragraph reads "Fast forwarding…".
@@ -439,6 +450,7 @@ test("ff-12: move input is hidden while fast-forward is active", async ({
   });
 
   await page.goto("/match?agentId=1");
+  await page.getByTestId("start-game-button").click();
 
   const moveInput = page.getByPlaceholder('e.g. "8/5 6/5" or "off"');
 
@@ -479,6 +491,7 @@ test("ff-13: forfeit button is disabled while fast-forward is running", async ({
   });
 
   await page.goto("/match?agentId=1");
+  await page.getByTestId("start-game-button").click();
   await page.getByRole("button", { name: /fast forward/i }).click();
 
   await expect(page.getByRole("button", { name: "Forfeit match" })).toBeDisabled({
@@ -517,6 +530,7 @@ test("ff-14: coach panel is hidden while fast-forward is active", async ({
   });
 
   await page.goto("/match?agentId=1");
+  await page.getByTestId("start-game-button").click();
   await page.getByRole("button", { name: /fast forward/i }).click();
 
   // The "Coach" heading is inside the coach panel, which disappears during FF.
@@ -530,6 +544,7 @@ test("ff-14: coach panel is hidden while fast-forward is active", async ({
 test("ff-15: /hint is never called during fast-forward", async ({ page }) => {
   const counts = await setupFF(page, { totalMoves: 4 });
   await page.goto("/match?agentId=1");
+  await page.getByTestId("start-game-button").click();
 
   await page.getByRole("button", { name: /fast forward/i }).click();
 
@@ -542,6 +557,7 @@ test("ff-15: /hint is never called during fast-forward", async ({ page }) => {
 test("ff-16: /evaluate is never called during fast-forward", async ({ page }) => {
   const counts = await setupFF(page, { totalMoves: 4 });
   await page.goto("/match?agentId=1");
+  await page.getByTestId("start-game-button").click();
 
   await page.getByRole("button", { name: /fast forward/i }).click();
 
@@ -554,6 +570,7 @@ test("ff-16: /evaluate is never called during fast-forward", async ({ page }) =>
 test("ff-17: /resign is never called during fast-forward", async ({ page }) => {
   const counts = await setupFF(page, { totalMoves: 3 });
   await page.goto("/match?agentId=1");
+  await page.getByTestId("start-game-button").click();
 
   await page.getByRole("button", { name: /fast forward/i }).click();
 
@@ -604,6 +621,7 @@ test("ff-18: /skip is called when /move returns null (bar dance — no legal mov
   });
 
   await page.goto("/match?agentId=1");
+  await page.getByTestId("start-game-button").click();
   await page.getByRole("button", { name: /fast forward/i }).click();
 
   await expect(page.getByText("Agent wins.")).toBeVisible({ timeout: 10_000 });
@@ -653,6 +671,7 @@ test("ff-19: fast-forward handles multiple consecutive /skip turns before game o
   });
 
   await page.goto("/match?agentId=1");
+  await page.getByTestId("start-game-button").click();
   await page.getByRole("button", { name: /fast forward/i }).click();
 
   await expect(page.getByText("Agent wins.")).toBeVisible({ timeout: 10_000 });
@@ -705,6 +724,7 @@ test("ff-20: an API error during fast-forward surfaces an error message on the p
   });
 
   await page.goto("/match?agentId=1");
+  await page.getByTestId("start-game-button").click();
   await page.getByRole("button", { name: /fast forward/i }).click();
 
   // The error paragraph must be visible — the page must not crash or stay blank.

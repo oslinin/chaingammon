@@ -87,7 +87,10 @@ test("match flow walks /new → /apply → /move → /apply through to game over
 
   await page.goto("/match?agentId=1");
 
-  // /new fires on mount.
+  // Click "Start Game" on the pre-game landing to launch the match.
+  await page.getByTestId("start-game-button").click();
+
+  // /new fires after "Start Game" is clicked.
   await expect.poll(() => seen.new.length, { timeout: 10_000 }).toBe(1);
 
   // Submit a human move — drives /apply, then auto-cascades agent /move + /apply.
@@ -150,7 +153,8 @@ test("fast forward lets the gnubg agent play both sides to game over", async ({ 
 
   await page.goto("/match?agentId=1");
 
-  // Click the fast-forward button — the agent should play both sides to completion.
+  // Click "Start Game" then let the agent play both sides to completion via fast-forward.
+  await page.getByTestId("start-game-button").click();
   await page.getByRole("button", { name: /fast forward/i }).click();
 
   await expect(page.getByText("You win!")).toBeVisible({ timeout: 10_000 });
@@ -179,6 +183,9 @@ test("forfeit posts /resign and shows the game-over banner", async ({ page }) =>
   });
 
   await page.goto("/match?agentId=1");
+
+  // Click "Start Game" on the pre-game landing, then forfeit.
+  await page.getByTestId("start-game-button").click();
 
   // Auto-accept the confirm dialog, then click Forfeit.
   page.on("dialog", (d) => d.accept());

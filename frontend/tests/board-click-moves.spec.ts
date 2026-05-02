@@ -116,6 +116,7 @@ test("clicking a blue checker selects it (amber highlight via data-selected)", a
 }) => {
   await setupRoutes(page);
   await page.goto("/match?agentId=1");
+  await page.getByTestId("start-game-button").click();
 
   // Wait for the board to render the opening position.
   await expect(page.locator("[data-point='8']")).toBeVisible({ timeout: 10_000 });
@@ -133,6 +134,7 @@ test("clicking a blue checker selects it (amber highlight via data-selected)", a
 test("clicking same point twice deselects it", async ({ page }) => {
   await setupRoutes(page);
   await page.goto("/match?agentId=1");
+  await page.getByTestId("start-game-button").click();
 
   await expect(page.locator("[data-point='8']")).toBeVisible({ timeout: 10_000 });
 
@@ -150,6 +152,7 @@ test("click pair moves checker to destination on the display board immediately",
 }) => {
   await setupRoutes(page);
   await page.goto("/match?agentId=1");
+  await page.getByTestId("start-game-button").click();
 
   await expect(page.locator("[data-point='8']")).toBeVisible({ timeout: 10_000 });
 
@@ -185,6 +188,7 @@ test("two click pairs auto-submit to /apply when both dice are used", async ({
   });
 
   await page.goto("/match?agentId=1");
+  await page.getByTestId("start-game-button").click();
   await expect(page.locator("[data-point='8']")).toBeVisible({ timeout: 10_000 });
 
   // Two click pairs: 8 → 5, then 6 → 5.
@@ -204,6 +208,7 @@ test("Undo button resets the board to start-of-turn position", async ({
 }) => {
   await setupRoutes(page);
   await page.goto("/match?agentId=1");
+  await page.getByTestId("start-game-button").click();
 
   await expect(page.locator("[data-point='8']")).toBeVisible({ timeout: 10_000 });
 

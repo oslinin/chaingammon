@@ -57,4 +57,33 @@ test.describe("Sidebar", () => {
     const href = await playLink.getAttribute("href");
     expect(href).toMatch(/^\/match\?agentId=/);
   });
+
+  test("clicking Play with agent shows pre-game landing with Start Game button (no game starts)", async ({
+    page,
+  }) => {
+    // Intercept /new — it must NOT fire when navigating via the sidebar link.
+    let newCalled = false;
+    await page.route("**/new", async (route) => {
+      newCalled = true;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({}),
+      });
+    });
+
+    await page.goto("/");
+    await page.waitForLoadState("networkidle");
+
+    // Click the sidebar "Play with agent" link.
+    await page.locator('[data-testid="sidebar-play"]').click();
+
+    // The pre-game landing must be visible with the "Start Game" button.
+    const startBtn = page.getByTestId("start-game-button");
+    await expect(startBtn).toBeVisible({ timeout: 5_000 });
+    await expect(startBtn).toHaveText("Start Game");
+
+    // No game should have been started yet — /new must not have fired.
+    expect(newCalled).toBe(false);
+  });
 });

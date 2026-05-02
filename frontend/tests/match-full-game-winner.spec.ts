@@ -119,6 +119,9 @@ test("game ends with human winning — banner says 'You win!' with score 1-0", a
 
   await page.goto("/match?agentId=1");
 
+  // Click "Start Game" on the pre-game landing.
+  await page.getByTestId("start-game-button").click();
+
   // Submit the first human move.
   const moveInput = page.getByPlaceholder('e.g. "8/5 6/5" or "off"');
   await moveInput.fill("8/5 6/5");
@@ -189,6 +192,9 @@ test("game ends with agent winning — banner says 'Agent wins.' with score 0-1"
   });
 
   await page.goto("/match?agentId=1");
+
+  // Click "Start Game" on the pre-game landing.
+  await page.getByTestId("start-game-button").click();
 
   // One human move triggers the agent's winning move.
   await page.getByPlaceholder('e.g. "8/5 6/5" or "off"').fill("8/5 6/5");

@@ -314,6 +314,11 @@ function MatchInner() {
     window.localStorage.removeItem("currentMatchArchiveUri");
   }, []);
 
+  // Whether the user has clicked "Start Game" on the pre-game landing.
+  // Game startup is deferred until this is true so that navigating to /match
+  // via the sidebar does not immediately launch a game.
+  const [started, setStarted] = useState(false);
+
   const [game, setGame] = useState<MatchState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -447,8 +452,11 @@ function MatchInner() {
       });
   };
 
-  // ── Start a new game on mount ──────────────────────────────────────────
+  // ── Start a new game when the user clicks "Start Game" ─────────────────
+  // Deferred from mount so that visiting /match via the sidebar shows a
+  // pre-game landing instead of immediately launching a game.
   useEffect(() => {
+    if (!started) return;
     let cancelled = false;
     setLoading(true);
     setError(null);
@@ -469,7 +477,7 @@ function MatchInner() {
       cancelled = true;
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [started]);
 
   // ── Auto-drive the agent when it's their turn (normal pace) ──────────────
   // In fast-forward mode this effect is bypassed entirely; the tight loop
@@ -896,6 +904,42 @@ function MatchInner() {
 
   // ── Render ─────────────────────────────────────────────────────────────
 
+  // Pre-game landing — shown when the user arrives via the sidebar before
+  // clicking "Start Game". Prevents an automatic game launch on navigation.
+  if (!started) {
+    return (
+      <div className="flex min-h-screen flex-col bg-zinc-50 dark:bg-black">
+        <header className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-200 px-4 py-3 sm:gap-4 sm:px-8 sm:py-4 dark:border-zinc-800">
+          <Link
+            href="/"
+            className="shrink-0 text-sm text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-50"
+          >
+            ← Agents
+          </Link>
+          <ConnectButton />
+        </header>
+        <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col items-center justify-center gap-6 px-3 py-6 sm:px-8 sm:py-8">
+          <div className="flex flex-col items-center gap-4 rounded-xl border border-zinc-200 bg-white px-8 py-10 dark:border-zinc-800 dark:bg-zinc-950">
+            <h2 className="text-2xl font-bold text-zinc-900 dark:text-zinc-50">
+              Play with Agent #{agentId}
+            </h2>
+            <p className="text-sm text-zinc-500 dark:text-zinc-400">
+              3-point match · gnubg AI opponent
+            </p>
+            <button
+              type="button"
+              data-testid="start-game-button"
+              onClick={() => setStarted(true)}
+              className="mt-2 rounded-md bg-indigo-600 px-6 py-3 text-base font-semibold text-white hover:bg-indigo-500"
+            >
+              Start Game
+            </button>
+          </div>
+        </main>
+      </div>
+    );
+  }
+
   if (!game && loading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-zinc-50 dark:bg-black">
@@ -924,7 +968,14 @@ function MatchInner() {
     );
   }
 
-  if (!game) return null;
+  // Brief render between started=true and the useEffect firing (loading=true).
+  if (!game) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-zinc-50 dark:bg-black">
+        <p className="text-zinc-500 dark:text-zinc-400">Starting game…</p>
+      </div>
+    );
+  }
 
   const isHumanTurn = game.turn === 0;
   const isAgentTurn = game.turn === 1;

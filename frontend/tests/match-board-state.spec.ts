@@ -146,6 +146,9 @@ test("board renders pieces correctly through opening → human move → agent mo
 
   await page.goto("/match?agentId=1");
 
+  // Click "Start Game" on the pre-game landing to launch the match.
+  await page.getByTestId("start-game-button").click();
+
   // Wait for the Board to mount with the opening position.
   await expect(page.locator("[data-testid='point-0']")).toBeVisible({
     timeout: 10_000,
