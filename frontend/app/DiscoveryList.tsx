@@ -6,10 +6,17 @@
 // "Play" button only appears for entries where endpoint is set.
 // Authoritative ELO comes from MatchRegistry; the text record is only for
 // cross-protocol consumers reading ENS directly.
+//
+// Phase 65: label resolution. The contract's subnameAt(i) returns only the
+// node hash; the human-readable label lives exclusively in the SubnameMinted
+// event log. We fetch all SubnameMinted events once via getLogs and build a
+// node→label map so each card can display e.g. "alice.chaingammon.eth".
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
-import { useReadContract, useReadContracts } from "wagmi";
+import { parseAbiItem } from "viem";
+import { usePublicClient, useReadContract, useReadContracts } from "wagmi";
 
 import { useActiveChain, useActiveChainId } from "./chains";
 import { PlayerSubnameRegistrarABI, useChainContracts } from "./contracts";
@@ -24,6 +31,7 @@ interface DiscoveryEntry {
   kind: string;
   elo: string;
   endpoint: string;
+  inftId: string; // agent iNFT ID written by AgentRegistry.mintAgent; "" for human entries
 }
 
 // -------------------------------------------------------------------------
@@ -32,6 +40,7 @@ interface DiscoveryEntry {
 
 function EntryCard({ entry }: { entry: DiscoveryEntry }) {
   const hasEndpoint = !!entry.endpoint;
+  const hasInfoLink = entry.kind === "agent" && !!entry.inftId;
   return (
     <div
       data-testid="discovery-entry"
@@ -41,9 +50,23 @@ function EntryCard({ entry }: { entry: DiscoveryEntry }) {
         <h3 className="font-mono text-sm font-semibold text-zinc-900 dark:text-zinc-50 break-all">
           {entry.label}.chaingammon.eth
         </h3>
-        <span className="shrink-0 rounded bg-zinc-100 px-1.5 py-0.5 text-xs font-mono text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
-          {entry.kind || "unknown"}
-        </span>
+        <div className="flex shrink-0 items-center gap-1">
+          {hasInfoLink && (
+            <a
+              href={`/agent/${entry.inftId}`}
+              target="_blank"
+              rel="noreferrer"
+              data-testid="discovery-agent-info-link"
+              title="Open agent info in a new tab"
+              className="rounded bg-zinc-100 px-1.5 py-0.5 text-xs font-mono text-zinc-500 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-400 dark:hover:bg-zinc-700"
+            >
+              Info ↗
+            </a>
+          )}
+          <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-xs font-mono text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+            {entry.kind || "unknown"}
+          </span>
+        </div>
       </div>
 
       <div className="flex items-baseline gap-1.5">
@@ -85,6 +108,35 @@ export function DiscoveryList({ staticEntries }: DiscoveryListProps = {}) {
   const active = useActiveChain();
   const chainId = useActiveChainId();
   const { playerSubnameRegistrar } = useChainContracts();
+  const publicClient = usePublicClient({ chainId });
+
+  // node (bytes32) → human-readable label (e.g. "alice"), populated from
+  // SubnameMinted event logs. Starts empty; cards fall back to a short hex
+  // prefix until the log fetch completes.
+  const [labelMap, setLabelMap] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    if (!publicClient || !playerSubnameRegistrar || !active || staticEntries) return;
+    publicClient
+      .getLogs({
+        address: playerSubnameRegistrar,
+        event: parseAbiItem(
+          "event SubnameMinted(string indexed labelHashed, string label, bytes32 indexed node, address indexed subnameOwner)",
+        ),
+        fromBlock: 0n,
+      })
+      .then((logs) => {
+        const map: Record<string, string> = {};
+        for (const log of logs) {
+          const { node, label } = log.args as { node?: `0x${string}`; label?: string };
+          if (node && label) map[node] = label;
+        }
+        setLabelMap(map);
+      })
+      .catch(() => {
+        // Non-fatal — cards will show the short node prefix fallback.
+      });
+  }, [publicClient, playerSubnameRegistrar, active, staticEntries]);
 
   // Read subnameCount so we know how many indexes to fetch
   const { data: subnameCount, isLoading: countLoading, error: countError } = useReadContract({
@@ -115,11 +167,13 @@ export function DiscoveryList({ staticEntries }: DiscoveryListProps = {}) {
     .map((r) => r?.result as `0x${string}` | undefined)
     .filter(Boolean) as `0x${string}`[];
 
-  // For each node, fetch kind + elo + endpoint text records in one batch
+  // For each node, fetch kind + elo + endpoint + inft_id text records in one batch.
+  // inft_id is written by AgentRegistry.mintAgent for agent entries; "" for humans.
   const textCalls = nodes.flatMap((node) => [
     { address: playerSubnameRegistrar, abi: PlayerSubnameRegistrarABI, functionName: "text" as const, args: [node, "kind"] as [`0x${string}`, string], chainId },
     { address: playerSubnameRegistrar, abi: PlayerSubnameRegistrarABI, functionName: "text" as const, args: [node, "elo"] as [`0x${string}`, string], chainId },
     { address: playerSubnameRegistrar, abi: PlayerSubnameRegistrarABI, functionName: "text" as const, args: [node, "endpoint"] as [`0x${string}`, string], chainId },
+    { address: playerSubnameRegistrar, abi: PlayerSubnameRegistrarABI, functionName: "text" as const, args: [node, "inft_id"] as [`0x${string}`, string], chainId },
   ]);
 
   const { data: textResults } = useReadContracts({
@@ -127,15 +181,17 @@ export function DiscoveryList({ staticEntries }: DiscoveryListProps = {}) {
     query: { enabled: !staticEntries && nodes.length > 0 },
   });
 
-  // Build entries from on-chain data (or use static entries for fixture pages)
+  // Build entries from on-chain data (or use static entries for fixture pages).
+  // Each node occupies 4 slots in textResults: kind, elo, endpoint, inft_id.
   const entries: DiscoveryEntry[] = staticEntries ?? nodes.map((node, i) => {
-    const base = i * 3;
+    const base = i * 4;
     return {
       node,
-      label: node.slice(0, 10), // placeholder; real label not stored on-chain
+      label: labelMap[node] ?? node.slice(0, 10),
       kind: (textResults?.[base]?.result as string) ?? "",
       elo: (textResults?.[base + 1]?.result as string) ?? "",
       endpoint: (textResults?.[base + 2]?.result as string) ?? "",
+      inftId: (textResults?.[base + 3]?.result as string) ?? "",
     };
   });
 

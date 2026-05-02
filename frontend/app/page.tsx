@@ -2,9 +2,12 @@
 // Phase 35: responsive padding for mobile screens.
 // Phase 57: page-level header removed — brand + ConnectButton now live in the
 // global layout navbar so they render on every page, not just the home page.
-// The page shell is a server component; <AgentsList> is a client component
-// that performs the wagmi reads.
+// Phase 65: DiscoverSection added below AgentsList — indexes the
+// *.chaingammon.eth ENS subnet and expands inline on click.
+// The page shell is a server component; client islands are AgentsList and
+// DiscoverSection.
 import { AgentsList } from "./AgentsList";
+import { DiscoverSection } from "./DiscoverSection";
 
 export default function Home() {
   return (
@@ -26,10 +29,12 @@ export default function Home() {
 
         <section className="flex flex-col gap-4">
           <h3 className="text-xl font-semibold text-zinc-900 dark:text-zinc-50">
-            Available agents
+            Agents
           </h3>
           <AgentsList />
         </section>
+
+        <DiscoverSection />
       </main>
     </div>
   );
