@@ -73,13 +73,68 @@ describe("Phase 2 — MatchRegistry", function () {
 
   describe("permissioning", function () {
     it("non-owner cannot record matches", async function () {
-      let reverted = false;
-      try {
-        await registry.connect(alice).recordMatch(0, alice.address, 1, ZERO, 1, ZERO_HASH);
-      } catch (e) {
-        reverted = true;
-      }
-      expect(reverted).to.be.true;
+      await expect(
+        registry.connect(alice).recordMatch(0, alice.address, 1, ZERO, 1, ZERO_HASH)
+      ).to.be.revertedWithCustomError(registry, "NotOwnerOrSettler");
+    });
+  });
+
+  describe("settler role", function () {
+    it("settler defaults to zero address", async function () {
+      expect(await registry.settler()).to.equal(ZERO);
+    });
+
+    it("owner can set the settler and emits SettlerSet", async function () {
+      await expect(registry.connect(owner).setSettler(alice.address))
+        .to.emit(registry, "SettlerSet")
+        .withArgs(ZERO, alice.address);
+      expect(await registry.settler()).to.equal(alice.address);
+    });
+
+    it("non-owner cannot set the settler", async function () {
+      await expect(
+        registry.connect(alice).setSettler(alice.address)
+      ).to.be.revertedWithCustomError(registry, "OwnableUnauthorizedAccount");
+    });
+
+    it("settler can record matches", async function () {
+      await registry.connect(owner).setSettler(alice.address);
+      // alice (now settler) records a match between bob (human) and agent #1.
+      const tx = await registry.connect(alice).recordMatch(
+        0, bob.address, 1, ZERO, 1, ZERO_HASH
+      );
+      const receipt = await tx.wait();
+      const evt = receipt.logs.find((l) => l.fragment?.name === "MatchRecorded");
+      expect(evt).to.not.be.undefined;
+    });
+
+    it("non-settler non-owner still cannot record matches after a settler is set", async function () {
+      await registry.connect(owner).setSettler(alice.address);
+      // bob is neither owner nor settler.
+      await expect(
+        registry.connect(bob).recordMatch(0, bob.address, 1, ZERO, 1, ZERO_HASH)
+      ).to.be.revertedWithCustomError(registry, "NotOwnerOrSettler");
+    });
+
+    it("owner can revoke the settler by setting address(0)", async function () {
+      await registry.connect(owner).setSettler(alice.address);
+      await expect(registry.connect(owner).setSettler(ZERO))
+        .to.emit(registry, "SettlerSet")
+        .withArgs(alice.address, ZERO);
+      // alice can no longer record.
+      await expect(
+        registry.connect(alice).recordMatch(0, alice.address, 1, ZERO, 1, ZERO_HASH)
+      ).to.be.revertedWithCustomError(registry, "NotOwnerOrSettler");
+    });
+
+    it("owner can still record matches when a settler is set", async function () {
+      await registry.connect(owner).setSettler(alice.address);
+      const tx = await registry.connect(owner).recordMatch(
+        0, bob.address, 1, ZERO, 1, ZERO_HASH
+      );
+      const receipt = await tx.wait();
+      const evt = receipt.logs.find((l) => l.fragment?.name === "MatchRecorded");
+      expect(evt).to.not.be.undefined;
     });
   });
 

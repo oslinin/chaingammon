@@ -72,6 +72,15 @@ contract MatchRegistry is Ownable {
     ///         `contracts/script/deploy.js`).
     address public matchEscrow;
 
+    /// @notice Additional address authorized to call `recordMatch` and
+    ///         `recordMatchAndSplit` alongside the owner. Zero address
+    ///         (default) means owner-only — leaves the original v1
+    ///         trust boundary intact. Wired post-deploy via
+    ///         `setSettler` so a hosted orchestrator (e.g. KeeperHub
+    ///         Para MPC wallet) can submit settlements without holding
+    ///         the deployer key.
+    address public settler;
+
     // Stored ratings; default 1500 returned via getter when unset.
     mapping(uint256 => uint256) private _agentElo;
     mapping(address => uint256) private _humanElo;
@@ -90,8 +99,15 @@ contract MatchRegistry is Ownable {
     event EloUpdated(uint256 indexed agentId, address indexed human, uint256 oldElo, uint256 newElo);
     event GameRecordStored(uint256 indexed matchId, bytes32 gameRecordHash);
     event MatchEscrowSet(address indexed previous, address indexed current);
+    event SettlerSet(address indexed previous, address indexed current);
 
     error NoEscrowConfigured();
+    error NotOwnerOrSettler();
+
+    modifier onlyOwnerOrSettler() {
+        if (msg.sender != owner() && msg.sender != settler) revert NotOwnerOrSettler();
+        _;
+    }
 
     constructor() Ownable(msg.sender) {}
 
@@ -103,6 +119,17 @@ contract MatchRegistry is Ownable {
     function setMatchEscrow(address escrow) external onlyOwner {
         emit MatchEscrowSet(matchEscrow, escrow);
         matchEscrow = escrow;
+    }
+
+    /// @notice Owner-only: grant (or revoke, by passing address(0)) an
+    ///         additional address that can call `recordMatch` and
+    ///         `recordMatchAndSplit`. Idempotent — passing the same
+    ///         address twice is a no-op from the contract's
+    ///         perspective; the SettlerSet event still fires so
+    ///         off-chain indexers can rebuild the wiring history.
+    function setSettler(address settler_) external onlyOwner {
+        emit SettlerSet(settler, settler_);
+        settler = settler_;
     }
 
     function agentElo(uint256 agentId) public view returns (uint256) {
@@ -117,7 +144,7 @@ contract MatchRegistry is Ownable {
         return matches[matchId];
     }
 
-    /// @notice Trusted settlement — owner (server / KeeperHub) records the match.
+    /// @notice Trusted settlement — owner or settler records the match.
     function recordMatch(
         uint256 winnerAgentId,
         address winnerHuman,
@@ -125,7 +152,7 @@ contract MatchRegistry is Ownable {
         address loserHuman,
         uint16 matchLength,
         bytes32 gameRecordHash
-    ) external onlyOwner returns (uint256 matchId) {
+    ) external onlyOwnerOrSettler returns (uint256 matchId) {
         require(
             (winnerAgentId == 0) != (winnerHuman == address(0)),
             "winner must be exactly one of agent or human"
@@ -167,7 +194,7 @@ contract MatchRegistry is Ownable {
         bytes32 escrowMatchId,
         address[] calldata winners,
         uint256[] calldata shares
-    ) external onlyOwner returns (uint256 matchId) {
+    ) external onlyOwnerOrSettler returns (uint256 matchId) {
         require(
             (winnerAgentId == 0) != (winnerHuman == address(0)),
             "winner must be exactly one of agent or human"
