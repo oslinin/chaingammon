@@ -300,7 +300,14 @@ function MatchInner() {
   // The archive URI (set after keeper settlement) is stored separately under
   // "currentMatchArchiveUri" and keyed by this UUID.
   useEffect(() => {
-    const matchSessionId = crypto.randomUUID();
+    // crypto.randomUUID exists only in secure contexts (HTTPS / localhost),
+    // so it's undefined when the dev server is reached over plain-HTTP via
+    // a LAN IP (e.g. 192.168.x.x:3000). Fall back to a non-cryptographic
+    // unique-enough id — this only keys local match-session state.
+    const matchSessionId =
+      typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+        ? crypto.randomUUID()
+        : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
     window.localStorage.setItem("currentMatchId", matchSessionId);
     // Clear any archive URI from a previous match so the log page correctly
     // shows "in progress" until this match is settled.
