@@ -2,7 +2,8 @@
 //
 // Asserts that the global sidebar renders on the home page with both
 // required navigation entries, and that clicking "Create new agent"
-// reveals the inline creation form.
+// navigates to the dedicated /create-agent page (form no longer inlined
+// in the sidebar).
 //
 // The sidebar is a client component that uses wagmi hooks — all reads
 // degrade gracefully when no wallet is connected, so these tests run
@@ -24,24 +25,27 @@ test.describe("Sidebar", () => {
     await expect(playLink).toContainText("Play with agent");
 
     // Entry 2: "Create new agent"
-    const createButton = page.locator('[data-testid="sidebar-create-agent"]');
-    await expect(createButton).toBeVisible({ timeout: 5000 });
-    await expect(createButton).toContainText("Create new agent");
+    const createLink = page.locator('[data-testid="sidebar-create-agent"]');
+    await expect(createLink).toBeVisible({ timeout: 5000 });
+    await expect(createLink).toContainText("Create new agent");
   });
 
-  test("clicking Create new agent reveals the inline form", async ({ page }) => {
+  test("Create new agent link points to /create-agent", async ({ page }) => {
     await page.goto("/");
     await page.waitForLoadState("networkidle");
 
-    // Form must not be visible before the toggle.
-    const form = page.locator('[data-testid="create-agent-form"]');
-    await expect(form).not.toBeVisible();
+    const createLink = page.locator('[data-testid="sidebar-create-agent"]');
+    await expect(createLink).toBeVisible({ timeout: 5000 });
 
-    // Click the toggle button.
-    await page.locator('[data-testid="sidebar-create-agent"]').click();
+    const href = await createLink.getAttribute("href");
+    expect(href).toBe("/create-agent");
+  });
 
-    // Form should now be visible with label input, tier select, and submit.
-    await expect(form).toBeVisible({ timeout: 3000 });
+  test("create-agent page shows the mint form", async ({ page }) => {
+    await page.goto("/create-agent");
+    await page.waitForLoadState("networkidle");
+
+    await expect(page.locator('[data-testid="create-agent-form"]')).toBeVisible({ timeout: 5000 });
     await expect(page.locator('[data-testid="agent-label-input"]')).toBeVisible();
     await expect(page.locator('[data-testid="agent-tier-select"]')).toBeVisible();
     await expect(page.locator('[data-testid="create-agent-submit"]')).toBeVisible();
