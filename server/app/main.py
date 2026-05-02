@@ -11,6 +11,14 @@ import re
 import sys
 import uuid
 
+# Load server/.env into os.environ before any module reads RPC_URL etc.
+# Without this, `uv run uvicorn app.main:app` ignores the .env file and
+# every chain-touching endpoint 503s with "Missing env var RPC_URL".
+# `override=False` lets shell-set vars win over the .env file (matches
+# how dotenvx + most CLI tools behave).
+from dotenv import load_dotenv
+load_dotenv(Path(__file__).resolve().parents[1] / ".env", override=False)
+
 # `agent/` is a sibling directory of `server/`, not a package.
 # /agents/{id}/recommend-teammate (below) needs `agent_profile.load_profile`
 # (the runtime resolver that picks OverlayProfile vs ModelProfile from a 0G
