@@ -24,6 +24,7 @@ const TYPE_LABELS: Record<ExpenseEntry["type"], string> = {
   game_settlement: "Settlement",
   ens_subname: "ENS claim",
   agent_mint: "Agent mint",
+  agent_funding: "Agent funding",
 };
 
 const TYPE_CLASSES: Record<ExpenseEntry["type"], string> = {
@@ -35,6 +36,8 @@ const TYPE_CLASSES: Record<ExpenseEntry["type"], string> = {
     "inline-flex rounded-full bg-teal-100 px-2 py-0.5 text-xs font-medium text-teal-800 dark:bg-teal-900/30 dark:text-teal-300",
   agent_mint:
     "inline-flex rounded-full bg-violet-100 px-2 py-0.5 text-xs font-medium text-violet-800 dark:bg-violet-900/30 dark:text-violet-300",
+  agent_funding:
+    "inline-flex rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300",
 };
 
 /** Renders a colour-coded badge for the expense type. */
