@@ -573,6 +573,52 @@ function KindBadge({ kind }: { kind: string }) {
   );
 }
 
+// Plain-English definitions for each overlay category. Shown as hover
+// tooltips on the weight row labels. Cube categories are noted as untracked
+// in v1 (classifiers always return 0) so users aren't confused by flat bars.
+const CATEGORY_TOOLTIPS: Record<string, string> = {
+  opening_slot:
+    "Opening: prefers slotting — placing a single checker on a key point and accepting the risk of being hit, in order to build that point next turn.",
+  opening_split:
+    "Opening: prefers splitting the two back checkers to separate points, making them harder to attack and creating more flexibility.",
+  opening_builder:
+    "Opening: prefers bringing builders (spare checkers) down from the mid-point to set up point-making later in the game.",
+  opening_anchor:
+    "Opening: prefers immediately anchoring in the opponent's home board, creating a safe base and reducing back-game risk.",
+  build_5_point:
+    "Tendency to prioritise making the 5-point — the most strategically valuable point in backgammon, blocking the opponent's escape.",
+  build_bar_point:
+    "Tendency to prioritise making the bar-point (7-point), which anchors a prime and restricts the opponent's mid-checkers.",
+  bearoff_efficient:
+    "Bear-off speed: prefers moves that maximise checkers borne off per turn, accepting blot risk to finish faster.",
+  bearoff_safe:
+    "Bear-off caution: prefers moves that avoid leaving blots during bear-off, even if that means bearing off fewer checkers per turn.",
+  risk_hit_exposure:
+    "Willingness to leave checkers exposed to hits while playing offensively — higher values mean the agent accepts more vulnerability to attack.",
+  risk_blot_leaving:
+    "General tendency to leave blots (single unprotected checkers) during mid-game play, as a side effect of bold or constructive moves.",
+  hits_blot:
+    "Aggressiveness in hitting the opponent's blots when the opportunity arises — positive = opportunistic hitter, negative = tends to avoid.",
+  runs_back_checker:
+    "Tendency to run the back checkers (the two starting on the opponent's 24-point) early and aggressively rather than anchoring them.",
+  anchors_back:
+    "Tendency to keep the back checkers anchored in the opponent's home board, maintaining a defensive point and delaying the running game.",
+  phase_prime_building:
+    "Game-phase preference: building a prime — a wall of six consecutive owned points that traps the opponent's checkers behind it.",
+  phase_race_conversion:
+    "Game-phase preference: converting to a pure race when ahead in pip count, stripping anchors and running home quickly.",
+  phase_back_game:
+    "Game-phase preference: playing a back game — holding two or more anchors deep in the opponent's board to hit a late shot.",
+  phase_holding_game:
+    "Game-phase preference: holding a key anchor point (usually the opponent's 5-point or bar-point) while waiting for a shot.",
+  phase_blitz:
+    "Game-phase preference: blitz — attacking aggressively by hitting multiple checkers and closing the home board to contain them on the bar.",
+  cube_offer_aggressive:
+    "Cube action: aggressiveness in offering the doubling cube. Currently untracked in v1 — classifier always returns 0.",
+  cube_take_aggressive:
+    "Cube action: aggressiveness in accepting cube offers. Currently untracked in v1 — classifier always returns 0.",
+};
+
 function OverlayWeightsTable({
   values,
 }: {
@@ -587,11 +633,16 @@ function OverlayWeightsTable({
       <p className="mb-3 text-xs text-zinc-500">
         Style weights sorted by |value| (range −1 to +1). Positive = the
         agent favours this style; negative = the agent avoids it. Values
-        shift after each training round.
+        shift after each training round. Hover a label for its definition.
       </p>
       <div className="space-y-2">
         {entries.map(([cat, val]) => (
-          <WeightRow key={cat} category={cat} value={val} />
+          <WeightRow
+            key={cat}
+            category={cat}
+            value={val}
+            tooltip={CATEGORY_TOOLTIPS[cat]}
+          />
         ))}
       </div>
     </div>
@@ -601,9 +652,11 @@ function OverlayWeightsTable({
 function WeightRow({
   category,
   value,
+  tooltip,
 }: {
   category: string;
   value: number;
+  tooltip?: string;
 }) {
   const isPos = value >= 0;
   const barPct = Math.abs(value) * 50; // max |value|=1 → 50% of half-width
@@ -611,8 +664,18 @@ function WeightRow({
 
   return (
     <div className="flex items-center gap-3 text-xs">
-      <span className="w-44 shrink-0 truncate font-mono text-zinc-600 dark:text-zinc-400">
-        {label}
+      <span className="group/tip relative flex w-44 shrink-0 cursor-help items-center gap-1 truncate font-mono text-zinc-600 dark:text-zinc-400">
+        <span className="truncate">{label}</span>
+        {tooltip && (
+          <>
+            <span className="shrink-0 select-none text-zinc-400 dark:text-zinc-600">
+              ⓘ
+            </span>
+            <span className="absolute bottom-full left-0 z-20 mb-1.5 w-64 rounded-md border border-zinc-200 bg-white px-2.5 py-2 text-xs leading-relaxed text-zinc-700 shadow-lg opacity-0 transition-opacity group-hover/tip:opacity-100 pointer-events-none dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 font-sans normal-case">
+              {tooltip}
+            </span>
+          </>
+        )}
       </span>
       {/* Centred bar chart: left half = negative (red), right half = positive (green). */}
       <div className="relative h-2 flex-1 overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-800">
