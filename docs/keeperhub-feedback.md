@@ -99,3 +99,84 @@ In rough priority order:
 The Phase-36 contract-first design + 8-step ontology held up well — Phase 37 was a clean slot-in. The pain wasn't shape; it was the absence of a reference orchestrator + a few schema-level gaps in `MatchInfo` and `GameRecord` that forced graceful degradation in `relay_tx`, `vrf_rolls`, and `settlement_signed`. None of these blocked shipping; all of them have clear fixes that would make the next integration team's life easier.
 
 The 8-step audit workflow itself runs end-to-end on this codebase: `POST /keeper-workflow/{matchId}/run` produces a live, persisted, frontend-renderable workflow with real on-chain reads, real 0G Storage fetches, real gnubg replays, real ENS cross-checks, and a real audit JSON pinned to 0G Storage. The plumbing we built is generic — anyone implementing the same spec against the same primitives would land in roughly the same place.
+
+---
+
+## Addendum (2026-05-02) — MCP integration attempt
+
+After the Phase-37 write-up above, we revisited registration of [keeperhub/match-settle.yaml](../keeperhub/match-settle.yaml) on the actual KeeperHub platform via the published MCP server (`https://app.keeperhub.com/mcp`). The intent was a one-shot `kh workflow push match-settle.yaml`-equivalent. What actually happened produced a second batch of specific feedback.
+
+### MCP OAuth state is dropped between tool-call boundaries
+
+`mcp__keeperhub__authenticate` returns a URL and tells the agent: *"Once they complete the flow, the server's tools will become available automatically. If the browser shows a connection error on the redirect page, ask the user to paste the full URL from the address bar and call `mcp__keeperhub__complete_authentication` with it."*
+
+The localhost auto-listener path eventually worked. The manual `complete_authentication` fallback **never** worked across two attempts: the server consistently returned `"No OAuth flow is in progress for keeperhub. Call mcp__keeperhub__authenticate first, then retry with the callback URL."` even though the immediately-prior `authenticate` call returned a fresh `state` value that matched the callback's `state` query param. Conclusion: the OAuth flow record is held in state that's tied to a single MCP request connection, not persisted across agent turns. For an agent that can't always keep its localhost listener alive (e.g. sandboxed environments, headless CI), the documented fallback is not actually usable.
+
+**Suggestion:** persist the OAuth flow record server-side keyed by the pkce `state` value, with a generous TTL (e.g. 10 min). Manual `complete_authentication` should succeed any time within that window regardless of intervening MCP requests.
+
+### `ai_generate_workflow` ignores explicit field-level constraints
+
+We made three sequential `ai_generate_workflow` calls with increasingly aggressive context constraints — the third one literally said *"network MUST be the literal string '11155111'. Eleven-one-one-five-five-one-one-one."* and provided a verbatim 6-arg ABI fragment as `"abi MUST be exactly: …"`. All three runs ignored those constraints:
+
+| Constraint requested verbatim | What was generated |
+|---|---|
+| `triggerType: "Event"` (real-time event listener) | `Webhook` (run 1: `web3/query-events`; runs 2–3: `Webhook` with fabricated `webhookPath`) |
+| `network: "11155111"` | `"Ethereum Sepolia"`, `"sepolia"`, `"Sepolia"` |
+| 6-arg verbatim ABI fragment for `recordMatch` | run 2: hallucinated 1-arg `recordMatch(bytes32 matchId)`; run 3: literal placeholder string `"Your contract ABI"` |
+| `0x0000000000000000000000000000000000000000` placeholder | `"0xMatchEscrowAddress"`, `"0xYourRegistryAddress"` (not valid hex) |
+| 6-element `functionArgs` array | run 2: ignored args entirely; run 3: single-key object `{"matchId": "..."}` |
+| Template `{{@trigger:Blockchain Event.args.matchId}}` | `{{@nodeId:trigger-1.event}}` (literal `nodeId:` text inserted) |
+
+The pattern is consistent: the generator treats the context as a vague hint and substitutes its priors. For any workflow that needs a specific contract ABI, specific chain, or specific function signature — i.e., basically any real-world web3 workflow — the AI generator's output is unsafe to deploy without total reauthoring. We ended up hand-writing the `nodes`/`edges` arrays and calling `create_workflow` directly; that worked on the first try.
+
+**Suggestion:** either (a) honour explicit context constraints (treat `MUST be exactly: <literal>` clauses as hard constraints), or (b) document the generator as "for shape sketches only, not for production workflows" so users don't burn cycles fighting it.
+
+### `tools_documentation` template grammar is under-specified
+
+The docs string explains `{{@nodeId:Label.field}}` for cross-node references, plus `{{@__system:System.unixTimestamp}}` for builtins. Nothing in `tools_documentation` covers:
+
+- How to access trigger event args (we guessed `args.matchId` based on the inline ABI's input names — this may or may not be correct; we were unable to test because the workflow is disabled).
+- How to access HTTP response body fields (we guessed `response.body.valid`).
+- What operators are valid in `Condition.condition` (we guessed `===` from JS-like syntax).
+- The exact shape of `functionArgs` for web3/write-contract (we guessed JSON-array-of-strings based on AI generator output, which itself was unreliable).
+
+The AI generator's confusion may be downstream of these documentation gaps — if even the official generator can't produce consistent template syntax, the human-facing docs probably don't pin it down either.
+
+**Suggestion:** ship a short "template reference" page with one example per common access pattern: trigger event arg, HTTP response field, on-chain read result, Condition operator list, web3 function-args-array.
+
+### Schema gaps for keeper-style workflows
+
+The original [keeperhub/match-settle.yaml](../keeperhub/match-settle.yaml) was a 7-step settlement flow modeled on the keeper conventions (drand round per turn, forfeit clock, off-chain ECDSA signature, mid-flow webhook wait). Mapping it onto KeeperHub's schema turned up structural misses:
+
+| YAML step | KeeperHub gap |
+|---|---|
+| `trigger.filter.count: 2 group_by: matchId` | No multi-event aggregation. Event trigger fires per event; no indexed-arg filter, no "fire when N events with the same indexed value have arrived" primitive. |
+| `http-poll` (drand-per-turn, forfeit-poll) | No polling action with `interval_seconds` + `stop_condition`. `Schedule` (cron) trigger could fake it with a separate workflow per loop, but loses the in-workflow stop condition. |
+| `webhook` as a mid-flow step (waiting for `/match/{id}/end`) | Webhooks are **triggers only**, never mid-flow waits. The "long-running workflow that pauses for an external event" pattern has no equivalent. |
+| `ecdsa-sign` of an arbitrary keeper payload | No off-chain signing primitive. Para MPC can sign on-chain transactions emitted by `web3/write-contract`, but cannot produce an EIP-191 / EIP-712 / raw-payload signature for downstream relay. |
+| `{{ secret.X }}` templating | No secret template syntax. Credentials only via `integrations` (Discord, Sendgrid, wallet). Generic key-value secrets (an API key for our gnubg replay service, the relayer URL) have no place to live. |
+
+Effectively, KeeperHub's primitive set is "trigger → HTTP/web3 actions → done" — a fanout workflow over a single event. Long-lived, multi-event, signature-producing keeper workflows need to be redesigned as multiple independent workflows + external orchestration, which is exactly the orchestrator we built in `server/app/keeper_workflow.py`. The on-platform workflow ends up doing only the final on-chain write.
+
+**Suggestion:** if KeeperHub wants to host the *whole* keeper, the priorities are (in this order) (1) a `Wait Webhook` action node so a workflow can pause mid-flow for an external signal; (2) a `Sign Message` action that emits an EIP-191/EIP-712 signature usable by downstream HTTP/web3 nodes; (3) a per-workflow secret store with `{{ secret.X }}` template access; (4) multi-event aggregation triggers (`fire when N events with matching indexed-arg X have arrived`).
+
+### `recordMatch` is `onlyOwner` — KeeperHub's wallet can't be the caller
+
+`MatchRegistry.recordMatch` (`contracts/src/MatchRegistry.sol:121-128`) is gated by `onlyOwner` → the deployer EOA `0xa2219C4f48bC9e6806Bce3B391aB9e23f55FEbb5`. The KeeperHub wallet integration is Para MPC, which won't be the deployer. So the workflow we just registered (id `7f9dqwtohidj6lc89tuht`, disabled) would revert at execution time even if everything else were correct.
+
+This is a chaingammon-side issue, not a KeeperHub one — the contract was designed for a single-keeper-server deploy model, not a hosted-orchestrator model. Working around it would require either deploying a new MatchRegistry that grants Para MPC a settler role (similar to how `MatchEscrow.settler` is set to MatchRegistry), or wrapping `recordMatch` behind a signature-verifying setter that anyone can call as long as they present a deployer signature. We didn't pursue either — the disabled workflow lives as a design artifact.
+
+**Suggestion** (for the chaingammon side): add a `settler` role to MatchRegistry analogous to MatchEscrow's existing `settler`. The KeeperHub wallet then becomes the settler, and the deployer retains override rights via `onlyOwner` admin functions but isn't on the hot path.
+
+### What worked
+
+After the AI dead-ends, the path that succeeded on the first attempt:
+
+1. Read `list_action_schemas` once (it dumps all triggers, actions, and chains in a single 9k-line response — too big for a model context, but greppable on disk).
+2. Mirror the structural conventions the AI generator emits (the wrapping `data: {label, type, config, status}` shape; `position: {x, y}` for visual layout; edge `{id, source, target, type: "default"}`).
+3. Hand-write the `nodes` and `edges` arrays with the literal field values you actually want.
+4. Call `create_workflow` with `enabled: false` to land a non-firing draft.
+
+The workflow round-tripped intact (every field preserved; `visibility: "private"`, `enabled: false`, `workflowType: "read"` defaulted automatically). This is the path we'd recommend to anyone hitting the same generator regressions.
+
+**Suggestion:** publish a "workflow as code" reference doc with two or three complete `nodes`/`edges` examples (one per common shape: pure HTTP fanout; event-trigger → web3 write; cron → multi-step). The AI generator's output is too unreliable to serve as a learn-by-example.
