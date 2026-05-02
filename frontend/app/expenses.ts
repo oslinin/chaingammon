@@ -18,7 +18,12 @@ export interface ExpenseEntry {
   /** ISO 8601 UTC timestamp of when the charge was incurred. */
   timestamp: string;
   /** Category of the spending event. */
-  type: "coach_hint" | "game_settlement" | "ens_subname" | "agent_mint";
+  type:
+    | "coach_hint"
+    | "game_settlement"
+    | "ens_subname"
+    | "agent_mint"
+    | "agent_funding";
   /** Human-readable summary shown in the Expenses ledger. */
   description: string;
 }
