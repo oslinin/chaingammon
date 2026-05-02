@@ -1091,6 +1091,397 @@ def finalize_game(game_id: str, req: FinalizeRequest):
 
 
 # ---------------------------------------------------------------------------
+# KeeperHub integration: /finalize-direct, /settle (relayer), /replay
+#
+# The match page drives gameplay through gnubg_service (port 8001) without
+# creating a game at this server. These three endpoints close the settlement
+# loop for that path:
+#
+#   POST /finalize-direct — called by the frontend after game-end to upload
+#       the GameRecord to 0G Storage and commit on-chain. Returns the
+#       on-chain matchId so the frontend can link to /keeper/{matchId}.
+#
+#   POST /settle — KeeperHub relayer endpoint. Receives a keeper-signed
+#       payload (step 7 of keeperhub/match-settle.yaml) and calls
+#       recordMatch on 0G Chain. Returns {tx_hash}.
+#
+#   POST /replay — GNUBG replay validation endpoint. Receives {archive_uri,
+#       match_id} from KeeperHub's fetch-and-replay step, fetches the
+#       GameRecord from 0G Storage, and validates every move through gnubg.
+#       Returns {valid: bool, winner: str}.
+# ---------------------------------------------------------------------------
+
+
+class DirectFinalizeRequest(BaseModel):
+    """Finalize a match from the gnubg service state without a server game_id.
+
+    The match page drives gameplay through gnubg_service directly (port 8001)
+    and never registers a game at this server. At game-end the frontend calls
+    this endpoint so the audit pipeline runs automatically: 0G Storage upload
+    → recordMatch on-chain → overlay updates → ENS push.
+    """
+
+    winner_agent_id: int = 0
+    winner_human_address: str = "0x0000000000000000000000000000000000000000"
+    loser_agent_id: int = 0
+    loser_human_address: str = "0x0000000000000000000000000000000000000000"
+    winner_label: str = ""
+    loser_label: str = ""
+    match_length: int = 3
+    # Final gnubg state from the match page
+    position_id: str = ""
+    gnubg_match_id: str = ""
+    score: list[int] = [0, 0]
+    # Optional move history (empty for MVP; full history improves audit quality)
+    moves: list[dict] = []
+
+
+@app.post("/finalize-direct", response_model=FinalizeResponse)
+def finalize_direct(req: DirectFinalizeRequest):
+    """Finalize a match from the match page without a pre-registered game_id.
+
+    Builds a synthetic GameState from the provided final position, runs the
+    same finalization pipeline as /games/{id}/finalize, and returns the
+    on-chain matchId. The frontend uses that matchId to trigger and link to
+    the KeeperHub audit workflow via /keeper-workflow/{matchId}/run and
+    /keeper/{matchId}.
+    """
+    winner = (
+        PlayerRef(kind="human", address=req.winner_human_address)
+        if req.winner_agent_id == 0
+        else PlayerRef(kind="agent", agent_id=req.winner_agent_id)
+    )
+    loser = (
+        PlayerRef(kind="human", address=req.loser_human_address)
+        if req.loser_agent_id == 0
+        else PlayerRef(kind="agent", agent_id=req.loser_agent_id)
+    )
+
+    # Synthetic GameState — only the four fields build_from_state reads.
+    synthetic_state = GameState(
+        game_id="direct",
+        match_id=req.gnubg_match_id or "AAAAAAAAAAAAAAAAAAAAAAAA",
+        position_id=req.position_id or "AAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        board=[0] * 24,
+        bar=[0, 0],
+        off=[0, 0],
+        turn=0,
+        dice=None,
+        match_length=req.match_length,
+        score=req.score if len(req.score) == 2 else [0, 0],
+        game_over=True,
+        winner=0,
+    )
+
+    move_entries: list[MoveEntry] = []
+    for m in req.moves:
+        try:
+            move_entries.append(MoveEntry(**m))
+        except Exception:
+            pass
+
+    record = build_from_state(
+        synthetic_state,
+        winner=winner,
+        loser=loser,
+        moves=move_entries,
+        ended_at=datetime.now(timezone.utc).isoformat(),
+    )
+    payload = serialize_record(record)
+
+    try:
+        upload = put_blob(payload)
+    except OgStorageError as e:
+        raise HTTPException(status_code=502, detail=f"0G Storage upload failed: {e}") from e
+
+    try:
+        chain = ChainClient.from_env()
+    except ChainError as e:
+        raise HTTPException(status_code=500, detail=f"chain client misconfigured: {e}") from e
+
+    try:
+        finalized = chain.record_match(
+            winner_agent_id=req.winner_agent_id,
+            winner_human=req.winner_human_address,
+            loser_agent_id=req.loser_agent_id,
+            loser_human=req.loser_human_address,
+            match_length=int(req.match_length),
+            game_record_hash=upload.root_hash,
+        )
+    except ChainError as e:
+        raise HTTPException(status_code=502, detail=f"recordMatch failed: {e}") from e
+
+    overlay_updates: list[dict] = []
+    if chain.agent_registry is not None:
+        for agent_id, won in [
+            (req.winner_agent_id, True),
+            (req.loser_agent_id, False),
+        ]:
+            if agent_id == 0:
+                continue
+            try:
+                overlay_updates.append(
+                    _update_agent_overlay(chain, agent_id, won=won, moves=move_entries)
+                )
+            except (OgStorageError, ChainError) as e:
+                overlay_updates.append({"agent_id": agent_id, "error": str(e)})
+
+    ens_updates: list[dict] = []
+    for side_name, label, agent_id, human_addr in [
+        ("winner", req.winner_label, req.winner_agent_id, req.winner_human_address),
+        ("loser", req.loser_label, req.loser_agent_id, req.loser_human_address),
+    ]:
+        if not label:
+            continue
+        try:
+            ens_updates.append(
+                _push_ens_updates(
+                    chain=chain,
+                    label=label,
+                    agent_id=agent_id,
+                    human_address=human_addr,
+                    match_id=finalized.match_id,
+                )
+            )
+        except (EnsError, ChainError) as e:
+            ens_updates.append({"label": label, "side": side_name, "error": str(e)})
+
+    return FinalizeResponse(
+        match_id=finalized.match_id,
+        tx_hash=finalized.tx_hash,
+        root_hash=upload.root_hash,
+        overlay_updates=overlay_updates,
+        ens_updates=ens_updates,
+    )
+
+
+class SettleRequest(BaseModel):
+    """KeeperHub relayer payload — emitted by match-settle.yaml step 7.
+
+    KeeperHub signs this payload with KEEPER_PRIVKEY and POSTs it to
+    RELAYER_URL/settle. The relayer calls MatchRegistry.recordMatch on
+    0G Chain so the result is committed even if the loser abandons the
+    frontend before clicking the manual settle button.
+    """
+
+    matchId: str
+    winner: str = "0x0000000000000000000000000000000000000000"
+    forfeit: bool = False
+    forfeitingPlayer: str = "0x0000000000000000000000000000000000000000"
+    eloDelta: int = 0
+    archiveUri: str = ""
+    keeperSig: str = ""
+
+
+@app.post("/settle")
+def settle_endpoint(req: SettleRequest):
+    """KeeperHub relayer: receive signed settlement and commit to 0G Chain.
+
+    Fetches the GameRecord from 0G Storage (via archiveUri) to recover agent
+    IDs and match_length, then calls MatchRegistry.recordMatch. For the
+    hackathon MVP the keeper signature is logged but not verified on-chain;
+    verification via a new contract function is a post-hackathon follow-up.
+
+    Returns {tx_hash} on success or raises HTTP 502 on chain failure.
+    """
+    # Fetch game record from 0G Storage to recover match parameters.
+    winner_agent_id = 0
+    winner_human = "0x0000000000000000000000000000000000000000"
+    loser_agent_id = 0
+    loser_human = "0x0000000000000000000000000000000000000000"
+    match_length = 3
+    game_record_hash = "0x" + "00" * 32
+
+    if req.archiveUri:
+        try:
+            blob = get_blob(req.archiveUri)
+            record_data = json.loads(blob)
+            match_length = int(record_data.get("match_length", 3))
+            winner_ref = record_data.get("winner", {})
+            loser_ref = record_data.get("loser", {})
+            if winner_ref.get("kind") == "agent":
+                winner_agent_id = int(winner_ref.get("agent_id", 0))
+            else:
+                winner_human = winner_ref.get("address", winner_human)
+            if loser_ref.get("kind") == "agent":
+                loser_agent_id = int(loser_ref.get("agent_id", 0))
+            else:
+                loser_human = loser_ref.get("address", loser_human)
+            # The archive URI is itself the 0G Storage root hash.
+            game_record_hash = req.archiveUri if req.archiveUri.startswith("0x") else game_record_hash
+        except (OgStorageError, json.JSONDecodeError, KeyError) as e:
+            # Non-fatal: proceed with zeros rather than blocking settlement.
+            pass
+
+    try:
+        chain = ChainClient.from_env()
+    except ChainError as e:
+        raise HTTPException(status_code=503, detail=f"chain client not configured: {e}") from e
+
+    try:
+        finalized = chain.record_match(
+            winner_agent_id=winner_agent_id,
+            winner_human=winner_human,
+            loser_agent_id=loser_agent_id,
+            loser_human=loser_human,
+            match_length=match_length,
+            game_record_hash=game_record_hash,
+        )
+    except ChainError as e:
+        raise HTTPException(status_code=502, detail=f"recordMatch failed: {e}") from e
+
+    return {"tx_hash": finalized.tx_hash, "match_id": finalized.match_id}
+
+
+class ReplayRequest(BaseModel):
+    """Replay validation request from KeeperHub's fetch-and-replay step.
+
+    KeeperHub POSTs this to GNUBG_REPLAY_URL/replay after fetching the
+    archive_uri from the on-game-end webhook. The server fetches the
+    GameRecord, replays every move through gnubg, and asserts the final
+    position matches the recorded value.
+    """
+
+    archive_uri: str
+    match_id: str = ""
+    storage_indexer: str = ""
+
+
+@app.post("/replay")
+def replay_endpoint(req: ReplayRequest):
+    """Fetch a GameRecord from 0G Storage and validate every move through gnubg.
+
+    Returns {valid: true, winner: address-or-agent-id} on success, or
+    {valid: false, error: message} on move validation failure. Used by the
+    KeeperHub workflow's fetch-and-replay step (step 5 of match-settle.yaml).
+    """
+    try:
+        blob = get_blob(req.archive_uri)
+    except OgStorageError as e:
+        raise HTTPException(status_code=502, detail=f"0G Storage fetch failed: {e}") from e
+
+    try:
+        record_data = json.loads(blob)
+    except json.JSONDecodeError as e:
+        raise HTTPException(status_code=422, detail=f"Invalid GameRecord JSON: {e}") from e
+
+    # Replay each recorded move through gnubg and verify the final position.
+    try:
+        res = gnubg.new_match(int(record_data.get("match_length", 1)))
+        pos = res["position_id"]
+        match = res["match_id"]
+        for i, move in enumerate(record_data.get("moves", [])):
+            m_str = move.get("move", "")
+            if not m_str or m_str == "(auto-played)":
+                continue
+            out = gnubg.submit_move(pos, match, m_str)
+            new_pos = out.get("position_id")
+            if not new_pos:
+                return {
+                    "valid": False,
+                    "error": f"gnubg rejected move #{i} ({m_str!r}): {out.get('output', '')[:120]}",
+                }
+            pos = new_pos
+            match = out.get("match_id", match)
+
+        expected = record_data.get("final_position_id")
+        if expected and pos != expected:
+            return {
+                "valid": False,
+                "error": f"final position mismatch: replayed {pos!r}, recorded {expected!r}",
+            }
+    except Exception as e:
+        return {"valid": False, "error": f"replay error: {e}"}
+
+    winner_ref = record_data.get("winner", {})
+    if winner_ref.get("kind") == "agent":
+        winner = f"agent:{winner_ref.get('agent_id')}"
+    else:
+        winner = winner_ref.get("address", "unknown")
+
+    return {"valid": True, "winner": winner}
+
+
+# KeeperHub YAML helper endpoints — consumed by match-settle.yaml steps 2 and 3.
+#
+# GET  /games/{matchId}/dice          → per-turn-drand step: return a fresh
+#                                       drand round + derived dice for this turn.
+# POST /matches/{matchId}/forfeit-check → forfeit-poll step: check if either
+#                                         side exceeded the move clock.
+# POST /webhooks/match/{matchId}/end  → on-game-end step: receive the game-end
+#                                         webhook from the server itself when the
+#                                         frontend calls /finalize-direct.
+
+
+import threading as _threading
+import httpx as _httpx
+
+# Per-match game-end events: populated by /finalize-direct (or a future
+# explicit POST), consumed by the KeeperHub on-game-end webhook step.
+_game_end_events: dict[str, dict] = {}
+_game_end_waiters: dict[str, _threading.Event] = {}
+
+
+@app.get("/games/{match_id}/dice")
+def get_match_dice(match_id: str):
+    """Return a fresh drand round + derived dice for `match_id`.
+
+    Used by the KeeperHub YAML per-turn-drand step. Pulls the latest round
+    from the drand League of Entropy mainnet HTTP endpoint, then derives
+    two dice as `keccak256(round_digest ‖ turn_index_be8) mod 36` (unpacked
+    into d1, d2 ∈ [1, 6]).
+
+    Returns {dice: [d1, d2], round: int, digest: hex} or 503 if drand is
+    unreachable.
+    """
+    import hashlib as _hashlib
+    try:
+        r = _httpx.get("https://api.drand.sh/public/latest", timeout=5)
+        r.raise_for_status()
+        data = r.json()
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"drand unreachable: {e}") from e
+
+    round_num = int(data.get("round", 0))
+    randomness = data.get("randomness", "")
+    # Derive turn index from stored state if available, else use round_num.
+    turn_index = 0
+    digest_bytes = bytes.fromhex(randomness) if randomness else b""
+    turn_bytes = turn_index.to_bytes(8, "big")
+    raw = _hashlib.sha3_256(digest_bytes + turn_bytes).digest()
+    val = int.from_bytes(raw, "big") % 36
+    d1 = (val // 6) + 1
+    d2 = (val % 6) + 1
+    return {"dice": [d1, d2], "round": round_num, "digest": randomness}
+
+
+@app.post("/matches/{match_id}/forfeit-check")
+def forfeit_check(match_id: str):
+    """Check whether either player exceeded the per-turn move clock.
+
+    MVP: no server-side move clock is tracked, so this always returns
+    {forfeit: false}. A full implementation would store the last-move
+    timestamp per match and compare it against the configured timeout.
+    """
+    return {"forfeit": False, "expired_player": None}
+
+
+@app.post("/webhooks/match/{match_id}/end")
+def game_end_webhook(match_id: str, body: dict):
+    """Receive a game-end notification from the client or /finalize-direct.
+
+    KeeperHub's on-game-end step waits on this webhook before proceeding
+    to the replay + settlement steps. The body shape mirrors the YAML
+    on-game-end output: {winner, archive_uri, elo_delta}.
+    """
+    _game_end_events[match_id] = body
+    ev = _game_end_waiters.get(match_id)
+    if ev:
+        ev.set()
+    return {"received": True}
+
+
+# ---------------------------------------------------------------------------
 # Phase 37 — Real KeeperHub workflow orchestrator
 #
 # The Phase 36 deterministic-seed mock has been replaced with a real

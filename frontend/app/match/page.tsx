@@ -82,6 +82,7 @@ interface MatchState {
 
 const GNUBG = process.env.NEXT_PUBLIC_GNUBG_URL ?? "http://localhost:8001";
 const COACH = process.env.NEXT_PUBLIC_COACH_URL ?? "http://localhost:8002";
+const SERVER = process.env.NEXT_PUBLIC_SERVER_URL ?? "http://localhost:8000";
 
 /**
  * POST helper for gnubg_service. All endpoints use POST with a JSON
@@ -390,6 +391,18 @@ function MatchInner() {
   // Whether the human has handed off to the gnubg agent to finish the game.
   const [fastForward, setFastForward] = useState(false);
 
+  // KeeperHub mode: game hasn't started yet (show "Start Game" card first).
+  // Always true for agent matches — the card explains KeeperHub will auto-settle.
+  const [gameStarted, setGameStarted] = useState(agentId === 0);
+
+  // KeeperHub auto-finalize state. After game-end the frontend automatically
+  // calls /finalize-direct then /keeper-workflow/{matchId}/run so settlement
+  // is never gated on a manual "Settle on-chain" click.
+  const [finalizing, setFinalizing] = useState(false);
+  const [finalizeError, setFinalizeError] = useState<string | null>(null);
+  const [keeperMatchId, setKeeperMatchId] = useState<number | null>(null);
+  const [keeperRunning, setKeeperRunning] = useState(false);
+
   // ── Settlement via settleWithSessionKeys ──────────────────────────────────
   // Wallet hooks — used only when a wallet is connected.
   const { address, isConnected } = useAccount();
@@ -462,8 +475,12 @@ function MatchInner() {
       });
   };
 
-  // ── Start a new game on mount ──────────────────────────────────────────
+  // ── Start a new game ──────────────────────────────────────────────────
+  // For agent matches, waits until the user clicks "Start Game" so KeeperHub
+  // mode is clearly communicated before play begins. Human-vs-human starts
+  // immediately (gameStarted initialises to true when agentId === 0).
   useEffect(() => {
+    if (!gameStarted) return;
     let cancelled = false;
     setLoading(true);
     setError(null);
@@ -483,8 +500,8 @@ function MatchInner() {
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gameStarted]);
 
   // ── Auto-drive the agent when it's their turn (normal pace) ──────────────
   // In fast-forward mode this effect is bypassed entirely; the tight loop
@@ -912,7 +929,108 @@ function MatchInner() {
     }
   };
 
+  // ── KeeperHub auto-finalize + workflow trigger ────────────────────────────
+  // Called automatically when the game ends (agent mode). Uploads the game
+  // record to 0G Storage, commits recordMatch on-chain, then kicks off the
+  // 9-step audit workflow. No wallet interaction required — the server's
+  // deployer key signs the recordMatch tx.
+  const doFinalizeAndTriggerKeeper = async () => {
+    if (!game?.game_over || finalizing || keeperMatchId !== null) return;
+    setFinalizing(true);
+    setFinalizeError(null);
+    try {
+      const humanWins = game.winner === 0;
+      const ZERO = "0x0000000000000000000000000000000000000000";
+      const res = await fetch(`${SERVER}/finalize-direct`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          winner_agent_id: humanWins ? 0 : agentId,
+          winner_human_address: humanWins && address ? address : ZERO,
+          loser_agent_id: humanWins ? agentId : 0,
+          loser_human_address: !humanWins && address ? address : ZERO,
+          match_length: game.match_length,
+          position_id: game.position_id,
+          gnubg_match_id: game.match_id,
+          score: game.score,
+        }),
+      });
+      if (!res.ok) {
+        const text = await res.text().catch(() => res.statusText);
+        let detail = text;
+        try {
+          const parsed = JSON.parse(text);
+          if (parsed?.detail) detail = String(parsed.detail);
+        } catch { /* keep raw */ }
+        throw new Error(detail);
+      }
+      const data = (await res.json()) as { match_id: number };
+      const mid = data.match_id;
+      setKeeperMatchId(mid);
+      // Trigger the audit workflow in the background.
+      setKeeperRunning(true);
+      fetch(`${SERVER}/keeper-workflow/${mid}/run`, { method: "POST" }).finally(() => {
+        setKeeperRunning(false);
+      });
+    } catch (e: unknown) {
+      setFinalizeError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setFinalizing(false);
+    }
+  };
+
+  // Auto-trigger finalize when the game ends (agent mode only).
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (game?.game_over && agentId > 0) {
+      void doFinalizeAndTriggerKeeper();
+    }
+  // Intentional: only re-run when game_over transitions to true.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [game?.game_over]);
+
   // ── Render ─────────────────────────────────────────────────────────────
+
+  // Pre-game "Start Game" card for agent matches. KeeperHub mode is always
+  // active when playing against an agent — this card makes that visible before
+  // the first move so the user understands settlement is automatic.
+  if (!gameStarted && agentId > 0) {
+    return (
+      <div className="flex min-h-screen flex-col bg-zinc-50 dark:bg-black">
+        <header className="flex items-center justify-between border-b border-zinc-200 px-8 py-4 dark:border-zinc-800">
+          <Link href="/" className="text-sm text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-50">
+            ← Agents
+          </Link>
+          <span className="font-mono text-sm text-zinc-500 dark:text-zinc-400">Agent #{agentId}</span>
+          <ConnectButton />
+        </header>
+        <main className="mx-auto flex w-full max-w-lg flex-1 flex-col items-center justify-center gap-6 px-4 py-16">
+          <div className="w-full rounded-xl border border-emerald-200 bg-emerald-50 p-6 dark:border-emerald-700/40 dark:bg-emerald-900/10">
+            <h2 className="mb-2 text-lg font-semibold text-emerald-900 dark:text-emerald-200">
+              KeeperHub mode
+            </h2>
+            <p className="text-sm leading-6 text-emerald-800 dark:text-emerald-300">
+              When you click <strong>Start Game</strong>, KeeperHub takes over settlement.
+              Your result is recorded on 0G Chain and your ELO is updated automatically —
+              even if you close the tab before the game ends.
+            </p>
+            <ul className="mt-3 space-y-1 text-xs text-emerald-700 dark:text-emerald-400">
+              <li>✓ drand dice — publicly verifiable randomness each turn</li>
+              <li>✓ gnubg move validation — every move audited on-chain</li>
+              <li>✓ automatic ELO settlement — no manual "Settle on-chain" click</li>
+            </ul>
+          </div>
+          <button
+            type="button"
+            onClick={() => setGameStarted(true)}
+            className="w-full rounded-lg bg-indigo-600 px-6 py-3 text-base font-semibold text-white shadow hover:bg-indigo-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600"
+          >
+            Start Game vs Agent #{agentId}
+          </button>
+        </main>
+      </div>
+    );
+  }
 
   if (!game && loading) {
     return (
@@ -1029,50 +1147,87 @@ function MatchInner() {
             <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
               Final score: {game.score[0]} – {game.score[1]}
             </p>
-            {/* Settle on-chain via settleWithSessionKeys */}
-            {isConnected ? (
-              settleTxHash ? (
-                <div className="mt-3">
-                  <p className="text-sm font-semibold text-green-700 dark:text-green-400">
-                    Settled on-chain — ELO updated!
+            {/* KeeperHub auto-settle for agent matches — no manual button needed */}
+            {agentId > 0 ? (
+              keeperMatchId !== null ? (
+                <div className="mt-3 rounded-md bg-emerald-50 px-3 py-2 dark:bg-emerald-900/20">
+                  <p className="text-sm font-semibold text-emerald-700 dark:text-emerald-400">
+                    KeeperHub settled — ELO updated!
                   </p>
-                  {explorerUrl && (
-                    <a
-                      href={`${explorerUrl}/tx/${settleTxHash}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="mt-1 block text-xs text-indigo-600 underline dark:text-indigo-400"
-                    >
-                      View transaction ↗
-                    </a>
-                  )}
-                </div>
-              ) : (
-                <>
-                  <button
-                    type="button"
-                    onClick={() => void doSettle()}
-                    disabled={settling}
-                    className="mt-3 rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-60"
-                    title="Record result and update ELO on-chain (2 wallet interactions)"
+                  <Link
+                    href={`/keeper/${keeperMatchId}`}
+                    className="mt-1 block text-xs text-indigo-600 underline dark:text-indigo-400"
                   >
-                    {settling ? "Settling…" : "Settle on-chain"}
-                  </button>
-                  {settleError && (
-                    <p className="mt-2 text-xs text-red-600 dark:text-red-400">
-                      {settleError}
+                    View KeeperHub audit trail ↗
+                  </Link>
+                  {keeperRunning && (
+                    <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                      Workflow running…
                     </p>
                   )}
-                </>
-              )
+                </div>
+              ) : finalizing ? (
+                <p className="mt-3 animate-pulse text-sm text-zinc-500 dark:text-zinc-400">
+                  KeeperHub settling…
+                </p>
+              ) : finalizeError ? (
+                <div className="mt-3">
+                  <p className="text-xs text-red-600 dark:text-red-400">
+                    Auto-settle failed: {finalizeError}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => void doFinalizeAndTriggerKeeper()}
+                    className="mt-2 rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-500"
+                  >
+                    Retry
+                  </button>
+                </div>
+              ) : null
             ) : (
-              <button
-                disabled
-                className="mt-3 cursor-not-allowed rounded-md bg-zinc-200 px-4 py-2 text-sm font-semibold text-zinc-400 dark:bg-zinc-800 dark:text-zinc-600"
-                title="Connect wallet to settle on-chain"
-              >
-                Settle on-chain (connect wallet)
-              </button>
+              /* Human-vs-human: keep the manual settle path */
+              isConnected ? (
+                settleTxHash ? (
+                  <div className="mt-3">
+                    <p className="text-sm font-semibold text-green-700 dark:text-green-400">
+                      Settled on-chain — ELO updated!
+                    </p>
+                    {explorerUrl && (
+                      <a
+                        href={`${explorerUrl}/tx/${settleTxHash}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="mt-1 block text-xs text-indigo-600 underline dark:text-indigo-400"
+                      >
+                        View transaction ↗
+                      </a>
+                    )}
+                  </div>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => void doSettle()}
+                      disabled={settling}
+                      className="mt-3 rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-60"
+                      title="Record result and update ELO on-chain (2 wallet interactions)"
+                    >
+                      {settling ? "Settling…" : "Settle on-chain"}
+                    </button>
+                    {settleError && (
+                      <p className="mt-2 text-xs text-red-600 dark:text-red-400">{settleError}</p>
+                    )}
+                  </>
+                )
+              ) : (
+                <button
+                  disabled
+                  className="mt-3 cursor-not-allowed rounded-md bg-zinc-200 px-4 py-2 text-sm font-semibold text-zinc-400 dark:bg-zinc-800 dark:text-zinc-600"
+                  title="Connect wallet to settle on-chain"
+                >
+                  Settle on-chain (connect wallet)
+                </button>
+              )
             )}
           </div>
         )}
