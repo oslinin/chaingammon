@@ -3,13 +3,20 @@
   "chainId": 16602,
   "deployer": "0xa2219C4f48bC9e6806Bce3B391aB9e23f55FEbb5",
   "contracts": {
-    "MatchRegistry": "0x60E52e2d9Ea7b4A851Dd63365222c7d102A11eaE",
-    "AgentRegistry": "0xCb0a562fa9079184922754717BB3035C0F7A983E",
-    "PlayerSubnameRegistrar": "0xf260aE6b2958623fC4e865433201050DC2Ed1ccC"
+    "MatchRegistry": "0xb729023d3258205fE04c1cF766fC1cCe0584BE0D",
+    "AgentRegistry": "0x585eE1894019E3B93029529A0295F35d20456c85",
+    "PlayerSubnameRegistrar": "0x5BcD5df531017eE27CC2B5Ae5aF978637228179c",
+    "MatchEscrow": "0x65C4B635D09Bacc1CD8b9B7aF39F96776fE39594"
+  },
+  "matchEscrowConstructorArgs": {
+    "settler": "0xb729023d3258205fE04c1cF766fC1cCe0584BE0D"
   },
   "agentRegistryConstructorArgs": {
-    "matchRegistry": "0x60E52e2d9Ea7b4A851Dd63365222c7d102A11eaE",
-    "initialBaseWeightsHash": "0x0000000000000000000000000000000000000000000000000000000000000000"
+    "matchRegistry": "0xb729023d3258205fE04c1cF766fC1cCe0584BE0D",
+    "initialBaseWeightsHash": "0x989ba07766cc35aa0011cf3f764831d9d1a7e11495db78c310d764b4478409ad"
+  },
+  "playerSubnameRegistrarConstructorArgs": {
+    "parentNode": "0x543cb3ed47a1ed324d00f8245468ef208194cc298026553f9adc78fb17e41cec"
   },
   "seedAgent": {
     "agentId": 1,
@@ -17,9 +24,5 @@
     "tier": 2,
     "owner": "0xa2219C4f48bC9e6806Bce3B391aB9e23f55FEbb5"
   },
-  "deployedAt": "2026-04-27T02:21:09.052Z",
-  "playerSubnameRegistrarConstructorArgs": {
-    "parentNode": "0x543cb3ed47a1ed324d00f8245468ef208194cc298026553f9adc78fb17e41cec"
-  },
-  "registrarDeployedAt": "2026-04-27T07:02:14.843Z"
+  "deployedAt": "2026-05-02T02:09:47.002Z"
 }
