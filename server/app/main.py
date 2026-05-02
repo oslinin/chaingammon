@@ -35,6 +35,7 @@ if str(_AGENT_DIR) not in sys.path:
 _LABEL_RE = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$")
 
 from .agent_overlay import Overlay, OverlayError, apply_overlay, update_overlay
+from .agent_wallets import AgentWalletError, AgentWalletManager
 from .chain_client import ChainClient, ChainError
 from .ens_client import EnsClient, EnsError
 from .game_record import (
@@ -1902,6 +1903,82 @@ def get_agent_profile(agent_id: int):
         "summary": profile.summarize(),
         "owner_ens": owner_ens,
     }
+
+
+# ── Agent wallet endpoints (server-managed EOAs for staked matches) ──────────
+
+
+class AgentDepositRequest(BaseModel):
+    match_id: str
+    stake_wei: int
+
+
+class AgentWithdrawRequest(BaseModel):
+    to: str
+    amount_wei: Optional[int] = None
+
+
+def _agent_wallets_or_503() -> AgentWalletManager:
+    try:
+        return AgentWalletManager.from_env()
+    except AgentWalletError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+
+
+@app.get("/agents/{agent_id}/wallet")
+def get_agent_wallet(agent_id: int):
+    """Return the agent's server-managed wallet address and current balance.
+    404 if no wallet has been provisioned yet (call POST first)."""
+    wallets = _agent_wallets_or_503()
+    if not wallets.has_wallet(agent_id):
+        raise HTTPException(status_code=404, detail=f"no wallet for agent {agent_id}")
+    address = wallets.get_address(agent_id)
+    try:
+        balance_wei = wallets.get_balance_wei(agent_id)
+    except Exception as e:  # noqa: BLE001 — surface RPC errors as 503
+        raise HTTPException(status_code=503, detail=f"balance lookup failed: {e}")
+    return {"agent_id": agent_id, "address": address, "balance_wei": balance_wei}
+
+
+@app.post("/agents/{agent_id}/wallet")
+def create_agent_wallet(agent_id: int):
+    """Idempotent: create a fresh wallet for the agent if none exists,
+    otherwise return the existing one."""
+    wallets = _agent_wallets_or_503()
+    wallet = wallets.get_or_create(agent_id)
+    return {"agent_id": wallet.agent_id, "address": wallet.address}
+
+
+@app.post("/agents/{agent_id}/deposit")
+def agent_deposit(agent_id: int, req: AgentDepositRequest):
+    """Sign and send `MatchEscrow.deposit(match_id, stake_wei)` from the
+    agent's wallet. Caller is responsible for funding the wallet first."""
+    wallets = _agent_wallets_or_503()
+    try:
+        tx_hash = wallets.deposit_to_escrow(
+            agent_id=agent_id,
+            match_id_hex=req.match_id,
+            stake_wei=req.stake_wei,
+        )
+    except AgentWalletError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"tx_hash": tx_hash}
+
+
+@app.post("/agents/{agent_id}/withdraw")
+def agent_withdraw(agent_id: int, req: AgentWithdrawRequest):
+    """Drain the agent's wallet to `to`. If `amount_wei` is omitted,
+    sends the entire balance minus gas."""
+    wallets = _agent_wallets_or_503()
+    try:
+        tx_hash = wallets.withdraw(
+            agent_id=agent_id,
+            to=req.to,
+            amount_wei=req.amount_wei,
+        )
+    except AgentWalletError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"tx_hash": tx_hash}
 
 
 def _truncate_address(addr: str) -> str:
