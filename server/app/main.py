@@ -34,7 +34,7 @@ if str(_AGENT_DIR) not in sys.path:
 # frontend's ProfileBadge so both layers agree on what is acceptable.
 _LABEL_RE = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$")
 
-from .agent_overlay import Overlay, OverlayError, apply_overlay, update_overlay
+from .agent_overlay import Overlay, OverlayError, apply_overlay
 from .agent_wallets import AgentWalletError, AgentWalletManager
 from .chain_client import ChainClient, ChainError
 from .ens_client import EnsClient, EnsError
@@ -938,34 +938,6 @@ def _push_ens_updates(
     }
 
 
-def _update_agent_overlay(
-    chain: ChainClient,
-    agent_id: int,
-    won: bool,
-    moves: list[MoveEntry],
-) -> dict:
-    """Compute the new overlay, upload it to 0G Storage, and call
-    `updateOverlayHash` on the agent iNFT. Returns a small dict for the
-    finalize response."""
-    current = _fetch_overlay(chain, agent_id)
-    new_overlay = update_overlay(
-        current,
-        agent_moves=moves,
-        won=won,
-        match_count=current.match_count,
-    )
-    blob = new_overlay.to_bytes()
-    upload = put_blob(blob)
-    tx_hash = chain.update_overlay_hash(agent_id, upload.root_hash)
-    return {
-        "agent_id": agent_id,
-        "won": won,
-        "overlay_root_hash": upload.root_hash,
-        "update_overlay_tx_hash": tx_hash,
-        "match_count": new_overlay.match_count,
-    }
-
-
 @app.post("/games/{game_id}/finalize", response_model=FinalizeResponse)
 def finalize_game(game_id: str, req: FinalizeRequest):
     """Wrap up a finished game: upload the GameRecord to 0G Storage, then
@@ -1031,31 +1003,14 @@ def finalize_game(game_id: str, req: FinalizeRequest):
     except ChainError as e:
         raise HTTPException(status_code=502, detail=f"recordMatch failed: {e}") from e
 
-    # Phase 9 — for each agent that played, recompute its experience
-    # overlay, upload to 0G Storage, and pin the new hash on the iNFT
-    # via updateOverlayHash. Humans get no overlay (their style profile
-    # is a separate descriptive blob, not a learning loop).
+    # Per-game overlay bumps were dropped — every finished match used to
+    # call updateOverlayHash on each agent (and upload a fresh overlay
+    # blob to 0G Storage), which churned `experienceVersion` and burned
+    # gas on writes that didn't reflect a meaningful retraining step.
+    # Training-round writes (training_service._post_training_chain_writes)
+    # are now the only path that bumps `experienceVersion`. The response
+    # field stays so clients reading `overlay_updates` don't break.
     overlay_updates: list[dict] = []
-    moves = _move_history.get(game_id, [])
-    if chain.agent_registry is not None:
-        if req.winner_agent_id != 0:
-            try:
-                overlay_updates.append(
-                    _update_agent_overlay(chain, req.winner_agent_id, won=True, moves=moves)
-                )
-            except (OgStorageError, ChainError) as e:
-                raise HTTPException(
-                    status_code=502, detail=f"winner overlay update failed: {e}"
-                ) from e
-        if req.loser_agent_id != 0:
-            try:
-                overlay_updates.append(
-                    _update_agent_overlay(chain, req.loser_agent_id, won=False, moves=moves)
-                )
-            except (OgStorageError, ChainError) as e:
-                raise HTTPException(
-                    status_code=502, detail=f"loser overlay update failed: {e}"
-                ) from e
 
     # Phase 11 — push reputation text records to each labelled side's
     # subname. Failure here is non-fatal: ENS reachability shouldn't block
@@ -1225,20 +1180,10 @@ def finalize_direct(req: DirectFinalizeRequest):
     except ChainError as e:
         raise HTTPException(status_code=502, detail=f"recordMatch failed: {e}") from e
 
+    # Per-game overlay bumps were dropped — see the equivalent comment
+    # in /games/{id}/finalize. Training rounds are now the only path
+    # that bumps experienceVersion.
     overlay_updates: list[dict] = []
-    if chain.agent_registry is not None:
-        for agent_id, won in [
-            (req.winner_agent_id, True),
-            (req.loser_agent_id, False),
-        ]:
-            if agent_id == 0:
-                continue
-            try:
-                overlay_updates.append(
-                    _update_agent_overlay(chain, agent_id, won=won, moves=move_entries)
-                )
-            except (OgStorageError, ChainError) as e:
-                overlay_updates.append({"agent_id": agent_id, "error": str(e)})
 
     ens_updates: list[dict] = []
     for side_name, label, agent_id, human_addr in [
@@ -1376,20 +1321,10 @@ def finalize_direct_staked(req: StakedFinalizeRequest):
     except ChainError as e:
         raise HTTPException(status_code=502, detail=f"recordMatchAndSplit failed: {e}") from e
 
+    # Per-game overlay bumps were dropped — see the equivalent comment
+    # in /games/{id}/finalize. Training rounds are now the only path
+    # that bumps experienceVersion.
     overlay_updates: list[dict] = []
-    if chain.agent_registry is not None:
-        for agent_id, won in [
-            (req.winner_agent_id, True),
-            (req.loser_agent_id, False),
-        ]:
-            if agent_id == 0:
-                continue
-            try:
-                overlay_updates.append(
-                    _update_agent_overlay(chain, agent_id, won=won, moves=move_entries)
-                )
-            except (OgStorageError, ChainError) as e:
-                overlay_updates.append({"agent_id": agent_id, "error": str(e)})
 
     ens_updates: list[dict] = []
     for side_name, label, agent_id, human_addr in [
@@ -2097,20 +2032,29 @@ def get_agent_profile(agent_id: int):
     except ChainError:
         pass
 
-    # Expose overlay values so the frontend can render the per-category
-    # weight bars (the NN "weights" that change after each training round).
+    # Expose per-category weight bars to the frontend. Phase-9 overlays
+    # expose them under `values`; trained model checkpoints expose them
+    # under `style_values` (probed from the extras head at save time —
+    # see sample_trainer._compute_style_values). Both flow through the
+    # same response field so the frontend renders one OverlayWeightsTable.
     values: dict = {}
     if isinstance(profile, OverlayProfile):
         values = {str(k): float(v) for k, v in metrics.get("values", {}).items()}
+    elif isinstance(profile, ModelProfile):
+        values = {str(k): float(v) for k, v in metrics.get("style_values", {}).items()}
 
-    # For model checkpoints expose non-tensor metadata (match_count,
-    # extras_dim, in_dim, feature_encoder) for the info page.
+    # For model checkpoints expose the network shape metadata
+    # (extras_dim, in_dim, hidden, feature_encoder) on the info page.
+    # `style_values` lives under `values` above; `match_count` is the
+    # checkpoint's local tally which diverges from on-chain matchCount
+    # across multiple runs — surface only the on-chain value (the
+    # frontend reads it directly via AgentRegistry.matchCount).
     model_meta: dict = {}
     if isinstance(profile, ModelProfile):
         model_meta = {
             k: (v if isinstance(v, (str, int, float, bool)) else str(v))
             for k, v in metrics.items()
-            if k != "kind"
+            if k not in ("kind", "style_values", "match_count")
         }
 
     return {

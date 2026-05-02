@@ -123,7 +123,7 @@ def _build_net_and_blob(*, extras_dim: int = 16):
 
     net = BackgammonNet(extras_dim=extras_dim, core_seed=0xBACC, extras_seed=42)
     state = {
-        "model": net.state_dict(),
+        "state_dict": net.state_dict(),
         "match_count": 7,
         "extras_dim": extras_dim,
         "in_dim": 198,
@@ -163,11 +163,17 @@ def test_model_profile_from_bytes_roundtrips():
     assert torch.allclose(src_out, loaded_out)
 
 
-def test_model_profile_summarize_uses_match_count():
+def test_model_profile_summary_is_neutral():
+    """Summary deliberately omits the checkpoint-local match_count —
+    it would diverge from on-chain matchCount once the chain has more
+    training runs than the checkpoint's local tally. The frontend
+    reads matchCount directly via AgentRegistry.matchCount instead."""
     blob = _torch_checkpoint_bytes()
     profile = ModelProfile.from_bytes(blob)
     summary = profile.summarize()
-    assert "7" in summary  # match_count from _torch_checkpoint_bytes
+    assert summary  # non-empty
+    assert "self-play" not in summary
+    assert "7" not in summary
 
 
 def test_model_profile_from_bytes_rejects_garbage():
@@ -185,7 +191,7 @@ def test_model_profile_from_bytes_rejects_partial_checkpoint():
     net."""
     import torch
 
-    bad = {"model": {}, "match_count": 1}  # missing extras_dim
+    bad = {"state_dict": {}, "match_count": 1}  # missing extras_dim
     buf = io.BytesIO()
     torch.save(bad, buf)
     with pytest.raises(AgentProfileError):

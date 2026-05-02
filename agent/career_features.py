@@ -61,6 +61,36 @@ STYLE_AXES: tuple[str, ...] = (
     "hits_blot",
 )
 
+
+# Full canonical category list — must mirror
+# `server/app/agent_overlay.CATEGORIES` so both profile kinds (overlay
+# JSON and trained model checkpoints) present the same axis set on
+# /agents/{id}/profile. Keep order stable; appending is safe (the
+# consumer sorts by |value|), but renaming or reordering will desync
+# overlay blobs.
+ALL_CATEGORIES: tuple[str, ...] = (
+    "opening_slot",
+    "opening_split",
+    "opening_builder",
+    "opening_anchor",
+    "build_5_point",
+    "build_bar_point",
+    "bearoff_efficient",
+    "bearoff_safe",
+    "risk_hit_exposure",
+    "risk_blot_leaving",
+    "hits_blot",
+    "runs_back_checker",
+    "anchors_back",
+    "phase_prime_building",
+    "phase_race_conversion",
+    "phase_back_game",
+    "phase_holding_game",
+    "phase_blitz",
+    "cube_offer_aggressive",
+    "cube_take_aggressive",
+)
+
 _MIN_DIM = 16
 _STAKE_LOG_DIVISOR = 70.0
 """log1p(1e30) ≈ 69.08; divisor 70 maps stakes up to 1e30 wei into [0, 1]
