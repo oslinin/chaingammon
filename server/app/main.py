@@ -1895,12 +1895,30 @@ def get_agent_profile(agent_id: int):
     except ChainError:
         pass
 
+    # Expose overlay values so the frontend can render the per-category
+    # weight bars (the NN "weights" that change after each training round).
+    values: dict = {}
+    if isinstance(profile, OverlayProfile):
+        values = {str(k): float(v) for k, v in metrics.get("values", {}).items()}
+
+    # For model checkpoints expose non-tensor metadata (match_count,
+    # extras_dim, in_dim, feature_encoder) for the info page.
+    model_meta: dict = {}
+    if isinstance(profile, ModelProfile):
+        model_meta = {
+            k: (v if isinstance(v, (str, int, float, bool)) else str(v))
+            for k, v in metrics.items()
+            if k != "kind"
+        }
+
     return {
         "agent_id": agent_id,
         "kind": kind,
         "match_count": int(metrics.get("match_count", 0)),
         "summary": profile.summarize(),
         "owner_ens": owner_ens,
+        "values": values,
+        "model_meta": model_meta,
     }
 
 
