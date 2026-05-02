@@ -76,6 +76,12 @@ interface DeploymentRecord {
     AgentRegistry: string;
     PlayerSubnameRegistrar?: string;
   };
+  // Captured by deploy.js as the chain head right before the first
+  // deploy tx. Used by log-scan hooks (e.g. useChaingammonName) to
+  // stay inside public-RPC `eth_getLogs` block-range caps. Older
+  // deployment records may be missing this field — callers should
+  // treat it as optional and fall back to a sliding window.
+  deployedBlock?: number;
 }
 
 const ALL_DEPLOYMENTS: DeploymentRecord[] = [
@@ -91,6 +97,8 @@ export interface ChainEntry {
     agentRegistry: `0x${string}`;
     playerSubnameRegistrar?: `0x${string}`;
   };
+  /** Block at which the contracts were deployed. Optional for older records. */
+  deployedBlock?: number;
 }
 
 function buildEntry(dep: DeploymentRecord, def: ChainDef): ChainEntry {
@@ -116,6 +124,7 @@ function buildEntry(dep: DeploymentRecord, def: ChainDef): ChainEntry {
         | `0x${string}`
         | undefined,
     },
+    deployedBlock: dep.deployedBlock,
   };
 }
 

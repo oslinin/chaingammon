@@ -24,5 +24,6 @@
     "tier": 2,
     "owner": "0xa2219C4f48bC9e6806Bce3B391aB9e23f55FEbb5"
   },
-  "deployedAt": "2026-05-02T02:23:01.344Z"
+  "deployedAt": "2026-05-02T02:23:01.344Z",
+  "deployedBlock": 10772455
 }
