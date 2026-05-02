@@ -48,11 +48,21 @@ export function AgentCard({ agentId }: AgentCardProps) {
         args: [BigInt(agentId)],
         chainId,
       },
+      {
+        address: agentRegistry,
+        abi: AgentRegistryABI,
+        functionName: "matchCount",
+        args: [BigInt(agentId)],
+        chainId,
+      },
     ],
   });
 
   const metadataUri = data?.[0]?.result as string | undefined;
   const elo = data?.[1]?.result as bigint | undefined;
+  // matchCount from AgentRegistry tracks how many times updateOverlayHash
+  // was called — i.e. the number of training matches completed.
+  const trainedCount = data?.[2]?.result as number | undefined;
 
   // Phase 15: format the agent identity as `<label>.chaingammon.eth` for
   // visual parity with player names. metadataUri is the string passed at
@@ -79,9 +89,22 @@ export function AgentCard({ agentId }: AgentCardProps) {
         <h3 className="font-mono text-sm font-semibold text-zinc-900 dark:text-zinc-50 break-all">
           {label}
         </h3>
-        <span className="shrink-0 rounded bg-zinc-100 px-1.5 py-0.5 text-xs font-mono text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
-          #{agentId}
-        </span>
+        <div className="flex shrink-0 items-center gap-1">
+          {/* Info link — opens the agent detail page in a new tab. */}
+          <a
+            href={`/agent/${agentId}`}
+            target="_blank"
+            rel="noreferrer"
+            data-testid="agent-card-info-link"
+            title="Open agent info in a new tab"
+            className="rounded bg-zinc-100 px-1.5 py-0.5 text-xs font-mono text-zinc-500 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-400 dark:hover:bg-zinc-700"
+          >
+            Info ↗
+          </a>
+          <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-xs font-mono text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+            #{agentId}
+          </span>
+        </div>
       </div>
 
       <div className="flex items-baseline gap-1.5">
@@ -92,6 +115,14 @@ export function AgentCard({ agentId }: AgentCardProps) {
           {isLoading ? "…" : eloDisplay}
         </span>
       </div>
+
+      {/* Training count — how many overlay updates the agent has received,
+          i.e. how many games it has been trained on (AgentRegistry.matchCount). */}
+      {trainedCount !== undefined && (
+        <p className="font-mono text-xs text-zinc-500 dark:text-zinc-400">
+          {trainedCount} trained
+        </p>
+      )}
 
       {/* Inline match record — chain-derived from MatchRegistry.MatchRecorded
           event scan via useAgentMatchSummary. */}
