@@ -49,7 +49,6 @@ import { encodeAbiParameters, keccak256 } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 
 import { Board } from "../Board";
-import { ConnectButton } from "../ConnectButton";
 import { DiceRoll } from "../DiceRoll";
 import { rollDice } from "../dice";
 import { recordExpense } from "../expenses";
@@ -958,7 +957,6 @@ function MatchInner() {
             {game.score[0]} – {game.score[1]}
           </span>
         </div>
-        <ConnectButton />
       </header>
 
       {/* Main */}
