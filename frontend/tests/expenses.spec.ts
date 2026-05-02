@@ -70,4 +70,55 @@ test.describe("Expenses page", () => {
       "Coach hint · Agent #1 · Qwen 2.5 7B via 0G Compute",
     );
   });
+
+  test("shows ENS subname and agent mint entries with correct badges", async ({
+    page,
+  }) => {
+    await page.goto("/");
+    await page.evaluate(() => {
+      const entries = [
+        {
+          id: "test-ens-1",
+          timestamp: new Date().toISOString(),
+          type: "ens_subname",
+          description: "ENS subname registered: alice.chaingammon.eth",
+        },
+        {
+          id: "test-agent-1",
+          timestamp: new Date().toISOString(),
+          type: "agent_mint",
+          description: 'Agent minted: "my-agent" (Tier 0)',
+        },
+        {
+          id: "test-settle-1",
+          timestamp: new Date().toISOString(),
+          type: "game_settlement",
+          description: "Match settled on-chain · Agent #1 · tx 0xabcdef1234…",
+        },
+      ];
+      window.localStorage.setItem(
+        "chaingammon_expenses",
+        JSON.stringify(entries),
+      );
+    });
+
+    await page.goto("/expenses");
+    await page.waitForLoadState("networkidle");
+
+    const table = page.locator('[data-testid="expenses-table"]');
+    await expect(table).toBeVisible({ timeout: 5000 });
+
+    await expect(page.locator("table")).toContainText("ENS claim");
+    await expect(page.locator("table")).toContainText(
+      "ENS subname registered: alice.chaingammon.eth",
+    );
+    await expect(page.locator("table")).toContainText("Agent mint");
+    await expect(page.locator("table")).toContainText(
+      'Agent minted: "my-agent" (Tier 0)',
+    );
+    await expect(page.locator("table")).toContainText("Settlement");
+    await expect(page.locator("table")).toContainText(
+      "Match settled on-chain · Agent #1 · tx 0xabcdef1234…",
+    );
+  });
 });
