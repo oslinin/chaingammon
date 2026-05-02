@@ -58,10 +58,11 @@ import { AgentWalletPanel } from "../AgentWalletPanel";
 import { Board } from "../Board";
 import { DiceRoll } from "../DiceRoll";
 import { rollDice } from "../dice";
-import { recordExpense } from "../expenses";
+import { recordTransaction } from "../transactions";
 import { useActiveChain } from "../chains";
 import { useComputeBackends } from "../ComputeBackendsContext";
 import { MatchEscrowABI, MatchRegistryABI, useChainContracts } from "../contracts";
+import { useChaingammonName } from "../useChaingammonName";
 
 // ── Types matching agent/gnubg_state.py:MatchStateDict ────────────────────
 
@@ -436,6 +437,7 @@ function MatchInner() {
   // ── Settlement via settleWithSessionKeys ──────────────────────────────────
   // Wallet hooks — used only when a wallet is connected.
   const { address, isConnected } = useAccount();
+  const { label: chaingammonLabel } = useChaingammonName(address);
   const { data: walletClient } = useWalletClient();
   const publicClient = usePublicClient();
   const chainId = useChainId();
@@ -494,7 +496,7 @@ function MatchInner() {
         // hint (the server may fall back to local even when "compute" is
         // requested, so we key off the *served* backend, not the user's pick).
         if (result.backend === "compute") {
-          recordExpense({
+          recordTransaction({
             type: "coach_hint",
             description: `Coach hint · Agent #${agentId} · Qwen 2.5 7B via 0G Compute`,
           });
@@ -948,7 +950,7 @@ function MatchInner() {
         ],
       });
       setSettleTxHash(txHash);
-      recordExpense({
+      recordTransaction({
         type: "game_settlement",
         description: `Match settled on-chain · Agent #${agentId} · tx ${txHash.slice(0, 10)}…`,
       });
@@ -991,6 +993,10 @@ function MatchInner() {
         gnubg_match_id: game.match_id,
         score: game.score,
       };
+      if (chaingammonLabel) {
+        if (humanWins) body.winner_label = chaingammonLabel;
+        else body.loser_label = chaingammonLabel;
+      }
       if (isStakedSettlement && escrowMatchId) {
         body.escrow_match_id = escrowMatchId;
         body.stake_wei = stakeWei.toString();
