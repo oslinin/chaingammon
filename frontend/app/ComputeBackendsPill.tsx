@@ -5,15 +5,11 @@
 // flip that operation; state persists via ComputeBackendsContext.
 //
 // Availability:
-//   coach     — both backends are wired today (chat.mjs + local fallback)
-//   inference — 0G is Phase G (eval.mjs); the chip renders the toggle but
-//               adds an "(coming)" tooltip and disables 0G until then
-//   training  — same as inference (training-as-a-service is out of scope;
-//               "training on 0G" really means inference-on-0G during a run)
-//
-// We render the disabled toggles regardless so the bounty story is
-// complete: judges see all three operations, both backends, and the
-// honest plumbing state.
+//   coach     — 0G is the canonical backend (Qwen 2.5 7B via 0G Compute);
+//               local (flan-t5 fallback) is greyed out to direct users to 0G.
+//   inference — always runs locally (browser-side value-net); both backends
+//               are disabled to show this is not a user-configurable option.
+//   training  — always runs locally (TD(λ) self-play loop); same as inference.
 "use client";
 
 import {
@@ -31,36 +27,37 @@ interface OpRow {
   unavailableTooltip?: Record<Backend, string>;
 }
 
-// Phase I.5 honesty pass: Inference 0G is now wired end-to-end (eval
-// bridge + Python wrapper + /training/estimate + match-page chip). The
-// only thing missing is a registered backgammon-net provider on the 0G
-// serving network — when one stands up, the toggle becomes live with
-// zero further code changes. Until then, flipping the toggle still
-// works (matches the bounty story; the training/estimate endpoint
-// surfaces "available: false" gracefully) — we just can't actually
-// dispatch a real inference yet.
 const OPS: readonly OpRow[] = [
   {
     key: "coach",
     label: "Coach",
-    available: { local: true, "0g": true },
+    // Coach is implemented on 0G Compute (Qwen 2.5 7B). Local flan-t5 fallback
+    // is disabled so users always route through the 0G-attested backend.
+    available: { local: false, "0g": true },
+    unavailableTooltip: {
+      local: "Coach runs on 0G Compute (Qwen 2.5 7B). Local fallback is disabled.",
+      "0g": "",
+    },
   },
   {
     key: "inference",
     label: "Inference",
-    available: { local: true, "0g": true },
+    // Inference runs as a browser-side value-net forward pass (no remote backend).
+    // Both segments are disabled to reflect that this is not user-configurable.
+    available: { local: false, "0g": false },
     unavailableTooltip: {
-      local: "",
-      "0g": "Wire is plumbed end-to-end (eval.mjs + Python client + /training/estimate). Backgammon-net provider not yet registered on the 0G serving network — once it is, the toggle dispatches real inferences.",
+      local: "Inference runs locally in the browser (value-net forward pass).",
+      "0g": "Inference runs locally in the browser (value-net forward pass).",
     },
   },
   {
     key: "training",
     label: "Training",
-    available: { local: true, "0g": true },
+    // Training (TD(λ) self-play) runs locally. Both segments are disabled.
+    available: { local: false, "0g": false },
     unavailableTooltip: {
-      local: "",
-      "0g": "Training control loop stays local; flipping this routes per-move forward passes through the eval bridge for the duration of the run. Same provider caveat as Inference.",
+      local: "Training runs locally (TD(λ) self-play loop).",
+      "0g": "Training runs locally (TD(λ) self-play loop).",
     },
   },
 ] as const;

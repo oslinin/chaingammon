@@ -30,7 +30,7 @@ export type ComputeBackends = Record<ComputeOperation, Backend>;
 const STORAGE_KEY = "chaingammon.computeBackends";
 
 const DEFAULTS: ComputeBackends = {
-  coach: "local",
+  coach: "0g",
   inference: "local",
   training: "local",
 };
