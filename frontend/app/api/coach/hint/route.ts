@@ -5,8 +5,14 @@ import { ethers } from "ethers";
 const RPC = process.env.OG_STORAGE_RPC;
 const PRIVATE_KEY = process.env.OG_STORAGE_PRIVATE_KEY;
 const PINNED_PROVIDER = process.env.OG_COMPUTE_PROVIDER || null;
-const MIN_BALANCE_OG = parseFloat(process.env.OG_COMPUTE_MIN_BALANCE || "0.01");
-const DEPOSIT_OG = parseFloat(process.env.OG_COMPUTE_DEPOSIT || "0.05");
+// Target locked balance per (user, provider) sub-account. The 0G
+// provider rejects inference with HTTP 400 "minimum reserve 1.000000
+// 0G" when locked < 1.0; 1.1 keeps a small buffer. Top-up is gated by
+// a getAccount check below so we don't transfer on every request.
+const MIN_BALANCE_OG = parseFloat(process.env.OG_COMPUTE_MIN_BALANCE || "1.1");
+// 0G Ledger contract reverts the first-time deposit below 0.1 with the
+// custom error 0x54443ec4(sentWei, requiredWei). Default high enough.
+const DEPOSIT_OG = parseFloat(process.env.OG_COMPUTE_DEPOSIT || "0.1");
 
 // Mocking some of the Python logic since we don't have the full RAG/Profile context here yet
 // In a real implementation, we would either fetch from 0G Storage here or pass it in.
@@ -91,10 +97,16 @@ export async function POST(req: NextRequest) {
       await broker.ledger.addLedger(DEPOSIT_OG);
     }
 
-    // Top up
+    // Top up only when the per-provider sub-account is below the
+    // target locked balance. getAccount[3] is locked-wei; transferFund
+    // takes raw wei (not gwei) and is incremental.
     try {
-      const amountNeuron = BigInt(Math.floor(MIN_BALANCE_OG * 1e9));
-      await broker.ledger.transferFund(providerAddress, "inference", amountNeuron);
+      const acct = await broker.inference.getAccount(providerAddress);
+      const locked = BigInt(acct[3] ?? 0);
+      const target = ethers.parseEther(MIN_BALANCE_OG.toString());
+      if (locked < target) {
+        await broker.ledger.transferFund(providerAddress, "inference", target - locked);
+      }
     } catch (e) {
       // ignore
     }

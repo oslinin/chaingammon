@@ -5,8 +5,16 @@ import { ethers } from "ethers";
 const RPC = process.env.OG_STORAGE_RPC;
 const PRIVATE_KEY = process.env.OG_STORAGE_PRIVATE_KEY;
 const PINNED_PROVIDER = process.env.OG_COMPUTE_PROVIDER || null;
-const MIN_BALANCE_OG = parseFloat(process.env.OG_COMPUTE_MIN_BALANCE || "0.01");
-const DEPOSIT_OG = parseFloat(process.env.OG_COMPUTE_DEPOSIT || "0.05");
+// Target locked balance per (user, provider) sub-account. The 0G provider
+// rejects inference with HTTP 400 "insufficient balance: minimum reserve
+// 1.000000 0G" when locked < 1.0, so 1.1 keeps a small buffer above that
+// floor without burning a fresh 1.0 OG on every call (we top up only
+// when getAccount reports below MIN_BALANCE_OG).
+const MIN_BALANCE_OG = parseFloat(process.env.OG_COMPUTE_MIN_BALANCE || "1.1");
+// 0G Ledger contract enforces a minimum first-time deposit; 0.05 reverts
+// with the custom error 0x54443ec4(sentWei, requiredWei) where required
+// is 0.1 ETH. Default high enough to clear that floor.
+const DEPOSIT_OG = parseFloat(process.env.OG_COMPUTE_DEPOSIT || "0.1");
 const SERVER = process.env.NEXT_PUBLIC_SERVER_URL ?? "http://localhost:8000";
 
 const DEEP_DIVE_TRIGGERS = [
@@ -163,13 +171,25 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Top up
+    // Top up only when the per-provider sub-account is below the
+    // target locked balance. `getAccount` returns a tuple whose [3]
+    // slot is the locked-balance in wei. `transferFund` takes raw
+    // wei (not gwei / "neuron") and is incremental — we transfer the
+    // difference plus enough to clear the provider's reserve.
     try {
-      console.log("CoS: Transferring funds to provider...");
-      const amountNeuron = BigInt(Math.floor(MIN_BALANCE_OG * 1e9));
-      await broker.ledger.transferFund(providerAddress, "inference", amountNeuron);
+      console.log("CoS: Checking sub-account balance...");
+      const acct = await broker.inference.getAccount(providerAddress);
+      const locked = BigInt(acct[3] ?? 0);
+      const target = ethers.parseEther(MIN_BALANCE_OG.toString());
+      if (locked < target) {
+        const topUp = target - locked;
+        console.log(`CoS: Topping up ${ethers.formatEther(topUp)} OG (locked ${ethers.formatEther(locked)} → ${MIN_BALANCE_OG})`);
+        await broker.ledger.transferFund(providerAddress, "inference", topUp);
+      } else {
+        console.log(`CoS: sub-account already at ${ethers.formatEther(locked)} OG, skipping top-up`);
+      }
     } catch (e) {
-      console.warn("CoS: Transfer fund failed (might already have balance):", e);
+      console.warn("CoS: Top-up step failed:", e);
     }
 
     let metadata;
