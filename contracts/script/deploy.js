@@ -39,6 +39,20 @@ function namehash(name) {
 const DEFAULT_ENS_PARENT_NODE = namehash("chaingammon.eth");
 const ENS_PARENT_NODE = process.env.ENS_PARENT_NODE || DEFAULT_ENS_PARENT_NODE;
 
+// Canonical ENS NameWrapper + PublicResolver addresses on Sepolia.
+// Real ENS on Sepolia: https://docs.ens.domains/learn/deployments
+const SEPOLIA_NAME_WRAPPER     = "0x0635513f179D50A207757E05759CbD106d7dFcE8";
+const SEPOLIA_PUBLIC_RESOLVER  = "0x8FADE66B79cC9f707aB26799354482EB93a5B7dD";
+
+// Per-network ENS infra. Mainnet entries can be added here when chaingammon
+// promotes off Sepolia. For local hardhat / 0g-testnet we deploy mocks below.
+const ENS_INFRA_BY_NETWORK = {
+  sepolia: {
+    nameWrapper: SEPOLIA_NAME_WRAPPER,
+    publicResolver: SEPOLIA_PUBLIC_RESOLVER,
+  },
+};
+
 // Initial baseWeightsHash for the AgentRegistry constructor.
 // Phase 8 pinned the encrypted-gnubg-weights blob on 0G Storage; future
 // deploys (e.g. on a fresh network) should pass the same hash here so
@@ -146,11 +160,41 @@ async function main() {
     console.log(`AgentRegistry: ${agentCount} agent(s) already minted — skipping seed`);
   }
 
+  // ── ENS infra (NameWrapper + PublicResolver) ──────────────────────────────
+  // On Sepolia we use the canonical ENS deployment. On hardhat/0g/localhost
+  // we deploy MockNameWrapper + MockResolver so the registrar has something
+  // to delegate to.
+  let nameWrapperAddr, resolverAddr;
+  const ensInfra = ENS_INFRA_BY_NETWORK[network.name];
+  if (ensInfra) {
+    nameWrapperAddr = ensInfra.nameWrapper;
+    resolverAddr = ensInfra.publicResolver;
+    console.log(`ENS infra: using canonical ${network.name} deployment`);
+  } else {
+    const MockNameWrapperFactory = await ethers.getContractFactory("MockNameWrapper");
+    const { address: nw } = await deployOrReuse(
+      "MockNameWrapper",
+      MockNameWrapperFactory,
+      [],
+      existing,
+    );
+    nameWrapperAddr = nw;
+
+    const MockResolverFactory = await ethers.getContractFactory("MockResolver");
+    const { address: r } = await deployOrReuse(
+      "MockResolver",
+      MockResolverFactory,
+      [],
+      existing,
+    );
+    resolverAddr = r;
+  }
+
   // ── PlayerSubnameRegistrar ─────────────────────────────────────────────────
   const RegistrarFactory = await ethers.getContractFactory("PlayerSubnameRegistrar");
   const { address: registrarAddr } =
     await deployOrReuse("PlayerSubnameRegistrar", RegistrarFactory,
-      [ENS_PARENT_NODE], existing);
+      [ENS_PARENT_NODE, nameWrapperAddr, resolverAddr], existing);
 
   // ── MatchEscrow ────────────────────────────────────────────────────────────
   const MatchEscrowFactory = await ethers.getContractFactory("MatchEscrow");
@@ -177,6 +221,8 @@ async function main() {
       AgentRegistry: agentAddr,
       PlayerSubnameRegistrar: registrarAddr,
       MatchEscrow: escrowAddr,
+      NameWrapper: nameWrapperAddr,
+      PublicResolver: resolverAddr,
       ...(mockOgStorageAddr ? { MockOgStorage: mockOgStorageAddr } : {}),
     },
     matchEscrowConstructorArgs: {
@@ -188,6 +234,8 @@ async function main() {
     },
     playerSubnameRegistrarConstructorArgs: {
       parentNode: ENS_PARENT_NODE,
+      nameWrapper: nameWrapperAddr,
+      resolver: resolverAddr,
     },
     seedAgent: {
       agentId: 1,
