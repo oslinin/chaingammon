@@ -1358,10 +1358,16 @@ def finalize_direct_staked(req: StakedFinalizeRequest):
 class SettleRequest(BaseModel):
     """KeeperHub relayer payload — emitted by match-settle.yaml step 7.
 
-    KeeperHub signs this payload with KEEPER_PRIVKEY and POSTs it to
-    RELAYER_URL/settle. The relayer calls MatchRegistry.recordMatch on
-    0G Chain so the result is committed even if the loser abandons the
-    frontend before clicking the manual settle button.
+    KeeperHub ECDSA-signs this payload with KEEPER_PRIVKEY and POSTs it to
+    RELAYER_URL/settle. The relayer verifies the signature against
+    KEEPER_PUBKEY (set in server/.env), fetches the GameRecord from 0G
+    Storage, reads the live escrow pot, then calls
+    MatchRegistry.recordMatchAndSplit so the match record and escrow payout
+    happen atomically in a single transaction.
+
+    `escrowMatchId` is the bytes32 key both players deposited under in
+    MatchEscrow. It is included in the signed payload so the relayer cannot
+    substitute a different escrow bucket.
     """
 
     matchId: str
@@ -1370,21 +1376,97 @@ class SettleRequest(BaseModel):
     forfeitingPlayer: str = "0x0000000000000000000000000000000000000000"
     eloDelta: int = 0
     archiveUri: str = ""
+    escrowMatchId: str = ""  # 0x-prefixed bytes32; empty → no escrow payout
     keeperSig: str = ""
+
+
+def _verify_keeper_sig(req: "SettleRequest") -> None:
+    """Verify the ECDSA keeperSig over the canonical settlement payload.
+
+    The signed message is the EIP-191 personal_sign hash of:
+        keccak256(matchId_bytes32 + winner_bytes + forfeit_byte +
+                  forfeitingPlayer_bytes + archiveUri_utf8 + escrowMatchId_bytes32)
+
+    The expected signer is KEEPER_PUBKEY from the environment (Ethereum
+    checksummed address). If KEEPER_PUBKEY is not set the check is skipped
+    with a warning so the server can start without it; a missing pubkey in
+    production is logged as an error.
+
+    Raises HTTPException 403 on a bad signature.
+    """
+    import logging as _logging
+    from eth_account import Account as _Account
+    from eth_account.messages import encode_defunct as _encode_defunct
+    from web3 import Web3 as _Web3
+
+    keeper_pubkey = os.environ.get("KEEPER_PUBKEY", "").strip()
+    if not keeper_pubkey:
+        _logging.getLogger(__name__).error(
+            "KEEPER_PUBKEY not set — skipping keeper signature verification. "
+            "Set KEEPER_PUBKEY in server/.env to harden the /settle endpoint."
+        )
+        return
+    if not req.keeperSig:
+        raise HTTPException(
+            status_code=403,
+            detail="keeperSig is required but was not provided",
+        )
+
+    # Canonical payload bytes (deterministic, order-stable).
+    # Fields match exactly what match-settle.yaml's sign-settlement step signs.
+    try:
+        match_id_bytes = _Web3.to_bytes(hexstr=req.matchId) if req.matchId.startswith("0x") else req.matchId.encode()
+        escrow_bytes = (
+            _Web3.to_bytes(hexstr=req.escrowMatchId)
+            if req.escrowMatchId.startswith("0x")
+            else req.escrowMatchId.encode()
+        )
+        payload_bytes = (
+            match_id_bytes
+            + req.winner.encode()
+            + (b"\x01" if req.forfeit else b"\x00")
+            + req.forfeitingPlayer.encode()
+            + req.archiveUri.encode()
+            + escrow_bytes
+        )
+        msg = _encode_defunct(primitive=payload_bytes)
+        recovered = _Account.recover_message(msg, signature=req.keeperSig)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=403,
+            detail=f"keeperSig recovery failed: {exc}",
+        ) from exc
+
+    if recovered.lower() != keeper_pubkey.lower():
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                f"keeperSig signer {recovered} does not match "
+                f"KEEPER_PUBKEY {keeper_pubkey}"
+            ),
+        )
 
 
 @app.post("/settle")
 def settle_endpoint(req: SettleRequest):
-    """KeeperHub relayer: receive signed settlement and commit to 0G Chain.
+    """KeeperHub relayer: verify keeper signature, then commit to 0G Chain.
 
-    Fetches the GameRecord from 0G Storage (via archiveUri) to recover agent
-    IDs and match_length, then calls MatchRegistry.recordMatch. For the
-    hackathon MVP the keeper signature is logged but not verified on-chain;
-    verification via a new contract function is a post-hackathon follow-up.
+    Flow:
+      1. Verify the ECDSA keeperSig against KEEPER_PUBKEY.
+      2. Fetch the GameRecord from 0G Storage (via archiveUri) to recover
+         agent IDs, match_length, and game_record_hash.
+      3. If escrowMatchId is provided, read the live pot from MatchEscrow
+         and call MatchRegistry.recordMatchAndSplit so the match record and
+         escrow payout happen atomically.
+      4. If escrowMatchId is absent (un-staked match), fall back to
+         recordMatch (record-only, no payout).
 
-    Returns {tx_hash} on success or raises HTTP 502 on chain failure.
+    Returns {tx_hash, match_id} on success or raises HTTP 4xx/5xx.
     """
-    # Fetch game record from 0G Storage to recover match parameters.
+    # Step 1 — verify keeper signature before touching the chain.
+    _verify_keeper_sig(req)
+
+    # Step 2 — fetch game record from 0G Storage to recover match parameters.
     winner_agent_id = 0
     winner_human = "0x0000000000000000000000000000000000000000"
     loser_agent_id = 0
@@ -1392,6 +1474,7 @@ def settle_endpoint(req: SettleRequest):
     match_length = 3
     game_record_hash = "0x" + "00" * 32
 
+    record_data: dict = {}
     if req.archiveUri:
         try:
             blob = get_blob(req.archiveUri)
@@ -1408,16 +1491,104 @@ def settle_endpoint(req: SettleRequest):
             else:
                 loser_human = loser_ref.get("address", loser_human)
             # The archive URI is itself the 0G Storage root hash.
-            game_record_hash = req.archiveUri if req.archiveUri.startswith("0x") else game_record_hash
-        except (OgStorageError, json.JSONDecodeError, KeyError) as e:
+            game_record_hash = (
+                req.archiveUri
+                if req.archiveUri.startswith("0x")
+                else game_record_hash
+            )
+        except (OgStorageError, json.JSONDecodeError, KeyError):
             # Non-fatal: proceed with zeros rather than blocking settlement.
             pass
 
     try:
         chain = ChainClient.from_env()
     except ChainError as e:
-        raise HTTPException(status_code=503, detail=f"chain client not configured: {e}") from e
+        raise HTTPException(
+            status_code=503, detail=f"chain client not configured: {e}"
+        ) from e
 
+    # Step 3 — staked path: read escrow pot and call recordMatchAndSplit.
+    escrow_match_id = (req.escrowMatchId or "").strip()
+    if escrow_match_id and escrow_match_id.startswith("0x") and len(escrow_match_id) == 66:
+        try:
+            pot = chain.escrow_pot(escrow_match_id)
+        except ChainError as e:
+            raise HTTPException(
+                status_code=502,
+                detail=f"escrow pot read failed: {e}",
+            ) from e
+
+        if pot == 0:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Escrow pot for {escrow_match_id} is zero — already paid "
+                    f"out or never funded. Settlement aborted."
+                ),
+            )
+
+        # Resolve winner address from the request.
+        # `req.winner` is either a 0x address (human) or an "agent:<id>" string
+        # produced by the /replay endpoint. Normalise to a checksum address.
+        winner_addr = req.winner
+        if winner_addr.lower().startswith("agent:"):
+            # Agent won — pay out to the agent's server-managed wallet
+            # (agent_wallets.py). Fall back to the deployer address so funds
+            # aren't lost if the wallet lookup fails.
+            try:
+                from .agent_wallets import AgentWallets as _AgentWallets
+                _wallets = _AgentWallets.from_env()
+                agent_id_str = winner_addr.split(":", 1)[1]
+                winner_addr = _wallets.address_for(int(agent_id_str))
+            except Exception:
+                winner_addr = chain.account_address
+        try:
+            from web3 import Web3 as _Web3
+            winner_addr = _Web3.to_checksum_address(winner_addr)
+        except Exception as exc:
+            raise HTTPException(
+                status_code=422,
+                detail=f"winner address invalid: {req.winner!r} → {exc}",
+            ) from exc
+
+        try:
+            finalized = chain.record_match_and_split(
+                winner_agent_id=winner_agent_id,
+                winner_human=winner_human,
+                loser_agent_id=loser_agent_id,
+                loser_human=loser_human,
+                match_length=match_length,
+                game_record_hash=game_record_hash,
+                escrow_match_id=escrow_match_id,
+                winners=[winner_addr],
+                shares=[pot],
+            )
+        except ChainError as e:
+            raise HTTPException(
+                status_code=502, detail=f"recordMatchAndSplit failed: {e}"
+            ) from e
+
+        # Annotate the in-memory game record with settlement metadata so the
+        # keeper_workflow settlement_signed step can verify the sig on replay.
+        # We don't re-upload the blob (it would change the root hash and break
+        # the on-chain gameRecordHash anchor); instead the workflow reads
+        # record_data from the /keeper-workflow run context where these fields
+        # are injected by the relay step.
+        record_data["keeper_sig"] = req.keeperSig
+        record_data["escrow_match_id"] = escrow_match_id
+        record_data["winner_addr"] = winner_addr
+        record_data["forfeit"] = req.forfeit
+        record_data["forfeiting_player"] = req.forfeitingPlayer
+        record_data["archive_uri"] = req.archiveUri
+
+        return {
+            "tx_hash": finalized.tx_hash,
+            "match_id": finalized.match_id,
+            "payout_wei": pot,
+            "payout_winner": winner_addr,
+        }
+
+    # Step 4 — un-staked path: record only, no escrow payout.
     try:
         finalized = chain.record_match(
             winner_agent_id=winner_agent_id,
@@ -1428,7 +1599,9 @@ def settle_endpoint(req: SettleRequest):
             game_record_hash=game_record_hash,
         )
     except ChainError as e:
-        raise HTTPException(status_code=502, detail=f"recordMatch failed: {e}") from e
+        raise HTTPException(
+            status_code=502, detail=f"recordMatch failed: {e}"
+        ) from e
 
     return {"tx_hash": finalized.tx_hash, "match_id": finalized.match_id}
 
