@@ -9,8 +9,10 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useReadContract } from "wagmi";
 
-import { useActiveChain, useEnsInfra } from "./chains";
+import { useActiveChain, useActiveChainId, useEnsInfra } from "./chains";
+import { MatchRegistryABI, useChainContracts } from "./contracts";
 import { useChaingammonProfile } from "./useChaingammonProfile";
 import { useHumanMatchSummary } from "./useHumanMatchSummary";
 
@@ -38,6 +40,20 @@ interface DiscoveryEntry {
 // -------------------------------------------------------------------------
 
 const PARENT_NAME = "chaingammon.eth";
+
+// NameWrapper wraps subnames as ERC-1155 NFTs whose tokenId IS the
+// namehash. The token holder is the wallet that "owns" the subname —
+// i.e. the address we want to look up MatchRegistry.humanElo for when
+// the resolver's addr record isn't populated.
+const NAME_WRAPPER_OWNER_ABI = [
+  {
+    type: "function",
+    name: "ownerOf",
+    stateMutability: "view",
+    inputs: [{ name: "id", type: "uint256" }],
+    outputs: [{ name: "", type: "address" }],
+  },
+] as const;
 
 const SUBNAMES_QUERY = `
   query Subnames($parent: String!) {
@@ -123,13 +139,48 @@ function EntryCard({ entry }: { entry: DiscoveryEntry }) {
   const { elo: eloText, matchCount } = useChaingammonProfile(
     isHuman ? entry.label : null,
   );
-  // MatchRecorded event scan to break match_count into wins/losses. Skipped
-  // when the resolver didn't expose an Ethereum address (returns null).
-  const { summary } = useHumanMatchSummary(
-    isHuman && entry.address ? entry.address : undefined,
-  );
 
-  const eloDisplay = eloText || entry.elo || "—";
+  // Resolve a wallet address for this entry. The subgraph reports
+  // `resolver.addr.id` only when the resolver has an addr-record set,
+  // which the current registrar doesn't write. Fall back to the
+  // NameWrapper's ERC-1155 owner (`ownerOf(namehash)`) — the wrapped
+  // subname's tokenId is the namehash, and its holder IS the wallet
+  // we want. Verified live: `oleg.chaingammon.eth` → 0xa221…Ebb5.
+  const chainId = useActiveChainId();
+  const { matchRegistry } = useChainContracts();
+  const ensInfra = useEnsInfra();
+  const { data: wrapperOwnerRaw } = useReadContract({
+    address: ensInfra?.nameWrapper,
+    abi: NAME_WRAPPER_OWNER_ABI,
+    functionName: "ownerOf",
+    args: [BigInt(entry.node)],
+    chainId,
+    query: { enabled: isHuman && !entry.address && !!ensInfra?.nameWrapper },
+  });
+  const resolvedAddress: `0x${string}` | undefined =
+    entry.address ?? (typeof wrapperOwnerRaw === "string" ? (wrapperOwnerRaw as `0x${string}`) : undefined);
+
+  // MatchRecorded event scan to break match_count into wins/losses. Skipped
+  // until we have a wallet address for this human.
+  const { summary } = useHumanMatchSummary(
+    isHuman && resolvedAddress ? resolvedAddress : undefined,
+  );
+  // Chain-side ELO fallback — the ENS text record is only written by the
+  // settlement flow when the human passes their `label` through. The
+  // navbar's ProfileBadge already mirrors this fallback; without the
+  // same mirror here, freshly-rated humans show ELO "—" on the home card
+  // while the navbar correctly shows their rating.
+  const { data: chainEloRaw } = useReadContract({
+    address: matchRegistry,
+    abi: MatchRegistryABI,
+    functionName: "humanElo",
+    args: resolvedAddress ? [resolvedAddress] : undefined,
+    chainId,
+    query: { enabled: isHuman && !!resolvedAddress && !eloText },
+  });
+  const chainElo =
+    chainEloRaw != null ? String(chainEloRaw) : undefined;
+  const eloDisplay = eloText || entry.elo || chainElo || "—";
   const matches = summary?.matches ?? (matchCount ? Number(matchCount) : null);
   const wins = summary?.wins ?? null;
   const losses = summary?.losses ?? null;
