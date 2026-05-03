@@ -20,6 +20,28 @@ from typing import Optional
 from web3 import Web3
 from web3.types import TxReceipt
 
+# Minimal ABI for MatchEscrow — only the views the server calls.
+# Mirrors contracts/src/MatchEscrow.sol exactly.
+_MATCH_ESCROW_ABI = [
+    {
+        "type": "function",
+        "name": "pot",
+        "stateMutability": "view",
+        "inputs": [{"name": "matchId", "type": "bytes32"}],
+        "outputs": [{"name": "", "type": "uint256"}],
+    },
+    {
+        "type": "event",
+        "name": "PaidOut",
+        "anonymous": False,
+        "inputs": [
+            {"name": "matchId", "type": "bytes32", "indexed": True},
+            {"name": "winner", "type": "address", "indexed": True},
+            {"name": "amount", "type": "uint256", "indexed": False},
+        ],
+    },
+]
+
 # Minimal ABI — only the methods + events we touch. Mirrors
 # contracts/src/MatchRegistry.sol exactly.
 _AGENT_REGISTRY_ABI = [
@@ -266,6 +288,7 @@ class ChainClient:
         match_registry_address: str,
         private_key: str,
         agent_registry_address: Optional[str] = None,
+        match_escrow_address: Optional[str] = None,
     ) -> None:
         self.w3 = Web3(Web3.HTTPProvider(rpc_url))
         if not self.w3.is_connected():
@@ -281,6 +304,14 @@ class ChainClient:
                 abi=_AGENT_REGISTRY_ABI,
             )
             if agent_registry_address
+            else None
+        )
+        self.match_escrow = (
+            self.w3.eth.contract(
+                address=Web3.to_checksum_address(match_escrow_address),
+                abi=_MATCH_ESCROW_ABI,
+            )
+            if match_escrow_address
             else None
         )
 
@@ -312,11 +343,16 @@ class ChainClient:
             os.environ.get("AGENT_REGISTRY_ADDRESS")
             or address_from_deployment("AgentRegistry")
         )
+        match_escrow = (
+            os.environ.get("MATCH_ESCROW_ADDRESS")
+            or address_from_deployment("MatchEscrow")
+        )
         return cls(
             rpc_url=os.environ["RPC_URL"],
             match_registry_address=match_registry,
             private_key=os.environ["DEPLOYER_PRIVATE_KEY"],
             agent_registry_address=agent_registry,
+            match_escrow_address=match_escrow,
         )
 
     @property
@@ -478,6 +514,22 @@ class ChainClient:
     def get_nonce(self, human: str) -> int:
         """Read the current settleWithSessionKeys nonce for a human address."""
         return int(self.match_registry.functions.nonces(Web3.to_checksum_address(human)).call())
+
+    def escrow_pot(self, escrow_match_id: str) -> int:
+        """Return the current pot (wei) held in MatchEscrow for escrow_match_id.
+
+        Returns 0 if the escrow contract is not configured rather than
+        raising, so callers can detect an un-wired escrow gracefully.
+        `escrow_match_id` must be a 0x-prefixed 32-byte hex string.
+        """
+        if self.match_escrow is None:
+            return 0
+        if not escrow_match_id.startswith("0x"):
+            raise ChainError(
+                f"escrow_match_id must start with 0x: {escrow_match_id!r}"
+            )
+        raw_id = self.w3.to_bytes(hexstr=escrow_match_id)
+        return int(self.match_escrow.functions.pot(raw_id).call())
 
     # --- AgentRegistry views + setters (Phase 8) ----------------------------
 

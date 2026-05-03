@@ -6,7 +6,7 @@ Built for ETHGlobal Open Agents. The three sponsor protocols Chaingammon targets
 
 - **0G** — full game records (Log), per-player style profiles (KV), encrypted agent weights (Blob, hash-committed to the iNFT) on **0G Storage**; TEE-attested agent NN inference and coach LLM (Qwen 2.5 7B) on **0G Compute**.
 - **ENS** — `<name>.chaingammon.eth` subnames carry verified ELO and a pointer to the match archive. Protocol-reserved text records cannot be self-claimed.
-- **KeeperHub** — orchestrates the per-match workflow: deposit verification, drand round pulls, WASM rules-engine validation, settlement broadcast, audit trail.
+- **KeeperHub** — orchestrates the per-match workflow end-to-end: deposit collection via `MatchEscrow`, drand VRF dice delivery per turn, forfeit detection, gnubg move-replay validation, ECDSA-signed settlement, and atomic escrow payout via `MatchRegistry.recordMatchAndSplit`. Both an event-driven YAML workflow (`keeperhub/match-settle.yaml`) and a Python audit orchestrator (`server/app/keeper_workflow.py`) are live.
 
 Other infrastructure (not sponsor-affiliated):
 
@@ -82,7 +82,7 @@ sequenceDiagram
 | **0G Storage** | Per-match game records (Log), per-player style profiles (KV), encrypted agent weights (Blob, hash-committed to iNFT), gnubg strategy docs (coach RAG context). | HTTP via the 0G Storage indexer SDK; `og-bridge/` |
 | **0G Compute** | TEE-attested agent NN inference (offline play, autonomous tournaments) and coach LLM (Qwen 2.5 7B). | `og-compute-bridge/`, `agent/coach_compute_client.py` |
 | **ENS** (real) | Portable identity. `<name>.chaingammon.eth` subnames; protocol-reserved text records carry ELO + style profile pointer. | `contracts/src/PlayerSubnameRegistrar.sol` |
-| **KeeperHub** | Per-match workflow: deposit verification, drand round pulls, move validation via WASM rules engine, settlement broadcast, audit JSON on 0G Storage. | [`docs/keeperhub-workflow.md`](docs/keeperhub-workflow.md), `docs/keeperhub-feedback.md` |
+| **KeeperHub** | Event-driven YAML workflow (`keeperhub/match-settle.yaml`): fires on both deposits, delivers drand VRF dice, detects forfeit, replays moves via gnubg, ECDSA-signs the settlement payload (with null-winner guard + `escrowMatchId` binding), POSTs to `/settle` which calls `recordMatchAndSplit` atomically. Python audit orchestrator (`server/app/keeper_workflow.py`): 10-step on-demand pipeline with keeper sig verification, iNFT move audit, ENS cross-check, and 0G Storage audit trail. | [`keeperhub/match-settle.yaml`](keeperhub/match-settle.yaml), [`server/app/keeper_workflow.py`](server/app/keeper_workflow.py), [`docs/keeperhub-feedback.md`](docs/keeperhub-feedback.md) |
 
 **Other infrastructure** (chosen for fit, not a sponsor track):
 
@@ -569,14 +569,30 @@ The keeper-orchestrated settlement workflow is real, not a Phase-36 mock. `serve
 | 3 | `og_storage_fetch` | Pulls the GameRecord blob from 0G Storage by the rootHash in MatchInfo. |
 | 4 | `gnubg_replay` | Walks every recorded move through `gnubg.submit_move` from the canonical opening; asserts the final `position_id` matches the recorded value. A mismatch means the GameRecord doesn't faithfully describe play and the match shouldn't settle. |
 | 5 | `agent_move_replay` | Phase 38: deterministic move-selection audit. For each agent side, resolves `iNFT.dataHashes[1]` → `BackgammonNet`, scores every legal candidate via `net(features, extras)` argmax, asserts the recorded move equals the argmax. Closes the ELO-audit gap that step 4 alone couldn't (legality vs selection correctness). Abstains cleanly with disclosure when the agent has only an overlay/race/null profile — full-board NN audit is enabled once the agent has a `gnubg_full` checkpoint registered. |
-| 6 | `settlement_signed` | Confirms the MatchInfo presence (session-key flow pre-authorizes; the relay tx itself is the proof). |
+| 6 | `settlement_signed` | Verifies the keeper ECDSA signature (`keeperSig`) from the game record's `keeper_sig` field against `KEEPER_PUBKEY`. Proves the trusted KeeperHub wallet — not an arbitrary caller — authorised this settlement before funds moved. Skips gracefully for session-key-settled (un-staked) matches that have no `keeper_sig`. |
 | 7 | `relay_tx` | Surfaces `gameRecordHash` as the canonical audit anchor — the same value KeeperHub commits to its run-audit log. |
 | 8 | `ens_update` | Cross-checks elo + last_match_id text records on each labelled subname; cleanly skips for unnamed / agent-vs-agent matches. |
 | 9 | `audit_append` | Serializes the entire workflow run to JSON, uploads to 0G Storage, and surfaces the rootHash as the audit-trail anchor. |
 
 Trigger via `POST /keeper-workflow/{matchId}/run` (the Run button on `/keeper/[matchId]` does this). The workflow runs on a background thread; `GET /keeper-workflow/{matchId}` polls return live mid-run progress, persisted to `/tmp/chaingammon-keeper-workflows/<matchId>.json` so navigating away and back during a long-running step doesn't lose state. A step failure marks itself "failed" with the exception message in `error`, the workflow status flips to "failed", and remaining steps stay "pending" — an audit reader can immediately see *which* step broke and *why*.
 
-The 8 step IDs and the response shape (`{matchId, status, steps: [{id, name, status, duration_ms, retry_count, tx_hash, error, detail}]}`) are the same canonical contract Phase 36 locked in for the frontend, so existing `/keeper/[matchId]` rendering works unchanged against the real orchestrator.
+The 10 step IDs and the response shape (`{matchId, status, steps: [{id, name, status, duration_ms, retry_count, tx_hash, error, detail}]}`) are the same canonical contract Phase 36 locked in for the frontend, so existing `/keeper/[matchId]` rendering works unchanged against the real orchestrator.
+
+### KeeperHub YAML workflow (`keeperhub/match-settle.yaml`)
+
+The YAML workflow is the event-driven counterpart to the Python orchestrator above. It fires automatically whenever both players have deposited into `MatchEscrow` on 0G testnet (trigger: two `Deposited` events for the same `matchId`), and handles the settlement end-to-end without any manual action:
+
+| Step | Action | What it does |
+| --- | --- | --- |
+| `on-deposit` | `log` | Confirms both deposits arrived; surfaces `matchId` for downstream steps. |
+| `per-turn-drand` | `http-poll` | Polls `GET /games/{matchId}/dice` every 5 s; derives dice as `keccak256(round_digest ‖ turn_index_be8) mod 36`. Stops when the game ends or a forfeit is detected. |
+| `forfeit-poll` | `http-poll` | Polls `POST /matches/{matchId}/forfeit-check` every 30 s; detects per-turn move-clock expiry. |
+| `on-game-end` | `webhook` | Waits for the server to POST a game-end payload `{winner, archive_uri, elo_delta}`. 2-hour hard cap; forfeit-poll provides earlier exit. |
+| `fetch-and-replay` | `http` | POSTs to `GNUBG_REPLAY_URL/replay`; server fetches the GameRecord from 0G Storage and replays every move through gnubg. Workflow halts on any invalid move — escrow stays locked. |
+| `sign-settlement` | `ecdsa-sign` | Builds and signs the settlement payload with `KEEPER_PRIVKEY`. An `assert` guard halts here if the resolved winner is null or empty on either path, preventing a zero-address from reaching the chain. `escrowMatchId` is bound in the signed payload so the signature covers which escrow bucket is being settled. |
+| `relay-settlement` | `http` | POSTs the signed payload to `RELAYER_URL/settle`. The relayer verifies the signature, reads the live pot from `MatchEscrow`, and calls `MatchRegistry.recordMatchAndSplit` — match record and escrow payout in a single atomic transaction. |
+
+**Setup:** copy `keeperhub/.env.example` to `keeperhub/.env`, fill in credentials, and run `scripts/setup-keeper.sh`. The `MATCH_ESCROW_ADDRESS` is pre-populated with the deployed 0G testnet address; update it if you redeploy.
 
 ## Live training visualization (Phase L)
 
@@ -708,7 +724,9 @@ See [ROADMAP.md](ROADMAP.md) for the full version. Architecture: [ARCHITECTURE.m
 
 **KeeperHub:**
 
-- [x] Workflow live (Phase 37): 8-step orchestrator at `server/app/keeper_workflow.py` runs sequentially — escrow_deposit (on-chain MatchInfo lookup), vrf_rolls (drand reachability), og_storage_fetch (GameRecord blob from 0G Storage), gnubg_replay (re-walk every move + assert final position), settlement_signed (MatchInfo presence proof), relay_tx (audit anchor surfaced as gameRecordHash), ens_update (cross-check ENS text records on labelled subnames), audit_append (workflow JSON pinned to 0G Storage). Triggered via `POST /keeper-workflow/{matchId}/run`; live progress via `GET /keeper-workflow/{matchId}` polled every 1.5s by `/keeper/[matchId]` page.
+- [x] Workflow live (Phase 37): 10-step orchestrator at `server/app/keeper_workflow.py` runs sequentially — escrow_deposit (on-chain MatchInfo lookup), vrf_rolls (drand reachability), og_storage_fetch (GameRecord blob from 0G Storage), rules_check (pure-Python rules validation), gnubg_replay (re-walk every move + assert final position), agent_move_replay (iNFT argmax audit), settlement_signed (ECDSA keeper signature verified against `KEEPER_PUBKEY`), relay_tx (audit anchor surfaced as gameRecordHash), ens_update (cross-check ENS text records on labelled subnames), audit_append (workflow JSON pinned to 0G Storage). Triggered via `POST /keeper-workflow/{matchId}/run`; live progress via `GET /keeper-workflow/{matchId}` polled every 1.5s by `/keeper/[matchId]` page.
+- [x] YAML workflow (`keeperhub/match-settle.yaml`): event-driven 7-step workflow fires on both-deposits-received; delivers drand VRF dice per turn, detects forfeit, validates moves via gnubg replay, signs settlement with `KEEPER_PRIVKEY` (null-winner guard + `escrowMatchId` bound in signature), relays to `/settle` which calls `MatchRegistry.recordMatchAndSplit` for atomic record + escrow payout.
+- [x] Staked settlement fully wired: `/settle` relayer verifies `keeperSig` against `KEEPER_PUBKEY`, reads live `MatchEscrow.pot()`, calls `recordMatchAndSplit` atomically; un-staked matches fall back to `recordMatch`. `MATCH_ESCROW_ADDRESS` pre-populated in `keeperhub/.env.example`; `KEEPER_PUBKEY` documented in `server/.env.example`.
 - [x] Write-up: workflow definition + audit trail UX (this section + module docstring at `server/app/keeper_workflow.py:1-50`).
 - [x] Feedback document ([docs/keeperhub-feedback.md](docs/keeperhub-feedback.md)) — concrete pain points (no `kh` SDK, recordMatch tx not in MatchInfo, match_id type mismatch between gnubg and chain, per-move drand round not in GameRecord, session-key signature verification has no on-chain query) + suggestions for a future KeeperHub Python client / workflow-definition format / reference per-step protocol.
 

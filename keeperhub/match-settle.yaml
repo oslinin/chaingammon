@@ -123,6 +123,18 @@ steps:
   # ─────────────────────────────────────────────────────────────────────────────
   - id: sign-settlement
     name: Sign settlement payload
+    # Guard: resolve winner before signing so neither branch produces a blank
+    # address.  Forfeit path: confirmed_winner comes from fetch-and-replay and
+    # is already the opponent of the expired player.  Normal path: winner comes
+    # from the on-game-end webhook; if it is somehow empty we halt here rather
+    # than broadcasting a payload with a zero winner.
+    assert: >-
+      {{
+        (steps.forfeit-poll.forfeited && steps.fetch-and-replay.confirmed_winner != null
+          && steps.fetch-and-replay.confirmed_winner != '')
+        || (!steps.forfeit-poll.forfeited && steps.on-game-end.winner != null
+          && steps.on-game-end.winner != '')
+      }}
     action: ecdsa-sign
     params:
       private_key: "{{ secret.KEEPER_PRIVKEY }}"
@@ -138,6 +150,10 @@ steps:
         forfeitingPlayer: "{{ steps.forfeit-poll.expired_player }}"
         eloDelta: "{{ steps.on-game-end.elo_delta }}"
         archiveUri: "{{ steps.on-game-end.archive_uri }}"
+        # escrowMatchId is the same bytes32 that both players deposited under;
+        # binding it in the signed payload prevents a relayer from pointing
+        # the settlement at a different escrow bucket.
+        escrowMatchId: "{{ steps.on-deposit.match_id }}"
     outputs:
       signature: "{{ signature }}"
       payload: "{{ payload }}"
@@ -161,7 +177,10 @@ steps:
         forfeitingPlayer: "{{ steps.sign-settlement.payload.forfeitingPlayer }}"
         eloDelta: "{{ steps.sign-settlement.payload.eloDelta }}"
         archiveUri: "{{ steps.sign-settlement.payload.archiveUri }}"
+        escrowMatchId: "{{ steps.on-deposit.match_id }}"
         keeperSig: "{{ steps.sign-settlement.signature }}"
     assert: "{{ response.status == 200 }}"
     outputs:
       tx_hash: "{{ response.body.tx_hash }}"
+      payout_wei: "{{ response.body.payout_wei }}"
+      payout_winner: "{{ response.body.payout_winner }}"

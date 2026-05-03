@@ -725,19 +725,98 @@ def step_agent_move_replay(ctx: WorkflowContext, step: WorkflowStep) -> None:
 
 
 def step_settlement_signed(ctx: WorkflowContext, step: WorkflowStep) -> None:
-    """Verify the on-chain MatchInfo carries a signed-settlement flag.
-    With session-key flow the pre-authorization happens at game start
-    and the relay tx records both parties' approvals; this step confirms
-    the flag stuck after recordMatch."""
+    """Verify the keeper ECDSA signature over the canonical settlement payload.
+
+    The signature is recovered from the game record's `keeper_sig` field
+    (written by the relay step when it calls /settle) and compared against
+    the KEEPER_PUBKEY environment variable. This proves a trusted keeper—
+    not an arbitrary caller—authorised this settlement before on-chain
+    funds were moved.
+
+    Falls back gracefully in two cases:
+      - `keeper_sig` absent from the game record (pre-Phase-37 records,
+        un-staked matches):  step passes with a note.
+      - KEEPER_PUBKEY not set in the environment:  step passes with an
+        error-level log so the gap is surfaced in the audit trail.
+    """
+    import os as _os
+    import logging as _logging
+
     if ctx.match_info is None:
         raise RuntimeError("match_info missing")
-    # MatchInfo's exact shape is chain-client-defined. v1's session-key
-    # path always produces a finalized match, so the presence of the
-    # match (verified in escrow_deposit) is itself the proof. A future
-    # iteration could verify session-key signature recovery on the
-    # canonical settlement payload, but that requires the signatures
-    # to be queryable from MatchRegistry — which they aren't in v1.
-    step.detail = "Match record present; session-key settlement is implicit in its existence."
+
+    keeper_pubkey = _os.environ.get("KEEPER_PUBKEY", "").strip()
+    if not keeper_pubkey:
+        _logging.getLogger(__name__).error(
+            "KEEPER_PUBKEY not set — keeper signature cannot be verified. "
+            "Set KEEPER_PUBKEY in server/.env to enable this check."
+        )
+        step.detail = (
+            "KEEPER_PUBKEY not configured; signature check skipped. "
+            "Match record present — session-key settlement confirmed by existence."
+        )
+        return
+
+    # The game record carries `keeper_sig` when the /settle relayer path
+    # was used. Records created via /finalize-direct (session-key path)
+    # don't have it; that's fine — those are settled on-chain via
+    # settleWithSessionKeys, not the keeper path.
+    record = ctx.game_record or {}
+    keeper_sig = record.get("keeper_sig", "")
+    if not keeper_sig:
+        step.detail = (
+            "No keeper_sig in game record — match settled via session-key "
+            "path (settleWithSessionKeys). Keeper signature check not applicable."
+        )
+        return
+
+    try:
+        from eth_account import Account as _Account
+        from eth_account.messages import encode_defunct as _encode_defunct
+        from web3 import Web3 as _Web3
+
+        match_id = record.get("match_id", ctx.match_id)
+        winner = record.get("winner_addr", "")
+        forfeit = record.get("forfeit", False)
+        forfeiting_player = record.get("forfeiting_player", "") or ""
+        archive_uri = record.get("archive_uri", "") or ""
+        escrow_match_id = record.get("escrow_match_id", "") or ""
+
+        match_id_bytes = (
+            _Web3.to_bytes(hexstr=match_id)
+            if isinstance(match_id, str) and match_id.startswith("0x")
+            else str(match_id).encode()
+        )
+        escrow_bytes = (
+            _Web3.to_bytes(hexstr=escrow_match_id)
+            if escrow_match_id.startswith("0x")
+            else escrow_match_id.encode()
+        )
+        payload_bytes = (
+            match_id_bytes
+            + winner.encode()
+            + (b"\x01" if forfeit else b"\x00")
+            + forfeiting_player.encode()
+            + archive_uri.encode()
+            + escrow_bytes
+        )
+        msg = _encode_defunct(primitive=payload_bytes)
+        recovered = _Account.recover_message(msg, signature=keeper_sig)
+    except Exception as exc:
+        raise RuntimeError(
+            f"keeper_sig recovery failed: {exc}"
+        ) from exc
+
+    if recovered.lower() != keeper_pubkey.lower():
+        raise RuntimeError(
+            f"keeper_sig signer {recovered} does not match "
+            f"KEEPER_PUBKEY {keeper_pubkey} — settlement payload may have been tampered with"
+        )
+
+    step.detail = (
+        f"Keeper signature verified: signer {recovered} matches KEEPER_PUBKEY. "
+        f"Settlement payload is authentic."
+    )
 
 
 def step_relay_tx(ctx: WorkflowContext, step: WorkflowStep) -> None:
