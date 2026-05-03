@@ -195,8 +195,7 @@ export function DiscoveryList({ staticEntries }: DiscoveryListProps = {}) {
     };
   });
 
-  const humans = entries.filter((e) => e.kind !== "agent");
-  const agents = entries.filter((e) => e.kind === "agent");
+  const humans = entries.filter((e) => e.kind === "human");
 
   // --- Loading / error states (only relevant when reading on-chain) ---
   if (!staticEntries) {
@@ -227,31 +226,13 @@ export function DiscoveryList({ staticEntries }: DiscoveryListProps = {}) {
           data-testid="discovery-humans-header"
           className="mb-4 text-lg font-semibold text-zinc-900 dark:text-zinc-50"
         >
-          Players
+          Humans
         </h2>
         {humans.length === 0 ? (
-          <p className="text-sm text-zinc-500 dark:text-zinc-400">No players registered yet.</p>
+          <p className="text-sm text-zinc-500 dark:text-zinc-400">No humans registered yet.</p>
         ) : (
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {humans.map((e) => (
-              <EntryCard key={e.node} entry={e} />
-            ))}
-          </div>
-        )}
-      </section>
-
-      <section data-testid="discovery-agents-section">
-        <h2
-          data-testid="discovery-agents-header"
-          className="mb-4 text-lg font-semibold text-zinc-900 dark:text-zinc-50"
-        >
-          Agents
-        </h2>
-        {agents.length === 0 ? (
-          <p className="text-sm text-zinc-500 dark:text-zinc-400">No agents registered yet.</p>
-        ) : (
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {agents.map((e) => (
               <EntryCard key={e.node} entry={e} />
             ))}
           </div>
