@@ -2,9 +2,13 @@
 // the wallet is currently on. Address comes from `chains.ts` (which
 // reads `contracts/deployments/<network>.json`) — there's no env-var
 // chainId to keep in sync.
+//
+// Phase N: switched from agentCount + 1..N iteration to
+// activeAgentCount + activeAgentAt(i) multicall so burned agents
+// are never rendered.
 "use client";
 
-import { useReadContract } from "wagmi";
+import { useReadContract, useReadContracts } from "wagmi";
 
 import { useActiveChain, useActiveChainId } from "./chains";
 import { AgentCard } from "./AgentCard";
@@ -15,19 +19,39 @@ export function AgentsList() {
   const chainId = useActiveChainId();
   const { agentRegistry } = useChainContracts();
 
-  const { data: agentCount, isLoading, error } = useReadContract({
+  // Step 1 — how many active (non-burned) agents exist?
+  const { data: activeCount, isLoading, error } = useReadContract({
     address: agentRegistry,
     abi: AgentRegistryABI,
-    functionName: "agentCount",
+    functionName: "activeAgentCount",
     chainId,
     query: { enabled: !!active },
   });
 
+  const count = activeCount !== undefined ? Number(activeCount) : 0;
+
+  // Step 2 — fetch the actual agentId at each active index in one batch.
+  const indexCalls = Array.from({ length: count }, (_, i) => ({
+    address: agentRegistry,
+    abi: AgentRegistryABI,
+    functionName: "activeAgentAt" as const,
+    args: [BigInt(i)] as [bigint],
+    chainId,
+  }));
+
+  const { data: idResults } = useReadContracts({
+    contracts: indexCalls,
+    query: { enabled: !!active && count > 0 },
+  });
+
+  const agentIds = (idResults ?? [])
+    .map((r) => r?.result as bigint | undefined)
+    .filter((v): v is bigint => v !== undefined)
+    .map(Number);
+
   const chainName = active?.chain.name ?? `chainId ${chainId}`;
 
   if (!active) {
-    // Wallet is on a chain we have no deployments for (e.g. mainnet) —
-    // ask the user to switch instead of pretending to load.
     return (
       <p className="text-sm text-zinc-500 dark:text-zinc-400">
         No Chaingammon deployment on this chain ({chainName}). Switch your
@@ -44,10 +68,7 @@ export function AgentsList() {
     );
   }
 
-  // The read failed (RPC unreachable, or no contract at agentRegistry on
-  // this chain). Tell the user what we tried instead of pretending the
-  // list is just empty.
-  if (error || agentCount === undefined) {
+  if (error || activeCount === undefined) {
     return (
       <div className="flex flex-col gap-1 text-sm text-zinc-500 dark:text-zinc-400">
         <p>No agents found.</p>
@@ -67,8 +88,6 @@ export function AgentsList() {
     );
   }
 
-  const count = Number(agentCount);
-
   if (count === 0) {
     return (
       <p className="text-sm text-zinc-500 dark:text-zinc-400">
@@ -77,10 +96,9 @@ export function AgentsList() {
     );
   }
 
-  // Agent IDs start at 1 (incrementing counter in AgentRegistry.mintAgent).
   return (
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-      {Array.from({ length: count }, (_, i) => i + 1).map((id) => (
+      {agentIds.map((id) => (
         <AgentCard key={id} agentId={id} />
       ))}
     </div>
