@@ -55,7 +55,7 @@ interface Props {
   matchId: string;
   dice: [number, number] | null;
   board?: number[];
-  agentId?: number;
+  opponentId?: number;
   onMoveSelect?: (move: string) => void;
   disabled?: boolean;
 }
@@ -108,7 +108,7 @@ export function ChiefOfStaffPanel({
   matchId,
   dice,
   board,
-  agentId,
+  opponentId,
   onMoveSelect,
   disabled = false,
 }: Props) {
@@ -180,7 +180,7 @@ export function ChiefOfStaffPanel({
 
     try {
       const opponentFeatures =
-        agentId != null ? `Agent #${agentId} in play` : undefined;
+        opponentId != null ? `Agent #${opponentId} in play` : undefined;
 
       const res = await fetch("/api/chief-of-staff/chat", {
         method: "POST",
@@ -190,7 +190,7 @@ export function ChiefOfStaffPanel({
           human_strategy: text.trim(),
           dialogue: newDialogue.map((m) => ({ role: m.role, text: m.text })),
           opponent_features: opponentFeatures ?? null,
-          agent_id: agentId ?? null,
+          agent_id: opponentId ?? null,
           turn_index: 0,
           // Use compute backend since the Route Handler only supports 0G Compute
           backend: "compute",
