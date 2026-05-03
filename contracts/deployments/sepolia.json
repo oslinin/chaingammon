@@ -4,19 +4,15 @@
   "deployer": "0xa2219C4f48bC9e6806Bce3B391aB9e23f55FEbb5",
   "contracts": {
     "MatchRegistry": "0x507d78149AE2092a5438825B1BA3F12737FAeC0C",
-    "AgentRegistry": "0xE23B83cE16B292e420cd8820ac9d303A45333D17",
-    "PlayerSubnameRegistrar": "0x48285B8C9B04C6a3D61bBA067a4DE4399A5a4aEb",
-    "MatchEscrow": "0x1206A93a9B76652382BC1F5164a8383a9F2A2e16"
+    "AgentRegistry": "0x590a3fd749eB0ADAA4F3DAd8F68C98314b5F21CE",
+    "PlayerSubnameRegistrar": "0x8fE78B0480616DfC09F4Cc3B3279966A8245470A",
+    "MatchEscrow": "0xEB2d28fDEC2C70e543e306FF78048bE683aD3b33"
   },
-  "matchRegistryPrevious": "0x8414E192f03a95E7a54f6bD9C0Cb2B2c3d67c5aC",
-  "matchRegistrySettler": "0x8422451d456D1374b73b14dCe24C5B10Ef43bD99",
-  "matchRegistryRedeployedAt": "2026-05-02T05:38:00.000Z",
-  "matchRegistryRedeployedBlock": 10773359,
   "matchEscrowConstructorArgs": {
     "settler": "0x507d78149AE2092a5438825B1BA3F12737FAeC0C"
   },
   "agentRegistryConstructorArgs": {
-    "matchRegistry": "0x8414E192f03a95E7a54f6bD9C0Cb2B2c3d67c5aC",
+    "matchRegistry": "0x507d78149AE2092a5438825B1BA3F12737FAeC0C",
     "initialBaseWeightsHash": "0x989ba07766cc35aa0011cf3f764831d9d1a7e11495db78c310d764b4478409ad"
   },
   "playerSubnameRegistrarConstructorArgs": {
@@ -29,8 +25,5 @@
     "owner": "0xa2219C4f48bC9e6806Bce3B391aB9e23f55FEbb5"
   },
   "deployedAt": "2026-05-02T02:23:01.344Z",
-  "deployedBlock": 10772455,
-  "matchEscrowPrevious": "0x8Bc78Ba625aA85a09A37ddE04695A5991B741546",
-  "matchEscrowRedeployedAt": "2026-05-02T06:02:00.891Z",
-  "matchEscrowRedeployedBlock": 10773451
+  "deployedBlock": 10772455
 }
