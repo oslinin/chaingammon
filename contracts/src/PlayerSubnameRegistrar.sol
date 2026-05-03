@@ -61,6 +61,7 @@ contract PlayerSubnameRegistrar is Ownable {
     mapping(address => bool) private _authorizedMinters;
 
     event SubnameMinted(string indexed labelHashed, string label, bytes32 indexed node, address indexed subnameOwner);
+    event SubnameRevoked(bytes32 indexed node);
     event TextRecordSet(bytes32 indexed node, string key, string value);
     event AuthorizedMinterSet(address indexed minter, bool authorized);
 
@@ -123,6 +124,30 @@ contract PlayerSubnameRegistrar is Ownable {
         _subnameIndex.push(node);
         subnameCount += 1;
         emit SubnameMinted(label, label, node, subnameOwner_);
+    }
+
+    /// @notice Revoke (delete) an existing subname.
+    ///         Owner-only (or authorized minter, e.g. AgentRegistry.burnAgent).
+    ///         Removes the subname from the index and clears its owner.
+    ///         Text records are left in storage (cheap, and historical reads
+    ///         are harmless once the node is gone from the index).
+    function revokeSubname(bytes32 node) external {
+        if (msg.sender != owner() && !_authorizedMinters[msg.sender]) revert NotAuthorized();
+        if (!_subnames[node].exists) revert SubnameDoesNotExist();
+
+        // Swap-and-pop to keep _subnameIndex packed.
+        uint256 len = _subnameIndex.length;
+        for (uint256 i = 0; i < len; i++) {
+            if (_subnameIndex[i] == node) {
+                _subnameIndex[i] = _subnameIndex[len - 1];
+                _subnameIndex.pop();
+                break;
+            }
+        }
+
+        delete _subnames[node];
+        subnameCount -= 1;
+        emit SubnameRevoked(node);
     }
 
     /// @notice Open self-registration: anyone can claim a subname for their own

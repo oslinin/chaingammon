@@ -8,11 +8,14 @@ interface IMatchRegistry {
     function agentElo(uint256 agentId) external view returns (uint256);
 }
 
-/// @notice Minimal interface for PlayerSubnameRegistrar — only the two
-///         functions AgentRegistry calls on mint.
+/// @notice Minimal interface for PlayerSubnameRegistrar — functions
+///         AgentRegistry calls on mint and on burn.
 interface IPlayerSubnameRegistrar {
     function mintSubname(string calldata label, address subnameOwner_) external returns (bytes32 node);
     function setText(bytes32 node, string calldata key, string calldata value) external;
+    function subnameNode(string calldata label) external view returns (bytes32);
+    function ownerOf(bytes32 node) external view returns (address);
+    function revokeSubname(bytes32 node) external;
 }
 
 /// @title AgentRegistry — iNFT registry for AI backgammon agents on 0G.
@@ -29,6 +32,11 @@ interface IPlayerSubnameRegistrar {
 ///      Phase 31 addition: `setSubnameRegistrar` wires up a
 ///      PlayerSubnameRegistrar so that `mintAgent` atomically issues a
 ///      subname with `kind="agent"` and `inft_id=<id>` text records.
+///
+///      Phase N addition: `burnAgent` lets the owner permanently delete an
+///      agent iNFT and its ENS subname. A compact active-agent index
+///      (`_activeIds` array + `_activeIndex` map) replaces the old
+///      1..agentCount iteration so gaps from burns are handled cleanly.
 contract AgentRegistry is ERC721, Ownable {
     uint8 public constant MAX_TIER = 3;
 
@@ -54,7 +62,17 @@ contract AgentRegistry is ERC721, Ownable {
     mapping(uint256 => string) private _agentMetadata;
     mapping(uint256 => AgentData) private _agentData;
 
+    /// @dev Compact enumerable active-agent index. Replaces the old
+    ///      1..agentCount iteration so burns leave no gaps.
+    ///      _activeIds[i] = agentId of the i-th active agent.
+    ///      _activeIndex[agentId] = position in _activeIds (1-based;
+    ///      0 means not present). Using 1-based storage lets us
+    ///      distinguish "not present" from "at index 0".
+    uint256[] private _activeIds;
+    mapping(uint256 => uint256) private _activeIndex; // agentId => 1-based index
+
     event AgentMinted(uint256 indexed agentId, address indexed owner, uint8 tier, string metadataURI);
+    event AgentBurned(uint256 indexed agentId);
     event OverlayUpdated(uint256 indexed agentId, bytes32 overlayHash, uint32 experienceVersion);
     event BaseWeightsHashSet(bytes32 baseWeightsHash);
     event SubnameRegistrarSet(address registrar);
@@ -94,6 +112,11 @@ contract AgentRegistry is ERC721, Ownable {
         _agentMetadata[agentId] = metadataURI;
         _agentData[agentId].tier = tier_;
         // overlayHash, matchCount, experienceVersion default to 0
+
+        // Add to active-agent index.
+        _activeIds.push(agentId);
+        _activeIndex[agentId] = _activeIds.length; // 1-based
+
         emit AgentMinted(agentId, to, tier_, metadataURI);
 
         // Atomic subname mint — only when a registrar is wired.
@@ -103,6 +126,47 @@ contract AgentRegistry is ERC721, Ownable {
             subnameRegistrar.setText(node, "kind", "agent");
             subnameRegistrar.setText(node, "inft_id", _toString(agentId));
         }
+    }
+
+    /// @notice Permanently delete an agent iNFT.
+    ///         Owner-only. Burns the ERC-721 token, clears all stored
+    ///         data, removes the agent from the active-agent index, and
+    ///         revokes the ENS subname when a registrar is wired.
+    ///         Historical match records in MatchRegistry are intentionally
+    ///         preserved — the on-chain history is immutable.
+    function burnAgent(uint256 agentId) external onlyOwner {
+        require(_ownerOf(agentId) != address(0), "AgentRegistry: agent does not exist");
+
+        // Revoke ENS subname atomically when a registrar is wired.
+        if (address(subnameRegistrar) != address(0)) {
+            string memory label = _cleanLabel(_agentMetadata[agentId]);
+            bytes32 node = subnameRegistrar.subnameNode(label);
+            // Only revoke if the subname actually exists (guard against
+            // agents minted before the registrar was wired).
+            if (subnameRegistrar.ownerOf(node) != address(0)) {
+                subnameRegistrar.revokeSubname(node);
+            }
+        }
+
+        // Remove from active-agent index using swap-and-pop so the
+        // array stays packed with no gaps.
+        uint256 idx = _activeIndex[agentId]; // 1-based
+        if (idx != 0) {
+            uint256 lastId = _activeIds[_activeIds.length - 1];
+            _activeIds[idx - 1] = lastId;      // overwrite slot with last element
+            _activeIndex[lastId] = idx;         // update last element's index
+            _activeIds.pop();                   // shrink array
+            delete _activeIndex[agentId];
+        }
+
+        // Clear agent data and metadata.
+        delete _agentMetadata[agentId];
+        delete _agentData[agentId];
+
+        // Burn the ERC-721 token.
+        _burn(agentId);
+
+        emit AgentBurned(agentId);
     }
 
     /// @notice Set the shared base weights hash on 0G Storage.
@@ -149,6 +213,22 @@ contract AgentRegistry is ERC721, Ownable {
 
     function agentElo(uint256 agentId) external view returns (uint256) {
         return matchRegistry.agentElo(agentId);
+    }
+
+    // -------------------------------------------------------------------------
+    // Active-agent enumeration
+    // -------------------------------------------------------------------------
+
+    /// @notice Number of agents currently active (not burned).
+    function activeAgentCount() external view returns (uint256) {
+        return _activeIds.length;
+    }
+
+    /// @notice Return the agentId at position `index` in the active list
+    ///         (0-based). Reverts when index >= activeAgentCount().
+    function activeAgentAt(uint256 index) external view returns (uint256) {
+        require(index < _activeIds.length, "AgentRegistry: index out of range");
+        return _activeIds[index];
     }
 
     // -------------------------------------------------------------------------
