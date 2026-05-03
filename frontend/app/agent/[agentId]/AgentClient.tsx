@@ -18,9 +18,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import { useBalance, usePublicClient, useReadContracts } from "wagmi";
+import { useAccount, useBalance, usePublicClient, useReadContracts, useWriteContract, useWaitForTransactionReceipt } from "wagmi";
 import { formatEther, parseAbiItem } from "viem";
 
 import { useActiveChain, useActiveChainId } from "../../chains";
@@ -42,9 +42,11 @@ const AGENT_MINTED_EVENT = parseAbiItem(
 interface ProfileResponse {
   agent_id: number;
   kind: "null" | "overlay" | "model";
+  root_hash: string;
   match_count: number;
   summary: string;
   owner_ens: string | null;
+  address: string | null;
   values: Record<string, number>;
   model_meta: Record<string, unknown>;
 }
@@ -57,6 +59,8 @@ interface MintInfo {
 
 export default function AgentClient() {
   const params = useParams();
+  const router = useRouter();
+  const { address: userAddress } = useAccount();
 
   // SSR-safe mount guard — avoids hydration mismatch in the static export.
   const [mounted, setMounted] = useState(false);
@@ -125,6 +129,13 @@ export default function AgentClient() {
         args: [BigInt(agentId)],
         chainId,
       },
+      {
+        address: agentRegistry,
+        abi: AgentRegistryABI,
+        functionName: "owner",
+        args: [],
+        chainId,
+      },
     ],
     query: {
       enabled: mounted && agentId > 0 && !!agentRegistry,
@@ -154,6 +165,7 @@ export default function AgentClient() {
     | undefined;
   const ownerAddress = chainData?.[5]?.result as `0x${string}` | undefined;
   const elo = chainData?.[6]?.result as bigint | undefined;
+  const contractOwner = chainData?.[7]?.result as `0x${string}` | undefined;
 
   // Owner's native-token balance on the current chain.
   const { data: balanceData } = useBalance({
@@ -265,7 +277,7 @@ export default function AgentClient() {
     : "";
   const label =
     cleanedLabel && cleanedLabel.length <= 60
-      ? `${cleanedLabel}.chaingammon.eth`
+      ? cleanedLabel
       : `Agent #${agentId}`;
 
   const explorerUrl = active?.chain.blockExplorers?.default?.url;
@@ -273,6 +285,29 @@ export default function AgentClient() {
   const mintDateStr = mintInfo?.timestamp
     ? new Date(Number(mintInfo.timestamp) * 1000).toLocaleString()
     : undefined;
+
+  const isContractOwner = userAddress?.toLowerCase() === contractOwner?.toLowerCase();
+
+  const { writeContract, data: burnTxHash, isPending: burnSigning } = useWriteContract();
+  const { isLoading: burnConfirming, isSuccess: burnSuccess } = useWaitForTransactionReceipt({
+    hash: burnTxHash,
+  });
+
+  useEffect(() => {
+    if (burnSuccess) {
+      router.push("/");
+    }
+  }, [burnSuccess, router]);
+
+  const handleBurn = () => {
+    if (!confirm("Are you sure you want to permanently delete this agent? This cannot be undone.")) return;
+    writeContract({
+      address: agentRegistry,
+      abi: AgentRegistryABI,
+      functionName: "burnAgent",
+      args: [BigInt(agentId)],
+    });
+  };
 
   return (
     <div
@@ -292,7 +327,18 @@ export default function AgentClient() {
         <h1 className="text-lg font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
           Agent Info
         </h1>
-        <div className="w-20" />
+        <div className="flex items-center gap-2">
+          {isContractOwner && (
+            <button
+              onClick={handleBurn}
+              disabled={burnSigning || burnConfirming}
+              className="rounded-md bg-red-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-500 disabled:opacity-50"
+            >
+              {burnSigning ? "Signing..." : burnConfirming ? "Burning..." : "Burn Agent"}
+            </button>
+          )}
+          <div className="w-8" />
+        </div>
       </header>
 
       <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-6 px-4 py-8 sm:px-8">
@@ -395,6 +441,20 @@ export default function AgentClient() {
               tooltip="Native token balance of the owner's wallet on the current chain. Shown for context when assessing stake capacity."
             />
             <InfoField
+              label="Agent wallet"
+              value={
+                profileLoading ? "…" : profile?.address ?? "—"
+              }
+              mono
+              truncate
+              href={
+                explorerUrl && profile?.address
+                  ? `${explorerUrl}/address/${profile.address}`
+                  : undefined
+              }
+              tooltip="Server-managed wallet address for this agent. Used to hold match stakes and receive winnings. Funded by the agent owner."
+            />
+            <InfoField
               label="Mint block"
               value={
                 mintLoading
@@ -438,11 +498,17 @@ export default function AgentClient() {
               tooltip="0G Storage root hash for the shared base neural-network weights. All agents start from this common foundation before per-agent training diverges them."
             />
             <InfoField
-              label="Overlay hash (per-agent)"
-              value={chainLoading ? "…" : dataHashes?.[1] ?? "—"}
+              label="0G root hash"
+              value={
+                chainLoading
+                  ? "…"
+                  : dataHashes?.[1] && dataHashes[1] !== "0x" + "0".repeat(64)
+                  ? dataHashes[1]
+                  : profile?.root_hash ?? "—"
+              }
               mono
               fullValue
-              tooltip="0G Storage root hash for this agent's personal overlay — the delta weights layered on top of the shared base, updated after each training round."
+              tooltip="0G Storage root hash for this agent's personal neural-network weights (overlay or model). Updated after each training round; determines the agent's playing style."
             />
           </dl>
         </section>
