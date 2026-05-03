@@ -15,6 +15,7 @@ const MOCK_ENTRIES = [
     elo: "1500",
     endpoint: "",
     inftId: "",
+    address: null,
   },
   {
     node: "0x0000000000000000000000000000000000000000000000000000000000000002" as `0x${string}`,
@@ -23,6 +24,7 @@ const MOCK_ENTRIES = [
     elo: "1520",
     endpoint: "http://localhost:8001",
     inftId: "1",
+    address: null,
   },
   {
     node: "0x0000000000000000000000000000000000000000000000000000000000000003" as `0x${string}`,
@@ -31,6 +33,7 @@ const MOCK_ENTRIES = [
     elo: "1480",
     endpoint: "",
     inftId: "2",
+    address: null,
   },
 ];
 

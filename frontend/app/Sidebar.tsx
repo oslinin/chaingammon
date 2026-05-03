@@ -53,12 +53,6 @@ export function Sidebar() {
       data-testid="sidebar"
       className="hidden md:flex w-56 shrink-0 flex-col border-r border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950"
     >
-      <div className="border-b border-zinc-200 px-4 py-4 dark:border-zinc-800">
-        <span className="text-xs font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
-          Navigation
-        </span>
-      </div>
-
       <nav className="flex flex-col gap-1 p-3">
         {/* Entry 0: home page */}
         <Link

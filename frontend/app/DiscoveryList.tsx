@@ -11,6 +11,8 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 
 import { useActiveChain, useEnsInfra } from "./chains";
+import { useChaingammonProfile } from "./useChaingammonProfile";
+import { useHumanMatchSummary } from "./useHumanMatchSummary";
 
 // -------------------------------------------------------------------------
 // Types
@@ -23,6 +25,7 @@ interface DiscoveryEntry {
   elo: string;
   endpoint: string;
   inftId: string; // agent iNFT id; "" for human entries
+  address: `0x${string}` | null; // resolved wallet address from ENS resolver, when available
 }
 
 // -------------------------------------------------------------------------
@@ -50,6 +53,9 @@ const SUBNAMES_QUERY = `
       name
       resolver {
         texts
+        addr {
+          id
+        }
       }
     }
   }
@@ -70,7 +76,10 @@ async function fetchSubnameEntries(subgraphUrl: string): Promise<DiscoveryEntry[
     id: string;
     labelName: string | null;
     name: string;
-    resolver: { texts: string[] | null } | null;
+    resolver: {
+      texts: string[] | null;
+      addr: { id: string } | null;
+    } | null;
   }>;
 
   // The subgraph reports which text keys exist; the actual values are not
@@ -79,8 +88,15 @@ async function fetchSubnameEntries(subgraphUrl: string): Promise<DiscoveryEntry[
   // surface every domain and let the consumer fall back to "" for missing
   // values; pulling actual text values would need a per-domain follow-up
   // query against the resolver, which is outside the scope of this view.
+  // The resolved Ethereum address (resolver.addr.id) feeds the per-card
+  // match-summary hook so we can show wins/losses on human cards.
   return domains.map((d) => {
     const texts = new Set(d.resolver?.texts ?? []);
+    const rawAddr = d.resolver?.addr?.id ?? null;
+    const address =
+      rawAddr && /^0x[0-9a-fA-F]{40}$/.test(rawAddr)
+        ? (rawAddr as `0x${string}`)
+        : null;
     return {
       node: d.id as `0x${string}`,
       label: d.labelName ?? d.id.slice(0, 10),
@@ -88,6 +104,7 @@ async function fetchSubnameEntries(subgraphUrl: string): Promise<DiscoveryEntry[
       elo: "",
       endpoint: "",
       inftId: "",
+      address,
     };
   });
 }
@@ -99,6 +116,24 @@ async function fetchSubnameEntries(subgraphUrl: string): Promise<DiscoveryEntry[
 function EntryCard({ entry }: { entry: DiscoveryEntry }) {
   const hasEndpoint = !!entry.endpoint;
   const hasInfoLink = entry.kind === "agent" && !!entry.inftId;
+  const isHuman = entry.kind === "human";
+
+  // ENS text records (`elo`, `match_count`) for humans. Agents render an
+  // ELO placeholder; their stats come from AgentsList.
+  const { elo: eloText, matchCount } = useChaingammonProfile(
+    isHuman ? entry.label : null,
+  );
+  // MatchRecorded event scan to break match_count into wins/losses. Skipped
+  // when the resolver didn't expose an Ethereum address (returns null).
+  const { summary } = useHumanMatchSummary(
+    isHuman && entry.address ? entry.address : undefined,
+  );
+
+  const eloDisplay = eloText || entry.elo || "—";
+  const matches = summary?.matches ?? (matchCount ? Number(matchCount) : null);
+  const wins = summary?.wins ?? null;
+  const losses = summary?.losses ?? null;
+
   return (
     <div
       data-testid="discovery-entry"
@@ -132,9 +167,41 @@ function EntryCard({ entry }: { entry: DiscoveryEntry }) {
           ELO
         </span>
         <span className="font-mono text-2xl font-bold text-zinc-900 dark:text-zinc-50">
-          {entry.elo || "—"}
+          {eloDisplay}
         </span>
       </div>
+
+      {isHuman && (
+        <dl
+          data-testid="discovery-human-stats"
+          className="grid grid-cols-3 gap-2 border-t border-zinc-200 pt-3 text-center dark:border-zinc-800"
+        >
+          <div>
+            <dt className="text-[10px] uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+              Played
+            </dt>
+            <dd className="font-mono text-base font-semibold text-zinc-900 dark:text-zinc-50">
+              {matches ?? "—"}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-[10px] uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+              Won
+            </dt>
+            <dd className="font-mono text-base font-semibold text-emerald-600 dark:text-emerald-400">
+              {wins ?? "—"}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-[10px] uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+              Lost
+            </dt>
+            <dd className="font-mono text-base font-semibold text-rose-600 dark:text-rose-400">
+              {losses ?? "—"}
+            </dd>
+          </div>
+        </dl>
+      )}
 
       {hasEndpoint && (
         <Link

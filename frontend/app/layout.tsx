@@ -54,10 +54,23 @@ export default function RootLayout({
               {/* Global top navbar: brand on the left, compute backends
                   + wallet connect (ELO, matches played) on the right.
                   Visible on every page so users always see their stats. */}
-              <header className="flex items-center justify-between gap-4 border-b border-zinc-200 px-4 py-2 dark:border-zinc-800">
-                <span className="text-sm font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
-                  Chaingammon
-                </span>
+              <header className="flex items-center justify-between gap-4 border-b border-indigo-100 px-4 py-2 dark:border-indigo-950/50">
+                <a
+                  href="/"
+                  className="flex items-center gap-2"
+                  aria-label="Chaingammon home"
+                >
+                  <img
+                    src="/chaingammon-icon.svg"
+                    alt=""
+                    width={24}
+                    height={24}
+                    className="shrink-0"
+                  />
+                  <span className="text-sm font-semibold tracking-tight text-indigo-700 dark:text-indigo-300">
+                    Chaingammon
+                  </span>
+                </a>
                 <div className="flex flex-wrap items-center justify-end gap-3">
                   <ComputeBackendsPill />
                   <ConnectButton />
