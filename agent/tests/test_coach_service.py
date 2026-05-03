@@ -33,30 +33,28 @@ async def test_hint_returns_string(app):
 
 
 @pytest.mark.anyio
-async def test_hint_falls_back_when_compute_fails(app, monkeypatch):
-    """If 0G Compute raises, /hint must fall back to the local model."""
-    from coach_service import _BACKEND  # capture default
-    assert _BACKEND in ("compute", "local", "compute-only")
+async def test_hint_propagates_when_compute_fails(app):
+    """The local flan-t5 fallback was removed — coach is 0G-Compute-only.
+    When compute raises, /hint must propagate the exception (no silent
+    fallback), so the operator sees the failure and the frontend can
+    surface the error to the user."""
+    from coach_service import _BACKEND
+    assert _BACKEND == "compute"
 
     def boom(*_a, **_kw):
         raise RuntimeError("0G testnet unreachable")
 
-    with patch("coach_service._generate_compute", side_effect=boom), \
-         patch("coach_service._generate_local") as local:
-        local.return_value = "Local fallback hint."
+    with patch("coach_service._generate_compute", side_effect=boom):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            resp = await client.post("/hint", json={
-                "position_id": "4HPwATDgc/ABMA",
-                "match_id": "cAkAAAAAAAAA",
-                "dice": [3, 1],
-                "candidates": [{"move": "13/10 24/23", "equity": -0.05}],
-                "docs_hash": "",
-                "agent_weights_hash": "",
-            })
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["backend"] == "local"
-    assert "fallback" in body["hint"].lower()
+            with pytest.raises(RuntimeError, match="0G testnet unreachable"):
+                await client.post("/hint", json={
+                    "position_id": "4HPwATDgc/ABMA",
+                    "match_id": "cAkAAAAAAAAA",
+                    "dice": [3, 1],
+                    "candidates": [{"move": "13/10 24/23", "equity": -0.05}],
+                    "docs_hash": "",
+                    "agent_weights_hash": "",
+                })
 
 
 @pytest.mark.anyio

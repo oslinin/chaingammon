@@ -81,7 +81,6 @@ Settlement chain: **Sepolia** (real ENS); also deployed on 0G testnet for cross-
 | --- | --- | --- | --- |
 | **`server/app/main.py`** (FastAPI) | 8000 | Game finalization, agent wallet manager (custodial EOA keys), training orchestration (subprocess), 0G Storage glue (Node CLI shellout), KeeperHub run trigger | Decompose: wallets → smart-contract agent wallet, training → 0G Compute managed agent, 0G uploads → browser-direct, KeeperHub trigger → user-driven |
 | **`agent/gnubg_service.py`** (FastAPI) | 8001 | Wraps the gnubg subprocess via External Player; drives move legality + audit replay | Replace with pure-Python rules engine + per-agent NN argmax for production; keep gnubg for local debugging only |
-| **`agent/coach_service.py`** (FastAPI) | 8002 | **Legacy**: agent profile resolution helper. The primary coach is the Next.js Route Handler, not this. | Fold remaining helpers into Next.js + 0G Compute |
 | **`og-bridge/`** (Node CLI) | — | Shells out from Python to publish/fetch bytes on 0G Storage | Keep — thin SDK adapter |
 | **`og-compute-bridge/`** (Node CLI) | — | Shells out for 0G Compute equity-net inference (when a provider is registered) | Keep until Next.js owns inference too |
 
@@ -184,7 +183,7 @@ sequenceDiagram
  │   value-net    │       │  Qwen 2.5 7B     │         │  process (dev    │
  │   forward pass │       │  coach +         │         │  convenience):   │
  │   (default)    │       │  offline NN      │         │  gnubg :8001     │
- │                │       │  inference       │         │  coach  :8002    │
+ │                │       │  inference       │         │                  │
  └────────────────┘       └──────────────────┘         └──────────────────┘
                                     │
                                     │ KeeperHub workflow
@@ -283,13 +282,13 @@ Fund the deployer wallet with Sepolia ETH from any public faucet.
 # 1. deploy + verify settlement contracts on Sepolia (one shot)
 ./scripts/bootstrap-network.sh
 
-# 2. local agent processes — gnubg + legacy coach helper (terminal A)
-cd agent && ./start.sh                         # gnubg :8001, coach helper :8002
+# 2. local gnubg agent process (terminal A) — coach LLM runs on 0G Compute, no local coach
+cd agent && ./start.sh                         # gnubg :8001
 
 # 3. FastAPI backend (terminal B, from repo root)
 cd server && uv run uvicorn app.main:app --host 0.0.0.0 --port 8000
 
-# 4. frontend (terminal C, from repo root) — orchestrates 0G Compute coach via Route Handlers
+# 4. frontend (terminal C, from repo root) — calls the 0G Compute coach via Next.js Route Handlers
 pnpm frontend:dev                              # Next.js on :3000
 ```
 

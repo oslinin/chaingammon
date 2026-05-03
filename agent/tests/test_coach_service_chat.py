@@ -40,7 +40,7 @@ def _request_body(kind: str = "open_turn", **overrides) -> dict:
         # Phase B wired the real LLM path. These tests exercise the
         # deterministic stub handler — assertions on stub output must
         # stay stable. Tests of the LLM path live below and mock
-        # _generate_chat_compute / _generate_chat_local directly.
+        # _generate_chat_compute directly.
         "backend": "stub",
     }
     body.update(overrides)
@@ -278,9 +278,8 @@ async def test_team_mode_kinds_round_trip_chosen_advisor_id_field(app):
 #
 # Tests above force backend="stub" so they assert on deterministic text.
 # These tests exercise the wired LLM path itself: build the prompt, ship
-# it to the inner _generate_chat_compute / _generate_chat_local, return
-# the model's content. Inner functions are mocked so the test suite
-# stays offline.
+# it to the inner _generate_chat_compute, return the model's content.
+# Inner functions are mocked so the test suite stays offline.
 # ---------------------------------------------------------------------------
 
 
@@ -310,60 +309,20 @@ async def test_chat_compute_path_uses_compute_when_available(app):
 
 
 @pytest.mark.anyio
-async def test_chat_falls_back_to_local_when_compute_fails(app):
-    """If 0G Compute raises, /chat must fall back to the local model
-    (same as /hint). Surface backend == 'local' in the response."""
+async def test_chat_propagates_when_compute_fails(app):
+    """The local flan-t5 fallback was removed — coach is 0G-Compute-only
+    (mirrors /hint). When compute raises, /chat must propagate the
+    exception so the operator sees the failure. Under ASGITransport the
+    unhandled exception propagates directly to the test (no error
+    middleware); in production FastAPI converts it to a 500 response."""
     def boom(*_a, **_kw):
         raise RuntimeError("0G testnet unreachable")
 
-    with patch("coach_service._generate_chat_compute", side_effect=boom), \
-         patch("coach_service._generate_chat_local") as mock_local:
-        mock_local.return_value = "Local fallback advice."
+    with patch("coach_service._generate_chat_compute", side_effect=boom):
         async with AsyncClient(transport=ASGITransport(app=app),
                                 base_url="http://test") as c:
-            resp = await c.post("/chat", json=_request_body(backend="compute"))
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["backend"] == "local"
-    assert "fallback" in body["message"]["text"].lower()
-
-
-@pytest.mark.anyio
-async def test_chat_local_only_skips_compute_entirely(app):
-    """backend == 'local' means do NOT attempt compute even on the
-    happy path. This is the offline-development backend choice."""
-    with patch("coach_service._generate_chat_compute") as mock_compute, \
-         patch("coach_service._generate_chat_local") as mock_local:
-        mock_local.return_value = "Local model output."
-        async with AsyncClient(transport=ASGITransport(app=app),
-                                base_url="http://test") as c:
-            resp = await c.post("/chat", json=_request_body(backend="local"))
-    assert resp.status_code == 200
-    assert not mock_compute.called  # compute was skipped
-    assert mock_local.called
-    assert resp.json()["backend"] == "local"
-
-
-@pytest.mark.anyio
-async def test_chat_compute_only_raises_on_compute_failure(app):
-    """backend == 'compute-only' surfaces the compute error to the
-    caller instead of falling back. Used in CI when the demo path
-    must work — the failure must NOT be swallowed by the local-fallback
-    path. Under ASGITransport the unhandled exception propagates
-    directly to the test (no error middleware); in production FastAPI
-    converts it to a 500 response."""
-    def boom(*_a, **_kw):
-        raise RuntimeError("0G testnet unreachable")
-
-    with patch("coach_service._generate_chat_compute", side_effect=boom), \
-         patch("coach_service._generate_chat_local") as mock_local:
-        mock_local.return_value = "should not be reached"
-        with pytest.raises(RuntimeError, match="0G testnet unreachable"):
-            async with AsyncClient(transport=ASGITransport(app=app),
-                                    base_url="http://test") as c:
-                await c.post("/chat", json=_request_body(backend="compute-only"))
-        # Local was never reached — the whole point of compute-only.
-        assert not mock_local.called
+            with pytest.raises(RuntimeError, match="0G testnet unreachable"):
+                await c.post("/chat", json=_request_body(backend="compute"))
 
 
 @pytest.mark.anyio

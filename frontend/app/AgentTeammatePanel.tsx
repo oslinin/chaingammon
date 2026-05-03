@@ -25,7 +25,6 @@
 import { useEffect, useRef, useState } from "react";
 
 const GNUBG = process.env.NEXT_PUBLIC_GNUBG_URL ?? "http://localhost:8001";
-const COACH = process.env.NEXT_PUBLIC_COACH_URL ?? "http://localhost:8002";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
