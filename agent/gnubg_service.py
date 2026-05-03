@@ -472,3 +472,46 @@ def evaluate_only(req: EvaluateRequest) -> dict:
     """
     candidates = _evaluate(req.position_id, req.match_id, req.dice)
     return {"candidates": candidates[:3]}
+
+
+class EvaluateTaggedRequest(BaseModel):
+    """Request body for POST /evaluate-tagged.
+
+    @param position_id  gnubg base64 position identifier.
+    @param match_id     gnubg base64 match-state identifier.
+    @param dice         Two-element list [d1, d2] for the current roll.
+    @param board        Optional 24-element board array (index = point-1,
+                        positive = player-0). When provided, hit detection
+                        and prime detection are more accurate.
+    @param top_n        How many tagged candidates to return (default 5).
+    """
+
+    position_id: str
+    match_id: str
+    dice: list[int]
+    board: Optional[list[int]] = None
+    top_n: int = 5
+
+
+@app.post("/evaluate-tagged")
+def evaluate_tagged(req: EvaluateTaggedRequest) -> dict:
+    """Evaluate all legal moves and return the top N with heuristic strategy tags.
+
+    @notice Phase 76: Chief-of-Staff collaborative agent. Returns the top
+            N candidates (default 5) each annotated with a human-readable
+            strategy tag (Safe, Aggressive, Priming, Anchor, Blitz) so the
+            LLM orchestrator can negotiate trade-offs with the human in
+            strategic vocabulary rather than raw equity numbers.
+    @dev    Pipeline:
+              1. gnubg evaluates all legal moves in a single subprocess call
+                 (`hint`) and returns them ranked by equity — equivalent to a
+                 batched evaluation pass.
+              2. move_tagger.tag_candidates applies heuristic labels in O(N)
+                 (one pass over the candidate list).
+    @param  req  EvaluateTaggedRequest.
+    @return      {"tagged_candidates": [{"move", "equity", "tag", "tag_reason"}]}
+    """
+    from move_tagger import tag_candidates
+    candidates = _evaluate(req.position_id, req.match_id, req.dice)
+    tagged = tag_candidates(candidates, board=req.board, top_n=req.top_n)
+    return {"tagged_candidates": tagged}

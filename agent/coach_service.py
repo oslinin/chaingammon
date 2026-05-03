@@ -473,3 +473,267 @@ def post_chat(req: ChatRequest) -> ChatResponse:
         preferences_delta=delta,
         latency_ms=elapsed_ms,
     )
+
+
+# ─── /chief-of-staff/chat endpoint ─────────────────────────────────────────
+#
+# Phase 76: DeepMind-inspired collaborative agent. The LLM acts as a
+# "Chief of Staff" that:
+#   1. Takes the tagged top-5 candidates from /evaluate-tagged.
+#   2. Reads the human's macro-strategy from the chat message.
+#   3. Recommends the specific tagged move that best fits the strategy.
+#   4. When the human asks to "validate an intuition" / "deep dive",
+#      triggers a mocked historical-search that simulates consulting
+#      a backgammon database (deterministic but realistic-looking).
+
+
+_DEEP_DIVE_TRIGGERS = frozenset([
+    "validate", "intuition", "deep dive", "deep-dive", "historical",
+    "history", "database", "tell me more", "confirm", "sure about",
+    "are you sure", "second opinion", "check",
+])
+
+
+def _deep_dive_requested(human_message: str) -> bool:
+    """Return True when the human's message contains a deep-dive keyword."""
+    lowered = human_message.lower()
+    return any(trigger in lowered for trigger in _DEEP_DIVE_TRIGGERS)
+
+
+def _mock_historical_search(move: str, tag: str) -> str:
+    """Return a mocked deep-dive historical analysis for the given move + tag.
+
+    Simulates consulting a backgammon game database (not a live search).
+    The output is deterministic but varies by tag so it reads naturally.
+
+    @dev  This is intentionally mocked for the hackathon demo. A production
+          version would query a real backgammon database (e.g. gnubg's
+          built-in rollout) and surface win-rate statistics.
+    """
+    tag_analysis: dict[str, str] = {
+        "Safe": (
+            f"Historical analysis: moves tagged Safe like '{move}' appear in "
+            "~68% of grandmaster games when the mover is ahead in the pip count. "
+            "Avoiding blots here wins the race ~12% more often than the next alternative."
+        ),
+        "Aggressive": (
+            f"Historical analysis: the aggressive line '{move}' gains tempo at the "
+            "cost of increased blot exposure. In similar positions, players choosing "
+            "this move win 54% of games vs 48% for the safe alternative — but lose "
+            "faster when it backfires."
+        ),
+        "Priming": (
+            f"Historical analysis: priming moves like '{move}' are endorsed by "
+            "gnubg's neural network in positions with ≥2 consecutive anchor points. "
+            "A 6-prime built this way closes out opponent checkers in 71% of games."
+        ),
+        "Anchor": (
+            f"Historical analysis: establishing an anchor with '{move}' matches "
+            "patterns in 82% of defensive grandmaster games when behind in the race. "
+            "Deep anchors (20–24) reduce gammon risk by ~18%."
+        ),
+        "Blitz": (
+            f"Historical analysis: the blitz '{move}' appears in 23% of world-class "
+            "games. It wins ~60% of games outright but concedes a gammon ~22% of the "
+            "time when the blitz stalls — higher variance than the priming alternative."
+        ),
+    }
+    return tag_analysis.get(tag, f"Historical analysis: '{move}' is consistent with strong play in similar positions.")
+
+
+def _build_chief_of_staff_prompt(
+    human_strategy: str,
+    tagged_candidates: list[dict],
+    dialogue_history: list[dict],
+    opponent_features: Optional[str] = None,
+) -> str:
+    """Assemble the Chief of Staff LLM prompt.
+
+    The prompt structure:
+      - Role: Chief of Staff who negotiates move selection with the human
+      - Context: tagged candidates + opponent features
+      - Human macro-strategy: what the human typed
+      - Dialogue history for multi-turn context
+      - Instruction: recommend the single best tagged move that fits the strategy
+    """
+    if not tagged_candidates:
+        candidates_section = "(no legal moves on this roll)"
+    else:
+        lines = []
+        for i, c in enumerate(tagged_candidates[:5], 1):
+            tag = c.get("tag", "Safe")
+            reason = c.get("tag_reason", "")
+            eq = c.get("equity", 0.0)
+            sign = "+" if eq >= 0 else ""
+            lines.append(f"  {i}. [{tag}] {c['move']}  (eq {sign}{eq:.3f}) — {reason}")
+        candidates_section = "\n".join(lines)
+
+    history_section = ""
+    if dialogue_history:
+        history_lines = []
+        for msg in dialogue_history[-6:]:
+            role = msg.get("role", "human")
+            text = msg.get("text", "")
+            history_lines.append(f"{role}: {text}")
+        history_section = "Recent conversation:\n" + "\n".join(history_lines) + "\n\n"
+
+    opp_section = f"Opponent tendency: {opponent_features}\n\n" if opponent_features else ""
+
+    strategy_section = (
+        f'Human\'s macro-strategy: "{human_strategy}"\n\n'
+        if human_strategy.strip()
+        else "Human has not stated a macro-strategy yet.\n\n"
+    )
+
+    return (
+        "You are the Chief of Staff for a human backgammon player. "
+        "Your job: negotiate the single best move from the tagged candidates below "
+        "that fits the human's macro-strategy. "
+        "Be direct: name the move, state its tag, and explain in 2 sentences why it "
+        "aligns with the human's strategy. If the human's strategy is unclear, ask one "
+        "focused clarifying question.\n\n"
+        f"{opp_section}"
+        f"Candidate moves (ranked by equity, tagged by strategy type):\n{candidates_section}\n\n"
+        f"{strategy_section}"
+        f"{history_section}"
+        "Your response (name the recommended move first, then the 2-sentence rationale):"
+    )
+
+
+# ─── request / response models for Chief of Staff ────────────────────────────
+
+class ChiefOfStaffRequest(BaseModel):
+    """Request body for POST /chief-of-staff/chat.
+
+    @param tagged_candidates  Tagged candidate list from /evaluate-tagged
+                              (each: {"move", "equity", "tag", "tag_reason"}).
+    @param human_strategy     Human's free-text macro-strategy for this turn
+                              (e.g. "I want to play safe", "be aggressive").
+    @param dialogue           Prior chat messages for multi-turn context.
+    @param opponent_features  Optional one-line summary of opponent tendencies
+                              (fast-path from agent overlay, no async needed).
+    @param turn_index         Current turn number.
+    @param backend            "compute" | "local" | "stub" — mirrors HintRequest.
+    """
+
+    tagged_candidates: list[dict]
+    human_strategy: str = ""
+    dialogue: list[dict] = []
+    opponent_features: Optional[str] = None
+    turn_index: int = 0
+    backend: Optional[str] = None
+
+
+class ChiefOfStaffResponse(BaseModel):
+    """Response body for POST /chief-of-staff/chat.
+
+    @param reply              LLM's negotiated recommendation.
+    @param recommended_move   The specific move string the LLM selected
+                              (parsed from the reply for UI highlighting).
+    @param recommended_tag    The strategy tag of the recommended move.
+    @param deep_dive          Historical analysis if the human requested validation;
+                              None otherwise.
+    @param backend            Which backend served the request.
+    @param latency_ms         Wall-clock latency of the LLM call.
+    """
+
+    reply: str
+    recommended_move: Optional[str]
+    recommended_tag: Optional[str]
+    deep_dive: Optional[str]
+    backend: str
+    latency_ms: int
+
+
+def _extract_recommended_move(
+    reply: str, tagged_candidates: list[dict]
+) -> tuple[Optional[str], Optional[str]]:
+    """Scan the LLM reply for a candidate move string and return (move, tag).
+
+    Tries to find the first candidate whose move notation appears verbatim
+    in the reply.  Falls back to the top candidate if nothing is found.
+    """
+    for cand in tagged_candidates:
+        move = cand.get("move", "")
+        if move and move in reply:
+            return move, cand.get("tag")
+    # Fallback: top candidate
+    if tagged_candidates:
+        top = tagged_candidates[0]
+        return top.get("move"), top.get("tag")
+    return None, None
+
+
+@app.post("/chief-of-staff/chat")
+def chief_of_staff_chat(req: ChiefOfStaffRequest) -> ChiefOfStaffResponse:
+    """Chief-of-Staff collaborative agent endpoint.
+
+    @notice Phase 76: the LLM acts as a strategic advisor that reads the
+            human's macro-strategy and selects the specific tagged move
+            that best fits it.  Uses "instant opponent features" for fast
+            suggestions; triggers a mocked deep-dive historical search
+            when the human's message contains validation keywords.
+
+    @dev    Pipeline:
+              1. Build a Chief-of-Staff prompt (tagged moves + strategy).
+              2. Dispatch to _generate_chat (0G Compute → local fallback)
+                 or stub mode.
+              3. Extract the recommended move from the reply.
+              4. If deep-dive was requested, append the mock historical
+                 analysis to the response.
+    @return ChiefOfStaffResponse with reply, move, tag, deep_dive, backend.
+    """
+    import time
+    started = time.monotonic()
+
+    # Detect deep-dive request from the most recent human message.
+    last_human_text = ""
+    for msg in reversed(req.dialogue):
+        if msg.get("role") == "human":
+            last_human_text = msg.get("text", "")
+            break
+    # Also check current human_strategy field.
+    full_text = (last_human_text + " " + req.human_strategy).strip()
+    needs_deep_dive = _deep_dive_requested(full_text)
+
+    prompt = _build_chief_of_staff_prompt(
+        human_strategy=req.human_strategy,
+        tagged_candidates=req.tagged_candidates,
+        dialogue_history=req.dialogue,
+        opponent_features=req.opponent_features,
+    )
+
+    chosen = (req.backend or _BACKEND).lower()
+    if chosen == "stub":
+        # Deterministic stub for tests / offline demo.
+        if req.tagged_candidates:
+            top = req.tagged_candidates[0]
+            reply_text = (
+                f"As your Chief of Staff, I recommend **{top.get('move', '?')}** "
+                f"[{top.get('tag', 'Safe')}]. "
+                f"It scores the highest equity and aligns with a solid positional approach. "
+                f"This keeps you ahead in the pip count while minimising blot exposure."
+            )
+        else:
+            reply_text = "No legal moves available on this roll — the turn passes."
+        backend_used = "stub"
+    else:
+        reply_text, backend_used = _generate_chat(prompt, req.backend)
+
+    recommended_move, recommended_tag = _extract_recommended_move(
+        reply_text, req.tagged_candidates
+    )
+
+    deep_dive: Optional[str] = None
+    if needs_deep_dive and recommended_move and recommended_tag:
+        deep_dive = _mock_historical_search(recommended_move, recommended_tag)
+
+    elapsed_ms = int((time.monotonic() - started) * 1000)
+    return ChiefOfStaffResponse(
+        reply=reply_text,
+        recommended_move=recommended_move,
+        recommended_tag=recommended_tag,
+        deep_dive=deep_dive,
+        backend=backend_used,
+        latency_ms=elapsed_ms,
+    )
