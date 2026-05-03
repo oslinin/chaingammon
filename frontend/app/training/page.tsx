@@ -25,6 +25,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useComputeBackends } from "../ComputeBackendsContext";
+import { useActiveChain } from "../chains";
 
 const SERVER = process.env.NEXT_PUBLIC_SERVER_URL ?? "http://localhost:8000";
 
@@ -87,6 +88,7 @@ interface CheckpointEntry {
   agent_id: number;
   path: string | null;
   root_hash: string | null;
+  address: string | null;
   error: string | null;
 }
 
@@ -103,11 +105,6 @@ interface StatusResponse {
   upload_to_0g: boolean;
   ended: "done" | "aborted" | null;
   last_update_ts: number;
-  // Phase L.2: TensorBoard sidecar metadata. Frontend uses this to
-  // mount the live-training iframe; null when launch failed (e.g.
-  // tensorboard binary not on PATH on the operator's host).
-  tensorboard_url?: string | null;
-  logdir?: string | null;
   // Per-agent checkpoint save/upload results. Populated after training
   // completes; root_hash is the 0G Storage Merkle root when uploaded.
   checkpoints?: CheckpointEntry[];
@@ -203,9 +200,13 @@ export default function TrainingPage() {
           agent_ids: selectedIds,
           use_0g_inference: use0gInference,
           use_0g_coaching: use0gCoaching,
-          // Auto-upload weights to 0G when any 0G backend is active so
-          // the iNFT's dataHashes[1] stays current after training.
-          upload_to_0g: use0gInference || use0gCoaching,
+          // Always upload weights to 0G so the iNFT's dataHashes[1] stays
+          // current after training, regardless of whether 0G inference
+          // is active.
+          upload_to_0g: true,
+          // Always skip encryption in the demo so the server (which
+          // has no key file) can fetch the checkpoint via load_profile.
+          no_encrypt: true,
         }),
       });
       if (!r.ok) {
@@ -317,8 +318,6 @@ export default function TrainingPage() {
       <StatusPanel status={statusQuery.data} />
 
       <CheckpointsPanel status={statusQuery.data} />
-
-      <TensorBoardPanel status={statusQuery.data} agentIds={selectedIds} />
     </main>
   );
 }
@@ -668,6 +667,9 @@ function formatBig(n: number): string {
 // error field is shown instead when the upload failed (e.g. missing env
 // vars) but the local save may still have succeeded.
 function CheckpointsPanel({ status }: { status: StatusResponse | undefined }) {
+  const active = useActiveChain();
+  const explorerUrl = active?.chain.blockExplorers?.default?.url;
+
   const entries = status?.checkpoints;
   if (!entries || entries.length === 0) return null;
 
@@ -680,6 +682,7 @@ function CheckpointsPanel({ status }: { status: StatusResponse | undefined }) {
         <thead>
           <tr className="border-b border-zinc-200 dark:border-zinc-800">
             <th className="py-1 text-left font-mono uppercase text-zinc-500">Agent</th>
+            <th className="text-left font-mono uppercase text-zinc-500">Agent wallet</th>
             <th className="text-left font-mono uppercase text-zinc-500">0G root hash</th>
             <th className="text-left font-mono uppercase text-zinc-500">Status</th>
           </tr>
@@ -688,6 +691,26 @@ function CheckpointsPanel({ status }: { status: StatusResponse | undefined }) {
           {entries.map((ck, i) => (
             <tr key={i} className="border-b border-zinc-100 dark:border-zinc-800">
               <td className="py-1 font-mono">#{ck.agent_id}</td>
+              <td className="py-1 font-mono text-[10px] text-zinc-500 break-all">
+                {ck.address ? (
+                  explorerUrl ? (
+                    <a
+                      href={`${explorerUrl}/address/${ck.address}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-indigo-600 underline-offset-2 hover:underline dark:text-indigo-400"
+                    >
+                      {ck.address.slice(0, 8)}…{ck.address.slice(-6)}
+                    </a>
+                  ) : (
+                    <span>
+                      {ck.address.slice(0, 8)}…{ck.address.slice(-6)}
+                    </span>
+                  )
+                ) : (
+                  "—"
+                )}
+              </td>
               <td className="py-1 font-mono text-[10px] text-zinc-500 break-all">
                 {ck.root_hash ? (
                   <span className="text-emerald-700 dark:text-emerald-400">
@@ -714,125 +737,6 @@ function CheckpointsPanel({ status }: { status: StatusResponse | undefined }) {
           ))}
         </tbody>
       </table>
-    </section>
-  );
-}
-
-// Phase L.3: TensorBoard panel — embeds the live tb dashboard so a
-// judge can watch the network learn (TD error, weight L2 per agent,
-// rolling win-rate per agent) while the trainer runs.
-//
-// Per-agent picker uses TensorBoard 2.x's #scalars URL params:
-//   #scalars&tagFilter=agent_<id>&_smoothingWeight=0
-// which restricts the visible scalar tags to those mentioning the
-// selected agent (Phase L.1 logs them under win_rate/agent_<id>,
-// weights/core_l2_agent_<id>, weights/extras_l2_agent_<id>, plus the
-// pair-level win/agent_a_vs_b — those show under either agent's filter).
-//
-// When tensorboard_url is null (sidecar didn't launch — binary
-// missing on PATH, port in use, etc.) the panel renders a clear
-// placeholder rather than an iframe pointing nowhere.
-function TensorBoardPanel({
-  status,
-  agentIds,
-}: {
-  status: StatusResponse | undefined;
-  agentIds: number[];
-}) {
-  const [pickedAgent, setPickedAgent] = useState<number | "all">("all");
-
-  if (!status) return null;
-
-  const url = status.tensorboard_url;
-  if (!url) {
-    return (
-      <section className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-200">
-        <strong>TensorBoard unavailable.</strong> The training service
-        couldn&apos;t spawn the <code>tensorboard</code> sidecar — likely the
-        binary isn&apos;t on PATH in the agent venv. Run{" "}
-        <code>uv pip install tensorboard</code> in <code>agent/</code> to
-        enable live charts here.
-      </section>
-    );
-  }
-
-  const tagFilter =
-    pickedAgent === "all" ? "" : `agent_${pickedAgent}`;
-  const iframeSrc = tagFilter
-    ? `${url}/#scalars&tagFilter=${encodeURIComponent(tagFilter)}`
-    : `${url}/#scalars`;
-
-  // Pool the available agents from both the status report (canonical
-  // set the trainer started with) and the page's selection (so the
-  // picker is responsive even before status arrives).
-  const allAgents = Array.from(
-    new Set([...(status.agent_ids ?? []), ...agentIds]),
-  ).sort((a, b) => a - b);
-
-  return (
-    <section className="flex flex-col gap-3 rounded-md border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
-      <div className="flex items-center justify-between gap-3">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">
-          TensorBoard
-        </h2>
-        <div className="flex items-center gap-2">
-          <label
-            htmlFor="tb-agent-picker"
-            className="text-xs text-zinc-600 dark:text-zinc-400"
-          >
-            Filter:
-          </label>
-          <select
-            id="tb-agent-picker"
-            value={String(pickedAgent)}
-            onChange={(e) => {
-              const v = e.target.value;
-              setPickedAgent(v === "all" ? "all" : Number(v));
-            }}
-            className="rounded-md border border-zinc-300 bg-white px-2 py-1 text-xs font-mono dark:border-zinc-700 dark:bg-zinc-900"
-          >
-            <option value="all">all agents</option>
-            {allAgents.map((a) => (
-              <option key={a} value={a}>
-                agent {a}
-              </option>
-            ))}
-          </select>
-          <a
-            href={iframeSrc}
-            target="_blank"
-            rel="noreferrer"
-            className="rounded border border-zinc-300 px-2 py-1 text-xs hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
-            title="Open TensorBoard in a new tab"
-          >
-            ↗
-          </a>
-        </div>
-      </div>
-
-      <p className="text-xs text-zinc-500">
-        Live scalars from the trainer:{" "}
-        <code className="font-mono">train/td_error</code>,{" "}
-        <code className="font-mono">match/plies</code>,{" "}
-        <code className="font-mono">win_rate/agent_*</code>,{" "}
-        <code className="font-mono">weights/core_l2_agent_*</code>.
-        {pickedAgent !== "all" && (
-          <> Filtered to agent {pickedAgent}.</>
-        )}
-      </p>
-
-      <iframe
-        key={iframeSrc /* re-mount when filter changes */}
-        src={iframeSrc}
-        title="TensorBoard"
-        className="h-[600px] w-full rounded border border-zinc-200 dark:border-zinc-800"
-      />
-
-      {status.logdir && (
-        <p className="font-mono text-[10px] text-zinc-400">
-          logdir: {status.logdir}
-        </p>
-      )}
     </section>
   );
 }
