@@ -4,9 +4,9 @@
   "deployer": "0xa2219C4f48bC9e6806Bce3B391aB9e23f55FEbb5",
   "contracts": {
     "MatchRegistry": "0x507d78149AE2092a5438825B1BA3F12737FAeC0C",
-    "AgentRegistry": null,
-    "PlayerSubnameRegistrar": null,
-    "MatchEscrow": null
+    "AgentRegistry": "0xE23B83cE16B292e420cd8820ac9d303A45333D17",
+    "PlayerSubnameRegistrar": "0x48285B8C9B04C6a3D61bBA067a4DE4399A5a4aEb",
+    "MatchEscrow": "0x1206A93a9B76652382BC1F5164a8383a9F2A2e16"
   },
   "matchRegistryPrevious": "0x8414E192f03a95E7a54f6bD9C0Cb2B2c3d67c5aC",
   "matchRegistrySettler": "0x8422451d456D1374b73b14dCe24C5B10Ef43bD99",
