@@ -370,10 +370,24 @@ When a match ends the frontend builds the `GameRecord`, uploads the JSON bytes t
 Chaingammon uses ENS subnames as a true protocol identity layer — a verifiable, composable reputation primitive that any third-party tool reads without coordinating with us.
 
 - **Verified, not claimed.** Five text record keys (`elo`, `match_count`, `last_match_id`, `kind`, `inft_id`) are reserved on-chain in `PlayerSubnameRegistrar`. Only the contract owner (KeeperHub-driven settlement) can write them; the on-chain `setText` rejects subname-owner writes via a `bytes32 → bool` reserved-key map.
-- **One identity layer for humans and agents.** Both register under `chaingammon.eth`. The `kind` text record (`"human"` or `"agent"`) discriminates. When an agent iNFT is minted via `AgentRegistry.mintAgent`, the contract atomically mints the corresponding subname and sets `kind="agent"` + `inft_id=<tokenId>` in the same transaction.
-- **Cross-protocol composability.** A betting market reads `text(namehash("alice.chaingammon.eth"), "elo")` to price a match. A tournament organiser walks `subnameCount()` + `subnameAt(i)` to enumerate ranked players. A coaching platform reads `text(node, "style_uri")` to pull style profiles from 0G Storage. None of them touch our API.
+- **One identity layer for humans and agents.** Both register under `backgammon.eth`. The `kind` text record (`"human"` or `"agent"`) discriminates. When an agent iNFT is minted via `AgentRegistry.mintAgent`, the contract atomically mints the corresponding subname and sets `kind="agent"` + `inft_id=<tokenId>` in the same transaction.
+- **Cross-protocol composability.** A betting market reads `text(namehash("alice.backgammon.eth"), "elo")` to price a match. A tournament organiser walks `subnameCount()` + `subnameAt(i)` to enumerate ranked players. A coaching platform reads `text(node, "style_uri")` to pull style profiles from 0G Storage. None of them touch our API.
 
 Full schema: [docs/ENS_SCHEMA.md](docs/ENS_SCHEMA.md).
+
+### ENS Architecture
+
+The subnet is `*.backgammon.eth` on Sepolia. The name was chosen as `backgammon.eth` (rather than `chaingammon.eth`) for interoperability with other backgammon leagues — any future league can plug into the same identity namespace without forking the schema.
+
+**Current state (internal fake ENS).** As of this submission, `PlayerSubnameRegistrar` is a custom contract that maintains its own *internal* index of subnames. Subnames do **not** exist in real ENS — `chaingammon.eth` is not registered on Sepolia ENS, and the navbar resolves names from the contract's own storage rather than from ENS resolution. This was the fastest path to get the reserved-key + `kind`-discriminator schema working end-to-end against `MatchRegistry` settlements.
+
+**Target state (true ENS — work in progress).** The architecture migrates to real ENS:
+
+1. **Parent name on real ENS.** `backgammon.eth` is registered on Sepolia ENS.
+2. **Subnames issued via NameWrapper.** `PlayerSubnameRegistrar` is updated to call ENS NameWrapper (`0x0635513f179D50A207757E05759CbD106d7dFcE8` on Sepolia) so `*.backgammon.eth` are real ENS entries — resolvable by any standard ENS client without going through our contract.
+3. **Human subnames are permanent.** Human subnames are minted with the `PARENT_CANNOT_CONTROL` fuse burned, so the parent (`backgammon.eth`) cannot revoke or reassign them. Once minted, the subname is permanently owned by the holder — the protocol no longer has authority to take it back.
+4. **Agent subnames are revocable.** Agent subnames are minted *without* burning `PARENT_CANNOT_CONTROL`. They remain revocable by the parent and are tied to the iNFT lifecycle: when an agent iNFT is burned, the corresponding subname is revoked.
+5. **Discovery via the ENS subgraph.** `DiscoveryList` queries the ENS subgraph (The Graph) to enumerate `*.backgammon.eth` subnames instead of walking `PlayerSubnameRegistrar`'s internal index. This makes discovery work for any indexer that already speaks ENS — no coordination with us required.
 
 ---
 
