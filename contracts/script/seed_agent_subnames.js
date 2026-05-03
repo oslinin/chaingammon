@@ -3,16 +3,20 @@
 // Backfills ENS subnames for existing AgentRegistry agents that were minted
 // before the PlayerSubnameRegistrar was wired up.
 //
+// After the NameWrapper migration the registrar holds no internal storage;
+// subname ownership lives in NameWrapper, and reputation/text records (kind,
+// inft_id, elo, …) live in the resolver. The kind/inft_id fields are now
+// captured in the SubnameMinted event's inftId argument and are not written
+// as resolver text records by this script.
+//
 // What it does:
 //   1. Reads deployed addresses from deployments/<network>.json
 //   2. Calls AgentRegistry.setSubnameRegistrar(registrarAddr) — wires up the
 //      registrar so future mintAgent calls are atomic. (Owner-only, idempotent.)
 //   3. For each existing agent (agentCount iterations):
 //      a. Derives the label from agentMetadata (mirrors AgentCard.tsx cleaning)
-//      b. Checks if a subname is already minted (ownerOf returns non-zero)
-//      c. If not minted: calls PlayerSubnameRegistrar.mintSubname(label, agentOwner)
-//         then setText for kind="agent" and inft_id=<id>
-//      d. If already minted but missing kind/inft_id: sets the text records only
+//      b. Checks if a subname is already minted (registrar.ownerOf(label) != 0)
+//      c. If not minted: calls registrar.mintSubname(label, agentOwner, agentId)
 //
 // Usage:
 //   pnpm exec hardhat run script/seed_agent_subnames.js --network sepolia
@@ -32,18 +36,13 @@ const AGENT_REGISTRY_ABI = [
 ];
 
 const PLAYER_SUBNAME_REGISTRAR_ABI = [
-  "function subnameNode(string label) view returns (bytes32)",
-  "function ownerOf(bytes32 node) view returns (address)",
-  "function text(bytes32 node, string key) view returns (string)",
-  "function mintSubname(string label, address subnameOwner_) external returns (bytes32 node)",
-  "function setText(bytes32 node, string key, string value) external",
+  "function ownerOf(string label) view returns (address)",
+  "function mintSubname(string label, address subnameOwner_, uint256 inftId) external returns (bytes32 node)",
 ];
 
 /** Mirror of AgentRegistry._cleanLabel and AgentCard.tsx cleanedLabel logic. */
 function cleanLabel(metadataUri) {
-  // Strip any scheme prefix (e.g. "ipfs://")
   let label = metadataUri.replace(/^[^:]+:\/\//, "");
-  // Replace "/" with "-"
   label = label.replaceAll("/", "-");
   return label;
 }
@@ -52,7 +51,6 @@ async function main() {
   const [deployer] = await ethers.getSigners();
   console.log(`Running on network: ${network.name} (deployer: ${deployer.address})`);
 
-  // Load deployment addresses
   const deploymentsPath = path.join(__dirname, "..", "deployments", `${network.name}.json`);
   if (!fs.existsSync(deploymentsPath)) {
     throw new Error(`No deployments file found at ${deploymentsPath}`);
@@ -99,48 +97,20 @@ async function main() {
     console.log(`  label       : ${label}`);
     console.log(`  owner       : ${agentOwner}`);
 
-    // Compute the expected subname node
-    const node = await registrar.subnameNode(label);
-    console.log(`  node        : ${node}`);
-
-    // Check if subname already minted (ownerOf returns zero address if not)
     let subnameOwner;
     try {
-      subnameOwner = await registrar.ownerOf(node);
+      subnameOwner = await registrar.ownerOf(label);
     } catch {
       subnameOwner = ethers.ZeroAddress;
     }
 
     if (subnameOwner === ethers.ZeroAddress) {
-      console.log(`  Minting subname "${label}.chaingammon.eth" → owner ${agentOwner}...`);
-      const mintTx = await registrar.mintSubname(label, agentOwner);
+      console.log(`  Minting subname "${label}.chaingammon.eth" → owner ${agentOwner}, inftId ${agentId}...`);
+      const mintTx = await registrar.mintSubname(label, agentOwner, agentId);
       const mintReceipt = await mintTx.wait();
       console.log(`  ✓ mintSubname tx: ${mintReceipt.hash}`);
     } else {
       console.log(`  Subname already minted (owner: ${subnameOwner})`);
-    }
-
-    // Set / verify kind text record
-    const existingKind = await registrar.text(node, "kind");
-    if (existingKind !== "agent") {
-      console.log(`  Setting kind="agent"...`);
-      const tx = await registrar.setText(node, "kind", "agent");
-      const receipt = await tx.wait();
-      console.log(`  ✓ setText(kind) tx: ${receipt.hash}`);
-    } else {
-      console.log(`  kind already set to "agent"`);
-    }
-
-    // Set / verify inft_id text record
-    const existingInftId = await registrar.text(node, "inft_id");
-    const expectedInftId = String(agentId);
-    if (existingInftId !== expectedInftId) {
-      console.log(`  Setting inft_id="${expectedInftId}"...`);
-      const tx = await registrar.setText(node, "inft_id", expectedInftId);
-      const receipt = await tx.wait();
-      console.log(`  ✓ setText(inft_id) tx: ${receipt.hash}`);
-    } else {
-      console.log(`  inft_id already set to "${expectedInftId}"`);
     }
   }
 

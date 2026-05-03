@@ -74,8 +74,10 @@ interface DeploymentRecord {
   contracts: {
     MatchRegistry: string;
     AgentRegistry: string;
-    PlayerSubnameRegistrar?: string;
+    PlayerSubnameRegistrar?: string | null;
     MatchEscrow?: string;
+    NameWrapper?: string;
+    PublicResolver?: string;
   };
   // Captured by deploy.js as the chain head right before the first
   // deploy tx. Used by log-scan hooks (e.g. useChaingammonName) to
@@ -83,6 +85,30 @@ interface DeploymentRecord {
   // deployment records may be missing this field — callers should
   // treat it as optional and fall back to a sliding window.
   deployedBlock?: number;
+}
+
+/// ENS infrastructure for chains where chaingammon delegates subname
+/// state to real ENS (NameWrapper-backed PlayerSubnameRegistrar). The
+/// subgraph URL is used by DiscoveryList to enumerate subnames under
+/// chaingammon.eth without scanning event logs.
+export interface EnsInfra {
+  nameWrapper: `0x${string}`;
+  publicResolver: `0x${string}`;
+  subgraphUrl: string;
+}
+
+const ENS_INFRA_BY_CHAIN: Record<number, EnsInfra> = {
+  // Sepolia ENS deployment + hosted subgraph.
+  11155111: {
+    nameWrapper: "0x0635513f179D50A207757E05759CbD106d7dFcE8",
+    publicResolver: "0x8FADE66B79cC9f707aB26799354482EB93a5B7dD",
+    subgraphUrl: "https://api.thegraph.com/subgraphs/name/ensdomains/enssepolia",
+  },
+};
+
+export function useEnsInfra(): EnsInfra | undefined {
+  const chainId = useChainId();
+  return ENS_INFRA_BY_CHAIN[chainId];
 }
 
 const ALL_DEPLOYMENTS: DeploymentRecord[] = [

@@ -4,9 +4,11 @@
   "deployer": "0xa2219C4f48bC9e6806Bce3B391aB9e23f55FEbb5",
   "contracts": {
     "MatchRegistry": "0x507d78149AE2092a5438825B1BA3F12737FAeC0C",
-    "AgentRegistry": "0x590a3fd749eB0ADAA4F3DAd8F68C98314b5F21CE",
-    "PlayerSubnameRegistrar": "0x8fE78B0480616DfC09F4Cc3B3279966A8245470A",
-    "MatchEscrow": "0xEB2d28fDEC2C70e543e306FF78048bE683aD3b33"
+    "AgentRegistry": "0xE23B83cE16B292e420cd8820ac9d303A45333D17",
+    "PlayerSubnameRegistrar": null,
+    "MatchEscrow": "0x1206A93a9B76652382BC1F5164a8383a9F2A2e16",
+    "NameWrapper": "0x0635513f179D50A207757E05759CbD106d7dFcE8",
+    "PublicResolver": "0x8FADE66B79cC9f707aB26799354482EB93a5B7dD"
   },
   "matchEscrowConstructorArgs": {
     "settler": "0x507d78149AE2092a5438825B1BA3F12737FAeC0C"
@@ -16,7 +18,9 @@
     "initialBaseWeightsHash": "0x989ba07766cc35aa0011cf3f764831d9d1a7e11495db78c310d764b4478409ad"
   },
   "playerSubnameRegistrarConstructorArgs": {
-    "parentNode": "0x543cb3ed47a1ed324d00f8245468ef208194cc298026553f9adc78fb17e41cec"
+    "parentNode": "0x543cb3ed47a1ed324d00f8245468ef208194cc298026553f9adc78fb17e41cec",
+    "nameWrapper": "0x0635513f179D50A207757E05759CbD106d7dFcE8",
+    "resolver": "0x8FADE66B79cC9f707aB26799354482EB93a5B7dD"
   },
   "seedAgent": {
     "agentId": 1,
