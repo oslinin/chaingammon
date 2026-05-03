@@ -150,15 +150,9 @@ async function main() {
     await deployOrReuse("AgentRegistry", AgentRegistryFactory,
       [matchAddr, INITIAL_BASE_WEIGHTS_HASH], existing);
 
-  // ── Seed agent — mint only if none exist yet ───────────────────────────────
-  const agentCount = await agentRegistry.agentCount();
-  if (agentCount === 0n) {
-    const tx = await agentRegistry.mintAgent(deployer.address, SEED_AGENT_METADATA, SEED_AGENT_TIER);
-    const receipt = await tx.wait();
-    console.log(`Seed agent #1 minted to ${deployer.address} (tx ${receipt.hash})`);
-  } else {
-    console.log(`AgentRegistry: ${agentCount} agent(s) already minted — skipping seed`);
-  }
+  // Seed-agent mint is deferred to after the PlayerSubnameRegistrar is wired
+  // up, so the seed agent gets an ENS subname atomically at mint time. See
+  // the "Seed agent" block lower in this file.
 
   // ── ENS infra (NameWrapper + PublicResolver) ──────────────────────────────
   // On Sepolia we use the canonical ENS deployment. On hardhat/0g/localhost
@@ -192,9 +186,51 @@ async function main() {
 
   // ── PlayerSubnameRegistrar ─────────────────────────────────────────────────
   const RegistrarFactory = await ethers.getContractFactory("PlayerSubnameRegistrar");
-  const { address: registrarAddr } =
+  const { contract: registrar, address: registrarAddr } =
     await deployOrReuse("PlayerSubnameRegistrar", RegistrarFactory,
       [ENS_PARENT_NODE, nameWrapperAddr, resolverAddr], existing);
+
+  // ── Wire AgentRegistry ↔ PlayerSubnameRegistrar (idempotent) ──────────────
+  // After wiring, every future AgentRegistry.mintAgent call atomically issues
+  // an ENS subname for the new agent. setSubnameRegistrar tells the AgentRegistry
+  // which registrar to delegate to; setAuthorizedMinter authorises the
+  // AgentRegistry contract address to call the registrar's mintSubname /
+  // revokeSubname functions.
+  const currentRegistrar = await agentRegistry.subnameRegistrar();
+  if (currentRegistrar.toLowerCase() !== registrarAddr.toLowerCase()) {
+    const wireTx = await agentRegistry.setSubnameRegistrar(registrarAddr);
+    await wireTx.wait();
+    console.log(`AgentRegistry.setSubnameRegistrar(${registrarAddr}) → tx ${wireTx.hash}`);
+  } else {
+    console.log(`AgentRegistry: subnameRegistrar already set to ${registrarAddr} — skipping`);
+  }
+
+  const agentIsMinter = await registrar.isAuthorizedMinter(agentAddr);
+  if (!agentIsMinter) {
+    const authTx = await registrar.setAuthorizedMinter(agentAddr, true);
+    await authTx.wait();
+    console.log(`PlayerSubnameRegistrar.setAuthorizedMinter(${agentAddr}, true) → tx ${authTx.hash}`);
+  } else {
+    console.log(`PlayerSubnameRegistrar: AgentRegistry already authorised minter — skipping`);
+  }
+
+  // ── Seed agent — mint only if none exist yet ───────────────────────────────
+  // Now that the registrar is wired, mintAgent issues the corresponding
+  // <label>.chaingammon.eth subname atomically. The label comes from
+  // SEED_AGENT_METADATA via AgentRegistry._cleanLabel ("ipfs://gnubg-default-
+  // placeholder" → "gnubg-default-placeholder").
+  const agentCount = await agentRegistry.agentCount();
+  if (agentCount === 0n) {
+    const tx = await agentRegistry.mintAgent(deployer.address, SEED_AGENT_METADATA, SEED_AGENT_TIER);
+    const receipt = await tx.wait();
+    console.log(`Seed agent #1 minted to ${deployer.address} (tx ${receipt.hash})`);
+  } else {
+    console.log(`AgentRegistry: ${agentCount} agent(s) already minted — skipping seed`);
+    console.log(
+      `  ↪ for any pre-existing agents minted before the registrar was wired, ` +
+      `run: pnpm exec hardhat run script/seed_agent_subnames.js --network ${network.name}`
+    );
+  }
 
   // ── MatchEscrow ────────────────────────────────────────────────────────────
   const MatchEscrowFactory = await ethers.getContractFactory("MatchEscrow");
