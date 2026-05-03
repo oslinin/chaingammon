@@ -121,12 +121,14 @@ export async function POST(req: NextRequest) {
     ];
 
     // 0G Compute Logic
+    console.log("CoS: Initializing 0G broker...");
     const provider = new ethers.JsonRpcProvider(RPC);
     const signer = new ethers.Wallet(PRIVATE_KEY, provider);
     const broker = await createZGComputeNetworkBroker(signer);
 
     let providerAddress = PINNED_PROVIDER;
     if (!providerAddress) {
+      console.log("CoS: Listing services...");
       const services = await broker.inference.listService();
       const chatService = services.find(
         (s) =>
@@ -137,25 +139,31 @@ export async function POST(req: NextRequest) {
       if (!chatService) throw new Error("No chat-capable provider found");
       providerAddress = chatService.provider;
     }
+    console.log(`CoS: Using provider ${providerAddress}`);
 
     // Ledger checks
     try {
+      console.log("CoS: Checking ledger...");
       await broker.ledger.getLedger();
     } catch (e) {
+      console.log("CoS: Adding ledger deposit...");
       await broker.ledger.addLedger(DEPOSIT_OG);
     }
 
     // Top up
     try {
+      console.log("CoS: Transferring funds to provider...");
       const amountNeuron = BigInt(Math.floor(MIN_BALANCE_OG * 1e9));
       await broker.ledger.transferFund(providerAddress, "inference", amountNeuron);
     } catch (e) {
-      // ignore
+      console.warn("CoS: Transfer fund failed (might already have balance):", e);
     }
 
+    console.log("CoS: Fetching service metadata...");
     const { endpoint, model } = await broker.inference.getServiceMetadata(providerAddress);
     const headers = await broker.inference.getRequestHeaders(providerAddress);
 
+    console.log(`CoS: Sending request to ${endpoint} (model: ${model})`);
     const resp = await fetch(`${endpoint}/chat/completions`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...headers },

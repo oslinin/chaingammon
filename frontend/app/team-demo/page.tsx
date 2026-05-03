@@ -443,7 +443,7 @@ export default function TeamDemoPage() {
             matchId={game.match_id}
             dice={game.dice}
             board={game.board}
-            agentId={teammateId || 0}
+            opponentId={opponentIds[0] || 0}
             disabled={!isHumanTurn || game.game_over}
             onMoveSelect={previewMove}
           />
