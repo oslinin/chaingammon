@@ -121,23 +121,32 @@ export async function POST(req: NextRequest) {
     ];
 
     // 0G Compute Logic
-    console.log("CoS: Initializing 0G broker...");
-    const provider = new ethers.JsonRpcProvider(RPC);
-    const signer = new ethers.Wallet(PRIVATE_KEY, provider);
-    const broker = await createZGComputeNetworkBroker(signer);
+    let broker;
+    try {
+      console.log("CoS: Initializing 0G broker...");
+      const provider = new ethers.JsonRpcProvider(RPC);
+      const signer = new ethers.Wallet(PRIVATE_KEY, provider);
+      broker = await createZGComputeNetworkBroker(signer);
+    } catch (e: any) {
+      throw new Error(`0G Broker Init failed: ${e.message}`);
+    }
 
     let providerAddress = PINNED_PROVIDER;
     if (!providerAddress) {
-      console.log("CoS: Listing services...");
-      const services = await broker.inference.listService();
-      const chatService = services.find(
-        (s) =>
-          (s.serviceType ?? "").toLowerCase().includes("chat") ||
-          (s.model ?? "").toLowerCase().includes("qwen") ||
-          (s.model ?? "").toLowerCase().includes("instruct"),
-      );
-      if (!chatService) throw new Error("No chat-capable provider found");
-      providerAddress = chatService.provider;
+      try {
+        console.log("CoS: Listing services...");
+        const services = await broker.inference.listService();
+        const chatService = services.find(
+          (s) =>
+            (s.serviceType ?? "").toLowerCase().includes("chat") ||
+            (s.model ?? "").toLowerCase().includes("qwen") ||
+            (s.model ?? "").toLowerCase().includes("instruct"),
+        );
+        if (!chatService) throw new Error("No chat-capable provider found on 0G network");
+        providerAddress = chatService.provider;
+      } catch (e: any) {
+        throw new Error(`0G Service Discovery failed: ${e.message}`);
+      }
     }
     console.log(`CoS: Using provider ${providerAddress}`);
 
@@ -146,8 +155,12 @@ export async function POST(req: NextRequest) {
       console.log("CoS: Checking ledger...");
       await broker.ledger.getLedger();
     } catch (e) {
-      console.log("CoS: Adding ledger deposit...");
-      await broker.ledger.addLedger(DEPOSIT_OG);
+      try {
+        console.log("CoS: Adding ledger deposit...");
+        await broker.ledger.addLedger(DEPOSIT_OG);
+      } catch (inner: any) {
+        throw new Error(`0G Ledger Deposit failed (check your OG balance): ${inner.message}`);
+      }
     }
 
     // Top up
@@ -159,8 +172,15 @@ export async function POST(req: NextRequest) {
       console.warn("CoS: Transfer fund failed (might already have balance):", e);
     }
 
-    console.log("CoS: Fetching service metadata...");
-    const { endpoint, model } = await broker.inference.getServiceMetadata(providerAddress);
+    let metadata;
+    try {
+      console.log("CoS: Fetching service metadata...");
+      metadata = await broker.inference.getServiceMetadata(providerAddress);
+    } catch (e: any) {
+      throw new Error(`0G Metadata Fetch failed: ${e.message}`);
+    }
+
+    const { endpoint, model } = metadata;
     const headers = await broker.inference.getRequestHeaders(providerAddress);
 
     console.log(`CoS: Sending request to ${endpoint} (model: ${model})`);
