@@ -11,11 +11,12 @@ Tests cover:
   - Recommended move is extracted from the reply
   - Recommended move falls back to top candidate when not found in reply
   - _deep_dive_requested correctly detects all registered trigger words
-  - _mock_historical_search returns tag-appropriate text
+  - _historical_search returns tag-appropriate text
 """
 
 import sys
 import os
+from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
@@ -23,7 +24,7 @@ from fastapi.testclient import TestClient
 from coach_service import (
     app,
     _deep_dive_requested,
-    _mock_historical_search,
+    _historical_search,
     _extract_recommended_move,
 )
 
@@ -107,37 +108,40 @@ def test_deep_dive_not_triggered_by_default():
 
 
 def test_deep_dive_triggered_by_human_strategy():
-    res = client.post("/chief-of-staff/chat", json={
-        "tagged_candidates": _TOP5,
-        "human_strategy": "validate my intuition",
-        "backend": "stub",
-    })
-    data = res.json()
-    assert data["deep_dive"] is not None
-    assert len(data["deep_dive"]) > 10
+    with patch("coach_service._generate_chat", return_value=("deep dive text", "stub")):
+        res = client.post("/chief-of-staff/chat", json={
+            "tagged_candidates": _TOP5,
+            "human_strategy": "validate my intuition",
+            "backend": "stub",
+        })
+        data = res.json()
+        assert data["deep_dive"] is not None
+        assert len(data["deep_dive"]) > 5
 
 
 def test_deep_dive_triggered_by_dialogue():
-    res = client.post("/chief-of-staff/chat", json={
-        "tagged_candidates": _TOP5,
-        "human_strategy": "",
-        "dialogue": [
-            {"role": "agent", "text": "I recommend 8/5 6/5."},
-            {"role": "human", "text": "are you sure about this?"},
-        ],
-        "backend": "stub",
-    })
-    data = res.json()
-    assert data["deep_dive"] is not None
+    with patch("coach_service._generate_chat", return_value=("deep dive text", "stub")):
+        res = client.post("/chief-of-staff/chat", json={
+            "tagged_candidates": _TOP5,
+            "human_strategy": "",
+            "dialogue": [
+                {"role": "agent", "text": "I recommend 8/5 6/5."},
+                {"role": "human", "text": "are you sure about this?"},
+            ],
+            "backend": "stub",
+        })
+        data = res.json()
+        assert data["deep_dive"] is not None
 
 
 def test_deep_dive_triggered_by_historical_keyword():
-    res = client.post("/chief-of-staff/chat", json={
-        "tagged_candidates": _TOP5,
-        "human_strategy": "what does historical data say?",
-        "backend": "stub",
-    })
-    assert res.json()["deep_dive"] is not None
+    with patch("coach_service._generate_chat", return_value=("deep dive text", "stub")):
+        res = client.post("/chief-of-staff/chat", json={
+            "tagged_candidates": _TOP5,
+            "human_strategy": "what does historical data say?",
+            "backend": "stub",
+        })
+        assert res.json()["deep_dive"] is not None
 
 
 def test_deep_dive_not_triggered_for_other_message():
@@ -175,37 +179,13 @@ def test_deep_dive_case_insensitive():
     assert _deep_dive_requested("VALIDATE my strategy") is True
 
 
-# ─── _mock_historical_search unit tests ──────────────────────────────────────
+# ─── _historical_search unit tests ──────────────────────────────────────────
 
-def test_mock_historical_safe():
-    result = _mock_historical_search("8/5 6/5", "Safe")
-    assert "Historical analysis" in result
-    assert "68%" in result or "race" in result.lower()
-
-
-def test_mock_historical_aggressive():
-    result = _mock_historical_search("13/7", "Aggressive")
-    assert "54%" in result or "aggressive" in result.lower()
-
-
-def test_mock_historical_blitz():
-    result = _mock_historical_search("10/5 13/8", "Blitz")
-    assert "blitz" in result.lower() or "60%" in result
-
-
-def test_mock_historical_anchor():
-    result = _mock_historical_search("13/20", "Anchor")
-    assert "anchor" in result.lower() or "82%" in result
-
-
-def test_mock_historical_priming():
-    result = _mock_historical_search("17/12", "Priming")
-    assert "prime" in result.lower() or "71%" in result
-
-
-def test_mock_historical_unknown_tag():
-    result = _mock_historical_search("8/5", "Unknown")
-    assert "Historical analysis" in result
+def test_historical_search():
+    with patch("coach_service._generate_chat", return_value=("Your intuition is supported by the data: he hits exposed blots 88% of the time.", "stub")):
+        result = _historical_search("Let's bait him", _TOP5, "tends to blitz aggressively", "stub")
+        assert "88%" in result
+        assert "intuition" in result.lower()
 
 
 # ─── _extract_recommended_move unit tests ────────────────────────────────────

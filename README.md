@@ -397,9 +397,10 @@ The coach is a turn-by-turn conversation, not a one-shot narrator. Per turn the 
 | Endpoint | Body | Purpose |
 | --- | --- | --- |
 | `POST /chat` | `ChatRequest{kind, match_id, turn_index, position_id, dice, candidates, dialogue, preferences, ...}` | Turn-by-turn dialogue. Three message kinds: `open_turn` (initial take after dice roll), `human_reply` (response to the human's text), `move_committed` (acknowledgement after move commit). Returns `ChatResponse{message, backend, preferences_delta, latency_ms}`. |
+| `POST /chief-of-staff/chat` | `ChiefOfStaffRequest{...}` | **DeepMind-inspired historical search.** The LLM acts as an elite Chief of Staff negotiating the human's macro-strategy. When the human asks for validation (e.g., "Let's bait him"), the LLM reads an Opponent Profile JSON from 0G Storage (simulated) and the ONNX neural network features, then returns a deep-dive response (e.g. "Your intuition is supported by the data: he hits exposed blots 88% of the time. We can play 8/3 to leave a bait blot. It costs 0.05 in theoretical equity against a perfect bot, but against him, it's highly profitable. Lock it in?"). |
 | `POST /hint` | (existing one-shot) | Single-sentence narration for users who don't want a back-and-forth. Stays for backwards-compat. |
 
-Full design: [docs/coach-dialogue.md](docs/coach-dialogue.md). Phase A (data shapes + endpoint stub) is in code now (`agent/coach_dialogue.py`, `agent/coach_service.py`); Phase B wires the LLM call, Phase C lands the frontend dialogue panel, Phase D persists per-session preferences across turns within a match.
+Full design: [docs/coach-dialogue.md](docs/coach-dialogue.md). Phase A (data shapes + endpoint stub) is in code now (`agent/coach_dialogue.py`, `agent/coach_service.py`); Phase B wires the LLM call, Phase C lands the frontend dialogue panel, Phase D persists per-session preferences across turns within a match. Phase 76 adds the Chief of Staff interactive historical search deep dive.
 
 ### Team mode (the human-in-the-loop story)
 
