@@ -56,6 +56,7 @@ import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 
 import { AgentWalletPanel } from "../AgentWalletPanel";
 import { Board } from "../Board";
+import { ChiefOfStaffPanel } from "../ChiefOfStaffPanel";
 import { DiceRoll } from "../DiceRoll";
 import { rollDice } from "../dice";
 import { recordTransaction } from "../transactions";
@@ -1590,6 +1591,27 @@ function MatchInner() {
               </p>
             )}
           </div>
+        )}
+
+        {/* ── Chief of Staff panel (Phase 76) ──────────────────────────────
+            DeepMind-inspired collaborative agent. Human sets macro-strategy;
+            LLM picks the specific tagged move that fits it. Rendered for
+            the human's turn outside fast-forward — same visibility rule as
+            the existing Coach panel above. */}
+        {!game.game_over && !fastForward && (
+          <ChiefOfStaffPanel
+            positionId={game.position_id}
+            matchId={game.match_id}
+            dice={game.dice}
+            board={game.board}
+            agentId={agentId}
+            disabled={!isHumanTurn || game.game_over}
+            onMoveSelect={(move) => {
+              // Pre-fill the text move input so the human can review and
+              // submit, or click to stage — whichever they prefer.
+              setMoveInput(move);
+            }}
+          />
         )}
 
         {!game.game_over && (
