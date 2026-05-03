@@ -9,8 +9,11 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useAccount, useReadContract } from "wagmi";
 
-import { useActiveChain, useEnsInfra } from "./chains";
+import { useActiveChain, useActiveChainId, useEnsInfra } from "./chains";
+import { MatchRegistryABI, useChainContracts } from "./contracts";
+import { useChaingammonName } from "./useChaingammonName";
 import { useChaingammonProfile } from "./useChaingammonProfile";
 import { useHumanMatchSummary } from "./useHumanMatchSummary";
 
@@ -51,6 +54,9 @@ const SUBNAMES_QUERY = `
       id
       labelName
       name
+      wrappedOwner {
+        id
+      }
       resolver {
         texts
         addr {
@@ -76,6 +82,7 @@ async function fetchSubnameEntries(subgraphUrl: string): Promise<DiscoveryEntry[
     id: string;
     labelName: string | null;
     name: string;
+    wrappedOwner: { id: string } | null;
     resolver: {
       texts: string[] | null;
       addr: { id: string } | null;
@@ -83,20 +90,31 @@ async function fetchSubnameEntries(subgraphUrl: string): Promise<DiscoveryEntry[
   }>;
 
   // The subgraph reports which text keys exist; the actual values are not
-  // included in the listing query. For the demo we only need the kind/elo/
-  // endpoint/inft_id keys when the resolver advertises them. For now we
-  // surface every domain and let the consumer fall back to "" for missing
-  // values; pulling actual text values would need a per-domain follow-up
-  // query against the resolver, which is outside the scope of this view.
-  // The resolved Ethereum address (resolver.addr.id) feeds the per-card
-  // match-summary hook so we can show wins/losses on human cards.
+  // included in the listing query. We surface every domain and the consumer
+  // falls back to "" for missing values.
+  //
+  // Address resolution for the per-card match-summary hook tries, in order:
+  //   1. resolver.addr.id  — canonical `addr()` resolution; what every other
+  //      ENS client reads for the wallet bound to a name.
+  //   2. wrappedOwner.id   — for NameWrapper'd subnames the `owner` is the
+  //      NameWrapper contract; the actual user is `wrappedOwner`. Useful
+  //      when the registrar didn't set an explicit `addr()` on the resolver.
+  // If neither is set the address is null and stats fall back to ENS-text
+  // values where available.
+  const ZERO = "0x0000000000000000000000000000000000000000";
   return domains.map((d) => {
     const texts = new Set(d.resolver?.texts ?? []);
-    const rawAddr = d.resolver?.addr?.id ?? null;
+    const candidates = [
+      d.resolver?.addr?.id ?? null,
+      d.wrappedOwner?.id ?? null,
+    ];
     const address =
-      rawAddr && /^0x[0-9a-fA-F]{40}$/.test(rawAddr)
-        ? (rawAddr as `0x${string}`)
-        : null;
+      (candidates.find(
+        (a) =>
+          a !== null &&
+          /^0x[0-9a-fA-F]{40}$/.test(a) &&
+          a.toLowerCase() !== ZERO,
+      ) as `0x${string}` | undefined) ?? null;
     return {
       node: d.id as `0x${string}`,
       label: d.labelName ?? d.id.slice(0, 10),
@@ -118,18 +136,46 @@ function EntryCard({ entry }: { entry: DiscoveryEntry }) {
   const hasInfoLink = entry.kind === "agent" && !!entry.inftId;
   const isHuman = entry.kind === "human";
 
+  // The connected wallet's own subname; lets us recover an address for the
+  // user's own card even when the subgraph didn't expose `resolver.addr` or
+  // `wrappedOwner`. This is the same trick ProfileBadge relies on.
+  const { address: connectedAddress } = useAccount();
+  const { label: connectedLabel } = useChaingammonName(connectedAddress);
+
+  const resolvedAddress: `0x${string}` | undefined =
+    entry.address ??
+    (isHuman && connectedAddress && connectedLabel === entry.label
+      ? connectedAddress
+      : undefined);
+
   // ENS text records (`elo`, `match_count`) for humans. Agents render an
   // ELO placeholder; their stats come from AgentsList.
   const { elo: eloText, matchCount } = useChaingammonProfile(
     isHuman ? entry.label : null,
   );
-  // MatchRecorded event scan to break match_count into wins/losses. Skipped
-  // when the resolver didn't expose an Ethereum address (returns null).
+  // MatchRecorded event scan to break match_count into wins/losses.
   const { summary } = useHumanMatchSummary(
-    isHuman && entry.address ? entry.address : undefined,
+    isHuman ? resolvedAddress : undefined,
   );
+  // Fallback ELO source: MatchRegistry.humanElo(address). The settlement
+  // flow doesn't always write the ENS `elo` text record, so the on-chain
+  // map is the authoritative current rating. Mirrors ProfileBadge.
+  const chainId = useActiveChainId();
+  const { matchRegistry } = useChainContracts();
+  const { data: chainEloRaw } = useReadContract({
+    address: matchRegistry,
+    abi: MatchRegistryABI,
+    functionName: "humanElo",
+    args: resolvedAddress ? [resolvedAddress] : undefined,
+    chainId,
+    query: { enabled: isHuman && !!resolvedAddress && !eloText },
+  });
 
-  const eloDisplay = eloText || entry.elo || "—";
+  const eloDisplay =
+    eloText ||
+    (chainEloRaw != null ? String(chainEloRaw) : "") ||
+    entry.elo ||
+    "—";
   const matches = summary?.matches ?? (matchCount ? Number(matchCount) : null);
   const wins = summary?.wins ?? null;
   const losses = summary?.losses ?? null;
