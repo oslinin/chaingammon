@@ -11,11 +11,11 @@ interface IMatchRegistry {
 /// @notice Minimal interface for PlayerSubnameRegistrar — functions
 ///         AgentRegistry calls on mint and on burn.
 interface IPlayerSubnameRegistrar {
-    function mintSubname(string calldata label, address subnameOwner_) external returns (bytes32 node);
-    function setText(bytes32 node, string calldata key, string calldata value) external;
-    function subnameNode(string calldata label) external view returns (bytes32);
-    function ownerOf(bytes32 node) external view returns (address);
-    function revokeSubname(bytes32 node) external;
+    function mintSubname(string calldata label, address subnameOwner_, uint256 inftId)
+        external
+        returns (bytes32 node);
+    function ownerOf(string calldata label) external view returns (address);
+    function revokeSubname(string calldata label) external;
 }
 
 /// @title AgentRegistry — iNFT registry for AI backgammon agents on 0G.
@@ -122,9 +122,7 @@ contract AgentRegistry is ERC721, Ownable {
         // Atomic subname mint — only when a registrar is wired.
         if (address(subnameRegistrar) != address(0)) {
             string memory label = _cleanLabel(metadataURI);
-            bytes32 node = subnameRegistrar.mintSubname(label, to);
-            subnameRegistrar.setText(node, "kind", "agent");
-            subnameRegistrar.setText(node, "inft_id", _toString(agentId));
+            subnameRegistrar.mintSubname(label, to, agentId);
         }
     }
 
@@ -140,11 +138,10 @@ contract AgentRegistry is ERC721, Ownable {
         // Revoke ENS subname atomically when a registrar is wired.
         if (address(subnameRegistrar) != address(0)) {
             string memory label = _cleanLabel(_agentMetadata[agentId]);
-            bytes32 node = subnameRegistrar.subnameNode(label);
             // Only revoke if the subname actually exists (guard against
             // agents minted before the registrar was wired).
-            if (subnameRegistrar.ownerOf(node) != address(0)) {
-                subnameRegistrar.revokeSubname(node);
+            if (subnameRegistrar.ownerOf(label) != address(0)) {
+                subnameRegistrar.revokeSubname(label);
             }
         }
 
@@ -256,23 +253,5 @@ contract AgentRegistry is ERC721, Ownable {
             result[i] = b[start + i] == "/" ? bytes1("-") : b[start + i];
         }
         return string(result);
-    }
-
-    /// @dev Convert uint256 to its decimal string representation.
-    function _toString(uint256 value) internal pure returns (string memory) {
-        if (value == 0) return "0";
-        uint256 temp = value;
-        uint256 digits;
-        while (temp != 0) {
-            digits++;
-            temp /= 10;
-        }
-        bytes memory buffer = new bytes(digits);
-        while (value != 0) {
-            digits -= 1;
-            buffer[digits] = bytes1(uint8(48 + uint256(value % 10)));
-            value /= 10;
-        }
-        return string(buffer);
     }
 }

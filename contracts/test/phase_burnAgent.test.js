@@ -1,8 +1,8 @@
 // Tests for AgentRegistry.burnAgent and the supporting pieces:
 //
-//   - PlayerSubnameRegistrar.revokeSubname (standalone)
+//   - PlayerSubnameRegistrar.revokeSubname (standalone, NameWrapper-backed)
 //   - AgentRegistry active-agent index (activeAgentCount / activeAgentAt)
-//   - AgentRegistry.burnAgent:
+//   - AgentRegistry.burnAgent core behaviour:
 //       · ERC-721 token gone
 //       · metadata + data cleared
 //       · active-agent index updated (swap-and-pop)
@@ -46,8 +46,18 @@ async function deployAll() {
   const MatchRegistry = await ethers.getContractFactory("MatchRegistry");
   const matchRegistry = await MatchRegistry.deploy();
 
+  const NameWrapper = await ethers.getContractFactory("MockNameWrapper");
+  const nameWrapper = await NameWrapper.deploy();
+
+  const Resolver = await ethers.getContractFactory("MockResolver");
+  const resolver = await Resolver.deploy();
+
   const Registrar = await ethers.getContractFactory("PlayerSubnameRegistrar");
-  const registrar = await Registrar.deploy(PARENT);
+  const registrar = await Registrar.deploy(
+    PARENT,
+    await nameWrapper.getAddress(),
+    await resolver.getAddress()
+  );
 
   const AgentRegistry = await ethers.getContractFactory("AgentRegistry");
   const agentRegistry = await AgentRegistry.deploy(
@@ -59,7 +69,7 @@ async function deployAll() {
   await agentRegistry.connect(owner).setSubnameRegistrar(await registrar.getAddress());
   await registrar.connect(owner).setAuthorizedMinter(await agentRegistry.getAddress(), true);
 
-  return { owner, alice, bob, carol, matchRegistry, registrar, agentRegistry };
+  return { owner, alice, bob, carol, matchRegistry, registrar, agentRegistry, nameWrapper, resolver };
 }
 
 // ---------------------------------------------------------------------------
@@ -67,78 +77,60 @@ async function deployAll() {
 // ---------------------------------------------------------------------------
 
 describe("PlayerSubnameRegistrar — revokeSubname", function () {
-  let registrar, owner, alice;
-
-  beforeEach(async function () {
-    [owner, alice] = await ethers.getSigners();
+  async function freshRegistrar() {
+    const [owner, alice] = await ethers.getSigners();
+    const NameWrapper = await ethers.getContractFactory("MockNameWrapper");
+    const nameWrapper = await NameWrapper.deploy();
+    const Resolver = await ethers.getContractFactory("MockResolver");
+    const resolver = await Resolver.deploy();
     const Registrar = await ethers.getContractFactory("PlayerSubnameRegistrar");
-    registrar = await Registrar.deploy(PARENT);
-  });
+    const registrar = await Registrar.deploy(
+      PARENT,
+      await nameWrapper.getAddress(),
+      await resolver.getAddress()
+    );
+    return { owner, alice, registrar };
+  }
 
   it("owner can revoke an existing subname", async function () {
-    await registrar.connect(owner).mintSubname("alice", alice.address);
-    const node = await registrar.subnameNode("alice");
-    await registrar.connect(owner).revokeSubname(node);
-    expect(await registrar.ownerOf(node)).to.equal(ZERO_ADDR);
-  });
-
-  it("subnameCount decrements after revoke", async function () {
-    await registrar.connect(owner).mintSubname("alice", alice.address);
-    expect(await registrar.subnameCount()).to.equal(1n);
-    const node = await registrar.subnameNode("alice");
-    await registrar.connect(owner).revokeSubname(node);
-    expect(await registrar.subnameCount()).to.equal(0n);
-  });
-
-  it("revoked node is no longer enumerable", async function () {
-    await registrar.connect(owner).mintSubname("alice", alice.address);
-    await registrar.connect(owner).mintSubname("bob", alice.address);
-    const nodeAlice = await registrar.subnameNode("alice");
-    await registrar.connect(owner).revokeSubname(nodeAlice);
-    // Only one entry left; it must be bob's node
-    const nodeBob = await registrar.subnameNode("bob");
-    expect(await registrar.subnameAt(0)).to.equal(nodeBob);
+    const { owner, alice, registrar } = await freshRegistrar();
+    await registrar.connect(owner).mintSubname("alice", alice.address, 0);
+    expect(await registrar.ownerOf("alice")).to.equal(alice.address);
+    await registrar.connect(owner).revokeSubname("alice");
+    expect(await registrar.ownerOf("alice")).to.equal(ZERO_ADDR);
   });
 
   it("non-owner cannot revoke", async function () {
-    await registrar.connect(owner).mintSubname("alice", alice.address);
-    const node = await registrar.subnameNode("alice");
+    const { owner, alice, registrar } = await freshRegistrar();
+    await registrar.connect(owner).mintSubname("alice", alice.address, 0);
     await expect(
-      registrar.connect(alice).revokeSubname(node)
+      registrar.connect(alice).revokeSubname("alice")
     ).to.be.revertedWithCustomError(registrar, "NotAuthorized");
   });
 
-  it("revoking a non-existent node reverts with SubnameDoesNotExist", async function () {
-    const fakeNode = ethers.keccak256(ethers.toUtf8Bytes("nonexistent"));
-    await expect(
-      registrar.connect(owner).revokeSubname(fakeNode)
-    ).to.be.revertedWithCustomError(registrar, "SubnameDoesNotExist");
-  });
-
   it("authorized minter can revoke", async function () {
-    await registrar.connect(owner).mintSubname("alice", alice.address);
-    const node = await registrar.subnameNode("alice");
-    // Authorize alice as a minter
+    const { owner, alice, registrar } = await freshRegistrar();
+    await registrar.connect(owner).mintSubname("alice", alice.address, 0);
     await registrar.connect(owner).setAuthorizedMinter(alice.address, true);
-    await registrar.connect(alice).revokeSubname(node);
-    expect(await registrar.ownerOf(node)).to.equal(ZERO_ADDR);
+    await registrar.connect(alice).revokeSubname("alice");
+    expect(await registrar.ownerOf("alice")).to.equal(ZERO_ADDR);
   });
 
   it("emits SubnameRevoked event", async function () {
-    await registrar.connect(owner).mintSubname("alice", alice.address);
+    const { owner, alice, registrar } = await freshRegistrar();
+    await registrar.connect(owner).mintSubname("alice", alice.address, 0);
     const node = await registrar.subnameNode("alice");
-    await expect(registrar.connect(owner).revokeSubname(node))
+    await expect(registrar.connect(owner).revokeSubname("alice"))
       .to.emit(registrar, "SubnameRevoked")
-      .withArgs(node);
+      .withArgs("alice", node);
   });
 
   it("after revoke the label can be re-minted", async function () {
-    await registrar.connect(owner).mintSubname("alice", alice.address);
-    const node = await registrar.subnameNode("alice");
-    await registrar.connect(owner).revokeSubname(node);
-    // Should not revert — SubnameAlreadyExists is no longer triggered
-    await registrar.connect(owner).mintSubname("alice", alice.address);
-    expect(await registrar.ownerOf(node)).to.equal(alice.address);
+    const { owner, alice, registrar } = await freshRegistrar();
+    await registrar.connect(owner).mintSubname("alice", alice.address, 0);
+    await registrar.connect(owner).revokeSubname("alice");
+    await registrar.connect(owner).mintSubname("alice", alice.address, 0);
+    expect(await registrar.ownerOf("alice")).to.equal(alice.address);
   });
 });
 
@@ -205,7 +197,6 @@ describe("AgentRegistry.burnAgent — core", function () {
     const { owner, alice, agentRegistry } = await deployAll();
     await agentRegistry.connect(owner).mintAgent(alice.address, "ipfs://tier1", 1);
     await agentRegistry.connect(owner).burnAgent(1);
-    // agentCount is the ever-minted counter; it must not decrement
     expect(await agentRegistry.agentCount()).to.equal(1n);
   });
 
@@ -252,29 +243,10 @@ describe("AgentRegistry.burnAgent — ENS subname", function () {
   it("revokes the ENS subname atomically", async function () {
     const { owner, alice, registrar, agentRegistry } = await deployAll();
     await agentRegistry.connect(owner).mintAgent(alice.address, "ipfs://tier1", 1);
-    const node = await registrar.subnameNode("tier1");
-    expect(await registrar.ownerOf(node)).to.equal(alice.address);
+    expect(await registrar.ownerOf("tier1")).to.equal(alice.address);
 
     await agentRegistry.connect(owner).burnAgent(1);
-    expect(await registrar.ownerOf(node)).to.equal(ZERO_ADDR);
-  });
-
-  it("subnameCount decrements after burn", async function () {
-    const { owner, alice, registrar, agentRegistry } = await deployAll();
-    await agentRegistry.connect(owner).mintAgent(alice.address, "ipfs://tier1", 1);
-    expect(await registrar.subnameCount()).to.equal(1n);
-    await agentRegistry.connect(owner).burnAgent(1);
-    expect(await registrar.subnameCount()).to.equal(0n);
-  });
-
-  it("burned subname is no longer enumerable in PlayerSubnameRegistrar", async function () {
-    const { owner, alice, registrar, agentRegistry } = await deployAll();
-    await agentRegistry.connect(owner).mintAgent(alice.address, "ipfs://tier1", 1);
-    await agentRegistry.connect(owner).mintAgent(alice.address, "ipfs://tier2", 2);
-    await agentRegistry.connect(owner).burnAgent(1);
-    // Only one subname left; it must be tier2
-    const nodeTier2 = await registrar.subnameNode("tier2");
-    expect(await registrar.subnameAt(0)).to.equal(nodeTier2);
+    expect(await registrar.ownerOf("tier1")).to.equal(ZERO_ADDR);
   });
 });
 
@@ -292,7 +264,6 @@ describe("AgentRegistry.burnAgent — no registrar", function () {
       await matchRegistry.getAddress(),
       ZERO_HASH
     );
-    // No setSubnameRegistrar call
     await agentRegistry.connect(owner).mintAgent(alice.address, "ipfs://tier1", 1);
     await agentRegistry.connect(owner).burnAgent(1);
     expect(await agentRegistry.activeAgentCount()).to.equal(0n);
@@ -309,8 +280,16 @@ describe("AgentRegistry.burnAgent — agent has no subname (pre-wire mint)", fun
     const [owner, alice] = await ethers.getSigners();
     const MatchRegistry = await ethers.getContractFactory("MatchRegistry");
     const matchRegistry = await MatchRegistry.deploy();
+    const NameWrapper = await ethers.getContractFactory("MockNameWrapper");
+    const nameWrapper = await NameWrapper.deploy();
+    const Resolver = await ethers.getContractFactory("MockResolver");
+    const resolver = await Resolver.deploy();
     const Registrar = await ethers.getContractFactory("PlayerSubnameRegistrar");
-    const registrar = await Registrar.deploy(PARENT);
+    const registrar = await Registrar.deploy(
+      PARENT,
+      await nameWrapper.getAddress(),
+      await resolver.getAddress()
+    );
     const AgentRegistry = await ethers.getContractFactory("AgentRegistry");
     const agentRegistry = await AgentRegistry.deploy(
       await matchRegistry.getAddress(),
@@ -353,11 +332,10 @@ describe("AgentRegistry active-agent index compaction", function () {
 
   it("burning the first agent moves the last into its slot", async function () {
     const { owner, alice, agentRegistry } = await deployAll();
-    await agentRegistry.connect(owner).mintAgent(alice.address, "ipfs://a", 1); // id 1
-    await agentRegistry.connect(owner).mintAgent(alice.address, "ipfs://b", 1); // id 2
-    await agentRegistry.connect(owner).mintAgent(alice.address, "ipfs://c", 1); // id 3
+    await agentRegistry.connect(owner).mintAgent(alice.address, "ipfs://a", 1);
+    await agentRegistry.connect(owner).mintAgent(alice.address, "ipfs://b", 1);
+    await agentRegistry.connect(owner).mintAgent(alice.address, "ipfs://c", 1);
     await agentRegistry.connect(owner).burnAgent(1); // burn first
-    // id 3 should have swapped into slot 0; id 2 stays at slot 1
     const ids = [
       Number(await agentRegistry.activeAgentAt(0)),
       Number(await agentRegistry.activeAgentAt(1)),
@@ -368,9 +346,9 @@ describe("AgentRegistry active-agent index compaction", function () {
 
   it("burning the middle agent compacts correctly", async function () {
     const { owner, alice, agentRegistry } = await deployAll();
-    await agentRegistry.connect(owner).mintAgent(alice.address, "ipfs://a", 1); // id 1
-    await agentRegistry.connect(owner).mintAgent(alice.address, "ipfs://b", 1); // id 2
-    await agentRegistry.connect(owner).mintAgent(alice.address, "ipfs://c", 1); // id 3
+    await agentRegistry.connect(owner).mintAgent(alice.address, "ipfs://a", 1);
+    await agentRegistry.connect(owner).mintAgent(alice.address, "ipfs://b", 1);
+    await agentRegistry.connect(owner).mintAgent(alice.address, "ipfs://c", 1);
     await agentRegistry.connect(owner).burnAgent(2); // burn middle
     const ids = [
       Number(await agentRegistry.activeAgentAt(0)),
@@ -393,11 +371,10 @@ describe("AgentRegistry active-agent index compaction", function () {
 
   it("minting after burns assigns new ids correctly and index stays consistent", async function () {
     const { owner, alice, agentRegistry } = await deployAll();
-    await agentRegistry.connect(owner).mintAgent(alice.address, "ipfs://a", 1); // id 1
-    await agentRegistry.connect(owner).mintAgent(alice.address, "ipfs://b", 1); // id 2
+    await agentRegistry.connect(owner).mintAgent(alice.address, "ipfs://a", 1);
+    await agentRegistry.connect(owner).mintAgent(alice.address, "ipfs://b", 1);
     await agentRegistry.connect(owner).burnAgent(1);
-    await agentRegistry.connect(owner).mintAgent(alice.address, "ipfs://c", 1); // id 3
-    // Active agents should be 2 and 3
+    await agentRegistry.connect(owner).mintAgent(alice.address, "ipfs://c", 1);
     const ids = [
       Number(await agentRegistry.activeAgentAt(0)),
       Number(await agentRegistry.activeAgentAt(1)),
