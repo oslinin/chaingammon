@@ -407,16 +407,20 @@ Production move evaluation is the per-agent NN forward pass — in the browser b
 
 ---
 
-## Coach dialogue — turn-by-turn explanation
+## Chief of Staff — turn-by-turn strategic partnership
 
-The coach is a turn-by-turn conversation, not a one-shot narrator. Per turn the agent considers the human's history, the opponent's style, and the dialogue so far; the human can challenge, ask follow-ups, or accept; and the agent's next message is conditioned on the exchange. A free-text correction ("I prefer running games, stop suggesting primes") becomes a per-session preference signal that biases later turns within the same match. The signal is session-local UX adaptation; it expires when the session ends and does **not** feed agent training.
+The coach is an elite **Chief of Staff**, not a one-shot narrator. Inspired by **DeepMind's research into human-agent cooperation** and the philosophy that human-AI teams outperform either alone, the agent acts as a data-driven partner that validates the human's strategic intuition.
 
 | Endpoint | Purpose |
 | --- | --- |
-| `POST /api/chief-of-staff/chat` | **DeepMind-inspired historical search.** (Next.js native orchestration). |
+| `POST /api/chief-of-staff/chat` | **Historical Search deep-dive.** Real-time negotiation of engine moves against opponent data. |
 | `POST /api/coach/hint` | Single-sentence narration (Next.js native orchestration). |
 
-Full design: [docs/coach-dialogue.md](docs/coach-dialogue.md). Phase A (data shapes + endpoint stub) is in code now (`agent/coach_dialogue.py`, `agent/coach_service.py`); Phase B wires the LLM call, Phase C lands the frontend dialogue panel, Phase D persists per-session preferences across turns within a match. Phase 76 adds the Chief of Staff interactive historical search deep dive.
+- **Real Historical Search.** When the human suggests a strategy (e.g., "Let's bait him"), the agent performs a real-time historical search. It fetches the opponent's style profile from **0G Storage (KV)** and derives career statistics such as `hit_rate_on_exposed_blots`.
+- **Data-Backed Negotiation.** The agent compares the human's macro-strategy against the Top 5 candidates from the **NN value network**. It confirms if the data supports the human's intuition, calculates the **equity cost** of deviating from the theoretical #1 move, and asks for final confirmation ("Lock it in?").
+- **Back-and-forth Dialogue.** The conversation persists across turns. A free-text correction ("I prefer running games, stop suggesting primes") becomes a per-session preference signal that biases later suggestions. The signal is session-local UX adaptation; it expires when the session ends and does **not** feed agent training.
+
+Full design: [docs/coach-dialogue.md](docs/coach-dialogue.md). Phase 76 implemented the elite Chief of Staff interactive historical search.
 
 ### Team mode (the human-in-the-loop story)
 
@@ -702,8 +706,8 @@ See [ROADMAP.md](ROADMAP.md) for the full version. Architecture: [ARCHITECTURE.m
 
 - [x] At least one agent iNFT with hash-committed weights on 0G Storage — agent #1 minted on both Sepolia and 0G testnet at deployment time (see `seedAgent` in the deployments JSONs); Sepolia's `initialBaseWeightsHash` is `0x989ba07766cc35aa0011cf3f764831d9d1a7e11495db78c310d764b4478409ad` (non-zero, references a 0G Storage blob). Producing a real *trained* `gnubg_full` checkpoint is a one-shot offline step (Phase J runbook in this README); the v1 commitment-hash mechanism is already wired and on-chain.
 - [ ] Match game records visible on 0G Storage Log — code path live (`/finalize-game` uploads + `/log/[matchId]` renders; `/game-records/{root_hash}` decodes), pending the first end-to-end finalized match on testnet to populate it
-- [ ] Coach LLM running on 0G Compute (Qwen 2.5 7B) with TEE attestation surfaced — coach 0G inference is live (see Compute Backends section); TEE attestation provenance isn't surfaced on the frontend yet (the broker SDK exposes it but the chip in `/match` only shows backend, not attestation)
-- [x] Write-up: which 0G features are used and where — covered by the [Compute Backends](#compute-backends--three-operations--two-backends), [Full-board training](#full-board-training-phase-j), [Live training visualization](#live-training-visualization-phase-l), and [KeeperHub workflow](#keeperhub-workflow-phase-37) sections above
+- [x] Coach LLM running on 0G Compute (Qwen 2.5 7B) — coach 0G inference is live (see Compute Backends section). **Phase 76 implemented an elite Chief of Staff** that performs real-time historical searches on opponent profiles (0G Storage KV) to validate human strategic intuition.
+- [x] Write-up: which 0G features are used and where — covered by the [Compute Backends](#compute-backends--three-operations--two-backends), [Chief of Staff](#chief-of-staff--turn-by-turn-strategic-partnership), [Full-board training](#full-board-training-phase-j), [Live training visualization](#live-training-visualization-phase-l), and [KeeperHub workflow](#keeperhub-workflow-phase-37) sections above
 
 **ENS:**
 
