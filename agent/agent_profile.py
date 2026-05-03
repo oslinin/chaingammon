@@ -193,9 +193,10 @@ class ModelProfile(AgentProfile):
                         # was constructed without a checkpoint blob.
 
     def summarize(self) -> str:
-        # Round-robin training pairs distinct agents (agent_A vs agent_B),
-        # not "self vs self" — keep the wording neutral.
-        return "This agent is a trained value network."
+        count = int(self._metadata.get("match_count", 0))
+        if count == 0:
+            return "This agent is a fresh value network — no training matches recorded yet."
+        return f"This agent is a trained value network with {count} games of experience."
 
     def metrics(self) -> Mapping[str, object]:
         return {"kind": "model", **self._metadata}
@@ -301,6 +302,13 @@ def load_profile(
         return NullProfile()
     if fetch is None:
         try:
+            import sys
+            from pathlib import Path as _P
+            # Add repo root (parent of agent/) to sys.path so we can import server.app.og_storage_client
+            _repo_root = _P(__file__).resolve().parents[1]
+            if str(_repo_root) not in sys.path:
+                sys.path.insert(0, str(_repo_root))
+
             from server.app.og_storage_client import get_blob  # type: ignore[import]
             fetch = get_blob
         except ImportError:

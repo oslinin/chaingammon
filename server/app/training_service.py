@@ -35,17 +35,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
+from .agent_wallets import AgentWalletManager
+
 
 # Repository root — agent/round_robin_trainer.py lives at ../agent/.
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _AGENT_DIR = _REPO_ROOT / "agent"
 _TRAINER = _AGENT_DIR / "round_robin_trainer.py"
-
-# Phase L.2: TensorBoard alongside the trainer. We pin the port so the
-# frontend's iframe URL is predictable; the env override exists for
-# operators running multiple training jobs side by side.
-TENSORBOARD_PORT = int(os.environ.get("CHAINGAMMON_TB_PORT", "6006"))
-TENSORBOARD_HOST = os.environ.get("CHAINGAMMON_TB_HOST", "localhost")
 
 
 # Used by /training/estimate when use_0g_inference is true. Calibrated
@@ -78,16 +74,6 @@ class TrainingJob:
     upload_to_0g: bool = False
     checkpoint_dir: Optional[Path] = None
     process: Optional[subprocess.Popen] = field(default=None, repr=False)
-    # Phase L.2: TensorBoard sidecar — written when the trainer's
-    # --logdir is set (the default for every job started via
-    # /training/start). url is published in /training/status so the
-    # frontend can iframe it.
-    logdir: Optional[Path] = None
-    tensorboard_pid: Optional[int] = None
-    tensorboard_url: Optional[str] = None
-    tensorboard_process: Optional[subprocess.Popen] = field(
-        default=None, repr=False
-    )
 
 
 _current_job: Optional[TrainingJob] = None
@@ -117,10 +103,7 @@ def _clear_if_dead() -> None:
     if _current_job is not None and not _is_pid_alive(_current_job.pid):
         # Don't drop the JSONL path — the status reader still wants it
         # for post-mortem; just zero out the module global so a new
-        # start_job() doesn't 409 against a corpse. Phase L.2: also
-        # tear down the tensorboard sidecar (the trainer is dead but
-        # tb keeps the port pinned otherwise).
-        _terminate_tensorboard(_current_job)
+        # start_job() doesn't 409 against a corpse.
         _current_job = None
 
 
@@ -165,11 +148,6 @@ def start_job(
     log_fd, log_path = tempfile.mkstemp(prefix="chaingammon-training-", suffix=".log")
     log_file = Path(log_path)
 
-    # Phase L.2: TensorBoard logdir lives next to the status file so
-    # event files persist for post-mortem inspection. mkdtemp keeps
-    # the directory unique per run.
-    tb_logdir = Path(tempfile.mkdtemp(prefix="chaingammon-training-tb-"))
-
     # When 0G upload is requested and no explicit checkpoint dir is
     # given, create a persistent temp dir so the trainer has somewhere
     # to write the .pt files before uploading them to 0G Storage. The
@@ -186,7 +164,6 @@ def start_job(
         "--status-file", str(status_file),
         "--extras-dim", str(extras_dim),
         "--seed", str(seed),
-        "--logdir", str(tb_logdir),
     ]
     # When the caller wants 0G uploads but didn't pin a checkpoint dir,
     # auto-create one in tmp. The trainer skips its end-of-run save block
@@ -205,6 +182,14 @@ def start_job(
     if use_0g_inference:
         cmd.append("--use-0g-inference")
 
+    # Pre-provision wallets for all agents so they show up in status.
+    try:
+        wallets = AgentWalletManager.from_env()
+        for aid in agent_ids:
+            wallets.get_or_create(aid)
+    except Exception:
+        pass
+
     # Open log file for the subprocess to write to.
     log_fh = open(log_path, "w")
     try:
@@ -222,14 +207,6 @@ def start_job(
         log_file.unlink(missing_ok=True)
         raise
 
-    # Phase L.2: spawn TensorBoard alongside the trainer. Best-effort —
-    # if the binary isn't on PATH or the port is already taken, log
-    # the failure and continue: training still works without it, and
-    # /training/status will report tensorboard_url=None so the
-    # frontend can show a "tensorboard unavailable" placeholder
-    # instead of a broken iframe.
-    tb_proc, tb_url = _maybe_spawn_tensorboard(tb_logdir, log_fh)
-
     job = TrainingJob(
         pid=process.pid,
         started_at=datetime.now(timezone.utc),
@@ -242,10 +219,6 @@ def start_job(
         upload_to_0g=upload_to_0g,
         checkpoint_dir=checkpoint_dir,
         process=process,
-        logdir=tb_logdir,
-        tensorboard_pid=tb_proc.pid if tb_proc is not None else None,
-        tensorboard_url=tb_url,
-        tensorboard_process=tb_proc,
     )
     _current_job = job
 
@@ -274,19 +247,19 @@ def _post_training_chain_writes(
 ) -> None:
     """Wait for the trainer subprocess to exit, then write every
     `agent_saved` event's `root_hash` on-chain.
-
-    Runs in a daemon thread spawned by `start_job`. Pure best-effort:
-    any failure is appended to the JSONL as a `chain_write` event with
-    an `error` field but never raised. Skipped silently if the trainer
-    was aborted (non-zero return code) — partial training shouldn't
-    move the on-chain state.
     """
+    import logging
+    logger = logging.getLogger(__name__)
     try:
+        logger.info("Watcher thread waiting for trainer PID %d", process.pid)
         returncode = process.wait()
     except Exception as e:
+        logger.error("Watcher thread wait failed: %s", e)
         _emit_chain_write(status_file, agent_id=None, error=f"wait failed: {e}")
         return
+    
     if returncode != 0:
+        logger.warning("Trainer PID %d exited with %d; skipping chain writes", process.pid, returncode)
         _emit_chain_write(
             status_file,
             agent_id=None,
@@ -294,9 +267,8 @@ def _post_training_chain_writes(
         )
         return
 
-    # Parse the JSONL for `agent_saved` events. Each carries `agent_id`
-    # and `root_hash`. `root_hash` is empty when the trainer didn't
-    # actually upload (e.g. og-bridge missing), so skip those.
+    logger.info("Trainer PID %d finished; parsing status file for saved agents", process.pid)
+    # Parse the JSONL for `agent_saved` events.
     saved: list[dict[str, Any]] = []
     try:
         for line in status_file.read_text().splitlines():
@@ -309,25 +281,29 @@ def _post_training_chain_writes(
             if evt.get("event") == "agent_saved":
                 saved.append(evt)
     except FileNotFoundError:
+        logger.error("Status file %s not found", status_file)
         return
 
     if not saved:
+        logger.info("No agent_saved events found in status file")
         return
 
-    # Lazy import to keep the test path (which mocks Popen) free of the
-    # web3 + ChainClient construction cost.
+    logger.info("Found %d saved agent(s). Preparing chain client...", len(saved))
     try:
         from .chain_client import ChainClient, ChainError
     except ImportError as e:
+        logger.error("chain_client import failed: %s", e)
         _emit_chain_write(status_file, agent_id=None, error=f"chain_client import: {e}")
         return
 
     try:
         chain = ChainClient.from_env()
     except (ChainError, KeyError, OSError) as e:
+        logger.error("Chain client construction failed: %s", e)
         _emit_chain_write(status_file, agent_id=None, error=f"chain client unavailable: {e}")
         return
     if chain.agent_registry is None:
+        logger.error("AGENT_REGISTRY_ADDRESS not set")
         _emit_chain_write(
             status_file,
             agent_id=None,
@@ -341,14 +317,17 @@ def _post_training_chain_writes(
         if agent_id is None or not root_hash:
             continue
         try:
+            logger.info("Writing Agent #%d root_hash %s on-chain...", agent_id, root_hash)
             tx_hash = chain.update_overlay_hash(int(agent_id), root_hash)
+            logger.info("Agent #%d update successful: %s", agent_id, tx_hash)
             _emit_chain_write(
                 status_file,
                 agent_id=int(agent_id),
                 root_hash=root_hash,
                 tx_hash=tx_hash,
             )
-        except Exception as e:  # noqa: BLE001 — surface every chain-write failure
+        except Exception as e:
+            logger.error("Chain write failed for Agent #%d: %s", agent_id, e)
             _emit_chain_write(
                 status_file,
                 agent_id=int(agent_id),
@@ -366,57 +345,6 @@ def _emit_chain_write(status_file: Path, **fields: Any) -> None:
             fh.write(json.dumps({"event": "chain_write", "ts": time.time(), **fields}) + "\n")
     except OSError:
         pass
-
-
-def _maybe_spawn_tensorboard(
-    logdir: Path, log_fh
-) -> "tuple[Optional[subprocess.Popen], Optional[str]]":
-    """Best-effort tensorboard launch. Returns (process, url) on success
-    or (None, None) when the binary isn't available / port is in use."""
-    cmd = [
-        "tensorboard",
-        "--logdir", str(logdir),
-        "--host", TENSORBOARD_HOST,
-        "--port", str(TENSORBOARD_PORT),
-        # Survive remote browsers when host is bound to 0.0.0.0; harmless
-        # at localhost.
-        "--bind_all",
-    ]
-    try:
-        proc = subprocess.Popen(
-            cmd,
-            stdout=log_fh,
-            stderr=log_fh,
-        )
-    except FileNotFoundError:
-        # tensorboard binary not on PATH — silently skip.
-        return None, None
-    except Exception:
-        # Permission / port binding / unknown — also skip.
-        return None, None
-    url = f"http://{TENSORBOARD_HOST}:{TENSORBOARD_PORT}"
-    return proc, url
-
-
-def _terminate_tensorboard(job: TrainingJob) -> None:
-    """Best-effort tensorboard teardown. Called from abort_job and from
-    next start_job's _clear_if_dead path so a finished run's TB
-    sidecar doesn't keep the port pinned."""
-    if job.tensorboard_pid is None:
-        return
-    try:
-        os.kill(job.tensorboard_pid, signal.SIGTERM)
-    except ProcessLookupError:
-        return
-    proc = job.tensorboard_process
-    if proc is not None:
-        try:
-            proc.wait(timeout=5.0)
-        except subprocess.TimeoutExpired:
-            try:
-                os.kill(job.tensorboard_pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
 
 
 def abort_job(*, grace_seconds: float = 5.0) -> bool:
@@ -459,10 +387,9 @@ def abort_job(*, grace_seconds: float = 5.0) -> bool:
             except ProcessLookupError:
                 pass
 
-    # Phase L.2: tensorboard sidecar cleanup before clearing singleton.
-    _terminate_tensorboard(_current_job)
     _current_job = None
     return True
+
 
 
 def get_current_job() -> Optional[TrainingJob]:
@@ -519,12 +446,6 @@ def _empty_status() -> dict[str, Any]:
         "upload_to_0g": False,
         "ended": None,
         "last_update_ts": 0.0,
-        # Phase L.2: TensorBoard sidecar metadata. Frontend reads these
-        # to mount the iframe; absent / null means the iframe should
-        # render a "tensorboard unavailable" placeholder instead of
-        # pointing at a dead URL.
-        "tensorboard_url": None,
-        "logdir": None,
         # Per-agent checkpoint save/upload results. Each entry is
         # {agent_id, path, root_hash, error} where root_hash is the
         # 0G Storage Merkle root (None for local-only saves) and error
@@ -560,6 +481,13 @@ def _aggregate(events: list[dict], *, job: Optional[TrainingJob],
     last_ts = 0.0
     checkpoints: list[dict] = []
 
+    # Resolve agent wallet addresses for the checkpoints panel.
+    wallets: Optional[AgentWalletManager] = None
+    try:
+        wallets = AgentWalletManager.from_env()
+    except Exception:
+        pass
+
     for e in events:
         kind = e.get("event")
         ts = float(e.get("ts", 0.0))
@@ -577,17 +505,33 @@ def _aggregate(events: list[dict], *, job: Optional[TrainingJob],
         elif kind == "aborted":
             ended = "aborted"
         elif kind == "agent_saved":
+            aid = int(e.get("agent_id", 0))
+            address = None
+            if wallets and wallets.has_wallet(aid):
+                try:
+                    address = wallets.get_address(aid)
+                except Exception:
+                    pass
             checkpoints.append({
-                "agent_id": int(e.get("agent_id", 0)),
+                "agent_id": aid,
                 "path": str(e.get("path", "")),
                 "root_hash": e.get("root_hash"),
+                "address": address,
                 "error": None,
             })
         elif kind == "agent_save_error":
+            aid = int(e.get("agent_id", 0))
+            address = None
+            if wallets and wallets.has_wallet(aid):
+                try:
+                    address = wallets.get_address(aid)
+                except Exception:
+                    pass
             checkpoints.append({
-                "agent_id": int(e.get("agent_id", 0)),
+                "agent_id": aid,
                 "path": None,
                 "root_hash": None,
+                "address": address,
                 "error": str(e.get("detail", "unknown error")),
             })
 
@@ -645,10 +589,6 @@ def _aggregate(events: list[dict], *, job: Optional[TrainingJob],
         "upload_to_0g": bool(job.upload_to_0g) if job else False,
         "ended": ended,
         "last_update_ts": last_ts,
-        # Phase L.2: tensorboard sidecar — null when launch failed
-        # (e.g. binary not on PATH) so the frontend can disclose state.
-        "tensorboard_url": job.tensorboard_url if job else None,
-        "logdir": str(job.logdir) if job and job.logdir else None,
         # Per-agent checkpoint save/upload events. Populated by
         # agent_saved and agent_save_error events from the trainer.
         "checkpoints": checkpoints,
@@ -696,13 +636,15 @@ def estimate_run(
             # Result has `available` (the eval bridge returns this when
             # the discovery step couldn't find a provider but pricing
             # arithmetic still works). Honor it instead of always
-            # returning available=true.
+            # returning available=true. If unavailable, zero the gas fields
+            # so the frontend row shows —/— rather than placeholder numbers.
+            available = bool(getattr(result, "available", True))
             return {
                 "games": games,
                 "total_inferences": total_inferences,
-                "gas_og": float(result.total_og),
-                "per_inference_og": float(result.per_inference_og),
-                "available": bool(getattr(result, "available", True)),
+                "gas_og": float(result.total_og) if available else 0.0,
+                "per_inference_og": float(result.per_inference_og) if available else 0.0,
+                "available": available,
                 "note": str(getattr(result, "note", "")),
             }
         except Exception as e:
@@ -715,13 +657,12 @@ def estimate_run(
                 "note": f"OG_EVAL_UNAVAILABLE: {e}",
             }
 
-    # No eval_estimator passed (Phase G not wired). Surface honest
-    # placeholder pricing so the frontend can still render the row.
+    # No eval_estimator passed (Phase G not wired).
     return {
         "games": games,
         "total_inferences": total_inferences,
-        "gas_og": per_inference_og * total_inferences,
-        "per_inference_og": per_inference_og,
+        "gas_og": 0.0,
+        "per_inference_og": 0.0,
         "available": False,
-        "note": "Phase G eval bridge not wired yet; price is a placeholder",
+        "note": "Phase G eval bridge not wired yet",
     }

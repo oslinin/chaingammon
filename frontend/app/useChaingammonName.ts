@@ -20,7 +20,7 @@ import { useActiveChain, useActiveChainId } from "./chains";
 import { useChainContracts } from "./contracts";
 
 const SUBNAME_MINTED_EVENT = parseAbiItem(
-  "event SubnameMinted(string indexed labelHashed, string label, bytes32 indexed node, address indexed subnameOwner)",
+  "event SubnameMinted(string label, bytes32 indexed node, address indexed subnameOwner, uint256 inftId)",
 );
 
 export function useChaingammonName(address: `0x${string}` | undefined) {
@@ -78,10 +78,14 @@ export function useChaingammonName(address: `0x${string}` | undefined) {
       )
       .then((logs) => {
         if (cancelled) return;
-        if (logs.length > 0) {
+        // Filter for human names (inftId == 0) — agent-associated subnames
+        // (minted by AgentRegistry) carry inftId > 0 and shouldn't be
+        // used as the human's primary identity.
+        const humanLogs = logs.filter((log) => log.args?.inftId === 0n);
+        if (humanLogs.length > 0) {
           // A wallet could in theory own multiple subnames; take the most
           // recently-minted one as the canonical display name.
-          const latest = logs[logs.length - 1];
+          const latest = humanLogs[humanLogs.length - 1];
           setLabel(latest.args?.label ?? null);
         } else {
           setLabel(null);

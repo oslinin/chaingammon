@@ -102,7 +102,7 @@ const ENS_INFRA_BY_CHAIN: Record<number, EnsInfra> = {
   11155111: {
     nameWrapper: "0x0635513f179D50A207757E05759CbD106d7dFcE8",
     publicResolver: "0x8FADE66B79cC9f707aB26799354482EB93a5B7dD",
-    subgraphUrl: "https://api.thegraph.com/subgraphs/name/ensdomains/enssepolia",
+    subgraphUrl: "https://api.studio.thegraph.com/query/49574/enssepolia/version/latest",
   },
 };
 
@@ -112,9 +112,9 @@ export function useEnsInfra(): EnsInfra | undefined {
 }
 
 const ALL_DEPLOYMENTS: DeploymentRecord[] = [
+  sepoliaDeployment as DeploymentRecord,
   ogTestnetDeployment as DeploymentRecord,
   localhostDeployment as DeploymentRecord,
-  sepoliaDeployment as DeploymentRecord,
 ];
 
 export interface ChainEntry {
@@ -201,11 +201,11 @@ export function useActiveChainId(): number {
 
 // Chain IDs the user can pick from in the network dropdown.
 // Order matters — this is the order they render in the menu.
-//   - 0G Galileo Testnet (16602) — primary chain, listed first.
-//   - Sepolia (11155111) — secondary, listed second.
+//   - Sepolia (11155111) — primary chain, listed first.
+//   - 0G Galileo Testnet (16602) — secondary, listed second.
 //   - Hardhat Localhost (31337) — dev only, listed last.
-const SELECTABLE_CHAIN_IDS_PROD = [16602, 11155111] as const;
-const SELECTABLE_CHAIN_IDS_DEV = [16602, 11155111, 31337] as const;
+const SELECTABLE_CHAIN_IDS_PROD = [11155111, 16602] as const;
+const SELECTABLE_CHAIN_IDS_DEV = [11155111, 16602, 31337] as const;
 
 /**
  * The chains the user can pick from in the network dropdown.

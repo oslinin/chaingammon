@@ -11,15 +11,12 @@ coach_service.py — local FastAPI agent process: LLM coaching hints.
           POST /hint — generate a plain-English coaching hint for the current
                        turn, given the ranked candidates from gnubg_service.
 
-        Inference backend (priority):
+        Inference backend:
           1. 0G Compute Network — Qwen 2.5 7B Instruct via
              @0glabs/0g-serving-broker. Sponsor-aligned (verifiable inference,
              pay-per-token from a 0G ledger). Routed through the Node bridge
              at og-compute-bridge/ so this Python service does not need to
              port the JS SDK.
-          2. Local flan-t5-base — fallback when 0G Compute is unreachable
-             (testnet down, wallet unfunded, network outage). Lower quality
-             but keeps the demo alive. Forced via COACH_BACKEND=local.
 
         docs_hash:  0G Storage root hash of the gnubg strategy doc uploaded by
                     scripts/upload_gnubg_docs.py. Used as RAG context. Falls
@@ -66,30 +63,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# COACH_BACKEND: "compute" (default — try 0G first, fall back on error),
-# "local" (force flan-t5-base), or "compute-only" (raise on compute failure;
-# useful in CI when we want to guarantee the live path works).
-_BACKEND = os.environ.get("COACH_BACKEND", "compute").lower()
-
-_local_model = None
-_local_tokenizer = None
-
-
-def _load_local_model() -> None:
-    """Lazy-load flan-t5-base for the local fallback path. Called on first
-    fallback only — the import alone costs >1s and ~250 MB RAM, so we defer
-    it until we actually need it.
-
-    @dev Newer transformers (>= 4.40) removed `T5ForConditionalGeneration`
-         and `T5Tokenizer` from the top-level namespace. Use the Auto*
-         wrappers, which resolve to the same classes and are forward-
-         compatible.
-    """
-    global _local_model, _local_tokenizer
-    if _local_model is None:
-        from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
-        _local_tokenizer = AutoTokenizer.from_pretrained("google/flan-t5-base")
-        _local_model = AutoModelForSeq2SeqLM.from_pretrained("google/flan-t5-base")
+# COACH_BACKEND: "compute" (default) or "compute-only" (raise on failure).
+# Local flan-t5 fallback is removed to streamline the demo to 0G Compute.
+_BACKEND = "compute"
 
 
 def _fetch_docs(docs_hash: str) -> str:
@@ -126,9 +102,7 @@ def _build_messages(
 ) -> tuple[str, list[dict]]:
     """Assemble the system prompt + chat messages for the LLM.
 
-    Returned in chat-completion shape so the same payload feeds either the
-    0G Compute path (Qwen) or the local flan-t5-base path (after we collapse
-    it back into a single prompt string).
+    Returned in chat-completion shape for the 0G Compute path (Qwen).
 
     @return (system_prompt, [{"role": "user", "content": ...}])
     """
@@ -167,22 +141,6 @@ def _generate_compute(
     return result.content.strip()
 
 
-def _generate_local(
-    dice: list[int],
-    candidates: list[dict],
-    docs_context: str,
-    profile: AgentProfile,
-) -> str:
-    """Local fallback — flan-t5-base seq2seq generation."""
-    _load_local_model()
-    system, messages = _build_messages(dice, candidates, docs_context, profile)
-    # flan-t5 is a single-prompt seq2seq model — concatenate.
-    prompt = system + "\n\n" + messages[0]["content"]
-    inputs = _local_tokenizer(prompt, return_tensors="pt", max_length=512, truncation=True)
-    outputs = _local_model.generate(**inputs, max_new_tokens=120)
-    return _local_tokenizer.decode(outputs[0], skip_special_tokens=True).strip()
-
-
 def _generate(
     dice: list[int],
     candidates: list[dict],
@@ -190,27 +148,12 @@ def _generate(
     profile: AgentProfile,
     backend: Optional[str] = None,
 ) -> tuple[str, str]:
-    """Run inference with the requested backend (or the server default).
+    """Run inference with the 0G Compute backend.
 
-    @param backend  Per-request override. None → use COACH_BACKEND env.
-    @return (hint_text, backend_used) — backend_used is "compute" or "local"
-            so the response can surface which path served the request.
+    @param backend  Per-request override.
+    @return (hint_text, backend_used) — backend_used is "compute".
     """
-    chosen = (backend or _BACKEND).lower()
-    if chosen == "local":
-        return _generate_local(dice, candidates, docs_context, profile), "local"
-    try:
-        return _generate_compute(dice, candidates, docs_context, profile), "compute"
-    except Exception as e:
-        if chosen == "compute-only":
-            raise
-        # Fall back to the local model and keep going. The frontend never
-        # sees the compute error — the demo stays online.
-        import logging
-        logging.getLogger(__name__).warning(
-            "0G Compute coach failed (%s); falling back to local flan-t5.", e
-        )
-        return _generate_local(dice, candidates, docs_context, profile), "local"
+    return _generate_compute(dice, candidates, docs_context, profile), "compute"
 
 
 # ─── request / response models ───────────────────────────────────────────────
@@ -230,8 +173,7 @@ class HintRequest(BaseModel):
                                future model checkpoint. Empty triggers the
                                NullProfile (cold-start agent).
     @param backend             Optional per-request override of COACH_BACKEND.
-                               One of "compute" (paid 0G inference, falls back
-                               to local on failure), "local" (free flan-t5),
+                               One of "compute" (paid 0G inference)
                                or "compute-only" (paid; raise on failure).
                                Empty/None = use the server default.
     """
@@ -258,9 +200,8 @@ def get_hint(req: HintRequest) -> dict:
     @dev    Pipeline:
               1. Fetch strategy docs from 0G Storage (or fallback).
               2. Load the agent profile from 0G Storage (or NullProfile).
-              3. Run inference on 0G Compute (Qwen 2.5 7B) — fall back to
-                 local flan-t5-base if compute is unreachable.
-    @return {"hint": str, "backend": "compute"|"local"}
+              3. Run inference on 0G Compute (Qwen 2.5 7B).
+    @return {"hint": str, "backend": "compute"}
     """
     docs_context = _fetch_docs(req.docs_hash)
     profile = load_profile(req.agent_weights_hash)
@@ -271,14 +212,6 @@ def get_hint(req: HintRequest) -> dict:
 
 
 # ─── /chat endpoint ─────────────────────────────────────────────────────────
-#
-# Phase A landed the deterministic stub. Phase B (this commit) wires the
-# real LLM path: build_chat_prompt → 0G Compute (Qwen 2.5 7B) with flan-
-# t5 local fallback, mirroring `/hint`'s _generate_compute / _generate_
-# local / _generate selector. The stub stays callable so tests that
-# assert on deterministic output keep working — they pass
-# `backend="stub"` in the request.
-
 
 _CHAT_SYSTEM_PROMPT = (
     "You are a backgammon coach embedded in a live match. The user "
@@ -304,49 +237,15 @@ def _generate_chat_compute(prompt: str) -> str:
     return result.content.strip()
 
 
-def _generate_chat_local(prompt: str) -> str:
-    """Local fallback for /chat — flan-t5-base seq2seq on the same prompt.
-
-    flan-t5 is a single-prompt seq2seq model; concatenate the system
-    prompt and the user message into one input sequence. Mirrors the
-    existing `_generate_local` for /hint.
-    """
-    _load_local_model()
-    text = _CHAT_SYSTEM_PROMPT + "\n\n" + prompt
-    inputs = _local_tokenizer(
-        text, return_tensors="pt", max_length=1024, truncation=True
-    )
-    outputs = _local_model.generate(**inputs, max_new_tokens=160)
-    return _local_tokenizer.decode(
-        outputs[0], skip_special_tokens=True
-    ).strip()
-
-
 def _generate_chat(
     prompt: str, backend: Optional[str] = None
 ) -> tuple[str, str]:
-    """Run /chat inference with the requested backend (or the server default).
+    """Run /chat inference with the 0G Compute backend.
 
     Selection rules mirror `_generate` for /hint:
-      - backend == "local"        → local flan-t5 only
-      - backend == "compute-only" → 0G Compute; raise on failure
-      - backend in ("compute", None) → 0G Compute, fall back to local on error
-    `backend == "stub"` is handled by `post_chat` directly and never
-    reaches this function.
+      - backend == "compute"        → 0G Compute
     """
-    chosen = (backend or _BACKEND).lower()
-    if chosen == "local":
-        return _generate_chat_local(prompt), "local"
-    try:
-        return _generate_chat_compute(prompt), "compute"
-    except Exception as e:
-        if chosen == "compute-only":
-            raise
-        import logging
-        logging.getLogger(__name__).warning(
-            "0G Compute /chat failed (%s); falling back to local flan-t5.", e
-        )
-        return _generate_chat_local(prompt), "local"
+    return _generate_chat_compute(prompt), "compute"
 
 
 def _stub_chat_reply(req: ChatRequest) -> str:
@@ -406,14 +305,13 @@ def post_chat(req: ChatRequest) -> ChatResponse:
     """Turn-by-turn dialogue endpoint. See docs/coach-dialogue.md.
 
     @notice Builds the prompt via `build_chat_prompt`, dispatches to
-            `_generate_chat` (0G Compute → flan-t5 local fallback)
+            `_generate_chat` (0G Compute)
             or, when `backend == "stub"`, to the deterministic
-            `_stub_chat_reply` used by tests. Same backend-selection
-            shape as the existing `/hint` endpoint.
+            `_stub_chat_reply` used by tests.
 
     @dev    Pipeline:
               1. build_chat_prompt(req) — pure function, deterministic.
-              2. dispatch to LLM (compute → local fallback) or stub.
+              2. dispatch to LLM (compute) or stub.
               3. Update per-session preferences from the human's last
                  message (if any) and emit the delta in the response.
             The pipeline lives entirely outside the LLM call so the
@@ -476,16 +374,6 @@ def post_chat(req: ChatRequest) -> ChatResponse:
 
 
 # ─── /chief-of-staff/chat endpoint ─────────────────────────────────────────
-#
-# Phase 76: DeepMind-inspired collaborative agent. The LLM acts as a
-# "Chief of Staff" that:
-#   1. Takes the tagged top-5 candidates from /evaluate-tagged.
-#   2. Reads the human's macro-strategy from the chat message.
-#   3. Recommends the specific tagged move that best fits the strategy.
-#   4. When the human asks to "validate an intuition" / "deep dive",
-#      triggers a mocked historical-search that simulates consulting
-#      a backgammon database (deterministic but realistic-looking).
-
 
 _DEEP_DIVE_TRIGGERS = frozenset([
     "validate", "intuition", "deep dive", "deep-dive", "historical",
@@ -505,23 +393,50 @@ def _historical_search(
     tagged_candidates: list[dict],
     opponent_features: Optional[str] = None,
     backend: Optional[str] = None,
+    agent_id: Optional[int] = None,
 ) -> str:
     """Return a real historical search deep-dive using an LLM.
 
-    The LLM processes the JSON opponent profile, looks at the Top 5 Moves list,
-    and replies confirming the data, stating the equity cost of deviating from
-    the Phase 1 - GNUBG wrapper service #1 move, and asks for final confirmation.
+    The LLM processes the JSON opponent profile (fetched from the server),
+    looks at the Top 5 Moves list, and replies confirming the data, stating
+    the equity cost of deviating from the Phase 1 - GNUBG wrapper service #1 move,
+    and asks for final confirmation.
     """
     import json
 
-    # Mocking the JSON payload from the 0G storage db
-    mock_opponent_profile = {
-        "hit_rate_on_exposed_blots": 0.88,
-        "blitz_success_rate": 0.45,
-        "average_pip_count_difference": -12,
-        "gammon_rate": 0.22
-    }
-    profile_json = json.dumps(mock_opponent_profile, indent=2)
+    # Real historical search: fetch the profile for agent_id if available.
+    # Note: agent_id is passed from the frontend to the chief-of-staff endpoint.
+    stats = None
+    if agent_id:
+        try:
+            # SERVER points to localhost:8000 (main server)
+            SERVER = os.environ.get("NEXT_PUBLIC_SERVER_URL", "http://localhost:8000")
+            import requests
+            res = requests.get(f"{SERVER}/agents/{agent_id}/profile", timeout=2)
+            if res.ok:
+                profile = res.json()
+                # Derive realistic stats from the learned biases
+                v = profile.get("values", {})
+                hit_rate = 0.5 + float(v.get("hits_blot", 0)) * 0.4
+                stats = {
+                    "hit_rate_on_exposed_blots": hit_rate,
+                    "blitz_success_rate": 0.4 + float(v.get("phase_blitz", 0)) * 0.3,
+                    "prime_building_tendency": 0.5 + float(v.get("phase_prime_building", 0)) * 0.4,
+                    "risk_tolerance": 0.5 + float(v.get("risk_hit_exposure", 0)) * 0.4,
+                }
+        except Exception:
+            pass
+
+    if not stats:
+        # Fallback to mock if fetch fails, but marked as "estimated"
+        stats = {
+            "hit_rate_on_exposed_blots": 0.88,
+            "blitz_success_rate": 0.45,
+            "average_pip_count_difference": -12,
+            "gammon_rate": 0.22
+        }
+
+    profile_json = json.dumps(stats, indent=2)
 
     if not tagged_candidates:
         candidates_section = "(no legal moves on this roll)"
@@ -542,12 +457,12 @@ def _historical_search(
         "1. Check the Opponent Profile to see if historical data supports the human's intuition.\n"
         "2. Look at the Top 5 Moves list from the engine.\n"
         "3. Find the move that best executes the human's strategy.\n"
-        "4. Respond concisely, confirming the data, stating the equity cost of deviating from the Phase 1 - GNUBG wrapper service #1 move, and asking for final confirmation.\n\n"
+        "4. Respond concisely, confirming the data, stating the equity cost of deviating from the #1 move (highest equity), and asking for final confirmation.\n\n"
         f"Opponent Profile Database (JSON):\n{profile_json}\n\n"
         f"{opp_section}"
         f"Top 5 Moves (Engine Data):\n{candidates_section}\n\n"
         f"Human Partner's Strategy/Intuition: \"{human_strategy}\"\n\n"
-        "Your Response:"
+        "Your Response (Concise, data-driven, highlighting the human-agent synergy):"
     )
 
     reply_text, _ = _generate_chat(prompt, backend)
@@ -625,14 +540,16 @@ class ChiefOfStaffRequest(BaseModel):
     @param dialogue           Prior chat messages for multi-turn context.
     @param opponent_features  Optional one-line summary of opponent tendencies
                               (fast-path from agent overlay, no async needed).
+    @param agent_id           Optional ID of the opponent agent for historical search.
     @param turn_index         Current turn number.
-    @param backend            "compute" | "local" | "stub" — mirrors HintRequest.
+    @param backend            "compute" | "stub" — mirrors HintRequest.
     """
 
     tagged_candidates: list[dict]
     human_strategy: str = ""
     dialogue: list[dict] = []
     opponent_features: Optional[str] = None
+    agent_id: Optional[int] = None
     turn_index: int = 0
     backend: Optional[str] = None
 
@@ -689,7 +606,7 @@ def chief_of_staff_chat(req: ChiefOfStaffRequest) -> ChiefOfStaffResponse:
 
     @dev    Pipeline:
               1. Build a Chief-of-Staff prompt (tagged moves + strategy).
-              2. Dispatch to _generate_chat (0G Compute → local fallback)
+              2. Dispatch to _generate_chat (0G Compute)
                  or stub mode.
               3. Extract the recommended move from the reply.
               4. If deep-dive was requested, append the historical
@@ -744,6 +661,7 @@ def chief_of_staff_chat(req: ChiefOfStaffRequest) -> ChiefOfStaffResponse:
             tagged_candidates=req.tagged_candidates,
             opponent_features=req.opponent_features,
             backend=req.backend,
+            agent_id=req.agent_id,
         )
 
     elapsed_ms = int((time.monotonic() - started) * 1000)

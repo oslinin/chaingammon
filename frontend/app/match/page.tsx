@@ -164,8 +164,8 @@ async function fetchHint(
     }>("/evaluate", { position_id: positionId, match_id: matchId, dice });
     if (!candidates || candidates.length === 0) return null;
 
-    // Step 2: ask coach_service to narrate the top move.
-    const res = await fetch(`${COACH}/hint`, {
+    // Step 2: ask the local Next.js Route Handler to narrate the top move.
+    const res = await fetch("/api/coach/hint", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({

@@ -23,6 +23,8 @@ interface OpRow {
   label: string;
   // Per-backend availability — false renders the segment as disabled.
   available: Record<Backend, boolean>;
+  // Optional: Force a specific value for display, ignoring the context/local storage.
+  forcedValue?: Backend;
   // Tooltip text shown when an unavailable backend is hovered.
   unavailableTooltip?: Record<Backend, string>;
 }
@@ -31,12 +33,13 @@ const OPS: readonly OpRow[] = [
   {
     key: "coach",
     label: "Coach",
-    // Coach is implemented on 0G Compute (Qwen 2.5 7B). Local flan-t5 fallback
-    // is disabled so users always route through the 0G-attested backend.
-    available: { local: false, "0g": true },
+    // Coach is fixed to 0G Compute (Qwen 2.5 7B). Local fallback removed.
+    // Both are disabled to show this is no longer user-configurable.
+    available: { local: false, "0g": false },
+    forcedValue: "0g",
     unavailableTooltip: {
-      local: "Coach runs on 0G Compute (Qwen 2.5 7B). Local fallback is disabled.",
-      "0g": "",
+      local: "Local flan-t5 fallback is removed. Coach only runs on 0G Compute.",
+      "0g": "Coach is fixed to 0G Compute (Qwen 2.5 7B).",
     },
   },
   {
@@ -45,6 +48,7 @@ const OPS: readonly OpRow[] = [
     // Inference runs as a browser-side value-net forward pass (no remote backend).
     // Both segments are disabled to reflect that this is not user-configurable.
     available: { local: false, "0g": false },
+    forcedValue: "local",
     unavailableTooltip: {
       local: "Inference runs locally in the browser (value-net forward pass).",
       "0g": "Inference runs locally in the browser (value-net forward pass).",
@@ -55,6 +59,7 @@ const OPS: readonly OpRow[] = [
     label: "Training",
     // Training (TD(λ) self-play) runs locally. Both segments are disabled.
     available: { local: false, "0g": false },
+    forcedValue: "local",
     unavailableTooltip: {
       local: "Training runs locally (TD(λ) self-play loop).",
       "0g": "Training runs locally (TD(λ) self-play loop).",
@@ -78,7 +83,7 @@ export function ComputeBackendsPill() {
         <Row
           key={op.key}
           row={op}
-          value={backends[op.key]}
+          value={op.forcedValue ?? backends[op.key]}
           hydrated={hydrated}
           onChange={(v) => setBackend(op.key, v)}
         />

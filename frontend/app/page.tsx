@@ -7,7 +7,7 @@
 // The page shell is a server component; client islands are AgentsList and
 // DiscoverSection.
 import { AgentsList } from "./AgentsList";
-import { DiscoverSection } from "./DiscoverSection";
+import { DiscoveryList } from "./DiscoveryList";
 
 export default function Home() {
   return (
@@ -28,13 +28,15 @@ export default function Home() {
         </div>
 
         <section className="flex flex-col gap-4">
-          <h3 className="text-xl font-semibold text-zinc-900 dark:text-zinc-50">
+          <h2 className="text-xl font-semibold text-zinc-900 dark:text-zinc-50">
             Agents
-          </h3>
+          </h2>
           <AgentsList />
         </section>
 
-        <DiscoverSection />
+        <section className="flex flex-col gap-4">
+          <DiscoveryList />
+        </section>
       </main>
     </div>
   );

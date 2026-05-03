@@ -48,35 +48,26 @@ class _FakePopen:
 
     def __init__(self, cmd, *, cwd=None, stdout=None, stderr=None, **kwargs):
         self.cmd = list(cmd)
-        # Phase L.2: training_service spawns a tensorboard sidecar
-        # alongside the trainer (cmd[0] == "tensorboard"). Tag it so
-        # we don't try to parse trainer-only args from its argv.
-        self.is_tensorboard = (
-            len(self.cmd) > 0 and Path(self.cmd[0]).name == "tensorboard"
-        )
-        if self.is_tensorboard:
-            self.status_path = None
-            self.epochs = 0
-            self.agent_ids = []
-            self.use_0g_inference = False
-            self.pid = 999500 + len(_FakePopen.instances)
-            self._alive = True
-            self._aborted = False
-            _FakePopen.instances.append(self)
-            return
 
         # Pull out --status-file's value.
         try:
             i = self.cmd.index("--status-file")
             self.status_path = Path(self.cmd[i + 1])
-        except ValueError:
+        except (ValueError, IndexError):
             self.status_path = None
 
         # Pull out --epochs and --agent-ids.
-        i = self.cmd.index("--epochs")
-        self.epochs = int(self.cmd[i + 1])
-        i = self.cmd.index("--agent-ids")
-        self.agent_ids = [int(s) for s in self.cmd[i + 1].split(",") if s]
+        try:
+            i = self.cmd.index("--epochs")
+            self.epochs = int(self.cmd[i + 1])
+        except (ValueError, IndexError):
+            self.epochs = 0
+
+        try:
+            i = self.cmd.index("--agent-ids")
+            self.agent_ids = [int(s) for s in self.cmd[i + 1].split(",") if s]
+        except (ValueError, IndexError):
+            self.agent_ids = []
 
         self.use_0g_inference = "--use-0g-inference" in self.cmd
         self.pid = 999000 + len(_FakePopen.instances)
@@ -180,41 +171,6 @@ def test_start_happy_path(monkeypatch):
     assert "started_at" in body
 
 
-def test_start_spawns_tensorboard_sidecar(monkeypatch):
-    """Phase L.2: /training/start launches a TensorBoard subprocess
-    alongside the trainer. Two _FakePopen instances are created — one
-    for the trainer, one for the TB sidecar — and /training/status
-    surfaces the URL."""
-    _install_fake_popen(monkeypatch)
-    r = client.post("/training/start", json={
-        "epochs": 1, "agent_ids": [1, 2],
-    })
-    assert r.status_code == 200
-    # Two subprocess.Popen calls observed: trainer + tensorboard.
-    assert len(_FakePopen.instances) == 2
-    tb = next(i for i in _FakePopen.instances if i.is_tensorboard)
-    assert "--logdir" in tb.cmd
-    # /training/status surfaces the TensorBoard URL for the iframe.
-    status = client.get("/training/status").json()
-    assert status["tensorboard_url"] == "http://localhost:6006"
-    assert status["logdir"] is not None
-
-
-def test_start_passes_logdir_to_trainer(monkeypatch):
-    """Phase L.2: the trainer subprocess gets --logdir so it writes
-    TensorBoard event files. Same path is passed to TensorBoard so
-    they line up."""
-    _install_fake_popen(monkeypatch)
-    client.post("/training/start", json={
-        "epochs": 1, "agent_ids": [1, 2],
-    })
-    trainer = next(i for i in _FakePopen.instances if not i.is_tensorboard)
-    tb = next(i for i in _FakePopen.instances if i.is_tensorboard)
-    trainer_logdir = trainer.cmd[trainer.cmd.index("--logdir") + 1]
-    tb_logdir = tb.cmd[tb.cmd.index("--logdir") + 1]
-    assert trainer_logdir == tb_logdir
-
-
 def test_start_409_when_already_running(monkeypatch):
     _install_fake_popen(monkeypatch)
     r1 = client.post("/training/start", json={
@@ -253,7 +209,7 @@ def test_start_upload_to_0g_passes_checkpoint_flags(monkeypatch):
     })
     assert r.status_code == 200, r.text
     assert r.json()["upload_to_0g"] is True
-    trainer = next(i for i in _FakePopen.instances if not i.is_tensorboard)
+    trainer = _FakePopen.instances[-1]
     assert "--checkpoint-dir" in trainer.cmd
     assert "--upload-to-0g" in trainer.cmd
 
@@ -268,7 +224,7 @@ def test_start_use_0g_inference_auto_derives_upload(monkeypatch):
     })
     assert r.status_code == 200, r.text
     assert r.json()["upload_to_0g"] is True
-    trainer = next(i for i in _FakePopen.instances if not i.is_tensorboard)
+    trainer = _FakePopen.instances[-1]
     assert "--checkpoint-dir" in trainer.cmd
     assert "--upload-to-0g" in trainer.cmd
 
@@ -283,7 +239,7 @@ def test_start_local_only_no_checkpoint_flags(monkeypatch):
     })
     assert r.status_code == 200, r.text
     assert r.json()["upload_to_0g"] is False
-    trainer = next(i for i in _FakePopen.instances if not i.is_tensorboard)
+    trainer = _FakePopen.instances[-1]
     assert "--upload-to-0g" not in trainer.cmd
 
 
@@ -305,7 +261,7 @@ def test_status_running_job_aggregates_matches(monkeypatch):
     client.post("/training/start", json={
         "epochs": 2, "agent_ids": [1, 2, 3],
     })
-    fake = next(i for i in reversed(_FakePopen.instances) if not i.is_tensorboard)
+    fake = _FakePopen.instances[-1]
     fake.emit_match(epoch=0, agent_a=1, agent_b=2, winner=1)
     fake.emit_match(epoch=0, agent_a=1, agent_b=3, winner=3)
 
@@ -324,7 +280,7 @@ def test_status_running_job_aggregates_matches(monkeypatch):
 def test_status_done_event_marks_ended(monkeypatch):
     _install_fake_popen(monkeypatch)
     client.post("/training/start", json={"epochs": 1, "agent_ids": [1, 2]})
-    fake = next(i for i in reversed(_FakePopen.instances) if not i.is_tensorboard)
+    fake = _FakePopen.instances[-1]
     fake.emit_match(epoch=0, agent_a=1, agent_b=2, winner=2)
     fake.emit_done()
 
@@ -339,7 +295,7 @@ def test_status_agent_saved_surfaced_in_checkpoints(monkeypatch):
     checkpoints list with agent_id, path, and root_hash."""
     _install_fake_popen(monkeypatch)
     client.post("/training/start", json={"epochs": 1, "agent_ids": [1, 2]})
-    fake = next(i for i in reversed(_FakePopen.instances) if not i.is_tensorboard)
+    fake = _FakePopen.instances[-1]
     fake.emit_match(epoch=0, agent_a=1, agent_b=2, winner=1)
     fake._emit("agent_saved", agent_id=1, path="/tmp/ckpt/agent-1.pt",
                root_hash="0x" + "aa" * 32)
@@ -363,7 +319,7 @@ def test_status_agent_save_error_surfaces_in_checkpoints(monkeypatch):
     appear in the checkpoints list with the error string."""
     _install_fake_popen(monkeypatch)
     client.post("/training/start", json={"epochs": 1, "agent_ids": [1, 2]})
-    fake = next(i for i in reversed(_FakePopen.instances) if not i.is_tensorboard)
+    fake = _FakePopen.instances[-1]
     fake.emit_match(epoch=0, agent_a=1, agent_b=2, winner=1)
     fake._emit("agent_save_error", agent_id=1,
                detail="Missing env vars for 0G Storage upload: ['OG_STORAGE_RPC']")
@@ -381,7 +337,7 @@ def test_status_agent_save_error_surfaces_in_checkpoints(monkeypatch):
 def test_status_dead_process_no_done_marks_aborted(monkeypatch):
     _install_fake_popen(monkeypatch)
     client.post("/training/start", json={"epochs": 1, "agent_ids": [1, 2]})
-    fake = next(i for i in reversed(_FakePopen.instances) if not i.is_tensorboard)
+    fake = _FakePopen.instances[-1]
     fake.emit_match(epoch=0, agent_a=1, agent_b=2, winner=1)
     fake.kill_quietly()  # simulate crash without 'done'
 
@@ -404,7 +360,7 @@ def test_status_dead_process_no_done_marks_aborted(monkeypatch):
 def test_abort_kills_running_job(monkeypatch):
     _install_fake_popen(monkeypatch)
     client.post("/training/start", json={"epochs": 1, "agent_ids": [1, 2]})
-    fake = next(i for i in reversed(_FakePopen.instances) if not i.is_tensorboard)
+    fake = _FakePopen.instances[-1]
     assert fake.is_alive() is True
 
     r = client.post("/training/abort")
@@ -507,8 +463,12 @@ class _FakeChainClient:
         self._match_counts = match_counts or {1: 0, 2: 7, 3: 12}
         self._tiers = tiers or {1: 0, 2: 1, 3: 2}
 
-    def agent_count(self):
+    def active_agent_count(self):
         return self._count
+
+    def active_agent_at(self, i):
+        # In this fake, IDs are 1..count.
+        return i + 1
 
     def agent_data_hashes(self, aid):
         h = self._hashes.get(aid, "0x" + "00" * 32)
@@ -519,6 +479,9 @@ class _FakeChainClient:
 
     def agent_tier(self, aid):
         return self._tiers.get(aid, 0)
+
+    def agent_owner(self, aid):
+        return "0x" + "f" * 40
 
 
 @pytest.fixture
@@ -584,9 +547,10 @@ def test_get_profile_model_when_checkpoint_hash(fake_chain, monkeypatch):
     net = BackgammonNet(extras_dim=16, core_seed=0xBACC, extras_seed=3)
     buf = _io.BytesIO()
     torch.save(
-        {"model": net.state_dict(), "match_count": 12, "extras_dim": 16, "in_dim": 198},
+        {"state_dict": net.state_dict(), "match_count": 12, "extras_dim": 16, "in_dim": 198},
         buf,
     )
+
     blob = buf.getvalue()
     monkeypatch.setattr(main_module, "get_blob", lambda h: blob)
     r = client.get("/agents/3/profile")
