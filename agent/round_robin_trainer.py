@@ -54,19 +54,17 @@ from typing import Callable, Optional, TextIO
 
 import torch
 
+# Load server/.env into os.environ before any module reads RPC_URL etc.
+# Needed because this script is spawned as a subprocess and must know
+# which contract addresses to read for the hybrid resolve path.
+from dotenv import load_dotenv
+from pathlib import Path as _Path
+_env_path = _Path(__file__).resolve().parents[1] / "server" / ".env"
+load_dotenv(_env_path, override=False)
+
 from agent_state_io import AgentState, load_or_seed, save_and_upload_checkpoint
 from career_features import encode_career_context, sample_career_context
 from sample_trainer import DEFAULT_EXTRAS_DIM, td_lambda_match
-
-
-# SummaryWriter is optional — round-robin runs work without it (the
-# JSONL status file is the canonical progress feed). When tensorboard
-# isn't installed in the agent venv, we set the type to None and
-# every write call short-circuits.
-try:
-    from torch.utils.tensorboard import SummaryWriter   # type: ignore
-except ImportError:
-    SummaryWriter = None   # type: ignore[assignment]
 
 
 # Default `td_match` callable — overridable for tests. Signature must
@@ -162,9 +160,16 @@ def _resolve_weights_hash(agent_id: int) -> str:
     no entry. Callers treat "" as "seed fresh".
     """
     try:
+        import sys
+        from pathlib import Path as _P
+        # Add repo root (parent of agent/) to sys.path so we can import server.app.chain_client
+        _repo_root = _P(__file__).resolve().parents[1]
+        if str(_repo_root) not in sys.path:
+            sys.path.insert(0, str(_repo_root))
+
         from server.app.chain_client import ChainClient
 
-        client = ChainClient()
+        client = ChainClient.from_env()
         hashes = client.agent_data_hashes(agent_id)
         if len(hashes) >= 2:
             return hashes[1]
@@ -214,7 +219,6 @@ def run_round_robin(
     lam: float = 0.7,
     gamma: float = 1.0,
     use_0g_inference: bool = False,
-    logdir: Optional[Path] = None,
 ) -> dict[int, AgentState]:
     """Run the round-robin training loop.
 
@@ -235,26 +239,12 @@ def run_round_robin(
     games_per_epoch = n * (n - 1) // 2
     total_games = epochs * games_per_epoch
 
-    # Phase L.1: open a TensorBoard SummaryWriter when a logdir is
-    # supplied so judges can watch per-match TD error, weight L2,
-    # win-rate trajectories etc. live. The writer is None-safe — every
-    # downstream call site checks `writer is not None` (or relies on
-    # td_lambda_match's existing optional-writer behavior). When
-    # tensorboard isn't installed in the venv, SummaryWriter is None
-    # at module import and we silently skip.
-    writer = None
-    if logdir is not None and SummaryWriter is not None:
-        logdir = Path(logdir)
-        logdir.mkdir(parents=True, exist_ok=True)
-        writer = SummaryWriter(log_dir=str(logdir))
-
     _emit(
         status_fh, "started",
         agent_ids=agent_ids, epochs=epochs,
         games_per_epoch=games_per_epoch,
         total_games=total_games,
         use_0g_inference=bool(use_0g_inference),
-        logdir=str(logdir) if logdir is not None else None,
     )
 
     # Phase I: when use_0g_inference is set, probe the eval bridge once
@@ -286,17 +276,11 @@ def run_round_robin(
     # so two runs with the same args replay identically.
     career_rng = random.Random(seed + 1000)
 
-    # Per-agent rolling stats — fed into TensorBoard as cumulative
-    # win-counts + rolling win-rates so judges can see relative
-    # strength evolve over the run.
-    cum_wins: dict[int, int] = {aid: 0 for aid in agent_ids}
-    cum_games: dict[int, int] = {aid: 0 for aid in agent_ids}
-    global_match_step = 0
-    global_step = 0  # plies-step counter for td_lambda_match's writer
-
     for epoch in range(epochs):
         _emit(status_fh, "epoch_start", epoch=epoch, total=epochs)
-        for a_id, b_id in itertools.combinations(agent_ids, 2):
+        # Use permutations so (a, b) and (b, a) both play — every agent
+        # learns against every other once per epoch.
+        for a_id, b_id in itertools.permutations(agent_ids, 2):
             # Career context per match — same shape sample_trainer.py
             # uses in --career-mode. Asymmetric (a has a teammate, b
             # does not) so the extras head sees a non-trivial signal.
@@ -307,13 +291,10 @@ def run_round_robin(
 
             # Pass infer_fn keyword only when set; the test stub
             # td_match signature (used by hermetic tests) doesn't
-            # accept it. Same for writer + global_step.
+            # accept it.
             kwargs = {"gamma": gamma, "lam": lam, "lr": lr}
             if infer_fn is not None:
                 kwargs["infer_fn"] = infer_fn
-            if writer is not None:
-                kwargs["writer"] = writer
-                kwargs["global_step"] = global_step
             steps, won = td_match(
                 agents[a_id].net, agents[b_id].net,
                 a_extras, b_extras,
@@ -326,65 +307,12 @@ def run_round_robin(
                 winner=winner, plies=int(steps),
             )
 
-            # Phase L.1 TensorBoard scalars per match. td_lambda_match
-            # already logs train/* (TD error, gradient norm, eligibility
-            # norm) when writer is non-None — we only need to add the
-            # match-level + per-agent aggregates.
-            if writer is not None:
-                writer.add_scalar("match/plies", int(steps), global_match_step)
-                writer.add_scalar(f"win/agent_{a_id}_vs_{b_id}",
-                                   1.0 if won else 0.0, global_match_step)
-                cum_games[a_id] += 1
-                cum_games[b_id] += 1
-                cum_wins[winner] += 1
-                for aid in agent_ids:
-                    games = cum_games[aid]
-                    if games > 0:
-                        writer.add_scalar(
-                            f"win_rate/agent_{aid}",
-                            cum_wins[aid] / games,
-                            global_match_step,
-                        )
-            global_match_step += 1
-            global_step += int(steps)
-
         _emit(status_fh, "epoch_end", epoch=epoch)
-
-        # Phase L.1: per-epoch model snapshots. Weight L2 + per-agent
-        # extras-head L2 give a quick "is anything actually changing"
-        # signal — flat lines = no learning; gentle drift = TD-λ
-        # is working as expected.
-        if writer is not None:
-            for aid, state in agents.items():
-                core_l2 = math.sqrt(sum(
-                    float(p.pow(2).sum().item())
-                    for p in state.net.core.parameters()
-                ))
-                writer.add_scalar(f"weights/core_l2_agent_{aid}",
-                                   core_l2, epoch)
-                if state.net.extras is not None:
-                    extras_l2 = math.sqrt(sum(
-                        float(p.pow(2).sum().item())
-                        for p in state.net.extras.parameters()
-                    ))
-                    writer.add_scalar(f"weights/extras_l2_agent_{aid}",
-                                       extras_l2, epoch)
-            writer.flush()
-
-    # Close the TensorBoard writer cleanly so the final scalars flush
-    # before the trainer subprocess exits. The status JSONL's 'done'
-    # event is the operator-facing completion signal; closing here
-    # ensures TensorBoard sees every datapoint we logged.
-    if writer is not None:
-        writer.close()
 
     # End-of-run save + optional upload.
     if checkpoint_dir is not None:
-        # Only the first net of each pair learns, so per-agent training
-        # exposure is `epochs * (n - 1) / 2` (each agent appears in
-        # `n - 1` pairs per epoch, half as the learner). Round to int
-        # for the on-chain match_count.
-        matches_per_agent = max(1, epochs * (n - 1) // 2)
+        # Every agent was the 'learner' in (n - 1) games per epoch.
+        matches_per_agent = epochs * (n - 1)
         for aid, state in agents.items():
             try:
                 local_path, root_hash = save_and_upload_checkpoint(
@@ -444,17 +372,6 @@ def main() -> int:
                         help="Demo modifier for --upload-to-0g: skip "
                              "AES-256-GCM seal so a server with no key can "
                              "fetch the checkpoint via load_profile.")
-    parser.add_argument("--logdir", type=str, default=None,
-                        help="Phase L.1: TensorBoard event-file output "
-                             "directory. When set, the trainer opens a "
-                             "SummaryWriter and logs train/* (TD error, "
-                             "gradient norm, eligibility norm), match/* "
-                             "(plies, per-pair win), win_rate/* (per-agent "
-                             "rolling win rate), and weights/* (per-agent "
-                             "L2 norms per epoch). Open with `tensorboard "
-                             "--logdir <path>`. The /training/start "
-                             "endpoint sets this automatically and spawns "
-                             "tensorboard alongside the trainer.")
     parser.add_argument("--use-0g-inference", action="store_true",
                         help="Phase G placeholder: route per-move forward "
                              "passes through og_compute_eval_client. The "
@@ -494,7 +411,6 @@ def main() -> int:
                 lam=args.lam,
                 gamma=args.gamma,
                 use_0g_inference=args.use_0g_inference,
-                logdir=Path(args.logdir) if args.logdir else None,
             )
             completed = True
         finally:

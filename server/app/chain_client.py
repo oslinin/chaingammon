@@ -118,6 +118,20 @@ _AGENT_REGISTRY_ABI = [
         "outputs": [{"name": "", "type": "uint32"}],
     },
     {
+        "type": "function",
+        "name": "activeAgentCount",
+        "stateMutability": "view",
+        "inputs": [],
+        "outputs": [{"name": "", "type": "uint256"}],
+    },
+    {
+        "type": "function",
+        "name": "activeAgentAt",
+        "stateMutability": "view",
+        "inputs": [{"name": "index", "type": "uint256"}],
+        "outputs": [{"name": "", "type": "uint256"}],
+    },
+    {
         "type": "event",
         "name": "OverlayUpdated",
         "anonymous": False,
@@ -504,6 +518,16 @@ class ChainClient:
         `agentCount()` view the frontend's AgentsList reads."""
         contract = self._require_agent_registry()
         return int(contract.functions.agentCount().call())
+
+    def active_agent_count(self) -> int:
+        """Number of agents currently active (not burned) on AgentRegistry."""
+        contract = self._require_agent_registry()
+        return int(contract.functions.activeAgentCount().call())
+
+    def active_agent_at(self, index: int) -> int:
+        """Return the agentId at position `index` in the active list."""
+        contract = self._require_agent_registry()
+        return int(contract.functions.activeAgentAt(index).call())
 
     def agent_elo(self, agent_id: int) -> int:
         return int(self.match_registry.functions.agentElo(agent_id).call())

@@ -182,7 +182,7 @@ export function ChiefOfStaffPanel({
       const opponentFeatures =
         agentId != null ? `Agent #${agentId} in play` : undefined;
 
-      const res = await fetch(`${COACH}/chief-of-staff/chat`, {
+      const res = await fetch("/api/chief-of-staff/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -190,12 +190,16 @@ export function ChiefOfStaffPanel({
           human_strategy: text.trim(),
           dialogue: newDialogue.map((m) => ({ role: m.role, text: m.text })),
           opponent_features: opponentFeatures ?? null,
+          agent_id: agentId ?? null,
           turn_index: 0,
-          // Use local backend so demo works offline; change to "compute" for 0G
-          backend: "local",
+          // Use compute backend since the Route Handler only supports 0G Compute
+          backend: "compute",
         }),
       });
-      if (!res.ok) throw new Error(`${res.status}`);
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.error || `${res.status}`);
+      }
       const data = (await res.json()) as ChiefOfStaffResponse;
 
       setLastResponse(data);
@@ -208,12 +212,12 @@ export function ChiefOfStaffPanel({
       if (data.recommended_move && onMoveSelect) {
         onMoveSelect(data.recommended_move);
       }
-    } catch {
+    } catch (e: any) {
       setDialogue([
         ...newDialogue,
         {
           role: "agent",
-          text: "Chief of Staff is offline. Start the coach node: `cd agent && ./start.sh`",
+          text: `Chief of Staff (0G Compute) encountered an error: ${e.message}. Please ensure your wallet has a sufficient OG balance and your connection to the 0G network is stable.`,
         },
       ]);
     } finally {

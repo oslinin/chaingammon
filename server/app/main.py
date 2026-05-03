@@ -2015,6 +2015,7 @@ class StartTrainingRequest(BaseModel):
 def post_training_start(req: StartTrainingRequest):
     """Spawn a round-robin training subprocess. 409 if one is already
     running. Returns `{job_id, started_at, epochs, agent_ids}`."""
+    print(f"TRAINING_START_REQ: {req}")
     # Auto-derive: if any 0G backend is selected, default to uploading
     # trained weights to 0G so the iNFT's dataHashes stay current.
     upload_to_0g = req.upload_to_0g or req.use_0g_inference or req.use_0g_coaching
@@ -2113,21 +2114,21 @@ def get_training_estimate(
 
 @app.get("/agents")
 def list_agents():
-    """List all minted agents. Returns `[{agent_id, weights_hash,
-    match_count, tier}]`. Label resolution (ENS) happens client-side.
-    503 when the chain isn't reachable so the training page can render
-    a 'chain unavailable' state instead of an empty list."""
+    """List all active (non-burned) agents. Returns `[{agent_id,
+    weights_hash, match_count, tier}]`. Label resolution (ENS) happens
+    client-side. 503 when the chain isn't reachable."""
     try:
         chain = ChainClient.from_env()
         if chain.agent_registry is None:
             raise ChainError("AGENT_REGISTRY_ADDRESS not set")
-        count = chain.agent_count()
+        count = chain.active_agent_count()
     except ChainError as e:
         raise HTTPException(status_code=503, detail=f"chain unavailable: {e}")
 
     agents = []
-    for aid in range(1, count + 1):
+    for i in range(count):
         try:
+            aid = chain.active_agent_at(i)
             hashes = chain.agent_data_hashes(aid)
             agents.append({
                 "agent_id": aid,
@@ -2136,15 +2137,8 @@ def list_agents():
                 "tier": chain.agent_tier(aid),
             })
         except ChainError:
-            # Skip agents the chain client can't read — but report the
-            # ID so the frontend knows there's a gap.
-            agents.append({
-                "agent_id": aid,
-                "weights_hash": "",
-                "match_count": 0,
-                "tier": 0,
-                "error": "chain read failed",
-            })
+            # Report that we couldn't read this specific active index.
+            pass
     return agents
 
 
@@ -2230,12 +2224,25 @@ def get_agent_profile(agent_id: int):
             if k not in ("kind", "style_values", "match_count")
         }
 
+    # Resolve the agent's server-managed wallet address.
+    # We use get_or_create so that every agent seen by the info page
+    # has a wallet provisioned and ready for match deposits.
+    agent_wallet_address: Optional[str] = None
+    try:
+        wallets = AgentWalletManager.from_env()
+        wallet = wallets.get_or_create(agent_id)
+        agent_wallet_address = wallet.address
+    except Exception:  # Best-effort
+        pass
+
     return {
         "agent_id": agent_id,
         "kind": kind,
+        "root_hash": weights_hash,
         "match_count": int(metrics.get("match_count", 0)),
         "summary": profile.summarize(),
         "owner_ens": owner_ens,
+        "address": agent_wallet_address,
         "values": values,
         "model_meta": model_meta,
     }

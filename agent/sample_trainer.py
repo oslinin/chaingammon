@@ -46,16 +46,12 @@ Two trainer modes:
 
 from __future__ import annotations
 
-from __future__ import annotations
-
 import argparse
 import json
 import math
 import os
 import random
-import shutil
 import signal
-import subprocess
 import sys
 import time
 from dataclasses import dataclass, field
@@ -63,18 +59,6 @@ from pathlib import Path
 
 import torch
 from torch import nn
-
-# Tensorboard is only needed by the trainer's main() loop. Guarding the
-# import lets lightweight consumers (e.g. server/app/main.py importing
-# `BackgammonNet` for the recommend-teammate endpoint, or
-# agent_profile.ModelProfile.from_bytes deserializing a checkpoint) load
-# this module without pulling in `tensorboard` and its transitive deps.
-# `main()` re-imports SummaryWriter directly and surfaces a clear error
-# if tensorboard isn't installed.
-try:
-    from torch.utils.tensorboard import SummaryWriter  # type: ignore
-except ImportError:
-    SummaryWriter = None  # type: ignore
 
 from career_features import (
     CareerContext,
@@ -339,8 +323,6 @@ def td_lambda_match(
     gamma: float = 1.0,
     lam: float = 0.7,
     lr: float = 1e-3,
-    writer: SummaryWriter | None = None,
-    global_step: int = 0,
     drand_round_digest: bytes | None = None,
     infer_fn=None,
     state_factory=None,
@@ -421,23 +403,11 @@ def td_lambda_match(
             agent.zero_grad()
             v_now.sum().backward()
             with torch.no_grad():
-                grad_norm_sq = 0.0
                 for p in agent.parameters():
                     if p.grad is None:
                         continue
                     eligibility[p].mul_(gamma * lam).add_(p.grad)
                     p.add_(lr * td_error * eligibility[p])
-                    grad_norm_sq += float(p.grad.pow(2).sum().item())
-
-            if writer is not None:
-                step = global_step + state.n_turns
-                writer.add_scalar("train/td_error", td_error, step)
-                writer.add_scalar("train/v_now", v_now.item(), step)
-                writer.add_scalar("train/v_next", v_next, step)
-                writer.add_scalar("train/grad_norm", math.sqrt(grad_norm_sq), step)
-                elig_norm = math.sqrt(sum(float(e.pow(2).sum().item())
-                                          for e in eligibility.values()))
-                writer.add_scalar("train/eligibility_norm", elig_norm, step)
 
             state = chosen
         else:
@@ -481,22 +451,6 @@ def evaluate(agent: BackgammonNet, opponent: BackgammonNet,
         if state.winner() == 0:
             wins += 1
     return wins / n_matches
-
-
-def maybe_launch_tensorboard(logdir: Path) -> subprocess.Popen | None:
-    """Spawn `tensorboard --logdir <logdir>` as a child process if the
-    binary is on PATH. Returns the Popen handle so the caller can wait
-    for Ctrl+C, or None if the binary is missing."""
-    binary = shutil.which("tensorboard")
-    if binary is None:
-        print("tensorboard binary not on PATH — skipping dashboard launch.", file=sys.stderr)
-        print("Install with: uv add tensorboard  (or pip install tensorboard)", file=sys.stderr)
-        return None
-    print(f"Launching TensorBoard at http://localhost:6006 (logdir={logdir})")
-    return subprocess.Popen(
-        [binary, "--logdir", str(logdir), "--port", "6006", "--bind_all"],
-        stdout=sys.stdout, stderr=sys.stderr,
-    )
 
 
 def _compute_style_values(net: "BackgammonNet") -> dict[str, float]:
@@ -598,10 +552,6 @@ def main() -> None:
     parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate.")
     parser.add_argument("--lam", type=float, default=0.7, help="TD(lambda) trace decay.")
     parser.add_argument("--gamma", type=float, default=1.0, help="Discount factor.")
-    parser.add_argument("--logdir", type=str, default="runs/sample_trainer",
-                        help="TensorBoard log directory (default: runs/sample_trainer).")
-    parser.add_argument("--launch-tensorboard", action="store_true",
-                        help="Spawn `tensorboard --logdir <logdir>` after training.")
     parser.add_argument("--seed", type=int, default=42, help="Python+torch RNG seed.")
     parser.add_argument("--extras-dim", type=int, default=DEFAULT_EXTRAS_DIM,
                         help="Per-agent contextual feature dim (0 = single-game head).")
@@ -773,17 +723,6 @@ def main() -> None:
         assert torch.allclose(agent.core.weight, opponent.core.weight), \
             "core weights should be identical at init (both seeded from gnubg published init)"
 
-    logdir = Path(args.logdir)
-    logdir.mkdir(parents=True, exist_ok=True)
-    writer = SummaryWriter(log_dir=str(logdir))
-
-    # Log model architecture to the TensorBoard "Graphs" tab.
-    sample_board = torch.zeros(1, GNUBG_FEAT_DIM)
-    if args.extras_dim > 0:
-        writer.add_graph(agent, (sample_board, agent_extras.unsqueeze(0)))
-    else:
-        writer.add_graph(agent, sample_board)
-
     # Phase J.3: when --full-board is on, swap the state factory + set
     # the module-level gnubg client so legal_successors dispatches to
     # the gnubg-driven path. encode_state's dispatch is type-based and
@@ -811,7 +750,6 @@ def main() -> None:
     # Baseline win rate before training.
     baseline_wr = evaluate(agent, opponent, agent_extras, opponent_extras,
                            n_matches=20, state_factory=state_factory)
-    writer.add_scalar("eval/win_rate_vs_frozen", baseline_wr, 0)
     print(f"Baseline win rate (untrained): {baseline_wr:.2%}")
     # Note: in career mode `agent_extras`/`opponent_extras` get re-bound
     # per match below; `eval_agent_extras`/`eval_opponent_extras` (set
@@ -837,7 +775,6 @@ def main() -> None:
         steps, won = td_lambda_match(
             agent, opponent, agent_extras, opponent_extras,
             gamma=args.gamma, lam=args.lam, lr=args.lr,
-            writer=writer, global_step=global_step,
             drand_round_digest=drand_digest,
             state_factory=state_factory,
         )
@@ -849,21 +786,10 @@ def main() -> None:
         if len(rolling_outcomes) > 50:
             rolling_outcomes.pop(0)
 
-        writer.add_scalar("match/won", won, match_idx)
-        writer.add_scalar("match/length", steps, match_idx)
-        writer.add_scalar("match/rolling_win_rate",
-                          sum(rolling_outcomes) / len(rolling_outcomes), match_idx)
-
-        # Periodic histograms — let the user see weights and gradients drift
-        # over training in the TensorBoard "Distributions" / "Histograms" tabs.
+        # Periodic evaluation — let the user see win-rate progress in the logs.
         if (match_idx + 1) % 25 == 0 or match_idx == args.matches - 1:
-            for name, p in agent.named_parameters():
-                writer.add_histogram(f"params/{name}", p, match_idx)
-                if p.grad is not None:
-                    writer.add_histogram(f"grads/{name}", p.grad, match_idx)
             wr = evaluate(agent, opponent, eval_agent_extras, eval_opponent_extras,
                           n_matches=20, state_factory=state_factory)
-            writer.add_scalar("eval/win_rate_vs_frozen", wr, match_idx + 1)
             print(f"  match {match_idx + 1:>4}/{args.matches}  "
                   f"rolling win-rate {sum(rolling_outcomes)/len(rolling_outcomes):.2%}  "
                   f"eval vs frozen {wr:.2%}")
@@ -873,8 +799,6 @@ def main() -> None:
     elapsed = time.time() - t0
     print(f"\nDone. {args.matches} matches in {elapsed:.1f}s. "
           f"Final win rate vs frozen opponent: {final_wr:.2%}")
-    print(f"TensorBoard events: {logdir}")
-    print(f"View with: tensorboard --logdir {logdir}")
 
     if args.save_checkpoint:
         ckpt_path = Path(args.save_checkpoint)
@@ -923,19 +847,9 @@ def main() -> None:
         print("--upload-to-0g requires --save-checkpoint; skipping upload.",
               file=sys.stderr)
 
-    writer.close()
     _emit("done", total=args.matches, final_win_rate=float(final_wr))
     if status_fh is not None:
         status_fh.close()
-
-    if args.launch_tensorboard:
-        proc = maybe_launch_tensorboard(logdir)
-        if proc is not None:
-            try:
-                proc.wait()
-            except KeyboardInterrupt:
-                proc.terminate()
-                proc.wait()
 
 
 if __name__ == "__main__":

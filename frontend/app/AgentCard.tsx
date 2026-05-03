@@ -92,7 +92,7 @@ export function AgentCard({ agentId }: AgentCardProps) {
     : "";
   const label =
     cleanedLabel && cleanedLabel.length <= 60
-      ? `${cleanedLabel}.chaingammon.eth`
+      ? cleanedLabel
       : `Agent #${agentId}`;
 
   const eloDisplay = elo !== undefined ? elo.toString() : "—";

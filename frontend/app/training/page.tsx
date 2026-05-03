@@ -48,18 +48,15 @@ function positionToEpochs(p: number, use0g: boolean): number {
   // Position is 0..100. Map to log scale.
   const max = maxEpochs(use0g);
   const exact = Math.pow(10, (p / 100) * Math.log10(max));
-  // Snap to the nearest power of 10 for readability.
-  const snaps = snapPoints(use0g);
-  let nearest = snaps[0];
-  let bestDist = Infinity;
-  for (const s of snaps) {
-    const d = Math.abs(Math.log10(exact) - Math.log10(s));
-    if (d < bestDist) {
-      bestDist = d;
-      nearest = s;
-    }
-  }
-  return nearest;
+
+  if (exact <= 10) return Math.round(exact);
+
+  // Round to 2 significant digits for a "nice" feel that allows selecting
+  // values like 15, 250, or 1.2M rather than just powers of 10.
+  const power = Math.floor(Math.log10(exact));
+  const magnitude = Math.pow(10, power - 1);
+  const rounded = Math.round(exact / magnitude) * magnitude;
+  return Math.min(max, rounded);
 }
 
 function epochsToPosition(epochs: number, use0g: boolean): number {
@@ -277,6 +274,8 @@ export default function TrainingPage() {
         sliderPos={sliderPos}
         epochs={epochs}
         use0g={use0gInference}
+        selectedIds={selectedIds}
+        gamesPerEpoch={gamesPerEpoch}
         onSliderChange={setSliderPos}
         onEpochInputChange={(e) =>
           setSliderPos(epochsToPosition(e, use0gInference))
@@ -433,12 +432,16 @@ function EpochSlider({
   sliderPos,
   epochs,
   use0g,
+  selectedIds,
+  gamesPerEpoch,
   onSliderChange,
   onEpochInputChange,
 }: {
   sliderPos: number;
   epochs: number;
   use0g: boolean;
+  selectedIds: number[];
+  gamesPerEpoch: number;
   onSliderChange: (p: number) => void;
   onEpochInputChange: (e: number) => void;
 }) {
@@ -446,9 +449,16 @@ function EpochSlider({
 
   return (
     <section className="flex flex-col gap-2">
-      <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">
-        Epochs
-      </h2>
+      <div className="flex flex-col gap-1">
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">
+          Epochs — {epochs.toLocaleString()}
+        </h2>
+        {selectedIds.length >= 2 && (
+          <p className="text-[10px] text-zinc-400 font-mono">
+            Total training games: {epochs.toLocaleString()} epochs × {gamesPerEpoch} matches/epoch = {(epochs * gamesPerEpoch).toLocaleString()} games
+          </p>
+        )}
+      </div>
       <div className="flex items-center gap-3">
         <input
           type="range"

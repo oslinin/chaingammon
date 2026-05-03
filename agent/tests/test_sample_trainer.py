@@ -229,19 +229,17 @@ def test_match_with_drand_digest_is_deterministic_in_dice():
 
 def test_career_mode_runs_end_to_end(tmp_path):
     """`python sample_trainer.py --career-mode --matches 3` must complete
-    without error, write TensorBoard event files, and save a checkpoint."""
+    without error and save a checkpoint."""
     import subprocess
     import sys
     from pathlib import Path
 
     trainer = Path(__file__).resolve().parents[1] / "sample_trainer.py"
-    logdir = tmp_path / "runs"
     ckpt = tmp_path / "agent.pt"
 
     result = subprocess.run(
         [sys.executable, str(trainer),
          "--career-mode", "--matches", "3",
-         "--logdir", str(logdir),
          "--save-checkpoint", str(ckpt)],
         capture_output=True, text=True, timeout=60,
     )
@@ -249,9 +247,6 @@ def test_career_mode_runs_end_to_end(tmp_path):
         f"trainer failed: stdout={result.stdout!r} stderr={result.stderr!r}"
     )
     assert ckpt.exists(), "checkpoint should be written"
-    assert any(logdir.glob("events.out.tfevents.*")), (
-        "TensorBoard event files should be written"
-    )
 
 
 def test_career_mode_requires_extras_dim_at_least_16(tmp_path):
@@ -264,8 +259,7 @@ def test_career_mode_requires_extras_dim_at_least_16(tmp_path):
     trainer = Path(__file__).resolve().parents[1] / "sample_trainer.py"
     result = subprocess.run(
         [sys.executable, str(trainer),
-         "--career-mode", "--extras-dim", "8", "--matches", "1",
-         "--logdir", str(tmp_path / "runs")],
+         "--career-mode", "--extras-dim", "8", "--matches", "1"],
         capture_output=True, text=True, timeout=30,
     )
     assert result.returncode != 0

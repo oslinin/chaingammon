@@ -2,6 +2,7 @@
 pragma solidity ^0.8.24;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/utils/Strings.sol";
 
 /// @notice Subset of ENS NameWrapper used by PlayerSubnameRegistrar.
 interface INameWrapper {
@@ -131,6 +132,15 @@ contract PlayerSubnameRegistrar is Ownable {
             type(uint64).max // expiry — never expires
         );
 
+        // Phase 31: set text records so discovery tools (subgraph-based)
+        // can distinguish agents from humans without event scanning.
+        if (inftId > 0) {
+            IResolver(resolver).setText(node, "kind", "agent");
+            IResolver(resolver).setText(node, "inft_id", Strings.toString(inftId));
+        } else {
+            IResolver(resolver).setText(node, "kind", "human");
+        }
+
         emit SubnameMinted(label, node, subnameOwner_, inftId);
     }
 
@@ -148,6 +158,9 @@ contract PlayerSubnameRegistrar is Ownable {
             0,
             type(uint64).max
         );
+
+        // Explicitly mark as human for discovery categorization.
+        IResolver(resolver).setText(node, "kind", "human");
 
         emit SubnameMinted(label, node, msg.sender, 0);
     }

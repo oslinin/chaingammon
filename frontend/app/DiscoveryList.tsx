@@ -38,7 +38,13 @@ const PARENT_NAME = "chaingammon.eth";
 
 const SUBNAMES_QUERY = `
   query Subnames($parent: String!) {
-    domains(where: { parent_: { name: $parent } }, first: 100) {
+    domains(
+      where: {
+        parent_: { name: $parent },
+        owner_not: "0x0000000000000000000000000000000000000000"
+      },
+      first: 100
+    ) {
       id
       labelName
       name
@@ -78,7 +84,7 @@ async function fetchSubnameEntries(subgraphUrl: string): Promise<DiscoveryEntry[
     return {
       node: d.id as `0x${string}`,
       label: d.labelName ?? d.id.slice(0, 10),
-      kind: texts.has("kind") ? "human" : "human",
+      kind: texts.has("kind") ? "agent" : "human",
       elo: "",
       endpoint: "",
       inftId: "",

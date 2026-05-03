@@ -143,50 +143,6 @@ export function Sidebar() {
             Per-turn advisor signals
           </span>
         </Link>
-
-        {/* Entry 4: 0G Storage log — live match record on 0G Storage */}
-        <Link
-          href={mounted && currentMatchId ? `/log/${currentMatchId}` : "/log/no-match"}
-          data-testid="sidebar-log"
-          className="flex flex-col gap-0.5 rounded-md px-3 py-3 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800"
-        >
-          <span className="font-semibold text-zinc-900 dark:text-zinc-50">
-            0G Storage log
-          </span>
-          <span className="text-xs text-zinc-500 dark:text-zinc-400">
-            Live match record
-          </span>
-        </Link>
-
-        {/* Entry 5: ENS text records before/after keeper settlement */}
-        <Link
-          href={mounted && currentMatchId ? `/ens/${currentMatchId}` : "/ens/no-match"}
-          data-testid="sidebar-ens"
-          className="flex flex-col gap-0.5 rounded-md px-3 py-3 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800"
-        >
-          <span className="font-semibold text-zinc-900 dark:text-zinc-50">
-            ENS updates
-          </span>
-          <span className="text-xs text-zinc-500 dark:text-zinc-400">
-            Reputation writes
-          </span>
-        </Link>
-
-        {/* Entry 6: KeeperHub workflow step view — escrow, VRF, replay, settlement */}
-        <Link
-          href={mounted && currentMatchId ? `/keeper/${currentMatchId}` : "/keeper/no-match"}
-          data-testid="sidebar-keeper"
-          className="flex flex-col gap-0.5 rounded-md px-3 py-3 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800"
-        >
-          <span className="font-semibold text-zinc-900 dark:text-zinc-50">
-            KeeperHub steps
-          </span>
-          <span className="text-xs text-zinc-500 dark:text-zinc-400">
-            Workflow + escrow
-          </span>
-        </Link>
-
-
       </nav>
     </aside>
   );
