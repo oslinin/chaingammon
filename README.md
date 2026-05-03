@@ -28,6 +28,68 @@ A decentralized, verifiable ELO ledger for backgammon — humans and agents shar
 
 ---
 
+## Running Locally
+
+### Prerequisites
+
+- Python 3.12+, [uv](https://github.com/astral-sh/uv)
+- Node 20+, [pnpm](https://pnpm.io)
+- `gnubg` (for local debugging only) — `sudo apt install gnubg` (Ubuntu/Debian) or `brew install gnubg` (macOS)
+
+### One-time setup
+
+```bash
+git clone <repo> && cd chaingammon
+pnpm install                    # frontend + contracts (workspace)
+cd agent && uv sync && cd ..    # agent Python deps
+cp contracts/.env.example contracts/.env       # add DEPLOYER_PRIVATE_KEY + Sepolia RPC_URL
+cp frontend/.env.example frontend/.env.local
+```
+
+Fund the deployer wallet with Sepolia ETH from any public faucet.
+
+### Bootstrap and run
+
+```bash
+# 1. deploy + verify settlement contracts on Sepolia (one shot)
+./scripts/bootstrap-network.sh
+
+# 2. start the local agent processes (terminal A)
+#    Acts as the backgammon engine for validating and generating moves during live play and provides a fallback local LLM coach.
+cd agent && ./start.sh           # gnubg :8001, coach fallback :8002
+
+# 3. start the FastAPI backend (terminal B, from repo root)
+#    Handles game finalization, agent training orchestration, uploading game records to 0G storage, and executing the KeeperHub settlement workflow.
+cd server && uv run uvicorn app.main:app --host 0.0.0.0 --port 8000
+
+# 4. start the frontend (terminal C, from repo root)
+#    Now also orchestrates 0G Compute LLM calls via Route Handlers.
+pnpm frontend:dev                # Next.js on :3000
+```
+
+Or use the VS Code Tasks workflow (`.vscode/tasks.json`) — `Tasks: Run Task` → `Localhost: launch all` fires hardhat node + deploy + agent + frontend in parallel terminals.
+
+### Local dev with Hardhat
+
+```bash
+cd contracts && pnpm exec hardhat node            # local chain (chainId 31337)
+cd contracts && pnpm exec hardhat run script/deploy.js --network localhost
+# copy addresses from contracts/deployments/localhost.json into frontend/.env.local
+```
+
+Switch chains in MetaMask; the frontend re-targets the new chain's contracts automatically (see `frontend/app/chains.ts`).
+
+### Test commands
+
+```bash
+pnpm test                  # all tests: agent (pytest) + contracts (hardhat) + frontend (build)
+pnpm contracts:test
+pnpm agent:test
+pnpm frontend:test
+```
+
+---
+
 ## How It Works
 
 1. Connect a wallet → frontend resolves (or auto-mints) `<name>.chaingammon.eth` on Sepolia.
@@ -603,80 +665,6 @@ The YAML workflow is the event-driven counterpart to the Python orchestrator abo
 ## Live training visualization (Phase L)
 
 Round-robin training runs spawned from the `/training` page are observable in real time via a real-time JSONL event stream. The frontend polls the training status, aggregates the match events, and displays progress (wins, losses, plies) per agent in the status panel. Once the run completes, the saved checkpoints and their 0G Storage hashes are displayed in the checkpoints table, along with the agent's unique cryptographic wallet address.
-
----
-
-## Running Locally
-
-### Prerequisites
-
-- Python 3.12+, [uv](https://github.com/astral-sh/uv)
-- Node 20+, [pnpm](https://pnpm.io)
-- `gnubg` (for local debugging only) — `sudo apt install gnubg` (Ubuntu/Debian) or `brew install gnubg` (macOS)
-
-### One-time setup
-
-```bash
-git clone <repo> && cd chaingammon
-pnpm install                    # frontend + contracts (workspace)
-cd agent && uv sync && cd ..    # agent Python deps
-cp contracts/.env.example contracts/.env       # add DEPLOYER_PRIVATE_KEY + Sepolia RPC_URL
-cp frontend/.env.example frontend/.env.local
-```
-
-Fund the deployer wallet with Sepolia ETH from any public faucet.
-
-### Bootstrap and run
-
-```bash
-# 1. deploy + verify settlement contracts on Sepolia (one shot)
-./scripts/bootstrap-network.sh
-
-# 2. start the local agent processes (terminal A)
-#    Acts as the backgammon engine for validating and generating moves during live play and provides a fallback local LLM coach.
-cd agent && ./start.sh           # gnubg :8001, coach fallback :8002
-
-# 3. start the FastAPI backend (terminal B, from repo root)
-#    Handles game finalization, agent training orchestration, uploading game records to 0G storage, and executing the KeeperHub settlement workflow.
-cd server && uv run uvicorn app.main:app --host 0.0.0.0 --port 8000
-
-# 4. start the frontend (terminal C, from repo root)
-#    Now also orchestrates 0G Compute LLM calls via Route Handlers.
-pnpm frontend:dev                # Next.js on :3000
-```
-
-Or use the VS Code Tasks workflow (`.vscode/tasks.json`) — `Tasks: Run Task` → `Localhost: launch all` fires hardhat node + deploy + agent + frontend in parallel terminals.
-
-### Local dev with Hardhat
-
-```bash
-cd contracts && pnpm exec hardhat node            # local chain (chainId 31337)
-cd contracts && pnpm exec hardhat run script/deploy.js --network localhost
-# copy addresses from contracts/deployments/localhost.json into frontend/.env.local
-```
-
-Switch chains in MetaMask; the frontend re-targets the new chain's contracts automatically (see `frontend/app/chains.ts`).
-
-### Test commands
-
-```bash
-pnpm test                  # all tests: agent (pytest) + contracts (hardhat) + frontend (build)
-pnpm contracts:test
-pnpm agent:test
-pnpm frontend:test
-```
-
----
-
-## Frontend Routes
-
-| Route | Page | Data source |
-| --- | --- | --- |
-| `/` | Agent discovery + matchmaking | On-chain reads via wagmi |
-| `/play/new` | Pick two players or teams, start a match | Wallet + `AgentRegistry` |
-| `/match?agentId=N` | Live match against agent N | local gnubg service (`:8001`) |
-| `/profile/[ensName]` | Player profile (ENS text records) | `PlayerSubnameRegistrar.text()` |
-| `/match/[matchId]` | Match replay + audit trail | 0G Storage |
 
 ---
 
