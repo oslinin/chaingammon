@@ -1,8 +1,8 @@
 // Fixture page for Phase 76 Playwright tests — Chief of Staff panel.
 //
 // Renders ChiefOfStaffPanel with static props so Playwright can assert
-// structural and visual correctness without requiring live gnubg or
-// coach_service processes.
+// structural and visual correctness without requiring a live gnubg
+// process or 0G Compute access.
 
 "use client";
 

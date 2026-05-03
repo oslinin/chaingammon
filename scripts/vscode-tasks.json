@@ -68,7 +68,7 @@
     },
     {
       "label": "Localhost: agent node",
-      "detail": "Terminal 3 — gnubg_service (port 8001) + coach_service (port 8002). Long-running.",
+      "detail": "Terminal 3 — gnubg_service (port 8001). Long-running. Coach LLM runs on 0G Compute via the Next.js Route Handler, so no local coach process.",
       "type": "shell",
       "command": "./start.sh; exec $SHELL",
       "options": { "cwd": "${workspaceFolder}/agent" },
@@ -80,9 +80,8 @@
         "clear": true
       },
       // Background task — release the next sequential task as soon as
-      // uvicorn signals at least one FastAPI service is up. Both
-      // gnubg_service and coach_service emit "Application startup
-      // complete." on success; matching once is enough to advance.
+      // uvicorn signals the FastAPI service is up. gnubg_service emits
+      // "Application startup complete." on success.
       "problemMatcher": {
         "owner": "agent-services",
         "pattern": [

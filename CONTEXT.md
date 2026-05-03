@@ -40,7 +40,7 @@ Sponsor mix per ETHGlobal Open Agents (the three Chaingammon targets): **0G** (S
  │ Browser-side  │       │  0G Compute       │         │ Local agent       │
  │ value-net     │       │  TEE-attested     │         │ process (dev):    │
  │ forward pass  │       │  coach LLM +      │         │ gnubg :8001       │
- │ (per-agent NN)│       │  offline NN       │         │ coach  :8002      │
+ │ (per-agent NN)│       │  offline NN       │         │                   │
  └───────────────┘       └───────────────────┘         └───────────────────┘
                                     │
                                     │ KeeperHub workflow
@@ -109,10 +109,7 @@ Or run sub-project commands directly from within each directory:
 # Start gnubg agent node (port 8001)
 uv run uvicorn gnubg_service:app --port 8001
 
-# Start coach agent node (port 8002)
-uv run uvicorn coach_service:app --port 8002
-
-# Start both at once (recommended)
+# Start it via the helper script (recommended)
 bash start.sh
 
 # Run all tests (includes sample_trainer + agent_profile + service tests)
@@ -166,8 +163,8 @@ See `## Frontend Policies` below for the three rules every frontend change must 
 | `CHANGELOG.md` | Keep-a-Changelog summary; the active per-release record |
 | `MISSION.md` | Product vision and principles |
 | `agent/gnubg_service.py` | Local FastAPI service (port 8001): gnubg move evaluation via External Player interface |
-| `agent/coach_service.py` | Local FastAPI service (port 8002): flan-t5-base LLM coaching hints with 0G Storage RAG context |
-| `agent/start.sh` | Start script: launches both agent FastAPI services |
+| `agent/coach_service.py` | Legacy Python coaching service — no longer started locally. The active coach LLM runs on 0G Compute, called from `frontend/app/api/coach/hint/route.ts`. |
+| `agent/start.sh` | Start script: launches the gnubg FastAPI service (coach now runs on 0G Compute) |
 | `scripts/upload_gnubg_docs.py` | One-time script: upload gnubg strategy docs to 0G Storage for coach RAG |
 | `contracts/src/PlayerSubnameRegistrar.sol` | ENS-shaped subname registrar. Issues `<label>.chaingammon.eth` subnames with text records (`elo`, `match_count`, `last_match_id`, `style_uri`, `archive_uri`). |
 | `contracts/src/EloMath.sol` | Fixed-point ELO formula — test extensively |

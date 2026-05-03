@@ -30,10 +30,11 @@
 //
 // After each move a non-blocking coach hint is requested (skipped during
 // fast-forward since the human is not choosing moves):
-//   → POST /evaluate (gnubg_service) → ranked candidates
-//   → POST /hint    (coach_service)   → plain-English hint
+//   → POST /evaluate       (gnubg_service)        → ranked candidates
+//   → POST /api/coach/hint (Next.js Route Handler → 0G Compute / Qwen 2.5 7B)
+//                                                 → plain-English hint
 // Coach calls are best-effort — any failure is silently swallowed so
-// the game continues regardless of coach availability.
+// the game continues regardless of 0G Compute availability.
 //
 // Move notation is gnubg's standard: "8/5 6/5" (from-point/to-point,
 // space-separated for multiple checker movements). See
@@ -84,7 +85,6 @@ interface MatchState {
 // ── API helpers ───────────────────────────────────────────────────────────
 
 const GNUBG = process.env.NEXT_PUBLIC_GNUBG_URL ?? "http://localhost:8001";
-const COACH = process.env.NEXT_PUBLIC_COACH_URL ?? "http://localhost:8002";
 const SERVER = process.env.NEXT_PUBLIC_SERVER_URL ?? "http://localhost:8000";
 
 const ZERO_ADDR = "0x0000000000000000000000000000000000000000" as `0x${string}`;
@@ -131,9 +131,10 @@ async function gnubgPost<T>(path: string, body: unknown): Promise<T> {
 
 // Coach backend choices the user can pick in the toggle. "compute" is the
 // paid 0G Compute path (Qwen 2.5 7B Instruct via @0glabs/0g-serving-broker);
-// "local" is the free flan-t5-base running inside coach_service. The server
-// also accepts "compute-only" but we don't expose that to the UI — the
-// frontend always wants graceful degradation.
+// "local" is the historical free path (flan-t5-base in the now-disabled
+// coach_service). The Next.js Route Handler currently only serves "compute"
+// — keep the type alias so the global ComputeBackendsContext can still
+// surface a "local" pill state, but expect "local" requests to no-op.
 type CoachBackend = "compute" | "local";
 
 interface HintResult {
@@ -145,10 +146,11 @@ interface HintResult {
 }
 
 /**
- * Request a coaching hint from coach_service (port 8002 / COACH env var).
- * Returns the hint + which backend served it, or null on any failure.
- * Non-blocking: callers should fire-and-forget and update state only if
- * still mounted.
+ * Request a coaching hint from the Next.js Route Handler at
+ * /api/coach/hint, which routes the request to Qwen 2.5 7B Instruct on
+ * 0G Compute. Returns the hint + which backend served it, or null on
+ * any failure. Non-blocking: callers should fire-and-forget and update
+ * state only if still mounted.
  */
 async function fetchHint(
   positionId: string,
@@ -303,7 +305,7 @@ function MatchInner() {
     (async () => {
       try {
         const res = await fetch(
-          `${COACH}/agents/${agentId}/recommend-teammate`,
+          `${SERVER}/agents/${agentId}/recommend-teammate`,
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -1554,7 +1556,7 @@ function MatchInner() {
                       ? "bg-amber-600 px-2 py-0.5 text-white"
                       : "bg-transparent px-2 py-0.5 text-amber-700 hover:bg-amber-100 dark:text-amber-300 dark:hover:bg-amber-900/30"
                   }
-                  title="Local flan-t5-base (free, runs in coach_service)"
+                  title="Local coach is disabled — coach LLM now runs only on 0G Compute"
                 >
                   Free · Local
                 </button>
@@ -1584,10 +1586,8 @@ function MatchInner() {
               </>
             ) : (
               <p className="text-sm text-amber-500 dark:text-amber-600">
-                Start the coach node to get per-turn hints:{" "}
-                <code className="font-mono text-xs">
-                  cd agent &amp;&amp; ./start.sh
-                </code>
+                Pick the <strong>Paid · 0G</strong> backend above to get
+                per-turn hints from the 0G Compute coach.
               </p>
             )}
           </div>
@@ -1662,7 +1662,7 @@ function InferenceChip() {
     queryKey: ["inference-probe"],
     staleTime: 60_000,
     queryFn: async () => {
-      const url = new URL(`${COACH}/training/estimate`);
+      const url = new URL(`${SERVER}/training/estimate`);
       url.searchParams.set("epochs", "1");
       url.searchParams.set("agent_ids", "1,2");
       url.searchParams.set("use_0g_inference", "true");
