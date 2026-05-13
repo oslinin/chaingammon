@@ -13,6 +13,10 @@ const nextConfig: NextConfig = {
     config.resolve.alias = {
       ...config.resolve.alias,
       accounts: false,
+      '@coinbase/wallet-sdk': false,
+      '@metamask/connect-evm': false,
+      'porto': false,
+      'porto/internal': false
     };
     return config;
   },

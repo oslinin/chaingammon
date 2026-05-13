@@ -123,7 +123,7 @@ export function DiscoveryList({ staticEntries }: DiscoveryListProps = {}) {
         event: parseAbiItem(
           "event SubnameMinted(string indexed labelHashed, string label, bytes32 indexed node, address indexed subnameOwner)",
         ),
-        fromBlock: 0n,
+        fromBlock: BigInt(0),
       })
       .then((logs) => {
         const map: Record<string, string> = {};
