@@ -24,7 +24,7 @@ A decentralized, verifiable ELO ledger for backgammon — humans and agents shar
 - **Living agents.** Each AI agent _is_ an ERC-7857 iNFT (with ERC-721 fallback). It pins two `dataHashes`: a starter NN initialized from gnubg's published weights, and a per-agent trained checkpoint that grows match by match. Transfer the token, transfer the brain.
 - **Trustless dice.** Each turn's dice are `sha3_256(drand_round_digest, turn_index) mod 36`. No server PRNG, no commit-reveal coordination, fully reproducible. The server passes drand's BLS12-381 signature through to the client (`signature` and `previous_signature` fields on `/games/{matchId}/dice`) so an auditor can independently verify the round against drand's published group public key.
 - **Optional stakes.** A match can be free (ELO-only) or staked (per-side ETH deposit, winner takes the pot). Agents stake via a dedicated server-managed session-key wallet that the owner pre-funds; settlement is atomic (`MatchRegistry.recordMatchAndSplit` records the result and pays the winner in the same transaction).
-- **No central server.** Move evaluation runs in the browser (small NN forward pass) or on 0G Compute (TEE-attested for offline play). The coach LLM runs on 0G Compute (Qwen 2.5 7B) with a local flan-t5-base fallback. KeeperHub workflows orchestrate settlement.
+- **No central server.** Move evaluation runs entirely in the browser (small NN forward pass via ONNX Runtime Web) (TEE-attested for offline play). The coach LLM runs on 0G Compute (Qwen 2.5 7B) with a local flan-t5-base fallback. KeeperHub workflows orchestrate settlement.
 
 ---
 
@@ -136,7 +136,7 @@ sequenceDiagram
 
 Each agent's brain is a small per-agent value network. Two pieces, both stored as 0G Storage blobs whose Merkle roots are committed to the iNFT:
 
-- **`dataHashes[0]` — starter weights.** Every agent is initialized from gnubg's published feedforward weights (a few hundred neurons, single hidden layer for the contact net). Same starting point for every agent in the protocol; what changes is what the owner trains on top.
+- **`dataHashes[0]` — starter weights.** Every agent is initialized from gnubg's published feedforward weights (which we export to `backgammon_net.onnx`) (a few hundred neurons, single hidden layer for the contact net). Same starting point for every agent in the protocol; what changes is what the owner trains on top.
 - **`dataHashes[1]` — per-agent checkpoint.** The owner runs a self-play / refereed-match training loop and uploads the latest checkpoint after each session. Two iNFTs that started identical drift into measurably different play styles as their match histories diverge.
 
 Inference at game time runs in the browser (default — small forward pass, ~10K parameters) or on 0G Compute (TEE-attested, used when the owner's machine is offline so other players can still challenge the agent).
@@ -377,18 +377,10 @@ Full schema: [docs/ENS_SCHEMA.md](docs/ENS_SCHEMA.md).
 
 ---
 
-## Local Agent Process (dev convenience)
+## Architecture
 
-`agent/gnubg_service.py` and `agent/coach_service.py` are small FastAPI services that run on the player's machine (`localhost:8001` and `:8002`) for local development. The browser hits them directly via `fetch`. CORS is open in dev.
-
-| Process | Port | What it does |
-| --- | --- | --- |
-| **gnubg agent** (`agent/gnubg_service.py`) | 8001 | Wraps the gnubg subprocess via its External Player interface. Useful for ground-truth equity comparisons during training; not part of the production data path. |
-| **LLM coach** (`agent/coach_service.py`) | 8002 | Local flan-t5-base coach with gnubg strategy docs as RAG context. Falls back to this when 0G Compute is unreachable. |
-
-Production move evaluation is the per-agent NN forward pass — in the browser by default, on 0G Compute when the owner is offline. The gnubg subprocess is *not* on the production path; it's an initialization source and a local debugging aid.
-
----
+- **Inference**: Exported `BackgammonNet` ONNX models running directly in the browser using `onnxruntime-web`.
+- **Coach**: Next.js API Routes (`/api/coach/hint`, `/api/coach/chat`) handling direct interactions with 0G Compute via `@0glabs/0g-serving-broker`. No Python/Node proxy processes are used.
 
 ## Coach dialogue — turn-by-turn explanation
 
