@@ -1,20 +1,25 @@
-// Discovery list — humans registered under chaingammon.eth, fetched from
-// the ENS subgraph rather than scanning event logs from the registrar.
+// Phase 31: unified discovery list — humans and agents from
+// PlayerSubnameRegistrar in a single view.
 //
-// After the NameWrapper migration, subname state lives entirely in real
-// ENS. The subgraph is the canonical index for "all subdomains of
-// chaingammon.eth"; the previous on-chain enumeration via subnameCount /
-// subnameAt was removed.
+// Reads kind, elo, and endpoint text records for each registered subname,
+// then groups them under separate "Players" and "Agents" sections.
+// "Play" button only appears for entries where endpoint is set.
+// Authoritative ELO comes from MatchRegistry; the text record is only for
+// cross-protocol consumers reading ENS directly.
+//
+// Phase 65: label resolution. The contract's subnameAt(i) returns only the
+// node hash; the human-readable label lives exclusively in the SubnameMinted
+// event log. We fetch all SubnameMinted events once via getLogs and build a
+// node→label map so each card can display e.g. "alice.chaingammon.eth".
 "use client";
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { useReadContract } from "wagmi";
+import { parseAbiItem } from "viem";
+import { usePublicClient, useReadContract, useReadContracts } from "wagmi";
 
-import { useActiveChain, useActiveChainId, useEnsInfra } from "./chains";
-import { MatchRegistryABI, useChainContracts } from "./contracts";
-import { useChaingammonProfile } from "./useChaingammonProfile";
-import { useHumanMatchSummary } from "./useHumanMatchSummary";
+import { useActiveChain, useActiveChainId } from "./chains";
+import { PlayerSubnameRegistrarABI, useChainContracts } from "./contracts";
 
 // -------------------------------------------------------------------------
 // Types
@@ -26,103 +31,7 @@ interface DiscoveryEntry {
   kind: string;
   elo: string;
   endpoint: string;
-  inftId: string; // agent iNFT id; "" for human entries
-  address: `0x${string}` | null; // resolved wallet address from ENS resolver, when available
-}
-
-// -------------------------------------------------------------------------
-// Subgraph query — list subdomains of chaingammon.eth with their resolver text records.
-//
-// The ENS subgraph stores Domain entities keyed by their namehash. Each
-// has a labelName, an owner, and a `resolver` record with `texts` keys
-// and `coinTypes`. We fetch a small page (100 is plenty for a demo) and
-// pull the text records we care about in a follow-up call below.
-// -------------------------------------------------------------------------
-
-const PARENT_NAME = "chaingammon.eth";
-
-// NameWrapper wraps subnames as ERC-1155 NFTs whose tokenId IS the
-// namehash. The token holder is the wallet that "owns" the subname —
-// i.e. the address we want to look up MatchRegistry.humanElo for when
-// the resolver's addr record isn't populated.
-const NAME_WRAPPER_OWNER_ABI = [
-  {
-    type: "function",
-    name: "ownerOf",
-    stateMutability: "view",
-    inputs: [{ name: "id", type: "uint256" }],
-    outputs: [{ name: "", type: "address" }],
-  },
-] as const;
-
-const SUBNAMES_QUERY = `
-  query Subnames($parent: String!) {
-    domains(
-      where: {
-        parent_: { name: $parent },
-        owner_not: "0x0000000000000000000000000000000000000000"
-      },
-      first: 100
-    ) {
-      id
-      labelName
-      name
-      resolver {
-        texts
-        addr {
-          id
-        }
-      }
-    }
-  }
-`;
-
-async function fetchSubnameEntries(subgraphUrl: string): Promise<DiscoveryEntry[]> {
-  const res = await fetch(subgraphUrl, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      query: SUBNAMES_QUERY,
-      variables: { parent: PARENT_NAME },
-    }),
-  });
-  if (!res.ok) throw new Error(`subgraph http ${res.status}`);
-  const json = await res.json();
-  const domains = (json?.data?.domains ?? []) as Array<{
-    id: string;
-    labelName: string | null;
-    name: string;
-    resolver: {
-      texts: string[] | null;
-      addr: { id: string } | null;
-    } | null;
-  }>;
-
-  // The subgraph reports which text keys exist; the actual values are not
-  // included in the listing query. For the demo we only need the kind/elo/
-  // endpoint/inft_id keys when the resolver advertises them. For now we
-  // surface every domain and let the consumer fall back to "" for missing
-  // values; pulling actual text values would need a per-domain follow-up
-  // query against the resolver, which is outside the scope of this view.
-  // The resolved Ethereum address (resolver.addr.id) feeds the per-card
-  // match-summary hook so we can show wins/losses on human cards.
-  return domains.map((d) => {
-    const texts = new Set(d.resolver?.texts ?? []);
-    const rawAddr = d.resolver?.addr?.id ?? null;
-    const address =
-      rawAddr && /^0x[0-9a-fA-F]{40}$/.test(rawAddr)
-        ? (rawAddr as `0x${string}`)
-        : null;
-    return {
-      node: d.id as `0x${string}`,
-      label: d.labelName ?? d.id.slice(0, 10),
-      kind: texts.has("kind") ? "agent" : "human",
-      elo: "",
-      endpoint: "",
-      inftId: "",
-      address,
-    };
-  });
+  inftId: string; // agent iNFT ID written by AgentRegistry.mintAgent; "" for human entries
 }
 
 // -------------------------------------------------------------------------
@@ -132,59 +41,6 @@ async function fetchSubnameEntries(subgraphUrl: string): Promise<DiscoveryEntry[
 function EntryCard({ entry }: { entry: DiscoveryEntry }) {
   const hasEndpoint = !!entry.endpoint;
   const hasInfoLink = entry.kind === "agent" && !!entry.inftId;
-  const isHuman = entry.kind === "human";
-
-  // ENS text records (`elo`, `match_count`) for humans. Agents render an
-  // ELO placeholder; their stats come from AgentsList.
-  const { elo: eloText, matchCount } = useChaingammonProfile(
-    isHuman ? entry.label : null,
-  );
-
-  // Resolve a wallet address for this entry. The subgraph reports
-  // `resolver.addr.id` only when the resolver has an addr-record set,
-  // which the current registrar doesn't write. Fall back to the
-  // NameWrapper's ERC-1155 owner (`ownerOf(namehash)`) — the wrapped
-  // subname's tokenId is the namehash, and its holder IS the wallet
-  // we want. Verified live: `oleg.chaingammon.eth` → 0xa221…Ebb5.
-  const chainId = useActiveChainId();
-  const { matchRegistry } = useChainContracts();
-  const ensInfra = useEnsInfra();
-  const { data: wrapperOwnerRaw } = useReadContract({
-    address: ensInfra?.nameWrapper,
-    abi: NAME_WRAPPER_OWNER_ABI,
-    functionName: "ownerOf",
-    args: [BigInt(entry.node)],
-    chainId,
-    query: { enabled: isHuman && !entry.address && !!ensInfra?.nameWrapper },
-  });
-  const resolvedAddress: `0x${string}` | undefined =
-    entry.address ?? (typeof wrapperOwnerRaw === "string" ? (wrapperOwnerRaw as `0x${string}`) : undefined);
-
-  // MatchRecorded event scan to break match_count into wins/losses. Skipped
-  // until we have a wallet address for this human.
-  const { summary } = useHumanMatchSummary(
-    isHuman && resolvedAddress ? resolvedAddress : undefined,
-  );
-  // Chain-side ELO fallback — the ENS text record is only written by the
-  // settlement flow when the human passes their `label` through. The
-  // navbar's ProfileBadge already mirrors this fallback; without the
-  // same mirror here, freshly-rated humans show ELO "—" on the home card
-  // while the navbar correctly shows their rating.
-  const { data: chainEloRaw } = useReadContract({
-    address: matchRegistry,
-    abi: MatchRegistryABI,
-    functionName: "humanElo",
-    args: resolvedAddress ? [resolvedAddress] : undefined,
-    chainId,
-    query: { enabled: isHuman && !!resolvedAddress && !eloText },
-  });
-  const chainElo =
-    chainEloRaw != null ? String(chainEloRaw) : undefined;
-  const eloDisplay = eloText || entry.elo || chainElo || "—";
-  const matches = summary?.matches ?? (matchCount ? Number(matchCount) : null);
-  const wins = summary?.wins ?? null;
-  const losses = summary?.losses ?? null;
-
   return (
     <div
       data-testid="discovery-entry"
@@ -218,41 +74,9 @@ function EntryCard({ entry }: { entry: DiscoveryEntry }) {
           ELO
         </span>
         <span className="font-mono text-2xl font-bold text-zinc-900 dark:text-zinc-50">
-          {eloDisplay}
+          {entry.elo || "—"}
         </span>
       </div>
-
-      {isHuman && (
-        <dl
-          data-testid="discovery-human-stats"
-          className="grid grid-cols-3 gap-2 border-t border-zinc-200 pt-3 text-center dark:border-zinc-800"
-        >
-          <div>
-            <dt className="text-[10px] uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
-              Played
-            </dt>
-            <dd className="font-mono text-base font-semibold text-zinc-900 dark:text-zinc-50">
-              {matches ?? "—"}
-            </dd>
-          </div>
-          <div>
-            <dt className="text-[10px] uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
-              Won
-            </dt>
-            <dd className="font-mono text-base font-semibold text-emerald-600 dark:text-emerald-400">
-              {wins ?? "—"}
-            </dd>
-          </div>
-          <div>
-            <dt className="text-[10px] uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
-              Lost
-            </dt>
-            <dd className="font-mono text-base font-semibold text-rose-600 dark:text-rose-400">
-              {losses ?? "—"}
-            </dd>
-          </div>
-        </dl>
-      )}
 
       {hasEndpoint && (
         <Link
@@ -282,26 +106,99 @@ export interface DiscoveryListProps {
 
 export function DiscoveryList({ staticEntries }: DiscoveryListProps = {}) {
   const active = useActiveChain();
-  const ensInfra = useEnsInfra();
-  const [entries, setEntries] = useState<DiscoveryEntry[] | null>(staticEntries ?? null);
-  const [error, setError] = useState<string | null>(null);
+  const chainId = useActiveChainId();
+  const { playerSubnameRegistrar } = useChainContracts();
+  const publicClient = usePublicClient({ chainId });
+
+  // node (bytes32) → human-readable label (e.g. "alice"), populated from
+  // SubnameMinted event logs. Starts empty; cards fall back to a short hex
+  // prefix until the log fetch completes.
+  const [labelMap, setLabelMap] = useState<Record<string, string>>({});
 
   useEffect(() => {
-    if (staticEntries) return;
-    if (!ensInfra) return;
-    let cancelled = false;
-    fetchSubnameEntries(ensInfra.subgraphUrl)
-      .then((rows) => {
-        if (!cancelled) setEntries(rows);
+    if (!publicClient || !playerSubnameRegistrar || !active || staticEntries) return;
+    publicClient
+      .getLogs({
+        address: playerSubnameRegistrar,
+        event: parseAbiItem(
+          "event SubnameMinted(string indexed labelHashed, string label, bytes32 indexed node, address indexed subnameOwner)",
+        ),
+        fromBlock: BigInt(0),
       })
-      .catch((e: Error) => {
-        if (!cancelled) setError(e.message);
+      .then((logs) => {
+        const map: Record<string, string> = {};
+        for (const log of logs) {
+          const { node, label } = log.args as { node?: `0x${string}`; label?: string };
+          if (node && label) map[node] = label;
+        }
+        setLabelMap(map);
+      })
+      .catch(() => {
+        // Non-fatal — cards will show the short node prefix fallback.
       });
-    return () => {
-      cancelled = true;
-    };
-  }, [ensInfra, staticEntries]);
+  }, [publicClient, playerSubnameRegistrar, active, staticEntries]);
 
+  // Read subnameCount so we know how many indexes to fetch
+  const { data: subnameCount, isLoading: countLoading, error: countError } = useReadContract({
+    address: playerSubnameRegistrar,
+    abi: PlayerSubnameRegistrarABI,
+    functionName: "subnameCount",
+    chainId,
+    query: { enabled: !staticEntries && !!active },
+  });
+
+  const count = subnameCount !== undefined ? Number(subnameCount) : 0;
+
+  // Fetch all node IDs via subnameAt(i)
+  const indexCalls = Array.from({ length: count }, (_, i) => ({
+    address: playerSubnameRegistrar,
+    abi: PlayerSubnameRegistrarABI,
+    functionName: "subnameAt" as const,
+    args: [BigInt(i)] as [bigint],
+    chainId,
+  }));
+
+  const { data: nodeResults } = useReadContracts({
+    contracts: indexCalls,
+    query: { enabled: !staticEntries && count > 0 },
+  });
+
+  const nodes = (nodeResults ?? [])
+    .map((r) => r?.result as `0x${string}` | undefined)
+    .filter(Boolean) as `0x${string}`[];
+
+  // For each node, fetch kind + elo + endpoint + inft_id text records in one batch.
+  // inft_id is written by AgentRegistry.mintAgent for agent entries; "" for humans.
+  const textCalls = nodes.flatMap((node) => [
+    { address: playerSubnameRegistrar, abi: PlayerSubnameRegistrarABI, functionName: "text" as const, args: [node, "kind"] as [`0x${string}`, string], chainId },
+    { address: playerSubnameRegistrar, abi: PlayerSubnameRegistrarABI, functionName: "text" as const, args: [node, "elo"] as [`0x${string}`, string], chainId },
+    { address: playerSubnameRegistrar, abi: PlayerSubnameRegistrarABI, functionName: "text" as const, args: [node, "endpoint"] as [`0x${string}`, string], chainId },
+    { address: playerSubnameRegistrar, abi: PlayerSubnameRegistrarABI, functionName: "text" as const, args: [node, "inft_id"] as [`0x${string}`, string], chainId },
+  ]);
+
+  const { data: textResults } = useReadContracts({
+    contracts: textCalls,
+    query: { enabled: !staticEntries && nodes.length > 0 },
+  });
+
+  // Build entries from on-chain data (or use static entries for fixture pages).
+  // Each node occupies 4 slots in textResults: kind, elo, endpoint, inft_id.
+  const entries: DiscoveryEntry[] = staticEntries ?? nodes.map((node, i) => {
+    const base = i * 4;
+    return {
+      node,
+      label: labelMap[node] ?? node.slice(0, 10),
+      kind: (textResults?.[base]?.result as string) ?? "",
+      elo: (textResults?.[base + 1]?.result as string) ?? "",
+      endpoint: (textResults?.[base + 2]?.result as string) ?? "",
+      inftId: (textResults?.[base + 3]?.result as string) ?? "",
+    };
+  });
+
+  const humans = entries.filter((e) => e.kind !== "agent");
+  const agents = entries.filter((e) => e.kind === "agent");
+
+  // --- Loading / error states (only relevant when reading on-chain) ---
   if (!staticEntries) {
     if (!active) {
       return (
@@ -310,27 +207,18 @@ export function DiscoveryList({ staticEntries }: DiscoveryListProps = {}) {
         </p>
       );
     }
-    if (!ensInfra) {
-      return (
-        <p className="text-sm text-zinc-500 dark:text-zinc-400">
-          No ENS infrastructure configured for this chain.
-        </p>
-      );
-    }
-    if (error) {
-      return (
-        <p className="text-sm text-zinc-500 dark:text-zinc-400">
-          Could not reach the ENS subgraph at <code className="font-mono">{ensInfra.subgraphUrl}</code>.
-        </p>
-      );
-    }
-    if (entries === null) {
+    if (countLoading) {
       return <p className="text-sm text-zinc-500 dark:text-zinc-400">Loading…</p>;
     }
+    if (countError || subnameCount === undefined) {
+      return (
+        <p className="text-sm text-zinc-500 dark:text-zinc-400">
+          Could not reach PlayerSubnameRegistrar at{" "}
+          <code className="font-mono">{playerSubnameRegistrar}</code>.
+        </p>
+      );
+    }
   }
-
-  const allEntries = entries ?? [];
-  const humans = allEntries.filter((e) => e.kind === "human");
 
   return (
     <div className="flex flex-col gap-8">
@@ -339,13 +227,31 @@ export function DiscoveryList({ staticEntries }: DiscoveryListProps = {}) {
           data-testid="discovery-humans-header"
           className="mb-4 text-lg font-semibold text-zinc-900 dark:text-zinc-50"
         >
-          Humans
+          Players
         </h2>
         {humans.length === 0 ? (
-          <p className="text-sm text-zinc-500 dark:text-zinc-400">No humans registered yet.</p>
+          <p className="text-sm text-zinc-500 dark:text-zinc-400">No players registered yet.</p>
         ) : (
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {humans.map((e) => (
+              <EntryCard key={e.node} entry={e} />
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section data-testid="discovery-agents-section">
+        <h2
+          data-testid="discovery-agents-header"
+          className="mb-4 text-lg font-semibold text-zinc-900 dark:text-zinc-50"
+        >
+          Agents
+        </h2>
+        {agents.length === 0 ? (
+          <p className="text-sm text-zinc-500 dark:text-zinc-400">No agents registered yet.</p>
+        ) : (
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {agents.map((e) => (
               <EntryCard key={e.node} entry={e} />
             ))}
           </div>
