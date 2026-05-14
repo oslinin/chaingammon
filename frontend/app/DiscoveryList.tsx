@@ -14,8 +14,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { parseAbiItem } from "viem";
-import { usePublicClient, useReadContracts } from "wagmi";
+import { formatEther, parseAbiItem } from "viem";
+import { useBalance, usePublicClient, useReadContracts } from "wagmi";
 
 import { useActiveChain, useActiveChainId, useEnsInfra } from "./chains";
 import { MatchRegistryABI, useChainContracts } from "./contracts";
@@ -50,11 +50,23 @@ interface ScanEntry {
 
 function EntryCard({ entry }: { entry: DiscoveryEntry }) {
   const isAgent = entry.kind === "agent";
+  const chainId = useActiveChainId();
+  const { data: balanceData } = useBalance({
+    address: entry.owner,
+    chainId,
+    query: { enabled: !!entry.owner },
+  });
+  const balance = balanceData
+    ? `${parseFloat(formatEther(balanceData.value)).toFixed(4)} ${balanceData.symbol}`
+    : entry.owner
+    ? undefined
+    : "";
   return (
     <div data-testid="discovery-entry">
       <PersonCard
         label={entry.label}
         elo={entry.elo || undefined}
+        balance={balance}
         matchSummary={entry.matchRecord ?? null}
         infoHref={isAgent && entry.inftId ? `/agent/${entry.inftId}` : undefined}
         infoLabel={entry.kind || "unknown"}

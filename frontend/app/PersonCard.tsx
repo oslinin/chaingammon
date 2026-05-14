@@ -11,6 +11,7 @@ export interface MatchSummary {
 export interface PersonCardProps {
   label: string;
   elo: bigint | string | undefined;
+  balance?: string; // e.g. "0.0432 ETH"; undefined = loading, "" = no data
   matchSummary: MatchSummary | null | undefined; // undefined = loading, null = no data
   infoHref?: string;
   infoLabel?: string;
@@ -21,6 +22,7 @@ export interface PersonCardProps {
 export function PersonCard({
   label,
   elo,
+  balance,
   matchSummary,
   infoHref,
   infoLabel,
@@ -55,13 +57,20 @@ export function PersonCard({
         </div>
       </div>
 
-      <div className="flex items-baseline gap-1.5">
-        <span className="text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-          ELO
-        </span>
-        <span className="font-mono text-2xl font-bold text-zinc-900 dark:text-zinc-50">
-          {eloDisplay ?? "—"}
-        </span>
+      <div className="flex items-baseline justify-between gap-2">
+        <div className="flex items-baseline gap-1.5">
+          <span className="text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+            ELO
+          </span>
+          <span className="font-mono text-2xl font-bold text-zinc-900 dark:text-zinc-50">
+            {eloDisplay ?? "—"}
+          </span>
+        </div>
+        {balance !== "" && (
+          <span className="font-mono text-sm text-zinc-500 dark:text-zinc-400">
+            {balance ?? "…"}
+          </span>
+        )}
       </div>
 
       <div className="flex flex-col gap-0.5 text-xs font-mono">
