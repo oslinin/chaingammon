@@ -311,14 +311,24 @@ def _post_training_chain_writes(
         )
         return
 
+    # Fetch the nonce once and increment locally after each mined tx.
+    # Querying "pending" before every call is unreliable on Sepolia — the
+    # RPC can return a stale value right after a tx is mined, causing
+    # "nonce too low" on the second and subsequent agents.
+    next_nonce: Optional[int] = chain.w3.eth.get_transaction_count(
+        chain.account.address, "pending"
+    )
+
     for evt in saved:
         agent_id = evt.get("agent_id")
         root_hash = evt.get("root_hash")
         if agent_id is None or not root_hash:
             continue
         try:
-            logger.info("Writing Agent #%d root_hash %s on-chain...", agent_id, root_hash)
-            tx_hash = chain.update_overlay_hash(int(agent_id), root_hash)
+            logger.info("Writing Agent #%d root_hash %s on-chain (nonce=%s)...", agent_id, root_hash, next_nonce)
+            tx_hash = chain.update_overlay_hash(int(agent_id), root_hash, nonce=next_nonce)
+            if next_nonce is not None:
+                next_nonce += 1
             logger.info("Agent #%d update successful: %s", agent_id, tx_hash)
             _emit_chain_write(
                 status_file,
