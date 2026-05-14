@@ -257,9 +257,9 @@ export function AgentTeammatePanel({
   // ── Render ─────────────────────────────────────────────────────────────
 
   return (
-    <div className="rounded-xl border border-indigo-200 bg-indigo-50/50 dark:border-indigo-800/40 dark:bg-indigo-900/10">
+    <div className="flex h-full flex-col rounded-xl border border-indigo-200 bg-indigo-50/50 dark:border-indigo-800/40 dark:bg-indigo-900/10">
       {/* Header */}
-      <div className="flex items-center justify-between border-b border-indigo-200 px-4 py-2 dark:border-indigo-800/40">
+      <div className="shrink-0 flex items-center justify-between border-b border-indigo-200 px-4 py-2 dark:border-indigo-800/40">
         <div className="flex items-center gap-2">
           <span className="text-xs font-semibold uppercase tracking-wide text-indigo-700 dark:text-indigo-400">
             Agent Teammate
@@ -270,7 +270,8 @@ export function AgentTeammatePanel({
         </div>
       </div>
 
-      <div className="flex flex-col gap-3 p-4">
+      {/* Scrollable content */}
+      <div className="flex flex-1 flex-col gap-3 overflow-y-auto p-4 min-h-0">
         {/* Tagged candidates row */}
         {loadingCandidates && (
           <p className="text-xs text-indigo-500 animate-pulse dark:text-indigo-400">
@@ -333,7 +334,7 @@ export function AgentTeammatePanel({
 
         {/* Conversation history */}
         {dialogue.length > 0 && (
-          <div className="flex max-h-48 flex-col gap-2 overflow-y-auto pr-1">
+          <div className="flex flex-col gap-2 pr-1">
             {dialogue.map((msg, i) => (
               <div
                 key={i}
@@ -371,36 +372,36 @@ export function AgentTeammatePanel({
           </div>
         )}
 
-        {/* Strategy input */}
-        <div className="flex gap-2">
-          <input
-            ref={inputRef}
-            value={strategyInput}
-            onChange={(e) => setStrategyInput(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && handleSend()}
-            placeholder={
-              disabled
-                ? "Waiting for your turn…"
-                : "Tell me your strategy (or ask to validate your intuition)"
-            }
-            disabled={disabled || sending}
-            className="flex-1 rounded-lg border border-indigo-200 bg-white px-3 py-2 text-xs placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-indigo-400 disabled:bg-zinc-50 disabled:text-zinc-400 dark:border-indigo-700/40 dark:bg-zinc-900 dark:text-zinc-100 dark:placeholder-zinc-600 dark:disabled:bg-zinc-950"
-          />
-          <button
-            type="button"
-            onClick={handleSend}
-            disabled={disabled || !strategyInput.trim() || sending}
-            className="rounded-lg bg-indigo-600 px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-500 disabled:cursor-not-allowed disabled:bg-zinc-400"
-          >
-            {sending ? "…" : "Ask"}
-          </button>
-        </div>
-
         {sending && (
           <p className="text-xs text-indigo-500 animate-pulse dark:text-indigo-400">
             Agent Teammate is thinking…
           </p>
         )}
+      </div>
+
+      {/* Strategy input — pinned at the bottom */}
+      <div className="shrink-0 flex gap-2 border-t border-indigo-200 px-4 py-3 dark:border-indigo-800/40">
+        <input
+          ref={inputRef}
+          value={strategyInput}
+          onChange={(e) => setStrategyInput(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && handleSend()}
+          placeholder={
+            disabled
+              ? "Waiting for your turn…"
+              : "Tell me your strategy (or ask to validate your intuition)"
+          }
+          disabled={disabled || sending}
+          className="flex-1 rounded-lg border border-indigo-200 bg-white px-3 py-2 text-xs placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-indigo-400 disabled:bg-zinc-50 disabled:text-zinc-400 dark:border-indigo-700/40 dark:bg-zinc-900 dark:text-zinc-100 dark:placeholder-zinc-600 dark:disabled:bg-zinc-950"
+        />
+        <button
+          type="button"
+          onClick={handleSend}
+          disabled={disabled || !strategyInput.trim() || sending}
+          className="rounded-lg bg-indigo-600 px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-500 disabled:cursor-not-allowed disabled:bg-zinc-400"
+        >
+          {sending ? "…" : "Ask"}
+        </button>
       </div>
     </div>
   );
