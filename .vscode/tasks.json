@@ -67,34 +67,6 @@
       "problemMatcher": []
     },
     {
-      "label": "Localhost: agent node",
-      "detail": "Terminal 3 — gnubg_service (port 8001). Long-running. Coach LLM runs on 0G Compute via the Next.js Route Handler, so no local coach process.",
-      "type": "shell",
-      "command": "uv run uvicorn gnubg_service:app --port 8001; exec $SHELL",
-      "options": { "cwd": "${workspaceFolder}/agent" },
-      "isBackground": true,
-      "presentation": {
-        "panel": "dedicated",
-        "reveal": "never",
-        "focus": false,
-        "clear": true
-      },
-      // Background task — release the next sequential task as soon as
-      // uvicorn signals the FastAPI service is up. gnubg_service emits
-      // "Application startup complete." on success.
-      "problemMatcher": {
-        "owner": "agent-services",
-        "pattern": [
-          { "regexp": ".", "file": 1, "location": 2, "message": 0 }
-        ],
-        "background": {
-          "activeOnStart": true,
-          "beginsPattern": "Started server process",
-          "endsPattern": "Application startup complete"
-        }
-      }
-    },
-    {
       "label": "Localhost: frontend",
       "detail": "Terminal 4 — Next.js dev server on http://localhost:3000. Long-running.",
       "type": "shell",
@@ -124,12 +96,11 @@
     },
     {
       "label": "Localhost: launch all",
-      "detail": "Compound task — runs children sequentially: hardhat node → (waits until ready) → deploy contracts → agent node → frontend. Each task lives in its own dedicated terminal tab.",
+      "detail": "Compound task — runs children sequentially: hardhat node → (waits until ready) → deploy contracts → frontend. Each task lives in its own dedicated terminal tab.",
       "dependsOrder": "sequence",
       "dependsOn": [
         "Localhost: hardhat node",
         "Localhost: deploy contracts",
-        "Localhost: agent node",
         "Localhost: frontend"
       ],
       "problemMatcher": []
