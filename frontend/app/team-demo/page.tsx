@@ -9,7 +9,7 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 
 import { Board } from "../Board";
-import { ChiefOfStaffPanel } from "../ChiefOfStaffPanel";
+import { AgentTeammatePanel } from "../ChiefOfStaffPanel";
 import { DiceRoll } from "../DiceRoll";
 import { rollDice } from "../dice";
 import { useComputeBackends } from "../ComputeBackendsContext";
@@ -85,7 +85,7 @@ function applyMoveSegment(
 
 export default function TeamDemoPage() {
   const [setup, setSetup] = useState(true);
-  const [teammateId, setTeammateId] = useState<number | null>(null);
+  const [teammateIds, setTeammateIds] = useState<number[]>([]);
   const [opponentIds, setOpponentIds] = useState<number[]>([]);
 
   const [game, setGame] = useState<MatchState | null>(null);
@@ -113,7 +113,7 @@ export default function TeamDemoPage() {
   });
 
   const startTrainingGame = () => {
-    if (!teammateId || opponentIds.length === 0) return;
+    if (teammateIds.length === 0 || opponentIds.length === 0) return;
     setSetup(false);
     setLoading(true);
     try {
@@ -246,24 +246,32 @@ export default function TeamDemoPage() {
             Choose your Teammate
           </h2>
           <div className="flex flex-wrap gap-2">
-            {agentsQuery.data?.map((a) => (
-              <button
-                key={a.agent_id}
-                type="button"
-                onClick={() => {
-                  setTeammateId(a.agent_id);
-                  // Remove from opponent list if it was there
-                  setOpponentIds((prev) => prev.filter((id) => id !== a.agent_id));
-                }}
-                className={`rounded-md border px-3 py-1.5 text-xs font-mono ${
-                  teammateId === a.agent_id
-                    ? "border-indigo-600 bg-indigo-50 text-indigo-900 dark:bg-indigo-950 dark:text-indigo-100"
-                    : "border-zinc-300 bg-white text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300"
-                }`}
-              >
-                Agent #{a.agent_id}
-              </button>
-            ))}
+            {agentsQuery.data?.map((a) => {
+              const active = teammateIds.includes(a.agent_id);
+              const isOpponent = opponentIds.includes(a.agent_id);
+              return (
+                <button
+                  key={a.agent_id}
+                  type="button"
+                  disabled={isOpponent}
+                  onClick={() => {
+                    if (active) {
+                      setTeammateIds((prev) => prev.filter((id) => id !== a.agent_id));
+                    } else {
+                      setTeammateIds((prev) => [...prev, a.agent_id]);
+                    }
+                  }}
+                  className={`rounded-md border px-3 py-1.5 text-xs font-mono disabled:opacity-30 disabled:cursor-not-allowed ${
+                    active
+                      ? "border-indigo-600 bg-indigo-50 text-indigo-900 dark:bg-indigo-950 dark:text-indigo-100"
+                      : "border-zinc-300 bg-white text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300"
+                  }`}
+                >
+                  Agent #{a.agent_id}
+                  {isOpponent && <span className="ml-1 text-[10px] opacity-60">(Opp)</span>}
+                </button>
+              );
+            })}
           </div>
         </section>
 
@@ -274,7 +282,7 @@ export default function TeamDemoPage() {
           <div className="flex flex-wrap gap-2">
             {agentsQuery.data?.map((a) => {
               const active = opponentIds.includes(a.agent_id);
-              const isTeammate = a.agent_id === teammateId;
+              const isTeammate = teammateIds.includes(a.agent_id);
               return (
                 <button
                   key={a.agent_id}
@@ -301,7 +309,7 @@ export default function TeamDemoPage() {
 
         <button
           onClick={startTrainingGame}
-          disabled={!teammateId || opponentIds.length === 0}
+          disabled={teammateIds.length === 0 || opponentIds.length === 0}
           className="rounded-lg bg-indigo-600 px-6 py-3 text-base font-semibold text-white shadow hover:bg-indigo-500 disabled:opacity-40"
         >
           Start Training Game
@@ -319,7 +327,7 @@ export default function TeamDemoPage() {
       <div className="flex flex-1 flex-col gap-6">
         <header className="flex items-center justify-between border-b border-zinc-200 pb-4 dark:border-zinc-800">
           <h1 className="font-mono text-sm text-zinc-500">
-            Training: You + Agent #{teammateId} vs. Agents [{opponentIds.join(",")}]
+            Training: You + [{teammateIds.join(",")}] vs. [{opponentIds.join(",")}]
           </h1>
           <button 
             onClick={() => setSetup(true)}
@@ -398,7 +406,7 @@ export default function TeamDemoPage() {
 
       <div className="w-full lg:w-80 flex flex-col gap-6">
         {game && (
-          <ChiefOfStaffPanel
+          <AgentTeammatePanel
             positionId={game.position_id}
             matchId={game.match_id}
             dice={game.dice}
@@ -406,7 +414,7 @@ export default function TeamDemoPage() {
             bar={game.bar}
             off={game.off}
             turn={game.turn}
-            opponentId={opponentIds[0] || 0}
+            opponentId={opponentIds[0]}
             disabled={!isHumanTurn || game.game_over}
             onMoveSelect={previewMove}
           />
