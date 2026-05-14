@@ -186,8 +186,9 @@ export default function TeamDemoPage() {
     if (game.turn !== 1) return;
     if (!game.dice) return;
 
-    agentMoving.current = true;
-    const step = async () => {
+    const timer = setTimeout(async () => {
+      if (agentMoving.current) return;
+      agentMoving.current = true;
       try {
         const board: GameBoard = { points: game.board, bar: game.bar, off: game.off };
         const best = await getBestMove(board, 1, game.dice!);
@@ -203,8 +204,7 @@ export default function TeamDemoPage() {
       } finally {
         agentMoving.current = false;
       }
-    };
-    const timer = setTimeout(step, 800);
+    }, 800);
     return () => clearTimeout(timer);
   }, [game, setup]);
 
