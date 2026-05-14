@@ -1,44 +1,37 @@
-// Phase 26: match flow over the local gnubg agent process (HTTP on localhost:8001).
-// Phase 31: drag-and-drop checker movement with optimistic board display and undo.
+// match/page.tsx — browser-owned backgammon match flow.
 //
 // URL: /match?agentId=<N>
 //
-// State machine (browser-owned game state — no central server):
-//   on mount         → POST /new {match_length} → opening MatchState
+// All game logic runs client-side via the match engine:
+//   on mount         → newMatch(3) → opening MatchState
 //                       → roll dice client-side for whichever side starts
 //   if turn === 0    → render board + dice + move input, wait for human
-//   human submits    → POST /apply {position_id, match_id, dice, move}
-//                       on 200 → replace state, roll next side's dice
-//                       on 422 → surface error, leave state unchanged
+//   human submits    → applyMoveToState(state, move)
+//                       on success → replace state, roll next side's dice
+//                       on error   → surface error, leave state unchanged
 //   agent loop (turn === 1)
-//                    → POST /move → best move
-//                    → POST /apply with that move
+//                    → getBestMove(board, 1, dice) via ONNX BackgammonNet
+//                    → applyMoveToState with that move
 //                    → replace state, roll next side's dice
-//   forfeit          → POST /resign → game_over response
+//   forfeit          → resignMatch(state) → game_over response
 //
-// Phase 31 additions:
+// Phase 31: drag-and-drop checker movement with optimistic board display and undo.
 //   stagedMoves      — array of "from/to" segments the human has clicked/dragged
-//   displayBoardState — optimistic board/bar/off after applying staged moves locally;
-//                       null when no moves staged (falls back to game.board)
+//   displayBoardState — optimistic board/bar/off after applying staged moves locally
 //   stageMove        — appends a segment, applies it to displayBoardState, and
 //                       auto-submits via doMoveWithNotation when all dice are used
 //   Undo button      — clears staged moves and resets display to start-of-turn
-//   Drag events      — onDragStart/onDrop forwarded to Board so users can drag
-//                       checkers in addition to clicking source then destination
-//   Text input + Move button still present for backward compatibility with tests
-//   and power users who prefer notation.
+//   Drag events      — onDragStart/onDrop forwarded to Board
+//   Text input + Move button still present for power users who prefer notation.
 //
 // After each move a non-blocking coach hint is requested (skipped during
 // fast-forward since the human is not choosing moves):
-//   → POST /evaluate       (gnubg_service)        → ranked candidates
+//   → evaluateCandidates(board, side, dice) via ONNX
 //   → POST /api/coach/hint (Next.js Route Handler → 0G Compute / Qwen 2.5 7B)
-//                                                 → plain-English hint
 // Coach calls are best-effort — any failure is silently swallowed so
 // the game continues regardless of 0G Compute availability.
 //
-// Move notation is gnubg's standard: "8/5 6/5" (from-point/to-point,
-// space-separated for multiple checker movements). See
-// agent/gnubg_service.py or the agent test suite for examples.
+// Move notation: "8/5 6/5" (from-point/to-point, space-separated).
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
@@ -65,26 +58,21 @@ import { useActiveChain } from "../chains";
 import { useComputeBackends } from "../ComputeBackendsContext";
 import { MatchEscrowABI, MatchRegistryABI, useChainContracts } from "../contracts";
 import { useChaingammonName } from "../useChaingammonName";
-
-// ── Types matching agent/gnubg_state.py:MatchStateDict ────────────────────
-
-interface MatchState {
-  position_id: string;
-  match_id: string;
-  board: number[];
-  bar: [number, number];
-  off: [number, number];
-  turn: 0 | 1;
-  dice: [number, number] | null;
-  score: [number, number];
-  match_length: number;
-  game_over: boolean;
-  winner: 0 | 1 | null;
-}
+import {
+  type MatchState,
+  newMatch,
+  applyMoveToState,
+  getBestMove,
+  evaluateCandidates,
+  skipTurn,
+  resignMatch,
+  playMatchToEnd,
+  hasLegalMoves,
+} from "../../lib/match_engine";
+import { type Board as GameBoard } from "../../lib/rules_engine";
 
 // ── API helpers ───────────────────────────────────────────────────────────
 
-const GNUBG = process.env.NEXT_PUBLIC_GNUBG_URL ?? "http://localhost:8001";
 const SERVER = process.env.NEXT_PUBLIC_SERVER_URL ?? "http://localhost:8000";
 
 const ZERO_ADDR = "0x0000000000000000000000000000000000000000" as `0x${string}`;
@@ -104,30 +92,6 @@ function safeParseEther(value: string): bigint {
   }
 }
 
-/**
- * POST helper for gnubg_service. All endpoints use POST with a JSON
- * body. 422 responses surface as Error with the `detail` string so
- * the page can render gnubg's complaint to the user.
- */
-async function gnubgPost<T>(path: string, body: unknown): Promise<T> {
-  const res = await fetch(`${GNUBG}${path}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body ?? {}),
-  });
-  if (!res.ok) {
-    const text = await res.text().catch(() => res.statusText);
-    let detail = text;
-    try {
-      const parsed = JSON.parse(text);
-      if (parsed && typeof parsed.detail === "string") detail = parsed.detail;
-    } catch {
-      // text wasn't JSON — keep raw.
-    }
-    throw new Error(`${res.status}: ${detail}`);
-  }
-  return (await res.json()) as T;
-}
 
 // Coach backend choices the user can pick in the toggle. "compute" is the
 // paid 0G Compute path (Qwen 2.5 7B Instruct via @0glabs/0g-serving-broker);
@@ -153,27 +117,25 @@ interface HintResult {
  * state only if still mounted.
  */
 async function fetchHint(
-  positionId: string,
-  matchId: string,
-  dice: [number, number],
+  state: MatchState,
   docsHash: string,
   backend: CoachBackend,
 ): Promise<HintResult | null> {
   try {
-    // Step 1: get ranked candidates from gnubg_service.
-    const { candidates } = await gnubgPost<{
-      candidates: { move: string; equity: number }[];
-    }>("/evaluate", { position_id: positionId, match_id: matchId, dice });
+    if (!state.dice) return null;
+    // Step 1: evaluate candidates with ONNX BackgammonNet.
+    const board: GameBoard = { points: state.board, bar: state.bar, off: state.off };
+    const candidates = await evaluateCandidates(board, state.turn, state.dice);
     if (!candidates || candidates.length === 0) return null;
 
-    // Step 2: ask the local Next.js Route Handler to narrate the top move.
+    // Step 2: ask the Next.js Route Handler to narrate the top move.
     const res = await fetch("/api/coach/hint", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        position_id: positionId,
-        match_id: matchId,
-        dice,
+        position_id: state.position_id,
+        match_id: state.match_id,
+        dice: state.dice,
         candidates,
         docs_hash: docsHash,
         backend,
@@ -410,7 +372,7 @@ function MatchInner() {
   // React re-renders while an agent step is mid-flight.
   const agentMoving = useRef(false);
 
-  // Whether the human has handed off to the gnubg agent to finish the game.
+  // Whether the human has handed off the ONNX engine to finish the game.
   const [fastForward, setFastForward] = useState(false);
 
   // KeeperHub mode: game hasn't started yet (show "Start Game" card first).
@@ -485,9 +447,7 @@ function MatchInner() {
     setCoachServedBy(null);
     setCoachLoading(true);
     fetchHint(
-      state.position_id,
-      state.match_id,
-      state.dice,
+      state,
       docsHash,
       coachBackendRef.current,
     )
@@ -516,25 +476,18 @@ function MatchInner() {
   // immediately (gameStarted initialises to true when agentId === 0).
   useEffect(() => {
     if (!gameStarted) return;
-    let cancelled = false;
     setLoading(true);
     setError(null);
-    gnubgPost<MatchState>("/new", { match_length: 3 })
-      .then((state) => {
-        if (cancelled) return;
-        const withDice = withFreshDice(state);
-        setGame(withDice);
-        requestCoachHint(withDice);
-      })
-      .catch((e: unknown) => {
-        if (!cancelled) setError(String(e));
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
+    try {
+      const state = newMatch(3);
+      const withDice = withFreshDice(state);
+      setGame(withDice);
+      requestCoachHint(withDice);
+    } catch (e: unknown) {
+      setError(String(e));
+    } finally {
+      setLoading(false);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gameStarted]);
 
@@ -550,38 +503,18 @@ function MatchInner() {
 
     const step = async () => {
       try {
-        const { move: best } = await gnubgPost<{ move: string | null }>(
-          "/move",
-          {
-            position_id: game.position_id,
-            match_id: game.match_id,
-            dice: game.dice,
-          },
-        );
+        const board: GameBoard = { points: game.board, bar: game.bar, off: game.off };
+        const best = await getBestMove(board, 1, game.dice!);
         if (!best) {
-          // No legal moves — typically a bar dance (checker on the bar,
-          // opponent's home board closed). Pass the turn via gnubg
-          // (board unchanged, match_id flipped to the other side) and
-          // roll dice for the new side. requestCoachHint is skipped
-          // because the side that lost the turn didn't actually choose
-          // a move worth narrating.
-          const skipped = await gnubgPost<MatchState>("/skip", {
-            position_id: game.position_id,
-            match_id: game.match_id,
-            current_turn: game.turn,
-          });
+          // No legal moves — bar dance. Skip turn and roll for the new side.
+          const skipped = skipTurn(game);
           const skippedWithDice = skipped.game_over
             ? skipped
             : withFreshDice(skipped);
           setGame(skippedWithDice);
           return;
         }
-        const next = await gnubgPost<MatchState>("/apply", {
-          position_id: game.position_id,
-          match_id: game.match_id,
-          dice: game.dice,
-          move: best,
-        });
+        const next = applyMoveToState(game, best);
         const nextWithDice = next.game_over ? next : withFreshDice(next);
         setGame(nextWithDice);
         requestCoachHint(nextWithDice);
@@ -598,14 +531,10 @@ function MatchInner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [game, fastForward]);
 
-  // ── Fast-forward (server-side) ────────────────────────────────────────────
-  // Single round-trip: gnubg auto-plays both seats inside one subprocess at
-  // 0-ply evaluation and returns the final match state. The previous client-
-  // side per-turn loop spawned a fresh gnubg subprocess for every /move and
-  // /apply (tens of seconds for a typical match); /play_to_end collapses
-  // that to one call that completes in well under a second. Trade-off: dice
-  // come from gnubg's PRNG instead of the browser's crypto.getRandomValues.
-  // That's acceptable — fast-forward is a UX shortcut, not the rated path.
+  // ── Fast-forward (client-side ONNX) ─────────────────────────────────────
+  // Runs the full remaining match in the browser via playMatchToEnd, which
+  // uses the ONNX BackgammonNet to pick moves for both sides. Dice come from
+  // Math.random — acceptable since fast-forward is a UX shortcut, not rated.
   useEffect(() => {
     if (!fastForward || !game || game.game_over) return;
     if (agentMoving.current) return;
@@ -615,10 +544,7 @@ function MatchInner() {
 
     void (async () => {
       try {
-        const final = await gnubgPost<MatchState>("/play_to_end", {
-          position_id: game.position_id,
-          match_id: game.match_id,
-        });
+        const final = await playMatchToEnd(game);
         if (!cancelled) setGame(final);
       } catch (e: unknown) {
         if (!cancelled) setError(String(e));
@@ -635,42 +561,19 @@ function MatchInner() {
 
   // ── Auto-skip the human's turn when they have no legal moves ──────────────
   // Symmetric counterpart to the agent loop above. Runs only on the human's
-  // turn outside fast-forward (fast-forward already routes through the agent
-  // loop). Calls /evaluate to detect a bar dance; when the candidate list is
-  // empty, /skip flips the turn and a fresh roll is seeded for the new side.
+  // turn outside fast-forward. Uses hasLegalMoves from the rules engine to
+  // detect bar-dance; when no moves exist, skipTurn flips the turn.
   useEffect(() => {
     if (!game || game.game_over) return;
     if (game.turn !== 0 || fastForward) return;
     if (!game.dice) return;
     if (agentMoving.current) return;
-    let cancelled = false;
-    void (async () => {
-      try {
-        const { candidates } = await gnubgPost<{
-          candidates: { move: string; equity: number }[];
-        }>("/evaluate", {
-          position_id: game.position_id,
-          match_id: game.match_id,
-          dice: game.dice,
-        });
-        if (cancelled || candidates.length > 0) return;
-        const skipped = await gnubgPost<MatchState>("/skip", {
-          position_id: game.position_id,
-          match_id: game.match_id,
-          current_turn: 0,
-        });
-        if (cancelled) return;
-        const skippedWithDice = skipped.game_over
-          ? skipped
-          : withFreshDice(skipped);
-        setGame(skippedWithDice);
-      } catch {
-        // gnubg offline — silently no-op so the human can still use /resign.
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
+    const board: GameBoard = { points: game.board, bar: game.bar, off: game.off };
+    if (!hasLegalMoves(board, 0, game.dice)) {
+      const skipped = skipTurn(game);
+      const skippedWithDice = skipped.game_over ? skipped : withFreshDice(skipped);
+      setGame(skippedWithDice);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [game, fastForward]);
 
@@ -687,9 +590,9 @@ function MatchInner() {
   }, [game?.turn]);
 
   /**
-   * Submit a move notation string to /apply. Shared by the manual Move
-   * button (text input) and the auto-submit path (click/drag staging).
-   * Clears all staged state on success or error.
+   * Apply a move notation string via the client-side engine. Shared by the
+   * manual Move button (text input) and the auto-submit path (click/drag
+   * staging). Clears all staged state on success or error.
    */
   const doMoveWithNotation = async (notation: string) => {
     if (!game || !game.dice) return;
@@ -697,12 +600,7 @@ function MatchInner() {
     setError(null);
     setSelectedSource(null);
     try {
-      const next = await gnubgPost<MatchState>("/apply", {
-        position_id: game.position_id,
-        match_id: game.match_id,
-        dice: game.dice,
-        move: notation,
-      });
+      const next = applyMoveToState(game, notation);
       const nextWithDice = next.game_over ? next : withFreshDice(next);
       setGame(nextWithDice);
       setStagedMoves([]);
@@ -826,10 +724,7 @@ function MatchInner() {
     setLoading(true);
     setError(null);
     try {
-      const next = await gnubgPost<MatchState>("/resign", {
-        position_id: game.position_id,
-        match_id: game.match_id,
-      });
+      const next = resignMatch(game);
       setGame(next);
     } catch (e: unknown) {
       setError(String(e));
@@ -1137,7 +1032,7 @@ function MatchInner() {
             </p>
             <ul className="mt-3 space-y-1 text-xs text-emerald-700 dark:text-emerald-400">
               <li>✓ drand dice — publicly verifiable randomness each turn</li>
-              <li>✓ gnubg move validation — every move audited on-chain</li>
+              <li>✓ ONNX move validation — every move audited on-chain</li>
               <li>
                 ✓ automatic ELO settlement — no manual "Settle on-chain" click
               </li>
@@ -1227,10 +1122,6 @@ function MatchInner() {
         <p className="text-red-600 dark:text-red-400">
           Could not start game: {error}
         </p>
-        <p className="text-sm text-zinc-500 dark:text-zinc-400">
-          Make sure the local gnubg agent process is running at{" "}
-          <code className="font-mono">{GNUBG}</code>.
-        </p>
         <Link
           href="/"
           className="text-sm text-indigo-600 underline dark:text-indigo-400"
@@ -1254,7 +1145,7 @@ function MatchInner() {
     selectedSource !== null;
 
   // Show Apply button when moves are staged but not all dice are used (player
-  // can't use remaining dice — let them submit a partial move for gnubg to validate).
+  // can't use remaining dice — let them submit a partial move for the rules engine to validate).
   const canApplyPartial =
     stagedMoves.length > 0 && diceCount > 0 && stagedMoves.length < diceCount;
 
@@ -1277,11 +1168,8 @@ function MatchInner() {
 
       {/* Main */}
       <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-6 px-3 py-6 sm:px-8 sm:py-8">
-        {/* Phase F: inference-backend chip. Mirrors the global Compute
-            pill so the user can see at a glance which backend the
-            agent's per-move equity calls run on. Currently decorative
-            — /agent-move uses gnubg, not the per-agent NN. Phase G
-            wires the flag through to og_compute_eval_client.evaluate. */}
+        {/* Inference-backend chip. Mirrors the global Compute pill so the
+            user can see which backend the per-move ONNX evaluation runs on. */}
         <InferenceChip />
 
         {/* Career-mode teammate-preference chip. Renders only when the
@@ -1604,7 +1492,10 @@ function MatchInner() {
             matchId={game.match_id}
             dice={game.dice}
             board={game.board}
-            agentId={agentId}
+            bar={game.bar}
+            off={game.off}
+            turn={game.turn}
+            opponentId={agentId}
             disabled={!isHumanTurn || game.game_over}
             onMoveSelect={(move) => {
               // Pre-fill the text move input so the human can review and
@@ -1639,17 +1530,12 @@ function MatchInner() {
   );
 }
 
-// Phase I.3: chip mirroring the global Compute pill's inference
-// backend. When 0G is on, fetches a one-shot probe from
-// /training/estimate so the chip can render real provider state +
-// per-inference cost when a backgammon-net provider is registered.
-// When local, the chip is a static label.
-//
-// The match flow today goes through gnubg_service (port 8001) which
-// doesn't know about 0G; per-move billing through /agent-move is
-// part of Phase J's per-agent-NN cutover. For now the chip surfaces
-// the standing 0G availability + cost so judges can see the matrix
-// is wired, even though each in-flight move doesn't tick the meter.
+// InferenceChip: mirrors the global Compute pill's inference backend.
+// When 0G is on, fetches a one-shot probe from /training/estimate so
+// the chip can render real provider state + per-inference cost when a
+// backgammon-net provider is registered. When local, shows a static
+// label. Agent moves now run via ONNX BackgammonNet in the browser;
+// 0G Compute is used for the coach LLM only.
 function InferenceChip() {
   const { backends, hydrated } = useComputeBackends();
   const is0G = hydrated && backends.inference === "0g";

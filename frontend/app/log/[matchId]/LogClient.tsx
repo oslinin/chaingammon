@@ -25,7 +25,7 @@ import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 
-// FastAPI server URL — distinct from the local gnubg service (port 8001).
+// FastAPI server URL for KeeperHub / settlement operations.
 const SERVER = process.env.NEXT_PUBLIC_SERVER_URL ?? "http://localhost:8000";
 
 // Sentinel value written to the URL when no match is active in localStorage.

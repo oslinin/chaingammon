@@ -36,12 +36,13 @@ Sponsor mix per ETHGlobal Open Agents (the three Chaingammon targets): **0G** (S
                                     │ HTTP fetch (no central server)
         ┌───────────────────────────┼────────────────────────────┐
         ▼                           ▼                            ▼
- ┌───────────────┐       ┌───────────────────┐         ┌───────────────────┐
- │ Browser-side  │       │  0G Compute       │         │ Local agent       │
- │ value-net     │       │  TEE-attested     │         │ process (dev):    │
- │ forward pass  │       │  coach LLM +      │         │ gnubg :8001       │
- │ (per-agent NN)│       │  offline NN       │         │                   │
- └───────────────┘       └───────────────────┘         └───────────────────┘
+ ┌───────────────┐       ┌───────────────────┐
+ │ Browser-side  │       │  0G Compute       │
+ │ value-net     │       │  TEE-attested     │
+ │ forward pass  │       │  coach LLM +      │
+ │ (per-agent NN)│       │  offline NN       │
+ │ ONNX Runtime  │       │                   │
+ └───────────────┘       └───────────────────┘
                                     │
                                     │ KeeperHub workflow
                                     ▼
@@ -64,7 +65,7 @@ Sponsor mix per ETHGlobal Open Agents (the three Chaingammon targets): **0G** (S
 
 - Player connects wallet → frontend resolves their `<name>.chaingammon.eth` on Sepolia (issues new subname if missing).
 - Player picks an agent → frontend reads agent iNFT data hashes → fetches encrypted weights from 0G Storage, decrypts, runs inference (browser by default; 0G Compute for offline play).
-- Each turn → KeeperHub pulls a drand round; dice = `keccak256(drand_round_digest, turn_index) mod 36` → active side runs a value-net forward pass → records move.
+- Each turn → KeeperHub pulls a drand round; dice = `keccak256(drand_round_digest, turn_index) mod 36` → active side runs a BackgammonNet ONNX forward pass in the browser → records move.
 - Game over → frontend serializes the full game record to 0G Storage Log → triggers KeeperHub workflow with the resulting hash.
 - Workflow runs: validate moves via WASM rules engine → `MatchRegistry.settleWithSessionKeys(...)` on Sepolia → ENS text records updated (`elo`, `last_match_id`, `style_uri`, `archive_uri`) → audit JSON mirrored to 0G Storage.
 - Frontend match-details page reads game record + audit from 0G Storage and renders both.
@@ -106,20 +107,14 @@ Or run sub-project commands directly from within each directory:
 ### agent/ (Python 3.12, uv)
 
 ```bash
-# Start gnubg agent node (port 8001)
-uv run uvicorn gnubg_service:app --port 8001
-
-# Start it via the helper script (recommended)
-bash start.sh
-
-# Run all tests (includes sample_trainer + agent_profile + service tests)
+# Run all tests (includes sample_trainer + agent_profile tests)
 uv run pytest
 
 # Run the sample value-network trainer (TD(λ) self-play with TensorBoard)
 uv run python sample_trainer.py --matches 200 --launch-tensorboard
 
-# Run a single test file
-uv run pytest tests/test_gnubg_service.py -v
+# Export the trained BackgammonNet to ONNX (places backgammon_net.onnx in frontend/public/)
+uv run python sample_trainer.py --export-onnx
 
 # Add a dependency
 uv add <package>
@@ -162,9 +157,10 @@ See `## Frontend Policies` below for the three rules every frontend change must 
 | `log.md` | Frozen archive of Phases 0–33 (no longer maintained) |
 | `CHANGELOG.md` | Keep-a-Changelog summary; the active per-release record |
 | `MISSION.md` | Product vision and principles |
-| `agent/gnubg_service.py` | Local FastAPI service (port 8001): gnubg move evaluation via External Player interface |
+| `agent/gnubg_service.py` | Legacy gnubg FastAPI service — no longer used. Game engine now runs client-side via ONNX (see `frontend/lib/match_engine.ts`). |
 | `agent/coach_service.py` | Legacy Python coaching service — no longer started locally. The active coach LLM runs on 0G Compute, called from `frontend/app/api/coach/hint/route.ts`. |
-| `agent/start.sh` | Start script: launches the gnubg FastAPI service (coach now runs on 0G Compute) |
+| `frontend/lib/match_engine.ts` | Client-side game engine: replaces gnubg_service. Uses rules_engine.ts (legality) + onnx_eval.ts (BackgammonNet inference). |
+| `frontend/lib/move_tagger.ts` | Heuristic strategy labels (Safe/Aggressive/Priming/Anchor/Blitz). TypeScript port of agent/move_tagger.py. |
 | `scripts/upload_gnubg_docs.py` | One-time script: upload gnubg strategy docs to 0G Storage for coach RAG |
 | `contracts/src/PlayerSubnameRegistrar.sol` | ENS-shaped subname registrar. Issues `<label>.chaingammon.eth` subnames with text records (`elo`, `match_count`, `last_match_id`, `style_uri`, `archive_uri`). |
 | `contracts/src/EloMath.sol` | Fixed-point ELO formula — test extensively |
@@ -207,16 +203,12 @@ Required envs by phase:
 **ENS:** Subnames issued under `chaingammon.eth`. Schema for text records: `elo`, `match_count`, `last_match_id`, `style_uri` (`0g://...`), `archive_uri` (`0g://...`). Frontend resolves subnames to display human-readable names everywhere addresses would otherwise appear.
 
 **0G Storage usage:**
-- Log per match → game record (gnubg `.mat` wrapped in JSON envelope)
+- Log per match → game record (JSON envelope with move history)
 - Log per match → KeeperHub audit JSON
 - KV per player → style profile (% openings, cube tendency, bear-off speed)
-- Blob per agent → encrypted gnubg weights, hash committed to iNFT
+- Blob per agent → encrypted BackgammonNet ONNX weights, hash committed to iNFT
 
 **KeeperHub:** Settlement workflow (`recordMatch` → ENS text records → on-chain hash commit → audit). Server triggers via HTTP POST. Audit pulled via `kh run status --json` and mirrored to 0G Storage so it's publicly viewable through our app.
-
-## gnubg External Player Protocol
-
-gnubg is driven via its socket-based External Player interface. Install with `sudo apt install gnubg`. `gnubg_client.py` manages the subprocess; do not bypass it.
 
 ## Commit Messages
 

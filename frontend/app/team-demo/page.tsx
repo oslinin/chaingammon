@@ -13,25 +13,18 @@ import { ChiefOfStaffPanel } from "../ChiefOfStaffPanel";
 import { DiceRoll } from "../DiceRoll";
 import { rollDice } from "../dice";
 import { useComputeBackends } from "../ComputeBackendsContext";
+import {
+  type MatchState,
+  newMatch,
+  applyMoveToState,
+  getBestMove,
+  skipTurn,
+} from "../../lib/match_engine";
+import { type Board as GameBoard } from "../../lib/rules_engine";
 
-const GNUBG = process.env.NEXT_PUBLIC_GNUBG_URL ?? "http://localhost:8001";
 const SERVER = process.env.NEXT_PUBLIC_SERVER_URL ?? "http://localhost:8000";
 
 // ── Types ──────────────────────────────────────────────────────────────────
-
-interface MatchState {
-  position_id: string;
-  match_id: string;
-  board: number[];
-  bar: [number, number];
-  off: [number, number];
-  turn: 0 | 1;
-  dice: [number, number] | null;
-  score: [number, number];
-  match_length: number;
-  game_over: boolean;
-  winner: 0 | 1 | null;
-}
 
 interface AgentRow {
   agent_id: number;
@@ -52,21 +45,6 @@ interface AdvisorSnapshot {
   captain_id: string | null;
   move_idx: number;
   team_mode: boolean;
-}
-
-// ── gnubg_service helper ───────────────────────────────────────────────────
-
-async function gnubgPost<T>(path: string, body: unknown): Promise<T> {
-  const res = await fetch(`${GNUBG}${path}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body ?? {}),
-  });
-  if (!res.ok) {
-    const text = await res.text().catch(() => res.statusText);
-    throw new Error(`${res.status}: ${text}`);
-  }
-  return (await res.json()) as T;
 }
 
 /**
@@ -138,12 +116,14 @@ export default function TeamDemoPage() {
     if (!teammateId || opponentIds.length === 0) return;
     setSetup(false);
     setLoading(true);
-    gnubgPost<MatchState>("/new", { match_length: 3 })
-      .then((state) => {
-        setGame({ ...state, dice: rollDice() });
-      })
-      .catch((e) => setError(String(e)))
-      .finally(() => setLoading(false));
+    try {
+      const state = newMatch(3);
+      setGame({ ...state, dice: rollDice() });
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => {
@@ -154,29 +134,14 @@ export default function TeamDemoPage() {
     agentMoving.current = true;
     const step = async () => {
       try {
-        const { move: best } = await gnubgPost<{ move: string | null }>(
-          "/move",
-          {
-            position_id: game.position_id,
-            match_id: game.match_id,
-            dice: game.dice,
-          },
-        );
+        const board: GameBoard = { points: game.board, bar: game.bar, off: game.off };
+        const best = await getBestMove(board, 1, game.dice!);
         if (!best) {
-          const skipped = await gnubgPost<MatchState>("/skip", {
-            position_id: game.position_id,
-            match_id: game.match_id,
-            current_turn: 1,
-          });
+          const skipped = skipTurn(game);
           setGame(skipped.game_over ? skipped : { ...skipped, dice: rollDice() });
           return;
         }
-        const next = await gnubgPost<MatchState>("/apply", {
-          position_id: game.position_id,
-          match_id: game.match_id,
-          dice: game.dice,
-          move: best,
-        });
+        const next = applyMoveToState(game, best);
         setGame(next.game_over ? next : { ...next, dice: rollDice() });
       } catch (e) {
         setError(String(e));
@@ -192,12 +157,7 @@ export default function TeamDemoPage() {
     if (!game || !game.dice) return;
     setLoading(true);
     try {
-      const next = await gnubgPost<MatchState>("/apply", {
-        position_id: game.position_id,
-        match_id: game.match_id,
-        dice: game.dice,
-        move: notation,
-      });
+      const next = applyMoveToState(game, notation);
       setGame(next.game_over ? next : { ...next, dice: rollDice() });
       setStagedMoves([]);
       setDisplayBoardState(null);
@@ -443,6 +403,9 @@ export default function TeamDemoPage() {
             matchId={game.match_id}
             dice={game.dice}
             board={game.board}
+            bar={game.bar}
+            off={game.off}
+            turn={game.turn}
             opponentId={opponentIds[0] || 0}
             disabled={!isHumanTurn || game.game_over}
             onMoveSelect={previewMove}
