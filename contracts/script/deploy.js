@@ -14,7 +14,21 @@
 
 const fs = require("fs");
 const path = require("path");
-const { ethers, network } = require("hardhat");
+const { ethers, network, run } = require("hardhat");
+
+async function verifyContract(address, constructorArguments = []) {
+  if (network.name === "localhost" || network.name === "hardhat") return;
+  console.log(`Verifying ${address} on Etherscan…`);
+  try {
+    await run("verify:verify", { address, constructorArguments });
+  } catch (e) {
+    if (e.message?.toLowerCase().includes("already verified")) {
+      console.log(`  already verified`);
+    } else {
+      console.warn(`  verification failed: ${e.message}`);
+    }
+  }
+}
 
 const SEED_AGENT_METADATA = "ipfs://gnubg-default-placeholder";
 const SEED_AGENT_TIER = 2; // 0=beginner, 1=intermediate, 2=advanced, 3=world-class
@@ -146,7 +160,7 @@ async function main() {
 
   // ── AgentRegistry ──────────────────────────────────────────────────────────
   const AgentRegistryFactory = await ethers.getContractFactory("AgentRegistry");
-  const { contract: agentRegistry, address: agentAddr } =
+  const { contract: agentRegistry, address: agentAddr, fresh: agentFresh } =
     await deployOrReuse("AgentRegistry", AgentRegistryFactory,
       [matchAddr, INITIAL_BASE_WEIGHTS_HASH], existing);
 
@@ -186,7 +200,7 @@ async function main() {
 
   // ── PlayerSubnameRegistrar ─────────────────────────────────────────────────
   const RegistrarFactory = await ethers.getContractFactory("PlayerSubnameRegistrar");
-  const { contract: registrar, address: registrarAddr } =
+  const { contract: registrar, address: registrarAddr, fresh: registrarFresh } =
     await deployOrReuse("PlayerSubnameRegistrar", RegistrarFactory,
       [ENS_PARENT_NODE, nameWrapperAddr, resolverAddr], existing);
 
@@ -234,7 +248,7 @@ async function main() {
 
   // ── MatchEscrow ────────────────────────────────────────────────────────────
   const MatchEscrowFactory = await ethers.getContractFactory("MatchEscrow");
-  const { contract: escrow, address: escrowAddr } =
+  const { contract: escrow, address: escrowAddr, fresh: escrowFresh } =
     await deployOrReuse("MatchEscrow", MatchEscrowFactory, [matchAddr], existing);
 
   // ── Wire MatchRegistry → MatchEscrow (idempotent setter) ──────────────────
@@ -246,6 +260,12 @@ async function main() {
   } else {
     console.log(`MatchRegistry: matchEscrow already set to ${escrowAddr} — skipping`);
   }
+
+  // ── Etherscan verification (skipped on localhost/hardhat) ─────────────────
+  if (matchFresh) await verifyContract(matchAddr, []);
+  if (agentFresh) await verifyContract(agentAddr, [matchAddr, INITIAL_BASE_WEIGHTS_HASH]);
+  if (registrarFresh) await verifyContract(registrarAddr, [ENS_PARENT_NODE, nameWrapperAddr, resolverAddr]);
+  if (escrowFresh) await verifyContract(escrowAddr, [matchAddr]);
 
   // ── Write deployments JSON ─────────────────────────────────────────────────
   const out = {

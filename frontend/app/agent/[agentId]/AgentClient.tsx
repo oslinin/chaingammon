@@ -376,9 +376,21 @@ export default function AgentClient() {
           data-testid="agent-info-onchain"
           className="rounded-lg border border-zinc-200 bg-white p-6 dark:border-zinc-800 dark:bg-zinc-900"
         >
-          <h3 className="mb-4 text-sm font-semibold uppercase tracking-wide text-zinc-500">
-            On-chain data
-          </h3>
+          <div className="mb-4 flex items-center gap-3">
+            <h3 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">
+              On-chain data
+            </h3>
+            {explorerUrl && agentRegistry && agentId > 0 && (
+              <a
+                href={`${explorerUrl}/nft/${agentRegistry}/${agentId}`}
+                target="_blank"
+                rel="noreferrer"
+                className="text-xs text-indigo-600 hover:underline dark:text-indigo-400"
+              >
+                Etherscan ↗
+              </a>
+            )}
+          </div>
           <dl className="grid grid-cols-2 gap-x-6 gap-y-4 text-sm sm:grid-cols-3">
             <InfoField
               label="ELO"

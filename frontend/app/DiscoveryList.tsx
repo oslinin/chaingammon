@@ -90,10 +90,13 @@ function EntryCard({ entry }: { entry: DiscoveryEntry }) {
       ? undefined
       : "";
   }
+  const ensName = entry.label ? `${entry.label}.chaingammon.eth` : null;
+
   return (
     <div data-testid="discovery-entry">
       <PersonCard
         label={entry.label}
+        nameHref={ensName ? `https://app.ens.domains/${ensName}` : undefined}
         elo={entry.elo || undefined}
         balance={balance}
         matchSummary={entry.matchRecord ?? null}

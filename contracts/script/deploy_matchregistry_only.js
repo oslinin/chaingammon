@@ -16,7 +16,21 @@
 
 const fs = require("fs");
 const path = require("path");
-const { ethers, network } = require("hardhat");
+const { ethers, network, run } = require("hardhat");
+
+async function verifyContract(address, constructorArguments = []) {
+  if (network.name === "localhost" || network.name === "hardhat") return;
+  console.log(`Verifying ${address} on Etherscan…`);
+  try {
+    await run("verify:verify", { address, constructorArguments });
+  } catch (e) {
+    if (e.message?.toLowerCase().includes("already verified")) {
+      console.log(`  already verified`);
+    } else {
+      console.warn(`  verification failed: ${e.message}`);
+    }
+  }
+}
 
 async function main() {
   const [deployer] = await ethers.getSigners();
@@ -39,6 +53,7 @@ async function main() {
   await matchRegistry.waitForDeployment();
   const matchAddr = await matchRegistry.getAddress();
   console.log(`MatchRegistry deployed: ${matchAddr} (block ${deployedBlock})`);
+  await verifyContract(matchAddr, []);
 
   if (settlerAddr) {
     const tx = await matchRegistry.setSettler(settlerAddr);

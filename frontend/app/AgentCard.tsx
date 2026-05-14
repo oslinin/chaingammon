@@ -116,9 +116,14 @@ export function AgentCard({ agentId }: AgentCardProps) {
     ? [`${trainedCount} games trained`]
     : [];
 
+  const ensName = cleanedLabel && cleanedLabel.length <= 60
+    ? `${cleanedLabel}.chaingammon.eth`
+    : null;
+
   return (
     <PersonCard
       label={label}
+      nameHref={ensName ? `https://app.ens.domains/${ensName}` : undefined}
       elo={isLoading ? undefined : elo}
       balance={balance}
       matchSummary={

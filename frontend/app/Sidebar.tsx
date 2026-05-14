@@ -2,20 +2,13 @@
 // Phase 36: adds three settlement-visualization entries below "Expenses".
 //
 // Navigation entries:
-//   1. "Play with agent" — links to /match with the most recently played
-//      agentId (read from localStorage, set by the match page on mount).
-//      Falls back to agentId=1 when no prior game exists.
-//   2. "Create new agent" — links to /create-agent, a dedicated page with
-//      the mint form (AgentRegistry.mintAgent).
-//   3. "Expenses" (Phase 30) — links to /expenses, the 0G token spending
-//      ledger. Shows coach-hint and game-settlement charges.
-//   4. "0G Storage log" (Phase 36) — links to /log/{currentMatchId}, the live
-//      match record on 0G Storage. currentMatchId is written to localStorage
-//      by the match page on game start. Falls back to /log/no-match.
-//   5. "ENS updates" (Phase 36) — links to /ens/{currentMatchId}, showing
-//      both players' ENS text records before/after keeper settlement.
-//   6. "KeeperHub steps" (Phase 36) — links to /keeper/{currentMatchId}, the
-//      KeeperHub workflow step view (escrow, VRF, replay, settlement, ENS).
+//   1. "Home" — landing page with agent cards and lobby.
+//   2. "Transactions" — gas, KeeperHub, and 0G token spending ledger.
+//   3. "Training" — round-robin self-play session launcher.
+//   4. "Team demo" — per-turn advisor signal visualizer.
+//   5. "0G Storage log" — live match record on 0G Storage.
+//   6. "ENS updates" — players' ENS text records before/after settlement.
+//   7. "KeeperHub steps" — KeeperHub workflow step view.
 //
 // The component is SSR-safe: localStorage is read inside useEffect after
 // hydration so the server-rendered HTML never diverges from the initial
@@ -24,66 +17,14 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { useReadContract, useReadContracts } from "wagmi";
-import { AgentRegistryABI, useChainContracts } from "./contracts";
-import { useActiveChain, useActiveChainId } from "./chains";
 
 export function Sidebar() {
-  // Defer localStorage access until after hydration to avoid SSR mismatch.
-  const [mounted, setMounted] = useState(false);
-  const [lastAgentId, setLastAgentId] = useState<number | null>(null);
   const [currentMatchId, setCurrentMatchId] = useState<string | null>(null);
 
-  // Read last active agentId and current match ID from localStorage after hydration.
   useEffect(() => {
-    setMounted(true);
-    const stored = window.localStorage.getItem("lastAgentId");
-    if (stored) setLastAgentId(Number(stored));
     const matchId = window.localStorage.getItem("currentMatchId");
     if (matchId) setCurrentMatchId(matchId);
   }, []);
-
-  // Validate lastAgentId against the live registry so a stale localStorage
-  // value (e.g. a burned agent) never shows as the play target.
-  const active = useActiveChain();
-  const chainId = useActiveChainId();
-  const { agentRegistry } = useChainContracts();
-
-  const { data: activeCount } = useReadContract({
-    address: agentRegistry,
-    abi: AgentRegistryABI,
-    functionName: "activeAgentCount",
-    chainId,
-    query: { enabled: !!active },
-  });
-
-  // Fetch all active agent IDs in one batch to validate and find the first one.
-  const count = activeCount !== undefined ? Number(activeCount) : 0;
-  const { data: idResults } = useReadContracts({
-    contracts: Array.from({ length: count }, (_, i) => ({
-      address: agentRegistry,
-      abi: AgentRegistryABI,
-      functionName: "activeAgentAt" as const,
-      args: [BigInt(i)] as [bigint],
-      chainId,
-    })),
-    query: { enabled: !!active && count > 0 },
-  });
-
-  const activeIds = (idResults ?? [])
-    .map((r) => r?.result as bigint | undefined)
-    .filter((v): v is bigint => v !== undefined)
-    .map(Number);
-
-  // Use lastAgentId only if it's still active; otherwise fall back to the
-  // first active agent, or null when none are registered yet.
-  const resolvedAgentId =
-    mounted && lastAgentId && activeIds.includes(lastAgentId)
-      ? lastAgentId
-      : activeIds[0] ?? null;
-
-  const playHref = resolvedAgentId ? `/match?agentId=${resolvedAgentId}` : "/match";
-  const playSubtitle = resolvedAgentId ? `Agent #${resolvedAgentId}` : "Start a match";
 
   return (
     <aside
@@ -91,7 +32,6 @@ export function Sidebar() {
       className="hidden md:flex w-56 shrink-0 flex-col border-r border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950"
     >
       <nav className="flex flex-col gap-1 p-3">
-        {/* Entry 0: home page */}
         <Link
           href="/"
           data-testid="sidebar-home"
@@ -105,35 +45,6 @@ export function Sidebar() {
           </span>
         </Link>
 
-        {/* Entry 1: current play with agent */}
-        <Link
-          href={playHref}
-          data-testid="sidebar-play"
-          className="flex flex-col gap-0.5 rounded-md px-3 py-3 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800"
-        >
-          <span className="font-semibold text-zinc-900 dark:text-zinc-50">
-            Play with agent
-          </span>
-          <span className="text-xs text-zinc-500 dark:text-zinc-400">
-            {playSubtitle}
-          </span>
-        </Link>
-
-        {/* Entry 2: create a new agent — navigates to dedicated /create-agent page */}
-        <Link
-          href="/create-agent"
-          data-testid="sidebar-create-agent"
-          className="flex flex-col gap-0.5 rounded-md px-3 py-3 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800"
-        >
-          <span className="font-semibold text-zinc-900 dark:text-zinc-50">
-            Create new agent
-          </span>
-          <span className="text-xs text-zinc-500 dark:text-zinc-400">
-            Mint an iNFT agent
-          </span>
-        </Link>
-
-        {/* Entry 3: transaction ledger */}
         <Link
           href="/transactions"
           data-testid="sidebar-transactions"
@@ -147,21 +58,6 @@ export function Sidebar() {
           </span>
         </Link>
 
-        {/* Entry 3.5: round-robin training (Phase F) */}
-        <Link
-          href="/training"
-          data-testid="sidebar-training"
-          className="flex flex-col gap-0.5 rounded-md px-3 py-3 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800"
-        >
-          <span className="font-semibold text-zinc-900 dark:text-zinc-50">
-            Training
-          </span>
-          <span className="text-xs text-zinc-500 dark:text-zinc-400">
-            Round-robin self-play
-          </span>
-        </Link>
-
-        {/* Entry 3.6: team-mode advisor demo (Phase K) */}
         <Link
           href="/team-demo"
           data-testid="sidebar-team-demo"

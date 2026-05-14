@@ -12,7 +12,21 @@
 
 const fs = require("fs");
 const path = require("path");
-const { ethers, network } = require("hardhat");
+const { ethers, network, run } = require("hardhat");
+
+async function verifyContract(address, constructorArguments = []) {
+  if (network.name === "localhost" || network.name === "hardhat") return;
+  console.log(`Verifying ${address} on Etherscan…`);
+  try {
+    await run("verify:verify", { address, constructorArguments });
+  } catch (e) {
+    if (e.message?.toLowerCase().includes("already verified")) {
+      console.log(`  already verified`);
+    } else {
+      console.warn(`  verification failed: ${e.message}`);
+    }
+  }
+}
 
 function namehash(name) {
   let node = "0x" + "00".repeat(32);
@@ -48,6 +62,7 @@ async function main() {
   console.log(
     `PlayerSubnameRegistrar deployed: ${registrarAddr} (parent node ${ENS_PARENT_NODE})`,
   );
+  await verifyContract(registrarAddr, [ENS_PARENT_NODE]);
 
   const merged = {
     ...existing,
