@@ -162,14 +162,19 @@ export function AgentTeammatePanel({
 
   // Auto-suggest on each new turn — fires once per (positionId, dice) pair
   // so the teammate opens with a recommendation without waiting to be asked.
+  // The ref is set inside the callback (not before) so React Strict Mode's
+  // double-invoke + cleanup doesn't permanently mark the turn as sent before
+  // the timer actually fires.
   const autoSentRef = useRef<string>("");
   useEffect(() => {
     if (disabled || !dice) return;
     const key = `${positionId}-${dice[0]}-${dice[1]}`;
     if (autoSentRef.current === key) return;
-    autoSentRef.current = key;
-    // Small delay so ONNX eval has a chance to populate candidates first.
-    const t = setTimeout(() => void sendStrategy("What's the best move here?"), 400);
+    const t = setTimeout(() => {
+      if (autoSentRef.current === key) return;
+      autoSentRef.current = key;
+      void sendStrategy("What's the best move here?");
+    }, 400);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [disabled, positionId, dice?.[0], dice?.[1]]);
