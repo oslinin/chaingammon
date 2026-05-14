@@ -14,12 +14,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
 import { parseAbiItem } from "viem";
 import { usePublicClient, useReadContracts } from "wagmi";
 
 import { useActiveChain, useActiveChainId, useEnsInfra } from "./chains";
 import { MatchRegistryABI, useChainContracts } from "./contracts";
+import { PersonCard, type MatchSummary } from "./PersonCard";
 
 // -------------------------------------------------------------------------
 // Types
@@ -33,6 +33,7 @@ interface DiscoveryEntry {
   endpoint: string;
   inftId: string; // agent iNFT ID written by AgentRegistry.mintAgent; "" for humans
   owner?: `0x${string}`;
+  matchRecord?: MatchSummary;
 }
 
 interface ScanEntry {
@@ -44,58 +45,25 @@ interface ScanEntry {
 }
 
 // -------------------------------------------------------------------------
-// Discovery entry card
+// Discovery entry card — thin wrapper around PersonCard
 // -------------------------------------------------------------------------
 
 function EntryCard({ entry }: { entry: DiscoveryEntry }) {
-  const hasEndpoint = !!entry.endpoint;
-  const hasInfoLink = entry.kind === "agent" && !!entry.inftId;
+  const isAgent = entry.kind === "agent";
   return (
-    <div
-      data-testid="discovery-entry"
-      className="flex flex-col gap-3 rounded-lg border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-900"
-    >
-      <div className="flex items-start justify-between gap-2">
-        <h3 className="font-mono text-sm font-semibold text-zinc-900 dark:text-zinc-50 break-all">
-          {entry.label}.chaingammon.eth
-        </h3>
-        <div className="flex shrink-0 items-center gap-1">
-          {hasInfoLink && (
-            <a
-              href={`/agent/${entry.inftId}`}
-              target="_blank"
-              rel="noreferrer"
-              data-testid="discovery-agent-info-link"
-              title="Open agent info in a new tab"
-              className="rounded bg-zinc-100 px-1.5 py-0.5 text-xs font-mono text-zinc-500 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-400 dark:hover:bg-zinc-700"
-            >
-              Info ↗
-            </a>
-          )}
-          <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-xs font-mono text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
-            {entry.kind || "unknown"}
-          </span>
-        </div>
-      </div>
-
-      <div className="flex items-baseline gap-1.5">
-        <span className="text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-          ELO
-        </span>
-        <span className="font-mono text-2xl font-bold text-zinc-900 dark:text-zinc-50">
-          {entry.elo || "—"}
-        </span>
-      </div>
-
-      {hasEndpoint && (
-        <Link
-          href={`/match?endpoint=${encodeURIComponent(entry.endpoint)}`}
-          data-testid="discovery-play-button"
-          className="mt-1 rounded-md bg-indigo-600 px-4 py-2 text-center text-sm font-semibold text-white hover:bg-indigo-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600"
-        >
-          Play
-        </Link>
-      )}
+    <div data-testid="discovery-entry">
+      <PersonCard
+        label={entry.label}
+        elo={entry.elo || undefined}
+        matchSummary={entry.matchRecord ?? null}
+        infoHref={isAgent && entry.inftId ? `/agent/${entry.inftId}` : undefined}
+        infoLabel={entry.kind || "unknown"}
+        playHref={
+          entry.endpoint
+            ? `/match?endpoint=${encodeURIComponent(entry.endpoint)}`
+            : undefined
+        }
+      />
     </div>
   );
 }
@@ -119,6 +87,12 @@ export interface DiscoveryListProps {
 const SUBNAME_MINTED_EVENT = parseAbiItem(
   "event SubnameMinted(string label, bytes32 indexed node, address indexed subnameOwner, uint256 inftId)",
 );
+
+const MATCH_RECORDED_EVENT = parseAbiItem(
+  "event MatchRecorded(uint256 indexed matchId, uint256 winnerAgentId, address winnerHuman, uint256 loserAgentId, address loserHuman, uint256 newWinnerElo, uint256 newLoserElo)",
+);
+
+const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000" as const;
 
 // Minimal ABI for ENS PublicResolver.text(bytes32, string) → string.
 const RESOLVER_ABI = [
@@ -151,6 +125,9 @@ export function DiscoveryList({ staticEntries, playersOnly }: DiscoveryListProps
   // Partial entries from event scan (elo + endpoint added below via resolver reads).
   const [scanEntries, setScanEntries] = useState<ScanEntry[]>([]);
   const [loading, setLoading] = useState(false);
+  // Match records grouped by address (humans) and agentId string (agents).
+  const [matchByAddress, setMatchByAddress] = useState<Map<string, MatchSummary>>(new Map());
+  const [matchByAgentId, setMatchByAgentId] = useState<Map<string, MatchSummary>>(new Map());
   const [scanError, setScanError] = useState(false);
 
   useEffect(() => {
@@ -233,6 +210,76 @@ export function DiscoveryList({ staticEntries, playersOnly }: DiscoveryListProps
     };
   }, [publicClient, playerSubnameRegistrar, active, chainId, staticEntries]);
 
+  // Scan MatchRecorded events once and group wins/losses by human address and
+  // agent ID so EntryCard can show "N played · W won · L lost" for every entry.
+  useEffect(() => {
+    if (!publicClient || !matchRegistry || !active || staticEntries) return;
+    let cancelled = false;
+
+    const fromBlock: bigint | "earliest" =
+      chainId === 31337
+        ? "earliest"
+        : typeof active.deployedBlock === "number"
+        ? BigInt(active.deployedBlock)
+        : BigInt(0);
+
+    const scanMatches = async () => {
+      if (fromBlock === "earliest") {
+        return publicClient.getLogs({
+          address: matchRegistry,
+          event: MATCH_RECORDED_EVENT,
+          fromBlock,
+        });
+      }
+      const tip = await publicClient.getBlockNumber();
+      const chunks: { fromBlock: bigint; toBlock: bigint }[] = [];
+      let from = fromBlock;
+      while (from <= tip) {
+        const to = from + MAX_BLOCK_RANGE <= tip ? from + MAX_BLOCK_RANGE : tip;
+        chunks.push({ fromBlock: from, toBlock: to });
+        from = to + 1n;
+      }
+      const results = await Promise.all(
+        chunks.map((c) =>
+          publicClient.getLogs({ address: matchRegistry, event: MATCH_RECORDED_EVENT, ...c }),
+        ),
+      );
+      return results.flat();
+    };
+
+    scanMatches()
+      .then((logs) => {
+        if (cancelled) return;
+        const byAddr = new Map<string, MatchSummary>();
+        const byAgent = new Map<string, MatchSummary>();
+        const tally = (map: Map<string, MatchSummary>, key: string, win: boolean) => {
+          const prev = map.get(key) ?? { matches: 0, wins: 0, losses: 0 };
+          map.set(key, {
+            matches: prev.matches + 1,
+            wins: prev.wins + (win ? 1 : 0),
+            losses: prev.losses + (win ? 0 : 1),
+          });
+        };
+        for (const log of logs) {
+          const a = log.args as {
+            winnerAgentId?: bigint;
+            winnerHuman?: `0x${string}`;
+            loserAgentId?: bigint;
+            loserHuman?: `0x${string}`;
+          };
+          if (a.winnerHuman && a.winnerHuman !== ZERO_ADDRESS) tally(byAddr, a.winnerHuman, true);
+          if (a.loserHuman && a.loserHuman !== ZERO_ADDRESS) tally(byAddr, a.loserHuman, false);
+          if (a.winnerAgentId && a.winnerAgentId > 0n) tally(byAgent, a.winnerAgentId.toString(), true);
+          if (a.loserAgentId && a.loserAgentId > 0n) tally(byAgent, a.loserAgentId.toString(), false);
+        }
+        setMatchByAddress(byAddr);
+        setMatchByAgentId(byAgent);
+      })
+      .catch(() => { /* non-critical — match record just won't show */ });
+
+    return () => { cancelled = true; };
+  }, [publicClient, matchRegistry, active, chainId, staticEntries]);
+
   // Batch-read elo + endpoint from ENS PublicResolver for each discovered node.
   // When ensInfra is absent (e.g. localhost), resolver is undefined and calls
   // are skipped — elo/endpoint show as empty strings.
@@ -292,10 +339,17 @@ export function DiscoveryList({ staticEntries, playersOnly }: DiscoveryListProps
     const ensElo = resolver ? ((textResults?.[i * 2]?.result as string) ?? "") : "";
     const chainElo = e.kind !== "agent" && e.owner ? (humanEloByOwner.get(e.owner) ?? "") : "";
     const elo = ensElo || chainElo;
+    const matchRecord =
+      e.kind === "agent"
+        ? matchByAgentId.get(e.inftId)
+        : e.owner
+        ? matchByAddress.get(e.owner)
+        : undefined;
     return {
       ...e,
       elo,
       endpoint: resolver ? ((textResults?.[i * 2 + 1]?.result as string) ?? "") : "",
+      matchRecord,
     };
   });
 
