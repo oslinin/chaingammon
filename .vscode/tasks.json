@@ -70,7 +70,7 @@
       "label": "Localhost: agent node",
       "detail": "Terminal 3 — gnubg_service (port 8001). Long-running. Coach LLM runs on 0G Compute via the Next.js Route Handler, so no local coach process.",
       "type": "shell",
-      "command": "./start.sh; exec $SHELL",
+      "command": "uv run uvicorn gnubg_service:app --port 8001; exec $SHELL",
       "options": { "cwd": "${workspaceFolder}/agent" },
       "isBackground": true,
       "presentation": {
