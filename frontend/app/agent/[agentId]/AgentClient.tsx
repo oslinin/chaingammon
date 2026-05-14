@@ -772,7 +772,7 @@ function WeightRow({
 
   return (
     <div className="flex items-center gap-3 text-xs">
-      <span className="group/tip relative flex w-44 shrink-0 cursor-help items-center gap-1 truncate font-mono text-zinc-600 dark:text-zinc-400">
+      <span className="group/tip relative flex w-44 shrink-0 cursor-help items-center gap-1 font-mono text-zinc-600 dark:text-zinc-400">
         <span className="truncate">{label}</span>
         {tooltip && (
           <>
