@@ -67,14 +67,35 @@ export function useAgentMatchSummary(agentId: number) {
 
     const targetId = BigInt(agentId);
 
-    computeFromBlock()
-      .then((fromBlock) =>
-        client.getLogs({
+    // publicnode Sepolia caps eth_getLogs at 50k blocks; scan in chunks.
+    const MAX_BLOCK_RANGE = BigInt(49_000);
+
+    const scanChunked = async (fromBlock: bigint | "earliest") => {
+      if (fromBlock === "earliest") {
+        return client.getLogs({
           address: matchRegistry,
           event: MATCH_RECORDED_EVENT,
           fromBlock,
-        }),
-      )
+        });
+      }
+      const tip = await client.getBlockNumber();
+      const chunks: { fromBlock: bigint; toBlock: bigint }[] = [];
+      let from = fromBlock;
+      while (from <= tip) {
+        const to = from + MAX_BLOCK_RANGE <= tip ? from + MAX_BLOCK_RANGE : tip;
+        chunks.push({ fromBlock: from, toBlock: to });
+        from = to + 1n;
+      }
+      const results = await Promise.all(
+        chunks.map((c) =>
+          client.getLogs({ address: matchRegistry, event: MATCH_RECORDED_EVENT, ...c }),
+        ),
+      );
+      return results.flat();
+    };
+
+    computeFromBlock()
+      .then((fromBlock) => scanChunked(fromBlock))
       .then((logs) => {
         if (cancelled) return;
         let wins = 0;

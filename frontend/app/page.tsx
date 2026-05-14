@@ -35,7 +35,7 @@ export default function Home() {
         </section>
 
         <section className="flex flex-col gap-4">
-          <DiscoveryList />
+          <DiscoveryList playersOnly />
         </section>
       </main>
     </div>
