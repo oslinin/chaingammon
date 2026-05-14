@@ -29,6 +29,9 @@ export function ConnectButton() {
 
   const injectedConnector = connectors.find((c: Connector) => c.type === "injected");
   const wcConnector = connectors.find((c: Connector) => c.type === "walletConnect");
+  // Only surface connectError after the user has explicitly clicked connect —
+  // wagmi's auto-reconnect on mount can set this without user interaction.
+  const [userAttempted, setUserAttempted] = useState(false);
 
   if (!mounted) return null;
 
@@ -52,7 +55,7 @@ export function ConnectButton() {
           {injectedConnector && (
             <button
               type="button"
-              onClick={() => connect({ connector: injectedConnector })}
+              onClick={() => { setUserAttempted(true); connect({ connector: injectedConnector }); }}
               disabled={connectPending}
               className="inline-flex h-10 items-center rounded-full bg-zinc-900 px-4 text-sm font-medium text-zinc-50 hover:bg-zinc-700 disabled:opacity-60 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-300"
             >
@@ -62,7 +65,7 @@ export function ConnectButton() {
           {wcConnector && (
             <button
               type="button"
-              onClick={() => connect({ connector: wcConnector })}
+              onClick={() => { setUserAttempted(true); connect({ connector: wcConnector }); }}
               disabled={connectPending}
               className="inline-flex h-10 items-center rounded-full border border-zinc-300 px-4 text-sm font-medium text-zinc-900 hover:bg-zinc-50 disabled:opacity-60 dark:border-zinc-700 dark:text-zinc-100 dark:hover:bg-zinc-900"
             >
@@ -70,7 +73,7 @@ export function ConnectButton() {
             </button>
           )}
         </div>
-        {connectError ? (
+        {userAttempted && connectError ? (
           <span className="text-xs text-red-600 dark:text-red-400">
             {connectError.message}
           </span>
