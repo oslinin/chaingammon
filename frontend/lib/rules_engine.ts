@@ -262,3 +262,266 @@ export function validateGameMoves(
 
   return { valid: true, firstInvalidIndex: -1, error: null };
 }
+
+/** Format a single checker move into gnubg notation. */
+function formatMove(piece: CheckerMove, side: number): string {
+  const src = piece.src === (side === 0 ? BAR_SRC : BAR_SRC_P1) ? "bar" : piece.src.toString();
+  const dst = piece.dst === (side === 0 ? OFF_DST : OFF_DST_P1) ? "off" : piece.dst.toString();
+  const hit = piece.hit ? "*" : "";
+  return `${src}/${dst}${hit}`;
+}
+
+export interface CandidateMove {
+  move: string;
+  pieces: CheckerMove[];
+}
+
+export function generateLegalMoves(board: Board, side: number, dice: [number, number]): string[] {
+  const pool = dicePool(dice);
+
+  // Recursively find all combinations of single moves
+  const sequences: CheckerMove[][] = [];
+
+  function backtrack(b: Board, remainingPips: number[], currentSeq: CheckerMove[]) {
+    // Find all possible single pip moves from this board state
+    const singleMoves = getSingleMoves(b, side, remainingPips);
+
+    if (singleMoves.length === 0) {
+      sequences.push([...currentSeq]);
+      return;
+    }
+
+    // Deduplicate moves to avoid identical branches
+    const seen = new Set<string>();
+
+    for (const { move, pipUsed, newBoard } of singleMoves) {
+      const moveStr = formatMove(move, side);
+      if (seen.has(moveStr)) continue;
+      seen.add(moveStr);
+
+      const newPips = [...remainingPips];
+      newPips.splice(newPips.indexOf(pipUsed), 1);
+
+      currentSeq.push(move);
+      backtrack(newBoard, newPips, currentSeq);
+      currentSeq.pop();
+    }
+  }
+
+  backtrack(board, pool, []);
+
+  if (sequences.length === 0) return [];
+
+  // Rule 1: Must play as many dice as possible.
+  const maxLen = Math.max(...sequences.map(s => s.length));
+  let validSeqs = sequences.filter(s => s.length === maxLen);
+
+  // Rule 2: If we can only play one die of a non-double roll, we must play the larger one if possible.
+  if (maxLen === 1 && pool.length === 2 && pool[0] !== pool[1]) {
+    const higherDie = Math.max(pool[0], pool[1]);
+    const seqsWithHigherDie = validSeqs.filter(s => {
+       const pip = pipConsumed(s[0], side);
+       return pip === higherDie || (s[0].dst === (side === 0 ? OFF_DST : OFF_DST_P1));
+    });
+    if (seqsWithHigherDie.length > 0) {
+        validSeqs = seqsWithHigherDie;
+    }
+  }
+
+  // Group identical sequences
+  const resultStrings = new Set<string>();
+
+  for (const seq of validSeqs) {
+      const counts = new Map<string, number>();
+      for (const piece of seq) {
+          const str = formatMove(piece, side);
+          counts.set(str, (counts.get(str) || 0) + 1);
+      }
+
+      const parts: string[] = [];
+      for (const [str, count] of counts.entries()) {
+          if (count > 1) {
+              parts.push(`${str}(${count})`);
+          } else {
+              parts.push(str);
+          }
+      }
+      resultStrings.add(parts.join(" "));
+  }
+
+  return Array.from(resultStrings);
+}
+
+function getSingleMoves(board: Board, side: number, availablePips: number[]): Array<{move: CheckerMove, pipUsed: number, newBoard: Board}> {
+    const moves: Array<{move: CheckerMove, pipUsed: number, newBoard: Board}> = [];
+    const uniquePips = Array.from(new Set(availablePips)).sort((a,b)=>a-b);
+
+    const barSrc = side === 0 ? BAR_SRC : BAR_SRC_P1;
+    const offDst = side === 0 ? OFF_DST : OFF_DST_P1;
+
+    // If on bar, must enter
+    if (board.bar[side] > 0) {
+        for (const pip of uniquePips) {
+            const dst = side === 0 ? (25 - pip) : pip;
+            if (isValidDst(board, side, dst)) {
+                const move = { src: barSrc, dst, hit: isHit(board, side, dst) };
+                moves.push({ move, pipUsed: pip, newBoard: applyMoveSingle(board, side, move) });
+            }
+        }
+        return moves; // Cannot do anything else if on bar
+    }
+
+    // Normal moves
+    const inHome = allInHome(board.points, board.bar, side);
+
+    for (let i = 0; i < NUM_POINTS; i++) {
+        const count = board.points[i];
+        if ((side === 0 && count > 0) || (side === 1 && count < 0)) {
+            const src = i + 1;
+
+            for (const pip of uniquePips) {
+                const dst = side === 0 ? src - pip : src + pip;
+
+                if (dst === offDst || (side === 0 ? dst < 0 : dst > 25)) {
+                    if (inHome) {
+                        // Check if exact bear off or larger die
+                        if (dst === offDst) {
+                             const move = { src, dst, hit: false };
+                             moves.push({ move, pipUsed: pip, newBoard: applyMoveSingle(board, side, move) });
+                        } else {
+                             // Trying to use a larger die
+                             let hasFurther = false;
+                             if (side === 0) {
+                                 for(let p = src; p < NUM_POINTS; p++) if (board.points[p] > 0) hasFurther = true;
+                             } else {
+                                 for(let p = src - 2; p >= 0; p--) if (board.points[p] < 0) hasFurther = true;
+                             }
+                             if (!hasFurther) {
+                                 const move = { src, dst: offDst, hit: false };
+                                 moves.push({ move, pipUsed: pip, newBoard: applyMoveSingle(board, side, move) });
+                             }
+                        }
+                    }
+                } else {
+                    if (isValidDst(board, side, dst)) {
+                        const move = { src, dst, hit: isHit(board, side, dst) };
+                        moves.push({ move, pipUsed: pip, newBoard: applyMoveSingle(board, side, move) });
+                    }
+                }
+            }
+        }
+    }
+
+    return moves;
+}
+
+function isValidDst(board: Board, side: number, dst: number): boolean {
+    if (dst < 1 || dst > 24) return false;
+    const count = board.points[dst - 1];
+    if (side === 0) {
+        return count >= -1;
+    } else {
+        return count <= 1;
+    }
+}
+
+function isHit(board: Board, side: number, dst: number): boolean {
+    if (dst < 1 || dst > 24) return false;
+    const count = board.points[dst - 1];
+    if (side === 0) {
+        return count === -1;
+    } else {
+        return count === 1;
+    }
+}
+
+function applyMoveSingle(board: Board, side: number, piece: CheckerMove): Board {
+  const simPoints = [...board.points];
+  const simBar: [number, number] = [board.bar[0], board.bar[1]];
+  const simOff: [number, number] = [board.off[0], board.off[1]];
+
+  const barSrc = side === 0 ? BAR_SRC : BAR_SRC_P1;
+  const offDst = side === 0 ? OFF_DST : OFF_DST_P1;
+
+  if (piece.src === barSrc) {
+    simBar[side]--;
+  } else {
+    const srcIdx = piece.src - 1;
+    simPoints[srcIdx] += side === 0 ? -1 : 1;
+  }
+
+  if (piece.dst === offDst) {
+    simOff[side]++;
+  } else {
+    const dstIdx = piece.dst - 1;
+    if (side === 0) {
+      if (simPoints[dstIdx] === -1) {
+        simBar[1]++;
+        simPoints[dstIdx] = 1;
+      } else {
+        simPoints[dstIdx]++;
+      }
+    } else {
+      if (simPoints[dstIdx] === 1) {
+        simBar[0]++;
+        simPoints[dstIdx] = -1;
+      } else {
+        simPoints[dstIdx]--;
+      }
+    }
+  }
+
+  return { points: simPoints, bar: simBar, off: simOff };
+}
+
+export function encodeFullBoard(board: Board, perspective: number): Float32Array {
+  const feat = new Float32Array(198);
+
+  function encodePoint(n: number): [number, number, number, number] {
+      if (n <= 0) return [0.0, 0.0, 0.0, 0.0];
+      return [
+          1.0,
+          n >= 2 ? 1.0 : 0.0,
+          n >= 3 ? 1.0 : 0.0,
+          n >= 4 ? (n - 3) / 2.0 : 0.0,
+      ];
+  }
+
+  const ownSign = perspective === 0 ? 1 : -1;
+  const oppSign = -ownSign;
+
+  for (let i = 0; i < 24; i++) {
+      let ownN = board.points[i] * ownSign;
+      if (ownN < 0) ownN = 0;
+      const [f0, f1, f2, f3] = encodePoint(ownN);
+      feat[i * 4 + 0] = f0;
+      feat[i * 4 + 1] = f1;
+      feat[i * 4 + 2] = f2;
+      feat[i * 4 + 3] = f3;
+  }
+
+  for (let i = 0; i < 24; i++) {
+      let oppN = board.points[i] * oppSign;
+      if (oppN < 0) oppN = 0;
+      const [f0, f1, f2, f3] = encodePoint(oppN);
+      feat[96 + i * 4 + 0] = f0;
+      feat[96 + i * 4 + 1] = f1;
+      feat[96 + i * 4 + 2] = f2;
+      feat[96 + i * 4 + 3] = f3;
+  }
+
+  const ownBar = board.bar[perspective];
+  const oppBar = board.bar[1 - perspective];
+  const ownOff = board.off[perspective];
+  const oppOff = board.off[1 - perspective];
+
+  feat[192] = ownBar / 2.0;
+  feat[193] = oppBar / 2.0;
+  feat[194] = ownOff / 15.0;
+  feat[195] = oppOff / 15.0;
+
+  feat[196] = 1.0;
+  feat[197] = 0.0;
+
+  return feat;
+}
