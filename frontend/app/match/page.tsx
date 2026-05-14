@@ -50,7 +50,7 @@ import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 
 import { AgentWalletPanel } from "../AgentWalletPanel";
 import { Board } from "../Board";
-import { ChiefOfStaffPanel } from "../ChiefOfStaffPanel";
+import { AgentTeammatePanel } from "../ChiefOfStaffPanel";
 import { DiceRoll } from "../DiceRoll";
 import { rollDice } from "../dice";
 import { recordTransaction } from "../transactions";
@@ -1481,13 +1481,13 @@ function MatchInner() {
           </div>
         )}
 
-        {/* ── Chief of Staff panel (Phase 76) ──────────────────────────────
+        {/* ── Agent Teammate panel (Phase 76) ─────────────────────────────
             DeepMind-inspired collaborative agent. Human sets macro-strategy;
             LLM picks the specific tagged move that fits it. Rendered for
             the human's turn outside fast-forward — same visibility rule as
             the existing Coach panel above. */}
         {!game.game_over && !fastForward && (
-          <ChiefOfStaffPanel
+          <AgentTeammatePanel
             positionId={game.position_id}
             matchId={game.match_id}
             dice={game.dice}

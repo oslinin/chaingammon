@@ -6,7 +6,7 @@
 
 "use client";
 
-import { AgentTeammatePanel } from "../AgentTeammatePanel";
+import { AgentTeammatePanel } from "../ChiefOfStaffPanel";
 
 export default function TestAgentTeammatePage() {
   return (
@@ -19,7 +19,7 @@ export default function TestAgentTeammatePage() {
         matchId="cIkqAAAAAAAA"
         dice={[3, 5]}
         board={Array(24).fill(0)}
-        agentId={1}
+        opponentId={1}
         disabled={false}
         onMoveSelect={() => {}}
       />

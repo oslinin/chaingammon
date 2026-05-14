@@ -1,20 +1,20 @@
-// Fixture page for Phase 76 Playwright tests — Chief of Staff panel.
+// Fixture page for Phase 76 Playwright tests — Agent Teammate panel.
 //
-// Renders ChiefOfStaffPanel with static props so Playwright can assert
+// Renders AgentTeammatePanel with static props so Playwright can assert
 // structural and visual correctness without requiring a live gnubg
 // process or 0G Compute access.
 
 "use client";
 
-import { ChiefOfStaffPanel } from "../ChiefOfStaffPanel";
+import { AgentTeammatePanel } from "../ChiefOfStaffPanel";
 
 export default function TestChiefOfStaffPage() {
   return (
     <div className="max-w-2xl mx-auto p-8">
       <h1 className="mb-4 text-lg font-semibold text-zinc-900 dark:text-zinc-100">
-        Chief of Staff fixture
+        Agent Teammate fixture
       </h1>
-      <ChiefOfStaffPanel
+      <AgentTeammatePanel
         positionId="4HPwATDgc/ABMA"
         matchId="cIkqAAAAAAAA"
         dice={[3, 5]}

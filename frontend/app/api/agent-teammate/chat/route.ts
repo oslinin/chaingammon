@@ -105,7 +105,7 @@ export async function POST(req: NextRequest) {
       : "Human has not stated a strategy yet.\n\n";
 
     const system = 
-      "You are an elite backgammon Chief of Staff. Your human partner will suggest a strategy or state an intuition. " +
+      "You are an elite backgammon Agent Teammate. Your human partner will suggest a strategy or state an intuition. " +
       "Inspired by DeepMind's cooperative agent research and the 'Claude Code' philosophy that human-AI teams outperform either alone, " +
       "your job is to provide the data-driven validation for the human's intuition. " +
       "\n\nYour Protocol:\n" +
@@ -131,7 +131,7 @@ export async function POST(req: NextRequest) {
     // 0G Compute Logic
     let broker;
     try {
-      console.log("CoS: Initializing 0G broker...");
+      console.log("AT: Initializing 0G broker...");
       const provider = new ethers.JsonRpcProvider(RPC);
       const signer = new ethers.Wallet(PRIVATE_KEY, provider);
       broker = await createZGComputeNetworkBroker(signer);
@@ -142,7 +142,7 @@ export async function POST(req: NextRequest) {
     let providerAddress = PINNED_PROVIDER;
     if (!providerAddress) {
       try {
-        console.log("CoS: Listing services...");
+        console.log("AT: Listing services...");
         const services = await broker.inference.listService();
         const chatService = services.find(
           (s) =>
@@ -156,15 +156,15 @@ export async function POST(req: NextRequest) {
         throw new Error(`0G Service Discovery failed: ${e.message}`);
       }
     }
-    console.log(`CoS: Using provider ${providerAddress}`);
+    console.log(`AT: Using provider ${providerAddress}`);
 
     // Ledger checks
     try {
-      console.log("CoS: Checking ledger...");
+      console.log("AT: Checking ledger...");
       await broker.ledger.getLedger();
     } catch (e) {
       try {
-        console.log("CoS: Adding ledger deposit...");
+        console.log("AT: Adding ledger deposit...");
         await broker.ledger.addLedger(DEPOSIT_OG);
       } catch (inner: any) {
         throw new Error(`0G Ledger Deposit failed (check your OG balance): ${inner.message}`);
@@ -177,24 +177,24 @@ export async function POST(req: NextRequest) {
     // wei (not gwei / "neuron") and is incremental — we transfer the
     // difference plus enough to clear the provider's reserve.
     try {
-      console.log("CoS: Checking sub-account balance...");
+      console.log("AT: Checking sub-account balance...");
       const acct = await broker.inference.getAccount(providerAddress);
       const locked = BigInt(acct[3] ?? 0);
       const target = ethers.parseEther(MIN_BALANCE_OG.toString());
       if (locked < target) {
         const topUp = target - locked;
-        console.log(`CoS: Topping up ${ethers.formatEther(topUp)} OG (locked ${ethers.formatEther(locked)} → ${MIN_BALANCE_OG})`);
+        console.log(`AT: Topping up ${ethers.formatEther(topUp)} OG (locked ${ethers.formatEther(locked)} → ${MIN_BALANCE_OG})`);
         await broker.ledger.transferFund(providerAddress, "inference", topUp);
       } else {
-        console.log(`CoS: sub-account already at ${ethers.formatEther(locked)} OG, skipping top-up`);
+        console.log(`AT: sub-account already at ${ethers.formatEther(locked)} OG, skipping top-up`);
       }
     } catch (e) {
-      console.warn("CoS: Top-up step failed:", e);
+      console.warn("AT: Top-up step failed:", e);
     }
 
     let metadata;
     try {
-      console.log("CoS: Fetching service metadata...");
+      console.log("AT: Fetching service metadata...");
       metadata = await broker.inference.getServiceMetadata(providerAddress);
     } catch (e: any) {
       throw new Error(`0G Metadata Fetch failed: ${e.message}`);
@@ -203,7 +203,7 @@ export async function POST(req: NextRequest) {
     const { endpoint, model } = metadata;
     const headers = await broker.inference.getRequestHeaders(providerAddress);
 
-    console.log(`CoS: Sending request to ${endpoint} (model: ${model})`);
+    console.log(`AT: Sending request to ${endpoint} (model: ${model})`);
     const resp = await fetch(`${endpoint}/chat/completions`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...headers },
@@ -248,7 +248,7 @@ export async function POST(req: NextRequest) {
       latency_ms: 0 // TODO: track
     });
   } catch (error: any) {
-    console.error("Chief of Staff API Error:", error);
+    console.error("Agent Teammate API Error:", error);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
