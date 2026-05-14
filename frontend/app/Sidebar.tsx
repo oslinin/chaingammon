@@ -24,6 +24,9 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useReadContract, useReadContracts } from "wagmi";
+import { AgentRegistryABI, useChainContracts } from "./contracts";
+import { useActiveChain, useActiveChainId } from "./chains";
 
 export function Sidebar() {
   // Defer localStorage access until after hydration to avoid SSR mismatch.
@@ -40,13 +43,47 @@ export function Sidebar() {
     if (matchId) setCurrentMatchId(matchId);
   }, []);
 
-  // Before hydration, render only the structural shell so the server HTML
-  // matches the initial client render.
-  const playHref =
-    mounted && lastAgentId ? `/match?agentId=${lastAgentId}` : "/match?agentId=1";
+  // Validate lastAgentId against the live registry so a stale localStorage
+  // value (e.g. a burned agent) never shows as the play target.
+  const active = useActiveChain();
+  const chainId = useActiveChainId();
+  const { agentRegistry } = useChainContracts();
 
-  const playSubtitle =
-    mounted && lastAgentId ? `Agent #${lastAgentId}` : "Start a match";
+  const { data: activeCount } = useReadContract({
+    address: agentRegistry,
+    abi: AgentRegistryABI,
+    functionName: "activeAgentCount",
+    chainId,
+    query: { enabled: !!active },
+  });
+
+  // Fetch all active agent IDs in one batch to validate and find the first one.
+  const count = activeCount !== undefined ? Number(activeCount) : 0;
+  const { data: idResults } = useReadContracts({
+    contracts: Array.from({ length: count }, (_, i) => ({
+      address: agentRegistry,
+      abi: AgentRegistryABI,
+      functionName: "activeAgentAt" as const,
+      args: [BigInt(i)] as [bigint],
+      chainId,
+    })),
+    query: { enabled: !!active && count > 0 },
+  });
+
+  const activeIds = (idResults ?? [])
+    .map((r) => r?.result as bigint | undefined)
+    .filter((v): v is bigint => v !== undefined)
+    .map(Number);
+
+  // Use lastAgentId only if it's still active; otherwise fall back to the
+  // first active agent, or null when none are registered yet.
+  const resolvedAgentId =
+    mounted && lastAgentId && activeIds.includes(lastAgentId)
+      ? lastAgentId
+      : activeIds[0] ?? null;
+
+  const playHref = resolvedAgentId ? `/match?agentId=${resolvedAgentId}` : "/match";
+  const playSubtitle = resolvedAgentId ? `Agent #${resolvedAgentId}` : "Start a match";
 
   return (
     <aside
