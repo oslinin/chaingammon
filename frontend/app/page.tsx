@@ -44,6 +44,12 @@ export default function Home() {
             >
               Train
             </a>
+            <a
+              href="/team-demo"
+              className="rounded border border-zinc-200 bg-white px-2 py-0.5 text-xs font-medium text-zinc-600 hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800"
+            >
+              Team play
+            </a>
           </div>
           <AgentsList />
         </section>
@@ -51,6 +57,13 @@ export default function Home() {
         <section className="flex flex-col gap-4">
           <DiscoveryList playersOnly />
         </section>
+
+        <a
+          href="/transactions"
+          className="text-sm text-zinc-400 hover:text-zinc-600 dark:text-zinc-600 dark:hover:text-zinc-400"
+        >
+          Transactions
+        </a>
       </main>
     </div>
   );

@@ -34,9 +34,6 @@ export function MobileNav() {
       <Link href={playHref} data-testid="mobile-nav-play" className={linkClass}>
         Play
       </Link>
-      <Link href="/transactions" data-testid="mobile-nav-transactions" className={linkClass}>
-        Transactions
-      </Link>
     </nav>
   );
 }
