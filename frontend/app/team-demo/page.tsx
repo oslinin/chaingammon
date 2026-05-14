@@ -151,9 +151,8 @@ export default function TeamDemoPage() {
 
   const onResizeMove = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!resizeState.current) return;
-    const w = Math.max(280, resizeState.current.origW + (e.clientX - resizeState.current.startX));
     const h = Math.max(200, resizeState.current.origH + (e.clientY - resizeState.current.startY));
-    setPanelSize({ w, h });
+    setPanelSize({ w: resizeState.current.origW, h });
   };
 
   const onResizeEnd = () => { resizeState.current = null; };
@@ -461,63 +460,70 @@ export default function TeamDemoPage() {
 
       <div
         ref={panelRef}
-        style={panelPos ? { position: "fixed", left: panelPos.x, top: panelPos.y, zIndex: 50, width: panelSize?.w ?? 320, height: panelSize?.h ?? undefined } : panelSize ? { width: panelSize.w, height: panelSize.h } : {}}
-        className={`w-full lg:w-80 flex flex-col gap-4${panelPos ? " shadow-2xl rounded-xl overflow-y-auto border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950" : ""}`}
+        style={panelPos
+          ? { position: "fixed", left: panelPos.x, top: panelPos.y, zIndex: 50, width: panelSize?.w ?? 320, height: panelSize?.h ?? 560 }
+          : { width: panelSize?.w, height: panelSize?.h ?? 560 }}
+        className={`w-full lg:w-80 flex flex-col${panelPos ? " shadow-2xl rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950" : ""}`}
       >
+        {/* Drag handle — grab to float and reposition */}
         <div
           onPointerDown={onDragStart}
           onPointerMove={onDragMove}
           onPointerUp={onDragEnd}
-          className="flex h-5 cursor-grab items-center justify-center rounded-t-xl bg-zinc-100 select-none active:cursor-grabbing dark:bg-zinc-800"
+          className="flex h-6 shrink-0 cursor-grab items-center justify-center rounded-t-xl bg-zinc-100 select-none active:cursor-grabbing dark:bg-zinc-800"
+          title="Drag to move panel"
         >
-          <div className="h-1 w-8 rounded-full bg-zinc-300 dark:bg-zinc-600" />
+          <div className="h-1 w-10 rounded-full bg-zinc-400 dark:bg-zinc-500" />
         </div>
 
-        {game && (
-          <AgentTeammatePanel
-            positionId={game.position_id}
-            matchId={game.match_id}
-            dice={game.dice}
-            board={game.board}
-            bar={game.bar}
-            off={game.off}
-            turn={game.turn}
-            opponentId={opponentIds[0]}
-            disabled={!isHumanTurn || game.game_over}
-            onMoveSelect={previewMove}
-          />
-        )}
+        {/* Scrollable content */}
+        <div className="flex flex-1 flex-col gap-4 overflow-y-auto min-h-0 p-0">
+          {game && (
+            <AgentTeammatePanel
+              positionId={game.position_id}
+              matchId={game.match_id}
+              dice={game.dice}
+              board={game.board}
+              bar={game.bar}
+              off={game.off}
+              turn={game.turn}
+              opponentId={opponentIds[0]}
+              disabled={!isHumanTurn || game.game_over}
+              onMoveSelect={previewMove}
+            />
+          )}
 
-        {isHumanTurn && !game?.game_over && (
-          <div className="flex flex-col gap-2 rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
-            <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Manual Move</h3>
-            <div className="flex gap-2">
-              <input
-                value={moveInput}
-                onChange={(e) => setMoveInput(e.target.value)}
-                placeholder='e.g. "8/5 6/5"'
-                className="flex-1 rounded-md border border-zinc-300 px-3 py-1.5 font-mono text-sm dark:border-zinc-700 dark:bg-zinc-950"
-              />
-              <button
-                onClick={() => doMoveWithNotation(moveInput)}
-                disabled={!moveInput.trim() || loading}
-                className="rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white"
-              >
-                Go
-              </button>
+          {isHumanTurn && !game?.game_over && (
+            <div className="flex flex-col gap-2 rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
+              <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Manual Move</h3>
+              <div className="flex gap-2">
+                <input
+                  value={moveInput}
+                  onChange={(e) => setMoveInput(e.target.value)}
+                  placeholder='e.g. "8/5 6/5"'
+                  className="flex-1 rounded-md border border-zinc-300 px-3 py-1.5 font-mono text-sm dark:border-zinc-700 dark:bg-zinc-950"
+                />
+                <button
+                  onClick={() => doMoveWithNotation(moveInput)}
+                  disabled={!moveInput.trim() || loading}
+                  className="rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white"
+                >
+                  Go
+                </button>
+              </div>
             </div>
-          </div>
-        )}
+          )}
+        </div>
 
+        {/* Resize handle — always visible at the bottom */}
         <div
           onPointerDown={onResizeStart}
           onPointerMove={onResizeMove}
           onPointerUp={onResizeEnd}
-          className="flex cursor-se-resize items-end justify-end p-1 select-none"
+          className="flex h-4 shrink-0 cursor-s-resize items-center justify-center rounded-b-xl bg-zinc-100 select-none hover:bg-zinc-200 active:bg-zinc-300 dark:bg-zinc-800 dark:hover:bg-zinc-700"
+          title="Drag to resize"
         >
-          <svg width="10" height="10" viewBox="0 0 10 10" className="text-zinc-300 dark:text-zinc-600">
-            <path d="M9 1L1 9M9 5L5 9M9 9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-          </svg>
+          <div className="h-0.5 w-10 rounded-full bg-zinc-400 dark:bg-zinc-500" />
         </div>
       </div>
     </main>
