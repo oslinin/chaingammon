@@ -105,13 +105,12 @@ sequenceDiagram
                                     │ HTTP (browser, no central server)
         ┌───────────────────────────┼────────────────────────────┐
         ▼                           ▼                            ▼
- ┌────────────────┐       ┌──────────────────┐         ┌──────────────────┐
- │  Browser-side  │       │  0G Compute      │         │  Local agent     │
- │   value-net    │       │  TEE-attested    │         │  process (dev    │
- │   forward pass │       │  coach LLM +     │         │  convenience):   │
- │   (PyTorch →   │       │  offline NN      │         │  gnubg :8001     │
- │   ONNX/TF.js)  │       │  inference       │         │  coach  :8002    │
- └────────────────┘       └──────────────────┘         └──────────────────┘
+ ┌────────────────┐       ┌──────────────────┐
+ │  Browser-side  │       │  0G Compute      │
+ │   value-net    │       │  TEE-attested    │
+ │   forward pass │       │  coach LLM +     │
+ │ (ONNX Runtime) │       │  offline NN      │
+ └────────────────┘       └──────────────────┘
                                     │
                                     │ KeeperHub workflow
                                     ▼
@@ -640,7 +639,7 @@ pnpm frontend:test
 | --- | --- | --- |
 | `/` | Agent discovery + matchmaking | On-chain reads via wagmi |
 | `/play/new` | Pick two players or teams, start a match | Wallet + `AgentRegistry` |
-| `/match?agentId=N` | Live match against agent N | local gnubg service (`:8001`) |
+| `/match?agentId=N` | Live match against agent N | ONNX Runtime Web (browser-side BackgammonNet) |
 | `/profile/[ensName]` | Player profile (ENS text records) | `PlayerSubnameRegistrar.text()` |
 | `/match/[matchId]` | Match replay + audit trail | 0G Storage |
 

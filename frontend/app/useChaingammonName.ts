@@ -67,15 +67,42 @@ export function useChaingammonName(address: `0x${string}` | undefined) {
       return tip > WINDOW ? tip - WINDOW : BigInt(0);
     };
 
-    computeFromBlock()
-      .then((fromBlock) =>
-        client.getLogs({
+    // publicnode Sepolia caps eth_getLogs at 50k blocks. Scan in 49k-block
+    // chunks so a deployedBlock range of any size succeeds.
+    const MAX_BLOCK_RANGE = BigInt(49_000);
+
+    const scanChunked = async (fromBlock: bigint | "earliest") => {
+      if (fromBlock === "earliest") {
+        return client.getLogs({
           address: playerSubnameRegistrar,
           event: SUBNAME_MINTED_EVENT,
           args: { subnameOwner: address },
           fromBlock,
-        }),
-      )
+        });
+      }
+      const tip = await client.getBlockNumber();
+      const chunks: { fromBlock: bigint; toBlock: bigint }[] = [];
+      let from = fromBlock;
+      while (from <= tip) {
+        const to = from + MAX_BLOCK_RANGE <= tip ? from + MAX_BLOCK_RANGE : tip;
+        chunks.push({ fromBlock: from, toBlock: to });
+        from = to + 1n;
+      }
+      const results = await Promise.all(
+        chunks.map((c) =>
+          client.getLogs({
+            address: playerSubnameRegistrar,
+            event: SUBNAME_MINTED_EVENT,
+            args: { subnameOwner: address },
+            ...c,
+          }),
+        ),
+      );
+      return results.flat();
+    };
+
+    computeFromBlock()
+      .then((fromBlock) => scanChunked(fromBlock))
       .then((logs) => {
         if (cancelled) return;
         // Filter for human names (inftId == 0) — agent-associated subnames
