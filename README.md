@@ -607,7 +607,7 @@ cd server && uv run uvicorn app.main:app --host 0.0.0.0 --port 8000
 pnpm frontend:dev                # Next.js on :3000
 ```
 
-Or use the VS Code Tasks workflow (`.vscode/tasks.json`) — `Tasks: Run Task` → `Localhost: launch all` fires hardhat node + deploy + agent + frontend in parallel terminals.
+Or use the VS Code Tasks workflow (`.vscode/tasks.json`) — `Tasks: Run Task` → `Localhost: launch all` fires hardhat node → deploy contracts → FastAPI server → Next.js frontend in sequence, each in its own dedicated terminal tab.
 
 ### Local dev with Hardhat
 

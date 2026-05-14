@@ -67,6 +67,31 @@
       "problemMatcher": []
     },
     {
+      "label": "Localhost: server",
+      "detail": "Terminal 3 — FastAPI backend on http://localhost:8000. Serves /agents/{id}/profile (0G Storage weights + summary), /training/*, /games/*. Long-running.",
+      "type": "shell",
+      "command": "cd server && uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload; exec $SHELL",
+      "options": { "cwd": "${workspaceFolder}" },
+      "isBackground": true,
+      "presentation": {
+        "panel": "dedicated",
+        "reveal": "never",
+        "focus": false,
+        "clear": true
+      },
+      "problemMatcher": {
+        "owner": "uvicorn",
+        "pattern": [
+          { "regexp": ".", "file": 1, "location": 2, "message": 0 }
+        ],
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": "INFO",
+          "endsPattern": "Application startup complete"
+        }
+      }
+    },
+    {
       "label": "Localhost: frontend",
       "detail": "Terminal 4 — Next.js dev server on http://localhost:3000. Long-running.",
       "type": "shell",
@@ -96,11 +121,12 @@
     },
     {
       "label": "Localhost: launch all",
-      "detail": "Compound task — runs children sequentially: hardhat node → (waits until ready) → deploy contracts → frontend. Each task lives in its own dedicated terminal tab.",
+      "detail": "Compound task — runs children sequentially: hardhat node → deploy contracts → server → frontend. Each task lives in its own dedicated terminal tab.",
       "dependsOrder": "sequence",
       "dependsOn": [
         "Localhost: hardhat node",
         "Localhost: deploy contracts",
+        "Localhost: server",
         "Localhost: frontend"
       ],
       "problemMatcher": []
