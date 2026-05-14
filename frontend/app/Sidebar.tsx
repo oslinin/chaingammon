@@ -3,12 +3,10 @@
 //
 // Navigation entries:
 //   1. "Home" — landing page with agent cards and lobby.
-//   2. "Transactions" — gas, KeeperHub, and 0G token spending ledger.
-//   3. "Training" — round-robin self-play session launcher.
-//   4. "Team demo" — per-turn advisor signal visualizer.
-//   5. "0G Storage log" — live match record on 0G Storage.
-//   6. "ENS updates" — players' ENS text records before/after settlement.
-//   7. "KeeperHub steps" — KeeperHub workflow step view.
+//   2. "Training" — round-robin self-play session launcher.
+//   3. "0G Storage log" — live match record on 0G Storage.
+//   4. "ENS updates" — players' ENS text records before/after settlement.
+//   5. "KeeperHub steps" — KeeperHub workflow step view.
 //
 // The component is SSR-safe: localStorage is read inside useEffect after
 // hydration so the server-rendered HTML never diverges from the initial
@@ -45,31 +43,6 @@ export function Sidebar() {
           </span>
         </Link>
 
-        <Link
-          href="/transactions"
-          data-testid="sidebar-transactions"
-          className="flex flex-col gap-0.5 rounded-md px-3 py-3 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800"
-        >
-          <span className="font-semibold text-zinc-900 dark:text-zinc-50">
-            Transactions
-          </span>
-          <span className="text-xs text-zinc-500 dark:text-zinc-400">
-            Gas, KeeperHub, 0G ledger
-          </span>
-        </Link>
-
-        <Link
-          href="/team-demo"
-          data-testid="sidebar-team-demo"
-          className="flex flex-col gap-0.5 rounded-md px-3 py-3 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800"
-        >
-          <span className="font-semibold text-zinc-900 dark:text-zinc-50">
-            Team demo
-          </span>
-          <span className="text-xs text-zinc-500 dark:text-zinc-400">
-            Per-turn advisor signals
-          </span>
-        </Link>
       </nav>
     </aside>
   );

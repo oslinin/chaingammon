@@ -4,8 +4,8 @@
 // and LLM coaching window (0G Compute). No on-chain settlement.
 "use client";
 
+import React, { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 
 import { Board } from "../Board";
@@ -102,6 +102,61 @@ export default function TeamDemoPage() {
   const [selectedSource, setSelectedSource] = useState<number | null>(null);
 
   const agentMoving = useRef(false);
+
+  const panelRef = useRef<HTMLDivElement>(null);
+  const [panelPos, setPanelPos] = useState<{ x: number; y: number } | null>(null);
+  const dragState = useRef<{ startX: number; startY: number; origX: number; origY: number } | null>(null);
+
+  const onDragStart = (e: React.PointerEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    let origX: number, origY: number;
+    if (panelPos) {
+      origX = panelPos.x;
+      origY = panelPos.y;
+    } else {
+      const rect = panelRef.current?.getBoundingClientRect();
+      origX = rect?.left ?? 0;
+      origY = rect?.top ?? 0;
+    }
+    dragState.current = { startX: e.clientX, startY: e.clientY, origX, origY };
+    if (!panelPos) setPanelPos({ x: origX, y: origY });
+  };
+
+  const onDragMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!dragState.current) return;
+    setPanelPos({
+      x: dragState.current.origX + (e.clientX - dragState.current.startX),
+      y: dragState.current.origY + (e.clientY - dragState.current.startY),
+    });
+  };
+
+  const onDragEnd = () => { dragState.current = null; };
+
+  const [panelSize, setPanelSize] = useState<{ w: number; h: number } | null>(null);
+  const resizeState = useRef<{ startX: number; startY: number; origW: number; origH: number } | null>(null);
+
+  const onResizeStart = (e: React.PointerEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    const rect = panelRef.current?.getBoundingClientRect();
+    const origW = panelSize?.w ?? rect?.width ?? 320;
+    const origH = panelSize?.h ?? rect?.height ?? 480;
+    resizeState.current = { startX: e.clientX, startY: e.clientY, origW, origH };
+    if (!panelPos) {
+      setPanelPos({ x: rect?.left ?? 0, y: rect?.top ?? 0 });
+    }
+  };
+
+  const onResizeMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!resizeState.current) return;
+    const w = Math.max(280, resizeState.current.origW + (e.clientX - resizeState.current.startX));
+    const h = Math.max(200, resizeState.current.origH + (e.clientY - resizeState.current.startY));
+    setPanelSize({ w, h });
+  };
+
+  const onResizeEnd = () => { resizeState.current = null; };
 
   const agentsQuery = useQuery({
     queryKey: ["agents"],
@@ -404,7 +459,20 @@ export default function TeamDemoPage() {
         )}
       </div>
 
-      <div className="w-full lg:w-80 flex flex-col gap-6">
+      <div
+        ref={panelRef}
+        style={panelPos ? { position: "fixed", left: panelPos.x, top: panelPos.y, zIndex: 50, width: panelSize?.w ?? 320, height: panelSize?.h ?? undefined } : panelSize ? { width: panelSize.w, height: panelSize.h } : {}}
+        className={`w-full lg:w-80 flex flex-col gap-4${panelPos ? " shadow-2xl rounded-xl overflow-y-auto border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950" : ""}`}
+      >
+        <div
+          onPointerDown={onDragStart}
+          onPointerMove={onDragMove}
+          onPointerUp={onDragEnd}
+          className="flex h-5 cursor-grab items-center justify-center rounded-t-xl bg-zinc-100 select-none active:cursor-grabbing dark:bg-zinc-800"
+        >
+          <div className="h-1 w-8 rounded-full bg-zinc-300 dark:bg-zinc-600" />
+        </div>
+
         {game && (
           <AgentTeammatePanel
             positionId={game.position_id}
@@ -440,6 +508,17 @@ export default function TeamDemoPage() {
             </div>
           </div>
         )}
+
+        <div
+          onPointerDown={onResizeStart}
+          onPointerMove={onResizeMove}
+          onPointerUp={onResizeEnd}
+          className="flex cursor-se-resize items-end justify-end p-1 select-none"
+        >
+          <svg width="10" height="10" viewBox="0 0 10 10" className="text-zinc-300 dark:text-zinc-600">
+            <path d="M9 1L1 9M9 5L5 9M9 9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+          </svg>
+        </div>
       </div>
     </main>
   );

@@ -29,7 +29,6 @@ build/
 contracts/artifacts/
 contracts/cache/
 contracts/deployments/localhost/
-contracts/deployments/localhost.json
 contracts/deployments/hardhat*.json
 contracts/typechain-types/
 
