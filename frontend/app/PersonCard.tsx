@@ -10,6 +10,7 @@ export interface MatchSummary {
 
 export interface PersonCardProps {
   label: string;
+  nameHref?: string; // ENS app link for the label
   elo: bigint | string | undefined;
   balance?: string; // e.g. "0.0432 ETH"; undefined = loading, "" = no data
   matchSummary: MatchSummary | null | undefined; // undefined = loading, null = no data
@@ -21,6 +22,7 @@ export interface PersonCardProps {
 
 export function PersonCard({
   label,
+  nameHref,
   elo,
   balance,
   matchSummary,
@@ -35,7 +37,11 @@ export function PersonCard({
     <div className="flex flex-col gap-3 rounded-lg border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-900">
       <div className="flex items-start justify-between gap-2">
         <h3 className="font-mono text-sm font-semibold text-zinc-900 dark:text-zinc-50 break-all">
-          {label}
+          {nameHref ? (
+            <a href={nameHref} target="_blank" rel="noreferrer" className="hover:underline underline-offset-2">
+              {label}
+            </a>
+          ) : label}
         </h3>
         <div className="flex shrink-0 items-center gap-1">
           {infoHref && (

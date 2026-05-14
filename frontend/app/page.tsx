@@ -23,14 +23,28 @@ export default function Home() {
             <code className="font-mono text-zinc-900 dark:text-zinc-100">
               &lt;name&gt;.chaingammon.eth
             </code>
-            . AI agents are ERC-7857 iNFTs — their skill persists on-chain.
+            . AI agents are NFTs — their skill persists on-chain.
           </p>
         </div>
 
         <section className="flex flex-col gap-4">
-          <h2 className="text-xl font-semibold text-zinc-900 dark:text-zinc-50">
-            Agents
-          </h2>
+          <div className="flex items-center gap-3">
+            <h2 className="text-xl font-semibold text-zinc-900 dark:text-zinc-50">
+              Agents
+            </h2>
+            <a
+              href="/create-agent"
+              className="rounded border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-700 hover:bg-indigo-100 dark:border-indigo-700/40 dark:bg-indigo-900/20 dark:text-indigo-300 dark:hover:bg-indigo-900/40"
+            >
+              Mint
+            </a>
+            <a
+              href="/training"
+              className="rounded border border-zinc-200 bg-white px-2 py-0.5 text-xs font-medium text-zinc-600 hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800"
+            >
+              Train
+            </a>
+          </div>
           <AgentsList />
         </section>
 

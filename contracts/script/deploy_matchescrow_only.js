@@ -14,7 +14,21 @@
 
 const fs = require("fs");
 const path = require("path");
-const { ethers, network } = require("hardhat");
+const { ethers, network, run } = require("hardhat");
+
+async function verifyContract(address, constructorArguments = []) {
+  if (network.name === "localhost" || network.name === "hardhat") return;
+  console.log(`Verifying ${address} on Etherscan…`);
+  try {
+    await run("verify:verify", { address, constructorArguments });
+  } catch (e) {
+    if (e.message?.toLowerCase().includes("already verified")) {
+      console.log(`  already verified`);
+    } else {
+      console.warn(`  verification failed: ${e.message}`);
+    }
+  }
+}
 
 async function main() {
   const settlerInput = process.env.SETTLER_ADDRESS;
@@ -32,6 +46,7 @@ async function main() {
   await escrow.waitForDeployment();
   const escrowAddr = await escrow.getAddress();
   console.log(`MatchEscrow deployed: ${escrowAddr} (block ${deployedBlock})`);
+  await verifyContract(escrowAddr, [settlerAddr]);
 
   // Sanity: read back the settler.
   const stored = await escrow.settler();
