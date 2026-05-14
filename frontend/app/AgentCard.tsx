@@ -11,7 +11,8 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { useReadContracts } from "wagmi";
+import { formatEther } from "viem";
+import { useBalance, useReadContracts } from "wagmi";
 
 import { useActiveChainId } from "./chains";
 import {
@@ -52,6 +53,13 @@ export function AgentCard({ agentId }: AgentCardProps) {
         args: [BigInt(agentId)],
         chainId,
       },
+      {
+        address: agentRegistry,
+        abi: AgentRegistryABI,
+        functionName: "ownerOf",
+        args: [BigInt(agentId)],
+        chainId,
+      },
     ],
     // Sepolia block time is ~12s and ELO bumps once recordMatch lands.
     // Without a poll the card stays frozen until manual refresh.
@@ -60,6 +68,18 @@ export function AgentCard({ agentId }: AgentCardProps) {
 
   const metadataUri = data?.[0]?.result as string | undefined;
   const elo = data?.[1]?.result as bigint | undefined;
+  const ownerAddress = data?.[2]?.result as `0x${string}` | undefined;
+
+  const { data: balanceData } = useBalance({
+    address: ownerAddress,
+    chainId,
+    query: { enabled: !!ownerAddress, refetchInterval: 8000 },
+  });
+  const balance = balanceData
+    ? `${parseFloat(formatEther(balanceData.value)).toFixed(4)} ${balanceData.symbol}`
+    : ownerAddress
+    ? undefined
+    : "";
 
   // 0G "games trained" — read from the trained checkpoint metadata via
   // the FastAPI /profile endpoint. Bumped only by training rounds, never
@@ -102,6 +122,7 @@ export function AgentCard({ agentId }: AgentCardProps) {
     <PersonCard
       label={label}
       elo={isLoading ? undefined : elo}
+      balance={balance}
       matchSummary={
         matchQuery.isLoading ? undefined : (matchQuery.summary ?? null)
       }
