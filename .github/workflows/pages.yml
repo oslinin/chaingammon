@@ -28,7 +28,17 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-          cache-dependency-path: frontend/pnpm-lock.yaml
+          cache-dependency-path: |
+            frontend/pnpm-lock.yaml
+            contracts/pnpm-lock.yaml
+
+      - name: Install contract dependencies
+        run: pnpm install --frozen-lockfile
+        working-directory: contracts
+
+      - name: Compile contracts
+        run: pnpm exec hardhat compile
+        working-directory: contracts
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
