@@ -5,26 +5,23 @@
 // real-time. The human dictates macro-strategy; the AI selects the specific
 // tagged move that best fits it.
 //
-// Layout:
-//   1. Tagged candidates row (top-5 with colour-coded strategy tags)
-//   2. LLM recommendation bubble (highlights the selected move)
-//   3. Deep-dive badge (shown when the LLM ran a mocked historical search)
-//   4. Human strategy input + Send button
-//   5. Conversation history (last 8 messages)
+// Move evaluation runs fully client-side via the ONNX BackgammonNet
+// (onnx_eval.ts) + heuristic move tagger (move_tagger.ts). No gnubg
+// subprocess or network call to port 8001 required.
 //
 // Props:
 //   positionId, matchId, dice  — current board state (feed from match state)
-//   board                      — board array for more accurate hit detection
-//   agentId                    — used to surface opponent features
+//   board, bar, off            — full board state for ONNX evaluation
+//   turn                       — who is on roll (0 = human, 1 = agent)
+//   opponentId                 — used to surface opponent features
 //   onMoveSelect               — called with the LLM-recommended move string
-//                                so the match page can pre-fill the move input
 //   disabled                   — true when it's the agent's turn or game over
 
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-
-const GNUBG = process.env.NEXT_PUBLIC_GNUBG_URL ?? "http://localhost:8001";
+import { evaluateMoves } from "../../lib/onnx_eval";
+import { tagCandidates } from "../../lib/move_tagger";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -54,6 +51,9 @@ interface Props {
   matchId: string;
   dice: [number, number] | null;
   board?: number[];
+  bar?: [number, number];
+  off?: [number, number];
+  turn?: 0 | 1;
   opponentId?: number;
   onMoveSelect?: (move: string) => void;
   disabled?: boolean;
@@ -107,6 +107,9 @@ export function ChiefOfStaffPanel({
   matchId,
   dice,
   board,
+  bar,
+  off,
+  turn = 0,
   opponentId,
   onMoveSelect,
   disabled = false,
@@ -124,41 +127,37 @@ export function ChiefOfStaffPanel({
   const inputRef = useRef<HTMLInputElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
-  // ── Step 1: Fetch tagged candidates whenever dice change ──────────────
+  // ── Step 1: Evaluate candidates with ONNX BackgammonNet ──────────────
 
   useEffect(() => {
-    if (!dice || !positionId || !matchId) return;
+    if (disabled || !dice || !board) return;
     setTaggedCandidates([]);
     setLastResponse(null);
     setLoadingCandidates(true);
 
-    const controller = new AbortController();
+    let cancelled = false;
     void (async () => {
       try {
-        const res = await fetch(`${GNUBG}/evaluate-tagged`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            position_id: positionId,
-            match_id: matchId,
-            dice,
-            board: board ?? null,
-            top_n: 5,
-          }),
-          signal: controller.signal,
-        });
-        if (!res.ok) return;
-        const data = (await res.json()) as { tagged_candidates: TaggedCandidate[] };
-        setTaggedCandidates(data.tagged_candidates ?? []);
+        const gameBoard = {
+          points: board,
+          bar: bar ?? ([0, 0] as [number, number]),
+          off: off ?? ([0, 0] as [number, number]),
+        };
+        const candidates = await evaluateMoves(gameBoard, turn, dice);
+        if (cancelled) return;
+        const tagged = tagCandidates(candidates, board, 5) as TaggedCandidate[];
+        setTaggedCandidates(tagged);
       } catch {
-        // gnubg offline — panel shows nothing but doesn't block the game.
+        // ONNX model unavailable — panel shows nothing but doesn't block the game.
       } finally {
-        setLoadingCandidates(false);
+        if (!cancelled) setLoadingCandidates(false);
       }
     })();
-    return () => controller.abort();
+    return () => {
+      cancelled = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [positionId, matchId, dice?.[0], dice?.[1]]);
+  }, [disabled, positionId, matchId, dice?.[0], dice?.[1]]);
 
   // Scroll to latest message whenever dialogue grows.
   useEffect(() => {

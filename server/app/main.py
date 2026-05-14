@@ -374,10 +374,10 @@ def get_last_advisor_signals(game_id: str):
     captain who decided that turn. The frontend's AdvisorSignalsPanel
     polls this so it can render the latest signals without driving
     /agent-move directly. Returns empty arrays when no move has been
-    recorded yet — the live match page uses gnubg_service for moves,
-    not /agent-move, so this stays empty unless the operator drives
-    moves through the main backend (e.g. team-mode integration tests
-    or a future end-to-end UI cutover)."""
+    recorded yet — the live match page uses the client-side ONNX engine
+    for moves, not /agent-move, so this stays empty unless the operator
+    drives moves through the main backend (e.g. team-mode integration
+    tests or a future end-to-end UI cutover)."""
     history = _move_history.get(game_id, [])
     if not history:
         return {"signals": [], "captain_id": None, "move_idx": -1, "team_mode": game_id in _game_teams}
@@ -1049,7 +1049,7 @@ def finalize_game(game_id: str, req: FinalizeRequest):
 # ---------------------------------------------------------------------------
 # KeeperHub integration: /finalize-direct, /settle (relayer), /replay
 #
-# The match page drives gameplay through gnubg_service (port 8001) without
+# The match page drives gameplay through the client-side ONNX engine without
 # creating a game at this server. These three endpoints close the settlement
 # loop for that path:
 #
@@ -1061,20 +1061,20 @@ def finalize_game(game_id: str, req: FinalizeRequest):
 #       payload (step 7 of keeperhub/match-settle.yaml) and calls
 #       recordMatch on 0G Chain. Returns {tx_hash}.
 #
-#   POST /replay — GNUBG replay validation endpoint. Receives {archive_uri,
+#   POST /replay — Move replay validation endpoint. Receives {archive_uri,
 #       match_id} from KeeperHub's fetch-and-replay step, fetches the
-#       GameRecord from 0G Storage, and validates every move through gnubg.
-#       Returns {valid: bool, winner: str}.
+#       GameRecord from 0G Storage, and validates every move via the
+#       rules engine. Returns {valid: bool, winner: str}.
 # ---------------------------------------------------------------------------
 
 
 class DirectFinalizeRequest(BaseModel):
-    """Finalize a match from the gnubg service state without a server game_id.
+    """Finalize a match from the client-side engine state without a server game_id.
 
-    The match page drives gameplay through gnubg_service directly (port 8001)
-    and never registers a game at this server. At game-end the frontend calls
-    this endpoint so the audit pipeline runs automatically: 0G Storage upload
-    → recordMatch on-chain → overlay updates → ENS push.
+    The match page drives gameplay through the ONNX BackgammonNet engine in
+    the browser and never registers a game at this server. At game-end the
+    frontend calls this endpoint so the audit pipeline runs automatically:
+    0G Storage upload → recordMatch on-chain → overlay updates → ENS push.
     """
 
     winner_agent_id: int = 0
