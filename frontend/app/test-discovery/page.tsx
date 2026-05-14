@@ -19,10 +19,10 @@ const MOCK_ENTRIES = [
   },
   {
     node: "0x0000000000000000000000000000000000000000000000000000000000000002" as `0x${string}`,
-    label: "gnubg-1",
+    label: "backgammonnet-1",
     kind: "agent",
     elo: "1520",
-    endpoint: "http://localhost:8001",
+    endpoint: "http://localhost:8000",
     inftId: "1",
     address: null,
   },
