@@ -309,6 +309,11 @@ def run_round_robin(
 
         _emit(status_fh, "epoch_end", epoch=epoch)
 
+    # Signal that the training loop itself is finished. Checkpoint
+    # save + 0G upload follow; the frontend uses this event to split
+    # the "Train" step timer from the "Upload to 0G" step timer.
+    _emit(status_fh, "training_complete")
+
     # End-of-run save + optional upload.
     if checkpoint_dir is not None:
         # Every agent was the 'learner' in (n - 1) games per epoch.
@@ -390,7 +395,10 @@ def main() -> int:
     # event to the status JSONL and the trainer falls back to local
     # inference for the run. Nothing to print here.
 
-    random.seed(args.seed)
+    # Seed torch for reproducible weight initialisation on fresh agents.
+    # Do NOT seed Python's random module here — td_lambda_match draws dice
+    # from random.randint, so a fixed seed makes every training run play
+    # the identical game sequence and the winner never changes.
     torch.manual_seed(args.seed)
 
     _install_sigterm_handler()

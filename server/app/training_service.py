@@ -456,11 +456,16 @@ def _empty_status() -> dict[str, Any]:
         "upload_to_0g": False,
         "ended": None,
         "last_update_ts": 0.0,
+        "agents_loaded": False,
+        "training_complete": False,
         # Per-agent checkpoint save/upload results. Each entry is
         # {agent_id, path, root_hash, error} where root_hash is the
         # 0G Storage Merkle root (None for local-only saves) and error
         # is set when the upload failed but the local save succeeded.
         "checkpoints": [],
+        # On-chain hash update results written by _post_training_chain_writes.
+        # Each entry is {agent_id, root_hash, tx_hash, error}.
+        "chain_writes": [],
     }
 
 
@@ -490,6 +495,9 @@ def _aggregate(events: list[dict], *, job: Optional[TrainingJob],
     ended: Optional[str] = None
     last_ts = 0.0
     checkpoints: list[dict] = []
+    chain_writes: list[dict] = []
+    agents_loaded = False
+    training_complete = False
 
     # Resolve agent wallet addresses for the checkpoints panel.
     wallets: Optional[AgentWalletManager] = None
@@ -544,6 +552,17 @@ def _aggregate(events: list[dict], *, job: Optional[TrainingJob],
                 "address": address,
                 "error": str(e.get("detail", "unknown error")),
             })
+        elif kind == "agents_loaded":
+            agents_loaded = True
+        elif kind == "training_complete":
+            training_complete = True
+        elif kind == "chain_write":
+            chain_writes.append({
+                "agent_id": e.get("agent_id"),
+                "root_hash": e.get("root_hash"),
+                "tx_hash": e.get("tx_hash"),
+                "error": e.get("error"),
+            })
 
     per_agent: dict[int, dict] = {}
     for m in matches:
@@ -565,7 +584,10 @@ def _aggregate(events: list[dict], *, job: Optional[TrainingJob],
             "use_0g_inference": bool(job.use_0g_inference) if job else False,
             "use_0g_coaching": bool(job.use_0g_coaching) if job else False,
             "upload_to_0g": bool(job.upload_to_0g) if job else False,
+            "agents_loaded": agents_loaded,
+            "training_complete": training_complete,
             "checkpoints": checkpoints,
+            "chain_writes": chain_writes,
         }
 
     total_games = int(started.get("total_games", 0))
@@ -599,9 +621,12 @@ def _aggregate(events: list[dict], *, job: Optional[TrainingJob],
         "upload_to_0g": bool(job.upload_to_0g) if job else False,
         "ended": ended,
         "last_update_ts": last_ts,
+        "agents_loaded": agents_loaded,
+        "training_complete": training_complete,
         # Per-agent checkpoint save/upload events. Populated by
         # agent_saved and agent_save_error events from the trainer.
         "checkpoints": checkpoints,
+        "chain_writes": chain_writes,
     }
 
 
