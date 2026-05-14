@@ -151,8 +151,9 @@ export default function TeamDemoPage() {
 
   const onResizeMove = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!resizeState.current) return;
+    const w = Math.max(280, resizeState.current.origW + (e.clientX - resizeState.current.startX));
     const h = Math.max(200, resizeState.current.origH + (e.clientY - resizeState.current.startY));
-    setPanelSize({ w: resizeState.current.origW, h });
+    setPanelSize({ w, h });
   };
 
   const onResizeEnd = () => { resizeState.current = null; };
@@ -476,8 +477,8 @@ export default function TeamDemoPage() {
           <div className="h-1 w-10 rounded-full bg-zinc-400 dark:bg-zinc-500" />
         </div>
 
-        {/* Scrollable content */}
-        <div className="flex flex-1 flex-col gap-4 overflow-y-auto min-h-0 p-0">
+        {/* Scrollable chat area */}
+        <div className="flex flex-1 overflow-y-auto min-h-0">
           {game && (
             <AgentTeammatePanel
               positionId={game.position_id}
@@ -492,38 +493,41 @@ export default function TeamDemoPage() {
               onMoveSelect={previewMove}
             />
           )}
-
-          {isHumanTurn && !game?.game_over && (
-            <div className="flex flex-col gap-2 rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
-              <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Manual Move</h3>
-              <div className="flex gap-2">
-                <input
-                  value={moveInput}
-                  onChange={(e) => setMoveInput(e.target.value)}
-                  placeholder='e.g. "8/5 6/5"'
-                  className="flex-1 rounded-md border border-zinc-300 px-3 py-1.5 font-mono text-sm dark:border-zinc-700 dark:bg-zinc-950"
-                />
-                <button
-                  onClick={() => doMoveWithNotation(moveInput)}
-                  disabled={!moveInput.trim() || loading}
-                  className="rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white"
-                >
-                  Go
-                </button>
-              </div>
-            </div>
-          )}
         </div>
 
-        {/* Resize handle — always visible at the bottom */}
+        {/* Manual Move — pinned above the resize handle */}
+        {isHumanTurn && !game?.game_over && (
+          <div className="shrink-0 flex flex-col gap-2 border-t border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-900">
+            <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Manual Move</h3>
+            <div className="flex gap-2">
+              <input
+                value={moveInput}
+                onChange={(e) => setMoveInput(e.target.value)}
+                placeholder='e.g. "8/5 6/5"'
+                className="flex-1 rounded-md border border-zinc-300 px-3 py-1.5 font-mono text-sm dark:border-zinc-700 dark:bg-zinc-950"
+              />
+              <button
+                onClick={() => doMoveWithNotation(moveInput)}
+                disabled={!moveInput.trim() || loading}
+                className="rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white"
+              >
+                Go
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Resize handle — drag in any direction to resize width and/or height */}
         <div
           onPointerDown={onResizeStart}
           onPointerMove={onResizeMove}
           onPointerUp={onResizeEnd}
-          className="flex h-4 shrink-0 cursor-s-resize items-center justify-center rounded-b-xl bg-zinc-100 select-none hover:bg-zinc-200 active:bg-zinc-300 dark:bg-zinc-800 dark:hover:bg-zinc-700"
+          className="flex h-4 shrink-0 cursor-nwse-resize items-center justify-end rounded-b-xl bg-zinc-100 px-2 select-none hover:bg-zinc-200 active:bg-zinc-300 dark:bg-zinc-800 dark:hover:bg-zinc-700"
           title="Drag to resize"
         >
-          <div className="h-0.5 w-10 rounded-full bg-zinc-400 dark:bg-zinc-500" />
+          <svg width="10" height="10" viewBox="0 0 10 10" className="text-zinc-400 dark:text-zinc-500">
+            <path d="M9 1L1 9M9 5L5 9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+          </svg>
         </div>
       </div>
     </main>
