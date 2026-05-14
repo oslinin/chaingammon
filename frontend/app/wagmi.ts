@@ -25,24 +25,24 @@ const transports = Object.fromEntries(ALL_CHAINS.map((c) => [c.id, http()]));
 // for CI). If it is missing we skip the connector so the app still boots.
 const projectId = process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID;
 
-const connectors = projectId
-  ? [
-      injected({ shimDisconnect: true }),
-      walletConnect({
-        projectId,
-        metadata: {
-          name: "Chaingammon",
-          description: "Open protocol for portable backgammon reputation",
-          url:
-            typeof window !== "undefined"
-              ? window.location.origin
-              : "https://oslinin.github.io/chaingammon",
-          icons: ["https://oslinin.github.io/chaingammon/favicon.ico"],
-        },
-        showQrModal: true,
-      }),
-    ]
-  : [injected({ shimDisconnect: true })];
+// WalletConnect uses IndexedDB for session persistence; guard against SSR
+// where indexedDB is not defined.
+const connectors =
+  typeof window !== "undefined" && projectId
+    ? [
+        injected({ shimDisconnect: true }),
+        walletConnect({
+          projectId,
+          metadata: {
+            name: "Chaingammon",
+            description: "Open protocol for portable backgammon reputation",
+            url: window.location.origin,
+            icons: ["https://oslinin.github.io/chaingammon/favicon.ico"],
+          },
+          showQrModal: true,
+        }),
+      ]
+    : [injected({ shimDisconnect: true })];
 
 export const config = createConfig({
   chains: ALL_CHAINS,

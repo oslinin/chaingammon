@@ -7,6 +7,10 @@
 // 49k-block chunks to stay within publicnode Sepolia's 50k block range cap.
 // kind + inftId come directly from the event; elo + endpoint are read from
 // the ENS PublicResolver via a batched useReadContracts call.
+//
+// Human ELO fallback: ENS PublicResolver only stores elo when KeeperHub
+// settlement writes it. For human entries, MatchRegistry.humanElo(owner)
+// is read as a fallback (mirrors ProfileBadge behaviour).
 "use client";
 
 import { useEffect, useState } from "react";
@@ -15,7 +19,7 @@ import { parseAbiItem } from "viem";
 import { usePublicClient, useReadContracts } from "wagmi";
 
 import { useActiveChain, useActiveChainId, useEnsInfra } from "./chains";
-import { useChainContracts } from "./contracts";
+import { MatchRegistryABI, useChainContracts } from "./contracts";
 
 // -------------------------------------------------------------------------
 // Types
@@ -28,6 +32,7 @@ interface DiscoveryEntry {
   elo: string;
   endpoint: string;
   inftId: string; // agent iNFT ID written by AgentRegistry.mintAgent; "" for humans
+  owner?: `0x${string}`;
 }
 
 interface ScanEntry {
@@ -35,6 +40,7 @@ interface ScanEntry {
   label: string;
   kind: string;
   inftId: string;
+  owner: `0x${string}`;
 }
 
 // -------------------------------------------------------------------------
@@ -101,6 +107,9 @@ function EntryCard({ entry }: { entry: DiscoveryEntry }) {
 export interface DiscoveryListProps {
   /** Pre-populated entries for test fixture pages (no blockchain read). */
   staticEntries?: DiscoveryEntry[];
+  /** When true, only the Players section is rendered. Use on pages where
+   *  AgentsList already shows agent cards so they aren't duplicated. */
+  playersOnly?: boolean;
 }
 
 // -------------------------------------------------------------------------
@@ -132,10 +141,10 @@ const MAX_BLOCK_RANGE = BigInt(49_000);
 // Main component
 // -------------------------------------------------------------------------
 
-export function DiscoveryList({ staticEntries }: DiscoveryListProps = {}) {
+export function DiscoveryList({ staticEntries, playersOnly }: DiscoveryListProps = {}) {
   const active = useActiveChain();
   const chainId = useActiveChainId();
-  const { playerSubnameRegistrar } = useChainContracts();
+  const { playerSubnameRegistrar, matchRegistry } = useChainContracts();
   const publicClient = usePublicClient({ chainId });
   const ensInfra = useEnsInfra();
 
@@ -193,9 +202,10 @@ export function DiscoveryList({ staticEntries }: DiscoveryListProps = {}) {
         const seen = new Set<string>();
         const result: ScanEntry[] = [];
         for (const log of logs) {
-          const { label, node, inftId } = log.args as {
+          const { label, node, subnameOwner, inftId } = log.args as {
             label?: string;
             node?: `0x${string}`;
+            subnameOwner?: `0x${string}`;
             inftId?: bigint;
           };
           if (!node || !label || seen.has(node)) continue;
@@ -205,6 +215,7 @@ export function DiscoveryList({ staticEntries }: DiscoveryListProps = {}) {
             label,
             kind: (inftId ?? 0n) > 0n ? "agent" : "human",
             inftId: inftId && inftId > 0n ? inftId.toString() : "",
+            owner: subnameOwner ?? "0x0000000000000000000000000000000000000000",
           });
         }
         setScanEntries(result);
@@ -251,11 +262,42 @@ export function DiscoveryList({ staticEntries }: DiscoveryListProps = {}) {
     query: { enabled: nodes.length > 0 && !!resolver },
   });
 
-  const liveEntries: DiscoveryEntry[] = scanEntries.map((e, i) => ({
-    ...e,
-    elo: resolver ? ((textResults?.[i * 2]?.result as string) ?? "") : "",
-    endpoint: resolver ? ((textResults?.[i * 2 + 1]?.result as string) ?? "") : "",
-  }));
+  // Fallback ELO for humans: ENS resolver only stores elo after KeeperHub
+  // settlement. Read MatchRegistry.humanElo(owner) for every human entry so
+  // freshly-minted subnames still show a rating (mirrors ProfileBadge).
+  const humanEntries = scanEntries.filter((e) => e.kind !== "agent");
+  const humanEloCalls = matchRegistry
+    ? humanEntries.map((e) => ({
+        address: matchRegistry,
+        abi: MatchRegistryABI,
+        functionName: "humanElo" as const,
+        args: [e.owner] as [`0x${string}`],
+        chainId,
+      }))
+    : [];
+
+  const { data: humanEloResults } = useReadContracts({
+    contracts: humanEloCalls,
+    query: { enabled: humanEntries.length > 0 && !!matchRegistry },
+  });
+
+  // Map owner address → chain ELO for O(1) lookup in liveEntries.
+  const humanEloByOwner = new Map<string, string>();
+  humanEntries.forEach((e, i) => {
+    const raw = humanEloResults?.[i]?.result;
+    if (raw != null && e.owner) humanEloByOwner.set(e.owner, String(raw));
+  });
+
+  const liveEntries: DiscoveryEntry[] = scanEntries.map((e, i) => {
+    const ensElo = resolver ? ((textResults?.[i * 2]?.result as string) ?? "") : "";
+    const chainElo = e.kind !== "agent" && e.owner ? (humanEloByOwner.get(e.owner) ?? "") : "";
+    const elo = ensElo || chainElo;
+    return {
+      ...e,
+      elo,
+      endpoint: resolver ? ((textResults?.[i * 2 + 1]?.result as string) ?? "") : "",
+    };
+  });
 
   const entries: DiscoveryEntry[] = staticEntries ?? liveEntries;
   const humans = entries.filter((e) => e.kind !== "agent");
@@ -303,23 +345,25 @@ export function DiscoveryList({ staticEntries }: DiscoveryListProps = {}) {
         )}
       </section>
 
-      <section data-testid="discovery-agents-section">
-        <h2
-          data-testid="discovery-agents-header"
-          className="mb-4 text-lg font-semibold text-zinc-900 dark:text-zinc-50"
-        >
-          Agents
-        </h2>
-        {agents.length === 0 ? (
-          <p className="text-sm text-zinc-500 dark:text-zinc-400">No agents registered yet.</p>
-        ) : (
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {agents.map((e) => (
-              <EntryCard key={e.node} entry={e} />
-            ))}
-          </div>
-        )}
-      </section>
+      {!playersOnly && (
+        <section data-testid="discovery-agents-section">
+          <h2
+            data-testid="discovery-agents-header"
+            className="mb-4 text-lg font-semibold text-zinc-900 dark:text-zinc-50"
+          >
+            Agents
+          </h2>
+          {agents.length === 0 ? (
+            <p className="text-sm text-zinc-500 dark:text-zinc-400">No agents registered yet.</p>
+          ) : (
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {agents.map((e) => (
+                <EntryCard key={e.node} entry={e} />
+              ))}
+            </div>
+          )}
+        </section>
+      )}
     </div>
   );
 }

@@ -20,8 +20,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { evaluateMoves } from "../../lib/onnx_eval";
-import { tagCandidates } from "../../lib/move_tagger";
+import { evaluateMoves } from "../lib/onnx_eval";
+import { tagCandidates } from "../lib/move_tagger";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
