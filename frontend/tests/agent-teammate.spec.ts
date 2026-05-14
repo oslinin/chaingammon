@@ -1,4 +1,4 @@
-// chief-of-staff.spec.ts — Phase 76: Agent Teammate panel structural tests.
+// agent-teammate.spec.ts — Phase 76: Agent Teammate panel structural tests.
 //
 // Uses the /test-chief-of-staff fixture page (deps-free — no gnubg or coach
 // service required) to verify DOM structure and visual correctness of the

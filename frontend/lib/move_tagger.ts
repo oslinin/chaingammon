@@ -2,7 +2,7 @@
  * move_tagger.ts — heuristic strategy labels for candidate moves.
  *
  * TypeScript port of agent/move_tagger.py. Assigns human-readable strategy
- * tags to ranked candidates so the Chief of Staff / Agent Teammate panel can
+ * tags to ranked candidates so the Agent Teammate panel can
  * speak in strategic terms rather than raw equity numbers.
  *
  * Tags applied in priority order:

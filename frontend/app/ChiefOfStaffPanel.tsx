@@ -1,7 +1,7 @@
-// ChiefOfStaffPanel.tsx — Phase 76: DeepMind-inspired Chief of Staff UI.
+// AgentTeammatePanel — Phase 76: DeepMind-inspired Agent Teammate UI.
 //
-// Dynamic chat panel beneath the game board where the LLM acts as a
-// "Chief of Staff" that negotiates move trade-offs with the human in
+// Dynamic chat panel beneath the game board where the LLM acts as an
+// Agent Teammate that negotiates move trade-offs with the human in
 // real-time. The human dictates macro-strategy; the AI selects the specific
 // tagged move that best fits it.
 //
@@ -32,12 +32,12 @@ export interface TaggedCandidate {
   tag_reason: string;
 }
 
-interface ChiefOfStaffMessage {
+interface TeammateMessage {
   role: "human" | "agent";
   text: string;
 }
 
-interface ChiefOfStaffResponse {
+interface TeammateResponse {
   reply: string;
   recommended_move: string | null;
   recommended_tag: string | null;
@@ -102,7 +102,7 @@ function TagBadge({ tag }: { tag: string }) {
 
 // ── Main component ─────────────────────────────────────────────────────────
 
-export function ChiefOfStaffPanel({
+export function AgentTeammatePanel({
   positionId,
   matchId,
   dice,
@@ -117,12 +117,12 @@ export function ChiefOfStaffPanel({
   const [taggedCandidates, setTaggedCandidates] = useState<TaggedCandidate[]>([]);
   const [loadingCandidates, setLoadingCandidates] = useState(false);
 
-  const [dialogue, setDialogue] = useState<ChiefOfStaffMessage[]>([]);
+  const [dialogue, setDialogue] = useState<TeammateMessage[]>([]);
   const [strategyInput, setStrategyInput] = useState("");
   const [sending, setSending] = useState(false);
 
-  // Last Chief-of-Staff response for the recommendation highlight + deep-dive.
-  const [lastResponse, setLastResponse] = useState<ChiefOfStaffResponse | null>(null);
+  // Last Agent Teammate response for the recommendation highlight + deep-dive.
+  const [lastResponse, setLastResponse] = useState<TeammateResponse | null>(null);
 
   const inputRef = useRef<HTMLInputElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -133,6 +133,7 @@ export function ChiefOfStaffPanel({
     if (disabled || !dice || !board) return;
     setTaggedCandidates([]);
     setLastResponse(null);
+    setDialogue([]);
     setLoadingCandidates(true);
 
     let cancelled = false;
@@ -159,17 +160,31 @@ export function ChiefOfStaffPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [disabled, positionId, matchId, dice?.[0], dice?.[1]]);
 
+  // Auto-suggest on each new turn — fires once per (positionId, dice) pair
+  // so the teammate opens with a recommendation without waiting to be asked.
+  const autoSentRef = useRef<string>("");
+  useEffect(() => {
+    if (disabled || !dice) return;
+    const key = `${positionId}-${dice[0]}-${dice[1]}`;
+    if (autoSentRef.current === key) return;
+    autoSentRef.current = key;
+    // Small delay so ONNX eval has a chance to populate candidates first.
+    const t = setTimeout(() => void sendStrategy("What's the best move here?"), 400);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [disabled, positionId, dice?.[0], dice?.[1]]);
+
   // Scroll to latest message whenever dialogue grows.
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [dialogue, lastResponse]);
 
-  // ── Step 2: Send strategy to Chief of Staff ──────────────────────────
+  // ── Step 2: Send strategy to Agent Teammate ──────────────────────────
 
   const sendStrategy = async (text: string) => {
     if (!text.trim() || sending) return;
 
-    const userMsg: ChiefOfStaffMessage = { role: "human", text: text.trim() };
+    const userMsg: TeammateMessage = { role: "human", text: text.trim() };
     const newDialogue = [...dialogue, userMsg];
     setDialogue(newDialogue);
     setStrategyInput("");
@@ -180,7 +195,7 @@ export function ChiefOfStaffPanel({
       const opponentFeatures =
         opponentId != null ? `Agent #${opponentId} in play` : undefined;
 
-      const res = await fetch("/api/chief-of-staff/chat", {
+      const res = await fetch("/api/agent-teammate/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -198,7 +213,7 @@ export function ChiefOfStaffPanel({
         const errorData = await res.json().catch(() => ({}));
         throw new Error(errorData.error || `${res.status}`);
       }
-      const data = (await res.json()) as ChiefOfStaffResponse;
+      const data = (await res.json()) as TeammateResponse;
 
       setLastResponse(data);
       setDialogue([
@@ -215,7 +230,7 @@ export function ChiefOfStaffPanel({
         ...newDialogue,
         {
           role: "agent",
-          text: `Chief of Staff (0G Compute) encountered an error: ${e.message}. Please ensure your wallet has a sufficient OG balance and your connection to the 0G network is stable.`,
+          text: `Agent Teammate (0G Compute) encountered an error: ${e.message}. Please ensure your wallet has a sufficient OG balance and your connection to the 0G network is stable.`,
         },
       ]);
     } finally {
@@ -242,7 +257,7 @@ export function ChiefOfStaffPanel({
       <div className="flex items-center justify-between border-b border-indigo-200 px-4 py-2 dark:border-indigo-800/40">
         <div className="flex items-center gap-2">
           <span className="text-xs font-semibold uppercase tracking-wide text-indigo-700 dark:text-indigo-400">
-            Chief of Staff
+            Agent Teammate
           </span>
           <span className="text-[10px] text-indigo-500/70 dark:text-indigo-400/50">
             · AI micro-tactics, you set the strategy
@@ -336,7 +351,7 @@ export function ChiefOfStaffPanel({
         )}
 
         {/* Quick-action chips */}
-        {!disabled && taggedCandidates.length > 0 && dialogue.length === 0 && (
+        {!disabled && dialogue.length === 0 && (
           <div className="flex flex-wrap gap-1.5">
             {QUICK_ACTIONS.map((action) => (
               <button
@@ -361,11 +376,9 @@ export function ChiefOfStaffPanel({
             placeholder={
               disabled
                 ? "Waiting for your turn…"
-                : taggedCandidates.length === 0
-                  ? "Waiting for move evaluation…"
-                  : "Tell me your strategy (or ask to validate your intuition)"
+                : "Tell me your strategy (or ask to validate your intuition)"
             }
-            disabled={disabled || taggedCandidates.length === 0 || sending}
+            disabled={disabled || sending}
             className="flex-1 rounded-lg border border-indigo-200 bg-white px-3 py-2 text-xs placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-indigo-400 disabled:bg-zinc-50 disabled:text-zinc-400 dark:border-indigo-700/40 dark:bg-zinc-900 dark:text-zinc-100 dark:placeholder-zinc-600 dark:disabled:bg-zinc-950"
           />
           <button
@@ -380,7 +393,7 @@ export function ChiefOfStaffPanel({
 
         {sending && (
           <p className="text-xs text-indigo-500 animate-pulse dark:text-indigo-400">
-            Chief of Staff is thinking…
+            Agent Teammate is thinking…
           </p>
         )}
       </div>
