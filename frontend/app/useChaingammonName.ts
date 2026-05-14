@@ -71,12 +71,15 @@ export function useChaingammonName(address: `0x${string}` | undefined) {
     // chunks so a deployedBlock range of any size succeeds.
     const MAX_BLOCK_RANGE = BigInt(49_000);
 
+    // Scan all SubnameMinted events without an RPC-side address filter.
+    // Filtering by args.subnameOwner in getLogs (topics filter) silently
+    // fails on some RPC providers (publicnode), while DiscoveryList's
+    // unfiltered scan succeeds. We match logs client-side instead.
     const scanChunked = async (fromBlock: bigint | "earliest") => {
       if (fromBlock === "earliest") {
         return client.getLogs({
           address: playerSubnameRegistrar,
           event: SUBNAME_MINTED_EVENT,
-          args: { subnameOwner: address },
           fromBlock,
         });
       }
@@ -93,7 +96,6 @@ export function useChaingammonName(address: `0x${string}` | undefined) {
           client.getLogs({
             address: playerSubnameRegistrar,
             event: SUBNAME_MINTED_EVENT,
-            args: { subnameOwner: address },
             ...c,
           }),
         ),
@@ -101,14 +103,17 @@ export function useChaingammonName(address: `0x${string}` | undefined) {
       return results.flat();
     };
 
+    const addrLower = address.toLowerCase();
     computeFromBlock()
       .then((fromBlock) => scanChunked(fromBlock))
       .then((logs) => {
         if (cancelled) return;
-        // Filter for human names (inftId == 0) — agent-associated subnames
-        // (minted by AgentRegistry) carry inftId > 0 and shouldn't be
-        // used as the human's primary identity.
-        const humanLogs = logs.filter((log) => log.args?.inftId === 0n);
+        // Filter client-side: human names (inftId == 0) owned by this address.
+        const humanLogs = logs.filter(
+          (log) =>
+            log.args?.inftId === 0n &&
+            (log.args?.subnameOwner as string | undefined)?.toLowerCase() === addrLower,
+        );
         if (humanLogs.length > 0) {
           // A wallet could in theory own multiple subnames; take the most
           // recently-minted one as the canonical display name.
