@@ -1,13 +1,16 @@
 import * as ort from "onnxruntime-web";
 import { Board, generateLegalMoves, encodeFullBoard, applyMove } from "./rules_engine";
 
-ort.env.wasm.wasmPaths = "/js/";
+// basePath is "/chaingammon" on GitHub Pages and "" in local dev.
+// WASM binaries are copied to public/js/ by the prebuild/predev script.
+const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
+ort.env.wasm.wasmPaths = `${basePath}/js/`;
 
 let session: ort.InferenceSession | null = null;
 
 export async function getSession(): Promise<ort.InferenceSession> {
   if (!session) {
-    session = await ort.InferenceSession.create("/backgammon_net.onnx");
+    session = await ort.InferenceSession.create(`${basePath}/backgammon_net.onnx`);
   }
   return session;
 }

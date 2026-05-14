@@ -37,6 +37,12 @@ const nextConfig: NextConfig = {
   // Set BASE_PATH=/chaingammon in the GitHub Actions workflow environment.
   basePath,
 
+  // Expose basePath to client-side code so ONNX Runtime WASM and model paths
+  // can be prefixed correctly (e.g. /chaingammon/js/ on GitHub Pages).
+  env: {
+    NEXT_PUBLIC_BASE_PATH: basePath,
+  },
+
   // Next 16 blocks cross-origin requests to /_next/* dev resources by
   // default. Without this, hitting the dev server from a non-localhost
   // host (phone / another laptop on the LAN) causes the JS bundles and

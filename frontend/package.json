@@ -3,7 +3,10 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "copy-wasm": "mkdir -p public/js && cp node_modules/onnxruntime-web/dist/*.wasm public/js/",
+    "predev": "npm run copy-wasm",
     "dev": "next dev --webpack",
+    "prebuild": "npm run copy-wasm",
     "build": "next build --webpack",
     "start": "next start",
     "lint": "eslint",
