@@ -1,25 +1,21 @@
 // Phase 31: unified discovery list — humans and agents from
 // PlayerSubnameRegistrar in a single view.
 //
-// Reads kind, elo, and endpoint text records for each registered subname,
-// then groups them under separate "Players" and "Agents" sections.
-// "Play" button only appears for entries where endpoint is set.
-// Authoritative ELO comes from MatchRegistry; the text record is only for
-// cross-protocol consumers reading ENS directly.
-//
-// Phase 65: label resolution. The contract's subnameAt(i) returns only the
-// node hash; the human-readable label lives exclusively in the SubnameMinted
-// event log. We fetch all SubnameMinted events once via getLogs and build a
-// node→label map so each card can display e.g. "alice.chaingammon.eth".
+// The contract delegates all subname state to ENS NameWrapper + PublicResolver
+// and exposes no enumeration functions (no subnameCount, subnameAt, or text).
+// Enumeration is driven entirely by SubnameMinted event logs, scanned in
+// 49k-block chunks to stay within publicnode Sepolia's 50k block range cap.
+// kind + inftId come directly from the event; elo + endpoint are read from
+// the ENS PublicResolver via a batched useReadContracts call.
 "use client";
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { parseAbiItem } from "viem";
-import { usePublicClient, useReadContract, useReadContracts } from "wagmi";
+import { usePublicClient, useReadContracts } from "wagmi";
 
-import { useActiveChain, useActiveChainId } from "./chains";
-import { PlayerSubnameRegistrarABI, useChainContracts } from "./contracts";
+import { useActiveChain, useActiveChainId, useEnsInfra } from "./chains";
+import { useChainContracts } from "./contracts";
 
 // -------------------------------------------------------------------------
 // Types
@@ -31,7 +27,14 @@ interface DiscoveryEntry {
   kind: string;
   elo: string;
   endpoint: string;
-  inftId: string; // agent iNFT ID written by AgentRegistry.mintAgent; "" for human entries
+  inftId: string; // agent iNFT ID written by AgentRegistry.mintAgent; "" for humans
+}
+
+interface ScanEntry {
+  node: `0x${string}`;
+  label: string;
+  kind: string;
+  inftId: string;
 }
 
 // -------------------------------------------------------------------------
@@ -101,6 +104,31 @@ export interface DiscoveryListProps {
 }
 
 // -------------------------------------------------------------------------
+// Constants
+// -------------------------------------------------------------------------
+
+const SUBNAME_MINTED_EVENT = parseAbiItem(
+  "event SubnameMinted(string label, bytes32 indexed node, address indexed subnameOwner, uint256 inftId)",
+);
+
+// Minimal ABI for ENS PublicResolver.text(bytes32, string) → string.
+const RESOLVER_ABI = [
+  {
+    name: "text",
+    type: "function" as const,
+    inputs: [
+      { name: "node", type: "bytes32" as const },
+      { name: "key", type: "string" as const },
+    ],
+    outputs: [{ name: "", type: "string" as const }],
+    stateMutability: "view" as const,
+  },
+] as const;
+
+// publicnode Sepolia caps eth_getLogs at 50k blocks; stay safely under.
+const MAX_BLOCK_RANGE = BigInt(49_000);
+
+// -------------------------------------------------------------------------
 // Main component
 // -------------------------------------------------------------------------
 
@@ -109,96 +137,131 @@ export function DiscoveryList({ staticEntries }: DiscoveryListProps = {}) {
   const chainId = useActiveChainId();
   const { playerSubnameRegistrar } = useChainContracts();
   const publicClient = usePublicClient({ chainId });
+  const ensInfra = useEnsInfra();
 
-  // node (bytes32) → human-readable label (e.g. "alice"), populated from
-  // SubnameMinted event logs. Starts empty; cards fall back to a short hex
-  // prefix until the log fetch completes.
-  const [labelMap, setLabelMap] = useState<Record<string, string>>({});
+  // Partial entries from event scan (elo + endpoint added below via resolver reads).
+  const [scanEntries, setScanEntries] = useState<ScanEntry[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [scanError, setScanError] = useState(false);
 
   useEffect(() => {
     if (!publicClient || !playerSubnameRegistrar || !active || staticEntries) return;
-    publicClient
-      .getLogs({
-        address: playerSubnameRegistrar,
-        event: parseAbiItem(
-          "event SubnameMinted(string indexed labelHashed, string label, bytes32 indexed node, address indexed subnameOwner)",
+    let cancelled = false;
+    setLoading(true);
+    setScanError(false);
+
+    // Scan from deployedBlock when known; BigInt(0) fallback is safe because
+    // the chunked scanner handles any range size.
+    const fromBlock: bigint | "earliest" =
+      chainId === 31337
+        ? "earliest"
+        : typeof active.deployedBlock === "number"
+        ? BigInt(active.deployedBlock)
+        : BigInt(0);
+
+    const scan = async () => {
+      if (fromBlock === "earliest") {
+        return publicClient.getLogs({
+          address: playerSubnameRegistrar,
+          event: SUBNAME_MINTED_EVENT,
+          fromBlock,
+        });
+      }
+      const tip = await publicClient.getBlockNumber();
+      const chunks: { fromBlock: bigint; toBlock: bigint }[] = [];
+      let from = fromBlock;
+      while (from <= tip) {
+        const to = from + MAX_BLOCK_RANGE <= tip ? from + MAX_BLOCK_RANGE : tip;
+        chunks.push({ fromBlock: from, toBlock: to });
+        from = to + 1n;
+      }
+      const results = await Promise.all(
+        chunks.map((c) =>
+          publicClient.getLogs({
+            address: playerSubnameRegistrar,
+            event: SUBNAME_MINTED_EVENT,
+            ...c,
+          }),
         ),
-        fromBlock: BigInt(0),
-      })
+      );
+      return results.flat();
+    };
+
+    scan()
       .then((logs) => {
-        const map: Record<string, string> = {};
+        if (cancelled) return;
+        const seen = new Set<string>();
+        const result: ScanEntry[] = [];
         for (const log of logs) {
-          const { node, label } = log.args as { node?: `0x${string}`; label?: string };
-          if (node && label) map[node] = label;
+          const { label, node, inftId } = log.args as {
+            label?: string;
+            node?: `0x${string}`;
+            inftId?: bigint;
+          };
+          if (!node || !label || seen.has(node)) continue;
+          seen.add(node);
+          result.push({
+            node,
+            label,
+            kind: (inftId ?? 0n) > 0n ? "agent" : "human",
+            inftId: inftId && inftId > 0n ? inftId.toString() : "",
+          });
         }
-        setLabelMap(map);
+        setScanEntries(result);
+        setLoading(false);
       })
       .catch(() => {
-        // Non-fatal — cards will show the short node prefix fallback.
+        if (!cancelled) {
+          setScanError(true);
+          setLoading(false);
+        }
       });
-  }, [publicClient, playerSubnameRegistrar, active, staticEntries]);
 
-  // Read subnameCount so we know how many indexes to fetch
-  const { data: subnameCount, isLoading: countLoading, error: countError } = useReadContract({
-    address: playerSubnameRegistrar,
-    abi: PlayerSubnameRegistrarABI,
-    functionName: "subnameCount",
-    chainId,
-    query: { enabled: !staticEntries && !!active },
-  });
+    return () => {
+      cancelled = true;
+    };
+  }, [publicClient, playerSubnameRegistrar, active, chainId, staticEntries]);
 
-  const count = subnameCount !== undefined ? Number(subnameCount) : 0;
-
-  // Fetch all node IDs via subnameAt(i)
-  const indexCalls = Array.from({ length: count }, (_, i) => ({
-    address: playerSubnameRegistrar,
-    abi: PlayerSubnameRegistrarABI,
-    functionName: "subnameAt" as const,
-    args: [BigInt(i)] as [bigint],
-    chainId,
-  }));
-
-  const { data: nodeResults } = useReadContracts({
-    contracts: indexCalls,
-    query: { enabled: !staticEntries && count > 0 },
-  });
-
-  const nodes = (nodeResults ?? [])
-    .map((r) => r?.result as `0x${string}` | undefined)
-    .filter(Boolean) as `0x${string}`[];
-
-  // For each node, fetch kind + elo + endpoint + inft_id text records in one batch.
-  // inft_id is written by AgentRegistry.mintAgent for agent entries; "" for humans.
-  const textCalls = nodes.flatMap((node) => [
-    { address: playerSubnameRegistrar, abi: PlayerSubnameRegistrarABI, functionName: "text" as const, args: [node, "kind"] as [`0x${string}`, string], chainId },
-    { address: playerSubnameRegistrar, abi: PlayerSubnameRegistrarABI, functionName: "text" as const, args: [node, "elo"] as [`0x${string}`, string], chainId },
-    { address: playerSubnameRegistrar, abi: PlayerSubnameRegistrarABI, functionName: "text" as const, args: [node, "endpoint"] as [`0x${string}`, string], chainId },
-    { address: playerSubnameRegistrar, abi: PlayerSubnameRegistrarABI, functionName: "text" as const, args: [node, "inft_id"] as [`0x${string}`, string], chainId },
-  ]);
+  // Batch-read elo + endpoint from ENS PublicResolver for each discovered node.
+  // When ensInfra is absent (e.g. localhost), resolver is undefined and calls
+  // are skipped — elo/endpoint show as empty strings.
+  const resolver = ensInfra?.publicResolver as `0x${string}` | undefined;
+  const nodes = scanEntries.map((e) => e.node);
+  const textCalls = resolver
+    ? nodes.flatMap((node) => [
+        {
+          address: resolver,
+          abi: RESOLVER_ABI,
+          functionName: "text" as const,
+          args: [node, "elo"] as [`0x${string}`, string],
+          chainId,
+        },
+        {
+          address: resolver,
+          abi: RESOLVER_ABI,
+          functionName: "text" as const,
+          args: [node, "endpoint"] as [`0x${string}`, string],
+          chainId,
+        },
+      ])
+    : [];
 
   const { data: textResults } = useReadContracts({
     contracts: textCalls,
-    query: { enabled: !staticEntries && nodes.length > 0 },
+    query: { enabled: nodes.length > 0 && !!resolver },
   });
 
-  // Build entries from on-chain data (or use static entries for fixture pages).
-  // Each node occupies 4 slots in textResults: kind, elo, endpoint, inft_id.
-  const entries: DiscoveryEntry[] = staticEntries ?? nodes.map((node, i) => {
-    const base = i * 4;
-    return {
-      node,
-      label: labelMap[node] ?? node.slice(0, 10),
-      kind: (textResults?.[base]?.result as string) ?? "",
-      elo: (textResults?.[base + 1]?.result as string) ?? "",
-      endpoint: (textResults?.[base + 2]?.result as string) ?? "",
-      inftId: (textResults?.[base + 3]?.result as string) ?? "",
-    };
-  });
+  const liveEntries: DiscoveryEntry[] = scanEntries.map((e, i) => ({
+    ...e,
+    elo: resolver ? ((textResults?.[i * 2]?.result as string) ?? "") : "",
+    endpoint: resolver ? ((textResults?.[i * 2 + 1]?.result as string) ?? "") : "",
+  }));
 
+  const entries: DiscoveryEntry[] = staticEntries ?? liveEntries;
   const humans = entries.filter((e) => e.kind !== "agent");
   const agents = entries.filter((e) => e.kind === "agent");
 
-  // --- Loading / error states (only relevant when reading on-chain) ---
+  // --- Loading / error states (only relevant for live on-chain path) ---
   if (!staticEntries) {
     if (!active) {
       return (
@@ -207,10 +270,10 @@ export function DiscoveryList({ staticEntries }: DiscoveryListProps = {}) {
         </p>
       );
     }
-    if (countLoading) {
+    if (loading) {
       return <p className="text-sm text-zinc-500 dark:text-zinc-400">Loading…</p>;
     }
-    if (countError || subnameCount === undefined) {
+    if (scanError) {
       return (
         <p className="text-sm text-zinc-500 dark:text-zinc-400">
           Could not reach PlayerSubnameRegistrar at{" "}
