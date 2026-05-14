@@ -165,7 +165,14 @@ export const CHAIN_REGISTRY: Record<number, ChainEntry> = Object.fromEntries(
 );
 
 // Tuple form for wagmi's `chains:` (it requires `[Chain, ...Chain[]]`).
-const allChains = Object.values(CHAIN_REGISTRY).map((e) => e.chain);
+// Built from ALL_DEPLOYMENTS order (Sepolia first) rather than Object.values,
+// which iterates numeric keys in ascending numeric order and would put 0G
+// Galileo (16602) first — making wagmi default to a chain MetaMask doesn't
+// have configured, causing "chain is not set up" on auto-connect.
+const allChains = ALL_DEPLOYMENTS
+  .map((d) => CHAIN_REGISTRY[d.chainId])
+  .filter((entry): entry is ChainEntry => entry !== undefined)
+  .map((entry) => entry.chain);
 if (allChains.length === 0) {
   throw new Error(
     "chaingammon: no chains in CHAIN_REGISTRY — check contracts/deployments/*.json files",
