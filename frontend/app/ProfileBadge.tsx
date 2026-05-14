@@ -253,7 +253,14 @@ export function ProfileBadge({ address }: { address: `0x${string}` }) {
         data-testid="profile-badge"
         className="flex items-center gap-2 font-mono text-sm text-zinc-700 dark:text-zinc-300"
       >
-        {name}
+        <a
+          href={`https://app.ens.domains/${name}`}
+          target="_blank"
+          rel="noreferrer"
+          className="hover:underline"
+        >
+          {name}
+        </a>
         {elo ? (
           <span
             title="ELO rating"

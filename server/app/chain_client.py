@@ -617,23 +617,25 @@ class ChainClient:
         contract = self._require_agent_registry()
         return int(contract.functions.experienceVersion(agent_id).call())
 
-    def update_overlay_hash(self, agent_id: int, new_overlay_hash: str) -> str:
+    def update_overlay_hash(
+        self, agent_id: int, new_overlay_hash: str, *, nonce: Optional[int] = None
+    ) -> str:
         """Owner-only on AgentRegistry. Sets the agent's `dataHashes[1]`
         (the experience overlay hash) and bumps `matchCount` and
         `experienceVersion` together. Returns the tx hash.
 
         Phase 18 will move this through a KeeperHub workflow; for v1 the
-        server signs directly."""
+        server signs directly.
+
+        `nonce`: explicit nonce to use. Callers that send multiple txs in a
+        loop should manage the nonce locally (incrementing after each mined
+        tx) rather than relying on the RPC "pending" count, which can lag on
+        Sepolia and cause "nonce too low" on the second tx."""
         if not new_overlay_hash.startswith("0x"):
             raise ChainError(f"new_overlay_hash must start with 0x: {new_overlay_hash!r}")
         contract = self._require_agent_registry()
-        # Use "pending" so back-to-back calls (e.g. the post-training
-        # chain-writer loop, which writes one updateOverlayHash per
-        # agent in sequence) get a nonce that already accounts for any
-        # tx broadcast moments earlier — "latest" can lag the
-        # mempool/RPC propagation and produce a "nonce too low" reject
-        # on the second tx, leaving that agent's matchCount stale.
-        nonce = self.w3.eth.get_transaction_count(self.account.address, "pending")
+        if nonce is None:
+            nonce = self.w3.eth.get_transaction_count(self.account.address, "pending")
         tx = contract.functions.updateOverlayHash(
             agent_id,
             self.w3.to_bytes(hexstr=new_overlay_hash),
