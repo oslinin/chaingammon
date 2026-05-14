@@ -16,6 +16,7 @@
 import { useEffect, useState } from "react";
 import { formatEther, parseAbiItem } from "viem";
 import { useBalance, usePublicClient, useReadContracts } from "wagmi";
+import { useQuery } from "@tanstack/react-query";
 
 import { useActiveChain, useActiveChainId, useEnsInfra } from "./chains";
 import { MatchRegistryABI, useChainContracts } from "./contracts";
@@ -51,16 +52,44 @@ interface ScanEntry {
 function EntryCard({ entry }: { entry: DiscoveryEntry }) {
   const isAgent = entry.kind === "agent";
   const chainId = useActiveChainId();
+
+  // Human players: show their on-chain wallet balance.
   const { data: balanceData } = useBalance({
     address: entry.owner,
     chainId,
-    query: { enabled: !!entry.owner },
+    query: { enabled: !isAgent && !!entry.owner },
   });
-  const balance = balanceData
-    ? `${parseFloat(formatEther(balanceData.value)).toFixed(4)} ${balanceData.symbol}`
-    : entry.owner
-    ? undefined
-    : "";
+
+  // Agents: show the agent's own server-managed wallet balance.
+  const agentWalletQuery = useQuery({
+    queryKey: ["agent-wallet", entry.inftId],
+    enabled: isAgent && !!entry.inftId,
+    refetchInterval: 30000,
+    queryFn: async (): Promise<{ balance_wei: string } | null> => {
+      const r = await fetch(`${SERVER}/agents/${entry.inftId}/wallet`);
+      if (r.status === 404) return null;
+      if (!r.ok) throw new Error(`/agents/${entry.inftId}/wallet → ${r.status}`);
+      return r.json();
+    },
+  });
+
+  let balance: string | undefined;
+  if (isAgent) {
+    if (agentWalletQuery.isLoading) {
+      balance = undefined;
+    } else {
+      const wei = agentWalletQuery.data?.balance_wei
+        ? BigInt(agentWalletQuery.data.balance_wei)
+        : BigInt(0);
+      balance = `${parseFloat(formatEther(wei)).toFixed(4)} ETH`;
+    }
+  } else {
+    balance = balanceData
+      ? `${parseFloat(formatEther(balanceData.value)).toFixed(4)} ${balanceData.symbol}`
+      : entry.owner
+      ? undefined
+      : "";
+  }
   return (
     <div data-testid="discovery-entry">
       <PersonCard
@@ -95,6 +124,8 @@ export interface DiscoveryListProps {
 // -------------------------------------------------------------------------
 // Constants
 // -------------------------------------------------------------------------
+
+const SERVER = process.env.NEXT_PUBLIC_SERVER_URL ?? "http://localhost:8000";
 
 const SUBNAME_MINTED_EVENT = parseAbiItem(
   "event SubnameMinted(string label, bytes32 indexed node, address indexed subnameOwner, uint256 inftId)",
