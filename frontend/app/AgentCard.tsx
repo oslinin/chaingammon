@@ -12,7 +12,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { formatEther } from "viem";
-import { useBalance, useReadContracts } from "wagmi";
+import { useReadContracts } from "wagmi";
 
 import { useActiveChainId } from "./chains";
 import {
@@ -53,13 +53,6 @@ export function AgentCard({ agentId }: AgentCardProps) {
         args: [BigInt(agentId)],
         chainId,
       },
-      {
-        address: agentRegistry,
-        abi: AgentRegistryABI,
-        functionName: "ownerOf",
-        args: [BigInt(agentId)],
-        chainId,
-      },
     ],
     // Sepolia block time is ~12s and ELO bumps once recordMatch lands.
     // Without a poll the card stays frozen until manual refresh.
@@ -68,18 +61,23 @@ export function AgentCard({ agentId }: AgentCardProps) {
 
   const metadataUri = data?.[0]?.result as string | undefined;
   const elo = data?.[1]?.result as bigint | undefined;
-  const ownerAddress = data?.[2]?.result as `0x${string}` | undefined;
 
-  const { data: balanceData } = useBalance({
-    address: ownerAddress,
-    chainId,
-    query: { enabled: !!ownerAddress, refetchInterval: 8000 },
+  const walletQuery = useQuery({
+    queryKey: ["agent-wallet", agentId],
+    refetchInterval: 8000,
+    queryFn: async (): Promise<{ balance_wei: string } | null> => {
+      const r = await fetch(`${SERVER}/agents/${agentId}/wallet`);
+      if (r.status === 404) return null;
+      if (!r.ok) throw new Error(`/agents/${agentId}/wallet → ${r.status}`);
+      return r.json();
+    },
   });
-  const balance = balanceData
-    ? `${parseFloat(formatEther(balanceData.value)).toFixed(4)} ${balanceData.symbol}`
-    : ownerAddress
+  const balanceWei = walletQuery.data?.balance_wei
+    ? BigInt(walletQuery.data.balance_wei)
+    : BigInt(0);
+  const balance = walletQuery.isLoading
     ? undefined
-    : "";
+    : `${parseFloat(formatEther(balanceWei)).toFixed(4)} ETH`;
 
   // 0G "games trained" — read from the trained checkpoint metadata via
   // the FastAPI /profile endpoint. Bumped only by training rounds, never

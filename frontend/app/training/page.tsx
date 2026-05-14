@@ -89,6 +89,13 @@ interface CheckpointEntry {
   error: string | null;
 }
 
+interface ChainWriteEntry {
+  agent_id: number | null;
+  root_hash: string | null;
+  tx_hash: string | null;
+  error: string | null;
+}
+
 interface StatusResponse {
   running: boolean;
   completed_games: number;
@@ -102,9 +109,10 @@ interface StatusResponse {
   upload_to_0g: boolean;
   ended: "done" | "aborted" | null;
   last_update_ts: number;
-  // Per-agent checkpoint save/upload results. Populated after training
-  // completes; root_hash is the 0G Storage Merkle root when uploaded.
+  agents_loaded?: boolean;
+  training_complete?: boolean;
   checkpoints?: CheckpointEntry[];
+  chain_writes?: ChainWriteEntry[];
 }
 
 export default function TrainingPage() {
@@ -166,7 +174,12 @@ export default function TrainingPage() {
   // would stop on stale data and the UI would freeze on "running 0/0"
   // or the prior "done" until the user manually reloaded.
   const [polling, setPolling] = useState(false);
+  const [modalOpen, setModalOpen] = useState(false);
   const playedAtRef = useRef<number | null>(null);
+  const openedAtRef = useRef<number | null>(null);
+  // Records when running first became false so we can cap the
+  // post-training chain-write polling window at 60 s.
+  const runEndedAtRef = useRef<number | null>(null);
   const statusQuery = useQuery({
     queryKey: ["training-status"],
     refetchInterval: polling ? 1000 : false,
@@ -180,8 +193,23 @@ export default function TrainingPage() {
     if (!polling || !statusQuery.data) return;
     const data = statusQuery.data;
     const playedAt = playedAtRef.current;
-    if (data.running) return;
+    if (data.running) {
+      runEndedAtRef.current = null;
+      return;
+    }
     if (playedAt !== null && data.last_update_ts < playedAt) return;
+    // After training ends, keep polling until chain writes arrive (max 60 s).
+    // The watcher thread emits chain_write events several seconds after the
+    // trainer process exits; without this guard polling stops on the "done"
+    // event before those events land.
+    if (data.upload_to_0g) {
+      const jobAgentCount = data.agent_ids?.length ?? 0;
+      const writesCount = data.chain_writes?.length ?? 0;
+      if (writesCount < jobAgentCount) {
+        if (runEndedAtRef.current === null) runEndedAtRef.current = Date.now();
+        if (Date.now() - runEndedAtRef.current < 60_000) return;
+      }
+    }
     setPolling(false);
   }, [polling, statusQuery.data]);
 
@@ -216,8 +244,11 @@ export default function TrainingPage() {
       // Stamp the click time (server-side seconds, matching
       // last_update_ts on /training/status). Polling won't stop
       // until a status update produced AFTER this stamp lands.
-      playedAtRef.current = Date.now() / 1000;
+      const now = Date.now();
+      playedAtRef.current = now / 1000;
+      openedAtRef.current = now;
       setPolling(true);
+      setModalOpen(true);
       queryClient.invalidateQueries({ queryKey: ["training-status"] });
     },
   });
@@ -317,6 +348,15 @@ export default function TrainingPage() {
       <StatusPanel status={statusQuery.data} />
 
       <CheckpointsPanel status={statusQuery.data} />
+
+      <TrainingProgressModal
+        key={openedAtRef.current ?? 0}
+        open={modalOpen}
+        status={statusQuery.data}
+        openedAt={openedAtRef.current}
+        agentCount={selectedIds.length}
+        onClose={() => setModalOpen(false)}
+      />
     </main>
   );
 }
@@ -669,6 +709,175 @@ function formatBig(n: number): string {
   if (n >= 1_000_000) return `${n / 1_000_000}M`;
   if (n >= 1_000) return `${n / 1_000}k`;
   return String(n);
+}
+
+function TrainingProgressModal({
+  open,
+  status,
+  openedAt,
+  agentCount,
+  onClose,
+}: {
+  open: boolean;
+  status: StatusResponse | undefined;
+  openedAt: number | null;
+  agentCount: number;
+  onClose: () => void;
+}) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!open) return;
+    const id = setInterval(() => setNow(Date.now()), 500);
+    return () => clearInterval(id);
+  }, [open]);
+
+  // Step completion predicates derived from live status.
+  // Each uses a distinct JSONL event so the timer reflects actual work:
+  //   s1: agents_loaded  — 0G download finished inside trainer subprocess
+  //   s2: training_complete — training loop done, save/upload loop starting
+  //   s3: all agent_saved  — trainer-side 0G upload done per agent
+  //   s4: all chain_write  — server watcher on-chain write done
+  const s1done =
+    status?.agents_loaded === true || status?.ended != null;
+  const s2done =
+    status?.training_complete === true || status?.ended != null;
+  const s3done =
+    agentCount > 0 && (status?.checkpoints?.length ?? 0) >= agentCount;
+  const s4done =
+    !status?.upload_to_0g ||
+    (agentCount > 0 && (status?.chain_writes?.length ?? 0) >= agentCount);
+
+  // Client-side timestamps for each step transition (ms).
+  // [0]=modal open, [1]=step1 done, [2]=step2 done, [3]=step3 done, [4]=step4 done.
+  const t = useRef<(number | null)[]>([null, null, null, null, null]);
+  useEffect(() => {
+    if (!open || openedAt === null) return;
+    if (t.current[0] === null) t.current[0] = openedAt;
+    if (s1done && t.current[1] === null) t.current[1] = Date.now();
+    if (s2done && t.current[2] === null) t.current[2] = Date.now();
+    if (s3done && t.current[3] === null) t.current[3] = Date.now();
+    if (s4done && t.current[4] === null) t.current[4] = Date.now();
+  }, [open, openedAt, s1done, s2done, s3done, s4done]);
+
+  if (!open) return null;
+
+  const fmtElapsed = (startMs: number | null, endMs: number | null) => {
+    if (startMs === null) return null;
+    const s = Math.floor(((endMs ?? now) - startMs) / 1000);
+    return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`;
+  };
+
+  const steps = [
+    {
+      label: "Load checkpoints from 0G",
+      active: t.current[0] !== null && !s1done,
+      done: s1done,
+      time: fmtElapsed(t.current[0], s1done ? t.current[1] : null),
+    },
+    {
+      label: "Train",
+      active: s1done && !s2done,
+      done: s2done,
+      time: fmtElapsed(t.current[1], s2done ? t.current[2] : null),
+    },
+    {
+      label: `Upload to 0G (${status?.checkpoints?.length ?? 0}/${agentCount})`,
+      active: s2done && !s3done,
+      done: s3done,
+      time: fmtElapsed(t.current[2], s3done ? t.current[3] : null),
+    },
+    {
+      label: `Write on-chain (${status?.chain_writes?.length ?? 0}/${agentCount})`,
+      active: s3done && !s4done,
+      done: s4done,
+      time: fmtElapsed(t.current[3], s4done ? t.current[4] : null),
+    },
+  ];
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+      <div className="relative w-full max-w-sm rounded-xl border border-zinc-200 bg-white p-6 shadow-2xl dark:border-zinc-700 dark:bg-zinc-900">
+        <button
+          onClick={onClose}
+          aria-label="Close"
+          className="absolute right-4 top-4 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300"
+        >
+          ✕
+        </button>
+        <h2 className="mb-5 text-sm font-semibold uppercase tracking-wide text-zinc-500">
+          Training progress
+        </h2>
+        <ol className="flex flex-col gap-4">
+          {steps.map((step, i) => (
+            <li key={i} className="flex items-center gap-3">
+              <StepIcon done={step.done} active={step.active} />
+              <span
+                className={[
+                  "flex-1 text-sm",
+                  step.done || step.active
+                    ? "text-zinc-900 dark:text-zinc-100"
+                    : "text-zinc-400 dark:text-zinc-600",
+                ].join(" ")}
+              >
+                {step.label}
+              </span>
+              {step.time && (
+                <span className="font-mono text-xs text-zinc-400">
+                  {step.time}
+                </span>
+              )}
+            </li>
+          ))}
+        </ol>
+      </div>
+    </div>
+  );
+}
+
+function StepIcon({ done, active }: { done: boolean; active: boolean }) {
+  if (done) {
+    return (
+      <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-emerald-600 text-white">
+        <svg className="h-3 w-3" viewBox="0 0 12 12" fill="none">
+          <polyline
+            points="2,6 5,9 10,3"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+      </span>
+    );
+  }
+  if (active) {
+    return (
+      <span className="flex h-5 w-5 shrink-0 items-center justify-center">
+        <svg
+          className="h-5 w-5 animate-spin text-emerald-600"
+          viewBox="0 0 24 24"
+          fill="none"
+        >
+          <circle
+            className="opacity-25"
+            cx="12"
+            cy="12"
+            r="10"
+            stroke="currentColor"
+            strokeWidth="4"
+          />
+          <path
+            className="opacity-75"
+            fill="currentColor"
+            d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+          />
+        </svg>
+      </span>
+    );
+  }
+  return (
+    <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 border-zinc-300 dark:border-zinc-600" />
+  );
 }
 
 // CheckpointsPanel — shows per-agent checkpoint save/upload results

@@ -601,7 +601,7 @@ Fund the deployer wallet with Sepolia ETH from any public faucet.
 #    Serves /agents, /agents/{id}/profile, /training/*, /games/*, etc.
 #    The frontend reads NEXT_PUBLIC_SERVER_URL (defaults to :8000) for these.
 #    Move evaluation now runs in the browser via ONNX Runtime Web — no local agent process needed.
-cd server && uv run uvicorn app.main:app --host 0.0.0.0 --port 8000
+cd server && uv run uvicorn app.main:app --host 0.0.0.0 --port 8000  # FastAPI on :8000
 
 # 3. start the frontend (terminal B, from repo root)
 pnpm frontend:dev                # Next.js on :3000
