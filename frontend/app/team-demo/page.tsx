@@ -5,18 +5,17 @@
 "use client";
 
 import React, { Suspense, useEffect, useRef, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 
-import { useAccount, useReadContracts } from "wagmi";
+import { useAccount, useReadContract, useReadContracts } from "wagmi";
 
 import { Board } from "../Board";
 import { AgentTeammatePanel } from "../ChiefOfStaffPanel";
 import { DiceRoll } from "../DiceRoll";
 import { rollDice } from "../dice";
-import { useActiveChainId } from "../chains";
-import { MatchRegistryABI, useChainContracts } from "../contracts";
+import { useActiveChain, useActiveChainId } from "../chains";
+import { AgentRegistryABI, MatchRegistryABI, useChainContracts } from "../contracts";
 import {
   type MatchState,
   newMatch,
@@ -165,7 +164,8 @@ function TeamDemoPageInner() {
 
   const { address } = useAccount();
   const chainId = useActiveChainId();
-  const { matchRegistry } = useChainContracts();
+  const activeChain = useActiveChain();
+  const { agentRegistry, matchRegistry } = useChainContracts();
 
   const primaryOpponentId = opponentIds[0];
   const eloQuery = useReadContracts({
@@ -251,13 +251,72 @@ function TeamDemoPageInner() {
 
   const onResizeEnd = () => { resizeState.current = null; };
 
-  const agentsQuery = useQuery({
-    queryKey: ["agents"],
-    queryFn: async (): Promise<AgentRow[]> => {
-      const r = await fetch(`${SERVER}/agents`);
-      if (!r.ok) throw new Error(`/agents → ${r.status}`);
-      return r.json();
-    },
+  // Agent list comes straight from the AgentRegistry on the wallet's
+  // current chain — same shape as the legacy `/agents` server endpoint
+  // (`agent_id`, `weights_hash`, `match_count`, `tier`) so the rest of
+  // this page is unchanged. Reading on-chain keeps the Pages build
+  // self-contained: no FastAPI backend required.
+  const { data: activeAgentCountRaw } = useReadContract({
+    address: agentRegistry,
+    abi: AgentRegistryABI,
+    functionName: "activeAgentCount",
+    chainId,
+    query: { enabled: !!activeChain },
+  });
+  const agentCount =
+    activeAgentCountRaw !== undefined ? Number(activeAgentCountRaw) : 0;
+
+  const agentIndexCalls = Array.from({ length: agentCount }, (_, i) => ({
+    address: agentRegistry,
+    abi: AgentRegistryABI,
+    functionName: "activeAgentAt" as const,
+    args: [BigInt(i)] as [bigint],
+    chainId,
+  }));
+  const { data: agentIndexResults } = useReadContracts({
+    contracts: agentIndexCalls,
+    query: { enabled: !!activeChain && agentCount > 0 },
+  });
+  const onChainAgentIds = (agentIndexResults ?? [])
+    .map((r) => r?.result as bigint | undefined)
+    .filter((v): v is bigint => v !== undefined)
+    .map((v) => Number(v));
+
+  // One multicall covers dataHashes + matchCount + tier for every agent.
+  const agentDetailCalls = onChainAgentIds.flatMap((id) => {
+    const args = [BigInt(id)] as [bigint];
+    return [
+      { address: agentRegistry, abi: AgentRegistryABI, functionName: "dataHashes" as const, args, chainId },
+      { address: agentRegistry, abi: AgentRegistryABI, functionName: "matchCount" as const, args, chainId },
+      { address: agentRegistry, abi: AgentRegistryABI, functionName: "tier" as const, args, chainId },
+    ];
+  });
+  const { data: agentDetailResults } = useReadContracts({
+    contracts: agentDetailCalls,
+    query: { enabled: onChainAgentIds.length > 0 },
+  });
+
+  const agents: AgentRow[] = onChainAgentIds.map((agent_id, i) => {
+    const base = i * 3;
+    const hashes = agentDetailResults?.[base]?.result as
+      | readonly [`0x${string}`, `0x${string}`]
+      | undefined;
+    const matchCountRaw = agentDetailResults?.[base + 1]?.result as
+      | number
+      | bigint
+      | undefined;
+    const tierRaw = agentDetailResults?.[base + 2]?.result as
+      | number
+      | undefined;
+    return {
+      agent_id,
+      weights_hash: hashes?.[1] ?? "",
+      match_count:
+        typeof matchCountRaw === "bigint"
+          ? Number(matchCountRaw)
+          : matchCountRaw ?? 0,
+      tier: tierRaw ?? 0,
+    };
   });
 
   const startTrainingGame = () => {
@@ -496,7 +555,7 @@ function TeamDemoPageInner() {
             </span>
           </h2>
           <div className="flex flex-wrap gap-2">
-            {agentsQuery.data?.map((a) => {
+            {agents.map((a) => {
               const active = teammateIds.includes(a.agent_id);
               const isOpponent = opponentIds.includes(a.agent_id);
               return (
@@ -537,7 +596,7 @@ function TeamDemoPageInner() {
         <section className="flex flex-col gap-4">
           <h2 style={eyebrow}>Choose opponents</h2>
           <div className="flex flex-wrap gap-2">
-            {agentsQuery.data?.map((a) => {
+            {agents.map((a) => {
               const active = opponentIds.includes(a.agent_id);
               const isTeammate = teammateIds.includes(a.agent_id);
               return (
