@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Chaingammon is an **open protocol for portable backgammon reputation**. Every player — human or AI agent — has an ENS subname (`<name>.chaingammon.eth`) whose text records hold their ELO and links to their full match archive on 0G Storage. AI agents are ERC-7857 iNFTs with their gnubg weights encrypted on 0G Storage and hash-committed to the iNFT. Match settlement runs as a KeeperHub workflow that produces a verifiable audit trail. See `plan.md` for the incremental phased build plan; `CHANGELOG.md` for the active per-release summary; `log.md` is a frozen archive of Phases 0–33. Work through phases in order; ask the owner before deviating.
+Chaingammon is an **open protocol for portable backgammon reputation**. Every player — human or AI agent — has an ENS subname (`<name>.chaingammon.eth`) whose text records hold their ELO and links to their full match archive on 0G Storage. AI agents are ERC-7857 iNFTs with their gnubg weights encrypted on 0G Storage and hash-committed to the iNFT. Match settlement runs as a KeeperHub workflow that produces a verifiable audit trail. See `plan.md` for the build plan; `CHANGELOG.md` for the active per-release summary; `log.md` is a frozen archive of Phases 0–33.
 
 **Hackathon:** ETHGlobal Open Agents (April 24 – May 6, 2026).
 
@@ -15,7 +15,7 @@ Chaingammon is an **open protocol for portable backgammon reputation**. Every pl
 - **KeeperHub** — match settlement is a multi-step orchestration; workflows handle retry, gas, audit
 - **Main track** — the open-protocol thesis stands on its own
 
-**Important rules** (after any phase development):
+**Important rules**:
 
 1. The `README.md` should be updated with the commands to run the latest code, including deployments and tests.
 2. All code files (new and updated) must be documented inline with appropriate docstrings, comments, and explanations.
@@ -214,10 +214,10 @@ Required envs by phase:
 
 ### Structure
 
-Every phase commit message follows this anatomy — keep each section brief but complete enough to read without opening the code:
+Every commit message follows this anatomy — keep each section brief but complete enough to read without opening the code:
 
 ```
-Phase N: <one-line title — what changed, not how>
+<one-line title — what changed, not how>
 
 <Opening paragraph: the goal and why it matters. One to three sentences.
 Define any sponsor, protocol, or project term that appears here for the
@@ -231,32 +231,26 @@ first time. No bullet points — prose only.>
 
 <Repeat one block per major new file or component.>
 
-<Deployed contract address block — include only when a contract was
-deployed in this phase:>
+<Deployed contract address block — include only when a contract was deployed:>
 <ContractName> deployed to <network>:
 <0xADDRESS>
 
 Tests (<sub-project>/tests/):
-- <test_phaseN_topic.py> (new, N tests):
+- <test_topic.py> (new, N tests):
   - <what the first group of tests covers>
   - <what the second group covers>
   - <skip condition, if any>
-- <test_phaseN_live.py> (new, N tests):
-  - <what the live test does end-to-end>
-  - <skip condition>
 
 <N> <sub-project> tests pass (<prior count> prior + <new count> new).
 ```
 
 **Rules:**
-- **Header** — `Phase N: title`. Max 120 chars. The `chaingammon-commit-format` Claude skill enforces this.
+- **Header** — one-line title, max 120 chars. The `chaingammon-commit-format` Claude skill enforces this.
 - **Brief** — the goal is a scannable record, not a tutorial. If a detail is obvious from the code, omit it; if it explains a non-obvious decision (why non-fatal, why deferred, why a specific address), keep it.
 - **New functionality first, tests last.** Sections appear in the order: goal paragraph → new files/components (each as a separate block) → deployed addresses → tests → test count summary.
 - **Sponsors and tools** — name each sponsor/tool (ENS, 0G Storage, KeeperHub, gnubg) the first time it appears in the message and give a one-clause definition if it isn't obvious from context.
-- **Deployed addresses** — include the full checksummed hex address for every contract deployed in the phase. Format: contract name on one line, address on the next.
+- **Deployed addresses** — include the full checksummed hex address for every contract deployed. Format: contract name on one line, address on the next.
 - **Tests** — list every new test file as a top-level bullet; list the individual test cases or logical groups as sublists beneath it. Include the skip condition for any test that is not always run.
-
-The Phase 11 entry in the frozen `log.md` archive is the canonical worked example of this style.
 
 ### Definitions and formatting
 
@@ -282,9 +276,9 @@ Approval is **per-commit, not per-workflow**. A previously approved flow does no
 
 ## Test-Driven Development
 
-This project follows TDD strictly. For every phase:
+This project follows TDD strictly:
 
-1. **Write tests first** describing the phase's "done when" criteria. Tests **MUST** live in the correct sub-project:
+1. **Write tests first** describing the "done when" criteria. Tests **MUST** live in the correct sub-project:
    - Server/Python tests in `server/tests/`
    - Solidity tests in `contracts/test/`
    - Frontend unit-style tests via build/typecheck; visual + DOM regressions via Playwright in `frontend/tests/`
@@ -292,7 +286,7 @@ This project follows TDD strictly. For every phase:
 3. **Implement** the minimum code to make tests pass (green).
 4. **Update `README.md`** — keep commands and instructions current.
 
-**Naming:** `server/tests/test_phase{N}_*.py`, `contracts/test/*.test.js`, `frontend/tests/<topic>.spec.ts`. Each phase adds its own test file. Never delete or weaken existing tests.
+**Naming:** `server/tests/test_<topic>.py`, `contracts/test/*.test.js`, `frontend/tests/<topic>.spec.ts`. Never delete or weaken existing tests.
 
 See `## Frontend Policies` for Playwright, chain registry, and bundler rules — they apply to every frontend commit.
 
