@@ -177,7 +177,15 @@ export function ConnectButton() {
   }
 
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        flexWrap: "wrap",
+        justifyContent: "flex-end",
+        gap: 8,
+      }}
+    >
       <NetworkDropdown />
       {address ? <ProfileBadge address={address} /> : null}
       <button
