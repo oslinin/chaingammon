@@ -3,8 +3,15 @@ Agent experience overlay (Phase 9).
 
 Every agent iNFT carries a small per-agent preference vector — the
 "experience overlay" — that biases gnubg's move recommendations and
-grows after every match. The overlay's bytes go to 0G Storage; the
-resulting Merkle hash sits at `dataHashes[1]` of the agent iNFT.
+grows after every match. The overlay is stored in **0G KV** under the key
+`chaingammon/overlay/agent/{agent_id}`. It is updated after every completed
+match (via `finalize_game` / `finalize_direct`) — mutable, latest-value
+semantics — and does not require an on-chain hash commitment.
+
+This is distinct from the agent's NN weights, which live in 0G blob storage
+at the Merkle root recorded in `dataHashes[1]` of the agent iNFT. NN weights
+are large, immutable, and content-addressed. The style overlay is tiny
+(< 1 KB JSON), mutable, and updated frequently.
 
 Two iNFTs minted at the same `tier` with the same shared base weights
 will play identically *out of the box*, then drift into measurably
@@ -13,7 +20,7 @@ what makes the iNFT meaningful as an asset rather than a label.
 
 What this module does:
   - Defines the canonical category list (`CATEGORIES`).
-  - `Overlay` — the dataclass uploaded to 0G Storage.
+  - `Overlay` — the dataclass stored in 0G KV.
   - `classify_move(move) → {category: score}` — hand-coded heuristics
     that read a gnubg-format move string and emit category scores in
     [0, 1]. v2 will replace with a learned classifier.
@@ -41,8 +48,8 @@ from typing import Mapping, Optional
 
 
 # Canonical category list. Keep stable — changes invalidate every existing
-# overlay blob on 0G Storage. Adding new categories at the end is safe;
-# `Overlay.default()` zero-fills new ones, and old blobs round-trip without
+# overlay stored in 0G KV. Adding new categories at the end is safe;
+# `Overlay.default()` zero-fills new ones, and old values round-trip without
 # carrying them (they re-fill to 0 on `from_bytes`).
 CATEGORIES: tuple[str, ...] = (
     # Opening style — what shape does the agent prefer to build first?

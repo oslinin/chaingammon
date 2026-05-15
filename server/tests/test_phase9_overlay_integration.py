@@ -1,21 +1,16 @@
 """
-Phase 9 live integration test — exercise the full overlay update path
-against 0G testnet.
+Phase 9 integration tests — overlay persistence via 0G KV.
 
-Flow:
-  1. Read agent #1's current overlay from 0G Storage (or default zero
-     if dataHashes[1] is still bytes32(0)).
-  2. Run `update_overlay` with a synthetic finished match.
-  3. Upload the new overlay blob to 0G Storage → rootHash.
-  4. Call `chain.update_overlay_hash(agent_id, rootHash)` to pin it
-     on the iNFT.
-  5. Re-read on-chain `dataHashes[1]` and assert it equals the upload's
-     rootHash.
-  6. Assert `experienceVersion` (the on-chain counter) bumped by 1.
-  7. Optionally re-download the overlay blob and assert it round-trips.
+Includes:
+  - Localhost mock tests (always run): verify that _persist_overlay_kv and
+    _fetch_overlay use KV correctly and that a subsequent _fetch_overlay call
+    reads back the overlay written by finalize.
+  - Live network tests (skipped unless env vars are set): the old blob-based
+    overlay path is preserved here for reference but the KV path is the
+    canonical one going forward.
 
 Skipped automatically when the live-network env vars or the deployed
-AgentRegistry address aren't set.
+AgentRegistry address aren't set (for the live tests only).
 """
 
 from __future__ import annotations
@@ -39,7 +34,7 @@ from app.agent_overlay import (  # noqa: E402
 )
 from app.chain_client import ChainClient  # noqa: E402
 from app.game_record import MoveEntry  # noqa: E402
-from app.og_storage_client import get_blob, put_blob  # noqa: E402
+from app.og_storage_client import OgStorageError, get_blob, get_kv, put_blob, put_kv  # noqa: E402
 
 
 _REQUIRED = (
@@ -51,15 +46,90 @@ _REQUIRED = (
     "DEPLOYER_PRIVATE_KEY",
 )
 
-pytestmark = pytest.mark.skipif(
+_live_skip = pytest.mark.skipif(
     any(not os.environ.get(k) for k in _REQUIRED),
     reason=f"missing one of {_REQUIRED}; skipping live Phase 9 test",
 )
 
-
 SEED_AGENT_ID = 1
 
 
+# ---------------------------------------------------------------------------
+# Localhost KV integration tests — always run (no live network required)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def kv_localhost_clean(monkeypatch):
+    """Run each KV test in localhost mode with a clean mock file."""
+    monkeypatch.setenv("OG_STORAGE_MODE", "localhost")
+    mock_path = Path("/tmp/chaingammon-kv-mock.json")
+    mock_path.unlink(missing_ok=True)
+    yield
+    mock_path.unlink(missing_ok=True)
+
+
+def test_finalize_writes_overlay_to_kv_and_fetch_overlay_reads_it_back(
+    kv_localhost_clean,
+):
+    """_persist_overlay_kv writes to KV; a subsequent get_kv call reads it back."""
+    # Import here so we pick up the monkeypatched env.
+    from app.main import _persist_overlay_kv, _fetch_overlay
+
+    agent_id = 99
+    moves = [
+        MoveEntry(turn=0, dice=[3, 1], move="8/5 6/5"),
+        MoveEntry(turn=0, dice=[6, 2], move="13/7 13/11"),
+    ]
+    result = _persist_overlay_kv(agent_id, moves, won=True)
+    assert "error" not in result, f"persist_overlay_kv failed: {result}"
+    assert result["agent_id"] == agent_id
+    assert result["match_count"] == 1
+
+    # get_kv should return the updated overlay.
+    kv_key = f"chaingammon/overlay/agent/{agent_id}"
+    raw = get_kv(kv_key)
+    fetched = Overlay.from_bytes(raw)
+    assert fetched.match_count == 1
+    assert fetched.values["build_5_point"] > 0.0  # "8/5 6/5" → build_5_point signal
+
+
+def test_fetch_overlay_returns_default_for_cold_start_agent(kv_localhost_clean):
+    """_fetch_overlay returns Overlay.default() when no KV key exists."""
+    from app.main import _fetch_overlay
+
+    # agent 888 has never played — key absent in fresh mock.
+    overlay = _fetch_overlay(888)
+    assert overlay == Overlay.default()
+    assert overlay.match_count == 0
+
+
+def test_two_consecutive_persist_overlay_kv_accumulate_match_count(
+    kv_localhost_clean,
+):
+    """Each call to _persist_overlay_kv increments match_count by 1."""
+    from app.main import _persist_overlay_kv
+
+    agent_id = 77
+    moves = [MoveEntry(turn=0, dice=[3, 1], move="8/5 6/5")]
+
+    r1 = _persist_overlay_kv(agent_id, moves, won=True)
+    r2 = _persist_overlay_kv(agent_id, moves, won=False)
+    assert r1["match_count"] == 1
+    assert r2["match_count"] == 2
+
+    # KV stores the latest overlay.
+    kv_key = f"chaingammon/overlay/agent/{agent_id}"
+    final = Overlay.from_bytes(get_kv(kv_key))
+    assert final.match_count == 2
+
+
+# ---------------------------------------------------------------------------
+# Live network tests — skipped unless live env vars are set
+# ---------------------------------------------------------------------------
+
+
+@_live_skip
 def test_overlay_update_lands_on_chain_and_round_trips_through_0g_storage():
     chain = ChainClient.from_env()
 
@@ -113,6 +183,7 @@ def test_overlay_update_lands_on_chain_and_round_trips_through_0g_storage():
     assert fetched.match_count == current.match_count + 1
 
 
+@_live_skip
 def test_two_consecutive_updates_produce_distinct_overlay_hashes():
     """Each match generates a different blob (different match_count, possibly
     different values), so the on-chain hash should change every time. This

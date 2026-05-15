@@ -34,7 +34,7 @@ if str(_AGENT_DIR) not in sys.path:
 # frontend's ProfileBadge so both layers agree on what is acceptable.
 _LABEL_RE = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$")
 
-from .agent_overlay import Overlay, OverlayError, apply_overlay
+from .agent_overlay import Overlay, OverlayError, apply_overlay, update_overlay
 from .agent_wallets import AgentWalletError, AgentWalletManager
 from .chain_client import ChainClient, ChainError
 from .ens_client import EnsClient, EnsError
@@ -49,7 +49,7 @@ from .game_record import (
 )
 from .game_state import GameState, decode_position_id, decode_match_id
 from .gnubg_client import GnubgClient
-from .og_storage_client import OgStorageError, get_blob, put_blob
+from .og_storage_client import OgStorageError, get_blob, get_kv, put_blob, put_kv
 
 app = FastAPI()
 # Phase 20: the Next.js frontend at :3000 calls these endpoints cross-origin
@@ -171,10 +171,9 @@ def _ensure_overlay_loaded(game_id: str) -> Overlay:
     """Load (and cache) the agent's experience overlay for this game.
 
     Lazy-loaded so create_game stays fast — first /agent-move pays the
-    one-time 0G Storage round-trip, subsequent moves hit the cache.
-    Returns a default zero overlay if the agent hasn't been on-chain
-    yet, the iNFT's `dataHashes[1]` is bytes32(0), or any error occurs
-    along the way (a corrupted blob shouldn't block play).
+    one-time 0G KV round-trip, subsequent moves hit the in-process cache.
+    Returns a default zero overlay if the agent has no KV entry yet
+    (cold-start) or any error occurs (a fetch failure shouldn't block play).
     """
     if game_id in _game_overlays:
         return _game_overlays[game_id]
@@ -183,11 +182,8 @@ def _ensure_overlay_loaded(game_id: str) -> Overlay:
         _game_overlays[game_id] = Overlay.default()
         return _game_overlays[game_id]
     try:
-        chain = ChainClient.from_env()
-        if chain.agent_registry is None:
-            raise ChainError("AGENT_REGISTRY_ADDRESS not set")
-        overlay = _fetch_overlay(chain, agent_id)
-    except (ChainError, OgStorageError, OverlayError):
+        overlay = _fetch_overlay(agent_id)
+    except (OgStorageError, OverlayError):
         overlay = Overlay.default()
     _game_overlays[game_id] = overlay
     return overlay
@@ -886,20 +882,54 @@ class FinalizeResponse(BaseModel):
     ens_updates: list[dict] = []
 
 
-def _fetch_overlay(chain: ChainClient, agent_id: int) -> Overlay:
-    """Read the agent's current overlay from 0G Storage. If the iNFT's
-    `dataHashes[1]` is bytes32(0) (a fresh agent that's never played), the
-    fetch is skipped and a zero overlay is returned."""
-    hashes = chain.agent_data_hashes(agent_id)
-    overlay_hash = hashes[1]
-    if overlay_hash == "0x" + "00" * 32:
-        return Overlay.default()
+def _persist_overlay_kv(agent_id: int, moves: list, won: bool) -> dict:
+    """Load the agent's overlay from KV, apply the post-match update, and
+    write it back. Returns a result dict for inclusion in overlay_updates.
+
+    KV failures are non-fatal: the match is already on-chain. Errors are
+    surfaced in the returned dict's `error` field rather than raised."""
+    kv_key = f"chaingammon/overlay/agent/{agent_id}"
     try:
-        blob = get_blob(overlay_hash)
+        try:
+            blob = get_kv(kv_key)
+            current = Overlay.from_bytes(blob)
+        except OgStorageError:
+            current = Overlay.default()
+        except OverlayError:
+            current = Overlay.default()
+
+        new_overlay = update_overlay(
+            current,
+            agent_moves=moves,
+            won=won,
+            match_count=current.match_count,
+        )
+        put_kv(kv_key, new_overlay.to_bytes())
+        return {
+            "agent_id": agent_id,
+            "match_count": new_overlay.match_count,
+            "kv_key": kv_key,
+        }
+    except Exception as exc:  # noqa: BLE001
+        import logging
+        logging.getLogger(__name__).warning(
+            "overlay KV write failed for agent %d: %s", agent_id, exc
+        )
+        return {"agent_id": agent_id, "error": str(exc)}
+
+
+def _fetch_overlay(agent_id: int) -> Overlay:
+    """Read the agent's current overlay from 0G KV. Returns Overlay.default()
+    for cold-start agents (key absent) or on any fetch error."""
+    kv_key = f"chaingammon/overlay/agent/{agent_id}"
+    try:
+        blob = get_kv(kv_key)
         return Overlay.from_bytes(blob)
-    except (OgStorageError, OverlayError):
-        # Fall back to a zero overlay so a corrupted blob doesn't block
-        # finalize. Phase 9.5 can add stricter handling.
+    except OgStorageError:
+        # Key not found (cold-start) or network error — return zero overlay.
+        return Overlay.default()
+    except OverlayError:
+        # Corrupt stored bytes — fall back rather than blocking the game.
         return Overlay.default()
 
 
@@ -1003,14 +1033,22 @@ def finalize_game(game_id: str, req: FinalizeRequest):
     except ChainError as e:
         raise HTTPException(status_code=502, detail=f"recordMatch failed: {e}") from e
 
-    # Per-game overlay bumps were dropped — every finished match used to
-    # call updateOverlayHash on each agent (and upload a fresh overlay
-    # blob to 0G Storage), which churned `experienceVersion` and burned
-    # gas on writes that didn't reflect a meaningful retraining step.
-    # Training-round writes (training_service._post_training_chain_writes)
-    # are now the only path that bumps `experienceVersion`. The response
-    # field stays so clients reading `overlay_updates` don't break.
+    # Persist per-agent style overlays to 0G KV. Each agent's moves are
+    # identified by turn parity (state.winner is 0 or 1 per gnubg convention).
+    # NN weights in blob storage / dataHashes[1] are NOT touched — only the
+    # lightweight KV overlay is updated. Failures are non-fatal.
+    all_moves = _move_history.get(game_id, [])
+    winner_turn = state.winner  # 0 or 1
+    winner_moves = [m for m in all_moves if m.turn == winner_turn]
+    loser_moves = [m for m in all_moves if m.turn != winner_turn]
     overlay_updates: list[dict] = []
+    for agent_id, moves, won in [
+        (req.winner_agent_id, winner_moves, True),
+        (req.loser_agent_id, loser_moves, False),
+    ]:
+        if agent_id == 0:
+            continue
+        overlay_updates.append(_persist_overlay_kv(agent_id, moves, won))
 
     # Phase 11 — push reputation text records to each labelled side's
     # subname. Failure here is non-fatal: ENS reachability shouldn't block
@@ -1180,10 +1218,17 @@ def finalize_direct(req: DirectFinalizeRequest):
     except ChainError as e:
         raise HTTPException(status_code=502, detail=f"recordMatch failed: {e}") from e
 
-    # Per-game overlay bumps were dropped — see the equivalent comment
-    # in /games/{id}/finalize. Training rounds are now the only path
-    # that bumps experienceVersion.
+    # Persist per-agent style overlays to 0G KV. For direct finalize, we
+    # pass all moves to each agent (turn assignment unknown without game
+    # state). NN weights in blob storage are NOT touched. Failures non-fatal.
     overlay_updates: list[dict] = []
+    for agent_id, won in [
+        (req.winner_agent_id, True),
+        (req.loser_agent_id, False),
+    ]:
+        if agent_id == 0:
+            continue
+        overlay_updates.append(_persist_overlay_kv(agent_id, move_entries, won))
 
     ens_updates: list[dict] = []
     for side_name, label, agent_id, human_addr in [
@@ -1321,10 +1366,16 @@ def finalize_direct_staked(req: StakedFinalizeRequest):
     except ChainError as e:
         raise HTTPException(status_code=502, detail=f"recordMatchAndSplit failed: {e}") from e
 
-    # Per-game overlay bumps were dropped — see the equivalent comment
-    # in /games/{id}/finalize. Training rounds are now the only path
-    # that bumps experienceVersion.
+    # Persist per-agent style overlays to 0G KV. Same approach as
+    # /finalize-direct: pass all moves to each agent. NN weights untouched.
     overlay_updates: list[dict] = []
+    for agent_id, won in [
+        (req.winner_agent_id, True),
+        (req.loser_agent_id, False),
+    ]:
+        if agent_id == 0:
+            continue
+        overlay_updates.append(_persist_overlay_kv(agent_id, move_entries, won))
 
     ens_updates: list[dict] = []
     for side_name, label, agent_id, human_addr in [
@@ -2144,13 +2195,11 @@ def list_agents():
 
 @app.get("/agents/{agent_id}/profile")
 def get_agent_profile(agent_id: int):
-    """Resolve `agent_id`'s on-chain `dataHashes[1]` → 0G storage blob
-    → `load_profile` content-sniff → `{match_count, summary, kind, owner_ens}`.
+    """Return agent profile combining NN weight summary (from blob storage)
+    and the current style overlay (from 0G KV).
 
-    Mirrors the resolver path /games/{id}/agent-move (overlay) and
-    /agents/{id}/recommend-teammate (model) already use. Returns the
-    NullProfile shape for cold-start agents (frontend renders a
-    'no measurable style yet' chip).
+    dataHashes[1] → NN weight blob → load_profile for weight/style metadata.
+    0G KV key chaingammon/overlay/agent/{id} → style overlay values.
 
     `owner_ens` is the ENS name of the agent's ERC-721 owner, resolved
     via web3 reverse lookup on Sepolia. Falls back to a truncated address
@@ -2170,6 +2219,7 @@ def get_agent_profile(agent_id: int):
     except ChainError as e:
         raise HTTPException(status_code=503, detail=f"chain unavailable: {e}")
 
+    # NN weights: still live at dataHashes[1] in blob storage.
     weights_hash = hashes[1] if len(hashes) >= 2 else ""
     profile = (
         load_profile(weights_hash, fetch=get_blob)
@@ -2199,16 +2249,26 @@ def get_agent_profile(agent_id: int):
     except ChainError:
         pass
 
-    # Expose per-category weight bars to the frontend. Phase-9 overlays
-    # expose them under `values`; trained model checkpoints expose them
-    # under `style_values` (probed from the extras head at save time —
-    # see sample_trainer._compute_style_values). Both flow through the
-    # same response field so the frontend renders one OverlayWeightsTable.
-    values: dict = {}
-    if isinstance(profile, OverlayProfile):
-        values = {str(k): float(v) for k, v in metrics.get("values", {}).items()}
-    elif isinstance(profile, ModelProfile):
-        values = {str(k): float(v) for k, v in metrics.get("style_values", {}).items()}
+    # Style overlay: fetched separately from 0G KV (updated after every match).
+    # Falls back to model style_values for trained checkpoints, or empty dict
+    # for cold-start agents.
+    overlay_values: dict = {}
+    try:
+        kv_blob = get_kv(f"chaingammon/overlay/agent/{agent_id}")
+        kv_overlay = Overlay.from_bytes(kv_blob)
+        overlay_values = {str(k): float(v) for k, v in kv_overlay.values.items()}
+    except (OgStorageError, OverlayError):
+        # Key absent (cold-start) or parse error — fall through to profile values.
+        pass
+
+    # Expose per-category weight bars to the frontend. KV overlay values take
+    # priority; trained model checkpoints fall back to their style_values.
+    values: dict = overlay_values if overlay_values else {}
+    if not values:
+        if isinstance(profile, OverlayProfile):
+            values = {str(k): float(v) for k, v in metrics.get("values", {}).items()}
+        elif isinstance(profile, ModelProfile):
+            values = {str(k): float(v) for k, v in metrics.get("style_values", {}).items()}
 
     # For model checkpoints expose the network shape metadata
     # (extras_dim, in_dim, hidden, feature_encoder) on the info page.
