@@ -1,199 +1,46 @@
-// Phase 14: visual backgammon board. Phase 27: click-to-move interaction.
-// Phase 31: drag-and-drop — onDragStart/onDrop on PointCell enable HTML5 drag.
-//
-// Layout (from player 0 / human's perspective):
-//   Top row  — points 13..24 left→right (player 0 enters at 24, moves left)
-//   Bottom row — points 12..1  left→right (player 0 bears off at 1..6)
-//
-// board[i] = checkers on point (i+1).
-//   Positive → player 0 (human, blue)
-//   Negative → player 1 (agent, red)
-//
-// bar[0] = player 0 checkers on bar, bar[1] = player 1 checkers on bar.
-// off[0] = player 0 borne off, off[1] = player 1 borne off.
-//
-// Phase 27 additions:
-//   onPointClick(n) — called when the user clicks a point column (1-24).
-//   onBarClick()    — called when the user clicks the bar zone.
-//   onOffClick()    — called when the user clicks the bear-off button.
-//   selectedPoint   — highlights the currently-selected source (1-24 or 25=bar).
-//   data-point / data-count attributes on every PointCell for Playwright selectors.
-//
-// Phase 31 additions:
-//   onDragStart(n)  — fired when the user begins dragging from point n (1-24).
-//   onDrop(n)       — fired when the user drops onto point n (1-24).
-//   A PointCell is draggable only when it has player-0 checkers and onDragStart
-//   is provided. All PointCells accept drops when onDrop is provided.
+"use client";
+
+import React, { useRef, useState, PointerEvent } from "react";
 
 interface BoardProps {
-  board: number[]; // length 24; index = point - 1
-  bar: number[]; // [p0_bar, p1_bar]
-  off: number[]; // [p0_off, p1_off]
-  turn: number; // 0 = human, 1 = agent
-  opponentName?: string; // display name for the agent (player 1)
-  // Click-to-move (all optional — Board is a pure visual component when omitted).
+  board: number[];          // length 24; board[i] = checkers on point (i+1). Positive = player 0, negative = player 1
+  bar: number[];            // [p0_bar, p1_bar]
+  off: number[];            // [p0_off, p1_off]
+  turn: number;             // 0 = human, 1 = agent
+  opponentName?: string;
   onPointClick?: (point: number) => void;
   onBarClick?: () => void;
   onOffClick?: () => void;
-  selectedPoint?: number | null; // 1-24 = board point, 25 = bar
-  // Drag-and-drop (Phase 31 — optional, independent of click props).
+  selectedPoint?: number | null;  // 1-24 = board point, 25 = bar
   onDragStart?: (point: number) => void;
   onDrop?: (point: number) => void;
 }
 
-// Maximum checkers shown as dots before falling back to a "+N" label.
+const FRAME = 20;
+const POINT_W = 44;
+const BAR_W = 52;
+const BEAR_W = 48;
+const CHECKER_R = 18;
+const CHECKER_GAP = 36;
 const MAX_DOTS = 5;
 
-interface PointProps {
-  point: number; // 1-indexed point number
-  count: number; // signed: positive = p0, negative = p1
-  flip?: boolean; // true for top row (dots grow downward)
-  onClick?: () => void;
-  isSelected?: boolean;
-  // Drag-and-drop (Phase 31).
-  onDragStart?: () => void; // drag begins from this cell
-  onDrop?: () => void;      // checker dropped onto this cell
-}
+// Inner play area x layout
+const L_BEAR_X = FRAME; // Left bear-off
+const L_QUAD_X = L_BEAR_X + BEAR_W;
+const BAR_X = L_QUAD_X + 6 * POINT_W;
+const R_QUAD_X = BAR_X + BAR_W;
+const R_BEAR_X = R_QUAD_X + 6 * POINT_W;
+const TOTAL_W = R_BEAR_X + BEAR_W + FRAME; // 20+48+264+52+264+48+20 = 716
+const TOTAL_H = 440;
 
-function PointCell({ point, count, flip = false, onClick, isSelected, onDragStart, onDrop }: PointProps) {
-  const abs = Math.abs(count);
-  const isP0 = count > 0;
-  const dotsToShow = Math.min(abs, MAX_DOTS);
-  const extra = abs > MAX_DOTS ? abs - MAX_DOTS : 0;
+const INNER_H = TOTAL_H - 2 * FRAME;
 
-  const dot = (
-    <div
-      className={`h-4 w-4 shrink-0 rounded-full ${
-        isP0
-          ? "bg-blue-500 dark:bg-blue-400"
-          : "bg-red-500 dark:bg-red-400"
-      }`}
-    />
-  );
-
-  const dots = Array.from({ length: dotsToShow }, (_, i) => (
-    <div key={i}>{dot}</div>
-  ));
-
-  const extraLabel = extra > 0 && (
-    <span className="text-[9px] font-mono text-zinc-500 dark:text-zinc-400">
-      +{extra}
-    </span>
-  );
-
-  // Cell is draggable when it has player-0 (blue) checkers and the drag handler is wired.
-  const isDraggable = !!onDragStart && count > 0;
-
-  const classes = [
-    "flex flex-col items-center gap-0.5",
-    onClick ? "cursor-pointer hover:opacity-75" : "",
-    isDraggable ? "cursor-grab" : "",
-    isSelected
-      ? "rounded bg-amber-100 ring-1 ring-amber-400 dark:bg-amber-900/30"
-      : "",
-  ]
-    .filter(Boolean)
-    .join(" ");
-
-  return (
-    <div
-      // data-testid keyed by zero-based index for match-board-state.spec.ts.
-      // data-point / data-count are 1-indexed signed attrs for piece-stability.spec.ts.
-      data-testid={`point-${point - 1}`}
-      data-point={point}
-      data-count={count}
-      data-selected={isSelected ? "true" : undefined}
-      className={classes}
-      style={{ width: 24 }}
-      onClick={onClick}
-      draggable={isDraggable}
-      onDragStart={isDraggable ? (e) => { e.dataTransfer.effectAllowed = "move"; onDragStart!(); } : undefined}
-      onDragOver={onDrop ? (e) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; } : undefined}
-      onDrop={onDrop ? (e) => { e.preventDefault(); onDrop(); } : undefined}
-    >
-      {/* Point label */}
-      {!flip && (
-        <span className="text-[9px] font-mono text-zinc-400 dark:text-zinc-500">
-          {point}
-        </span>
-      )}
-      {/* Checkers — flip reverses order so top-row dots grow downward */}
-      {flip ? (
-        <div className="flex flex-col items-center gap-0.5">
-          {extra > 0 && extraLabel}
-          {[...dots].reverse()}
-        </div>
-      ) : (
-        <div className="flex flex-col items-center gap-0.5">
-          {dots}
-          {extra > 0 && extraLabel}
-        </div>
-      )}
-      {flip && (
-        <span className="text-[9px] font-mono text-zinc-400 dark:text-zinc-500">
-          {point}
-        </span>
-      )}
-    </div>
-  );
-}
-
-interface BarCellProps {
-  p0Bar: number;
-  p1Bar: number;
-  onBarClick?: () => void;
-  isBarSelected?: boolean;
-}
-
-function BarCell({ p0Bar, p1Bar, onBarClick, isBarSelected }: BarCellProps) {
-  const classes = [
-    "flex w-8 flex-col items-center justify-center gap-1 border-x border-zinc-300 dark:border-zinc-600",
-    onBarClick ? "cursor-pointer hover:opacity-75" : "",
-    isBarSelected
-      ? "bg-amber-100 ring-1 ring-amber-400 dark:bg-amber-900/30"
-      : "",
-  ]
-    .filter(Boolean)
-    .join(" ");
-
-  return (
-    <div className={classes} onClick={onBarClick}>
-      {p1Bar > 0 && (
-        <div className="flex flex-col items-center gap-0.5">
-          {Array.from({ length: Math.min(p1Bar, 3) }, (_, i) => (
-            <div
-              key={i}
-              className="h-3 w-3 rounded-full bg-red-500 dark:bg-red-400"
-            />
-          ))}
-          {p1Bar > 3 && (
-            <span className="text-[9px] font-mono text-zinc-500">
-              +{p1Bar - 3}
-            </span>
-          )}
-        </div>
-      )}
-      <span className="text-[8px] font-mono text-zinc-400 dark:text-zinc-500">
-        BAR
-      </span>
-      {p0Bar > 0 && (
-        <div className="flex flex-col items-center gap-0.5">
-          {Array.from({ length: Math.min(p0Bar, 3) }, (_, i) => (
-            <div
-              key={i}
-              className="h-3 w-3 rounded-full bg-blue-500 dark:bg-blue-400"
-            />
-          ))}
-          {p0Bar > 3 && (
-            <span className="text-[9px] font-mono text-zinc-500">
-              +{p0Bar - 3}
-            </span>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
+type DragState = {
+  fromPoint: number | "bar";
+  isP0: boolean;
+  svgX: number;
+  svgY: number;
+} | null;
 
 export function Board({
   board,
@@ -208,96 +55,532 @@ export function Board({
   onDragStart,
   onDrop,
 }: BoardProps) {
-  // Top row: points 13–24 (indices 12–23), displayed left→right.
-  const topPoints = Array.from({ length: 12 }, (_, i) => i + 13); // [13..24]
-  // Bottom row: points 12–1 (indices 11–0), displayed left→right (12 down to 1).
-  const bottomPoints = Array.from({ length: 12 }, (_, i) => 12 - i); // [12..1]
+  const svgRef = useRef<SVGSVGElement>(null);
+  const [dragState, setDragState] = useState<DragState>(null);
 
-  const turnLabel =
-    turn === 0 ? "Your turn" : `${opponentName ?? "Agent"}'s turn`;
-  const turnColor =
-    turn === 0
-      ? "text-blue-600 dark:text-blue-400"
-      : "text-red-600 dark:text-red-400";
+  const turnLabel = turn === 0 ? "Your turn" : `${opponentName ?? "Agent"}'s turn`;
+  const turnColor = turn === 0 ? "var(--cg-player-warm)" : "var(--cg-player-cool)";
+
+  const getColXOffset = (col: number, rightHalf: boolean) => {
+    const baseX = rightHalf ? R_QUAD_X : L_QUAD_X;
+    return baseX + col * POINT_W;
+  };
+
+  const clientToSvg = (clientX: number, clientY: number) => {
+    if (!svgRef.current) return { x: 0, y: 0 };
+    const pt = svgRef.current.createSVGPoint();
+    pt.x = clientX;
+    pt.y = clientY;
+    const ctm = svgRef.current.getScreenCTM();
+    if (!ctm) return { x: 0, y: 0 };
+    return pt.matrixTransform(ctm.inverse());
+  };
+
+  const handlePointerDown = (e: PointerEvent<SVGGElement>, point: number | "bar", isP0: boolean) => {
+    if (turn !== 0 || !isP0) return;
+    (e.target as Element).setPointerCapture(e.pointerId);
+    const { x, y } = clientToSvg(e.clientX, e.clientY);
+    setDragState({ fromPoint: point, isP0, svgX: x, svgY: y });
+    if (onDragStart && typeof point === "number") onDragStart(point);
+  };
+
+  const handlePointerMove = (e: PointerEvent<SVGSVGElement>) => {
+    if (!dragState) return;
+    const { x, y } = clientToSvg(e.clientX, e.clientY);
+    setDragState({ ...dragState, svgX: x, svgY: y });
+  };
+
+  const handlePointerUp = (e: PointerEvent<SVGSVGElement>) => {
+    if (!dragState) return;
+    const ds = dragState;
+    setDragState(null);
+    const { x, y } = clientToSvg(e.clientX, e.clientY);
+
+    // Hit test Bear-off Tray (Right tray for P0)
+    if (x >= R_BEAR_X && x <= R_BEAR_X + BEAR_W && y >= FRAME && y <= FRAME + INNER_H) {
+      if (onOffClick) {
+          // ensure the point is selected if drag-and-drop bypassed clicking
+          if (ds.fromPoint === "bar" && onBarClick) {
+              if (selectedPoint !== 25) onBarClick();
+              // In this naive approach, state updates are async, so stageMove won't have the updated selectedPoint.
+              // To fix this without refactoring parent, we rely on the parent updating `selectedPoint` and then
+              // clicking off. The user expects dropping on bear-off to trigger it.
+              // We simulate the click sequence:
+              setTimeout(() => onOffClick(), 0);
+          } else if (typeof ds.fromPoint === "number" && onPointClick) {
+              if (selectedPoint !== ds.fromPoint) onPointClick(ds.fromPoint);
+              setTimeout(() => onOffClick(), 0);
+          }
+      }
+      return;
+    }
+
+    // Hit test Bar
+    if (x >= BAR_X && x <= BAR_X + BAR_W && y >= FRAME && y <= FRAME + INNER_H) {
+      // cannot drop on bar
+      return;
+    }
+
+    // Hit test Points
+    // Bottom row
+    if (y >= FRAME + INNER_H / 2 && y <= FRAME + INNER_H) {
+      // Left half (points 12-7)
+      if (x >= L_QUAD_X && x < L_QUAD_X + 6 * POINT_W) {
+        const col = Math.floor((x - L_QUAD_X) / POINT_W);
+        const point = 12 - col;
+        triggerDrop(ds.fromPoint, point);
+        return;
+      }
+      // Right half (points 6-1)
+      if (x >= R_QUAD_X && x < R_QUAD_X + 6 * POINT_W) {
+        const col = Math.floor((x - R_QUAD_X) / POINT_W);
+        const point = 6 - col;
+        triggerDrop(ds.fromPoint, point);
+        return;
+      }
+    }
+
+    // Top row
+    if (y >= FRAME && y < FRAME + INNER_H / 2) {
+      // Left half (points 13-18)
+      if (x >= L_QUAD_X && x < L_QUAD_X + 6 * POINT_W) {
+        const col = Math.floor((x - L_QUAD_X) / POINT_W);
+        const point = 13 + col;
+        triggerDrop(ds.fromPoint, point);
+        return;
+      }
+      // Right half (points 19-24)
+      if (x >= R_QUAD_X && x < R_QUAD_X + 6 * POINT_W) {
+        const col = Math.floor((x - R_QUAD_X) / POINT_W);
+        const point = 19 + col;
+        triggerDrop(ds.fromPoint, point);
+        return;
+      }
+    }
+  };
+
+  const triggerDrop = (from: number | "bar", to: number) => {
+    // If not selected yet, select it, then move
+    if (from === "bar" && onBarClick) {
+      if (selectedPoint !== 25) onBarClick();
+      setTimeout(() => { if (onPointClick) onPointClick(to); if (onDrop) onDrop(to); }, 0);
+    } else if (typeof from === "number" && onPointClick) {
+      if (selectedPoint !== from) onPointClick(from);
+      setTimeout(() => { if (onPointClick) onPointClick(to); if (onDrop) onDrop(to); }, 0);
+    }
+  };
+
+  const renderChecker = (cx: number, cy: number, isP0: boolean, key: string, isDragging: boolean = false) => {
+    return (
+      <g key={key} style={{ pointerEvents: "none" }}>
+        <circle
+          cx={cx}
+          cy={cy}
+          r={CHECKER_R}
+          fill={isP0 ? "url(#cg-p0)" : "url(#cg-p1)"}
+          stroke="rgba(0,0,0,0.5)"
+          strokeWidth="1"
+          opacity={isDragging ? 0.3 : 1}
+        />
+        <ellipse
+          cx={cx}
+          cy={cy - CHECKER_R * 0.3}
+          rx={CHECKER_R * 0.6}
+          ry={CHECKER_R * 0.3}
+          fill="rgba(255,255,255,0.2)"
+          transform={`rotate(-20 ${cx} ${cy - CHECKER_R * 0.3})`}
+        />
+      </g>
+    );
+  };
+
+  const renderPoint = (point: number) => {
+    const isTop = point >= 13;
+    const isLeft = (isTop && point <= 18) || (!isTop && point >= 7);
+    let col = 0;
+    if (isTop) {
+      col = isLeft ? point - 13 : point - 19;
+    } else {
+      col = isLeft ? 12 - point : 6 - point;
+    }
+
+    const startX = getColXOffset(col, !isLeft);
+    const tipY = isTop ? FRAME + 180 : TOTAL_H - FRAME - 180;
+    const baseY = isTop ? FRAME : TOTAL_H - FRAME;
+
+    // Alternating colors
+    // col 0 = crimson on bottom, amber on top
+    const isCrimson = isTop ? col % 2 !== 0 : col % 2 === 0;
+    const triColor = isCrimson ? "#8B2210" : "#C47820";
+
+    const pts = `${startX},${baseY} ${startX + POINT_W},${baseY} ${startX + POINT_W / 2},${tipY}`;
+
+    const count = board[point - 1];
+    const isP0 = count > 0;
+    const absCount = Math.abs(count);
+
+    // Dragging state info
+    const isDragSource = dragState?.fromPoint === point;
+    // Visually, if we're dragging from here, we show one fewer checker (the ghost is on the mouse)
+    const displayCount = isDragSource ? absCount - 1 : absCount;
+
+    const dotsToShow = Math.min(displayCount, MAX_DOTS);
+    const extra = displayCount > MAX_DOTS ? displayCount - MAX_DOTS : 0;
+
+    const isSelected = selectedPoint === point;
+
+    return (
+      <g
+        key={`point-${point}`}
+        data-testid={`point-${point - 1}`}
+        data-point={point}
+        data-count={count}
+      >
+        {/* Triangle */}
+        <polygon
+          points={pts}
+          fill={triColor}
+          opacity={0.9}
+        />
+        {/* Selection Highlight */}
+        {isSelected && (
+          <rect
+            x={startX}
+            y={isTop ? FRAME : FRAME + INNER_H - 180}
+            width={POINT_W}
+            height={180}
+            fill="var(--cg-brass)"
+            fillOpacity={0.15}
+            stroke="var(--cg-brass)"
+            strokeWidth={1}
+            pointerEvents="none"
+          />
+        )}
+
+        {/* Point Label */}
+        <text
+          x={startX + POINT_W / 2}
+          y={isTop ? FRAME - 5 : TOTAL_H - FRAME + 12}
+          textAnchor="middle"
+          fontSize="10"
+          fontFamily="var(--cg-font-mono, monospace)"
+          fill="var(--cg-fg-4, #4A4339)"
+        >
+          {point}
+        </text>
+
+        {/* Clickable Overlay */}
+        <rect
+          x={startX}
+          y={isTop ? FRAME : FRAME + INNER_H - 180}
+          width={POINT_W}
+          height={180}
+          fill="transparent"
+          cursor={onPointClick ? "pointer" : "default"}
+          onClick={() => onPointClick && onPointClick(point)}
+          onPointerDown={(e) => {
+            if (count > 0 && turn === 0) handlePointerDown(e, point, true);
+          }}
+          style={{ touchAction: "none" }}
+        />
+
+        {/* Checkers */}
+        <g pointerEvents="none">
+          {Array.from({ length: dotsToShow }).map((_, i) => {
+            const cy = isTop
+              ? FRAME + CHECKER_R + i * CHECKER_GAP
+              : TOTAL_H - FRAME - CHECKER_R - i * CHECKER_GAP;
+            return renderChecker(startX + POINT_W / 2, cy, isP0, `checker-${point}-${i}`);
+          })}
+          {extra > 0 && (
+            <text
+              x={startX + POINT_W / 2}
+              y={isTop
+                  ? FRAME + CHECKER_R + dotsToShow * CHECKER_GAP + 4
+                  : TOTAL_H - FRAME - CHECKER_R - dotsToShow * CHECKER_GAP + 4}
+              textAnchor="middle"
+              fontSize="12"
+              fontFamily="var(--cg-font-mono, monospace)"
+              fill="var(--cg-fg-4, #4A4339)"
+            >
+              +{extra}
+            </text>
+          )}
+        </g>
+      </g>
+    );
+  };
+
+  const renderBar = () => {
+    const isSelected = selectedPoint === 25;
+    const [p0Bar, p1Bar] = bar;
+
+    const p0Display = dragState?.fromPoint === "bar" ? p0Bar - 1 : p0Bar;
+
+    return (
+      <g key="bar">
+        <rect
+          x={BAR_X}
+          y={FRAME}
+          width={BAR_W}
+          height={INNER_H}
+          fill="rgba(0,0,0,0.1)"
+          stroke="rgba(0,0,0,0.3)"
+        />
+        {isSelected && (
+          <rect
+            x={BAR_X}
+            y={FRAME}
+            width={BAR_W}
+            height={INNER_H}
+            fill="var(--cg-brass)"
+            fillOpacity={0.15}
+            stroke="var(--cg-brass)"
+            strokeWidth={1}
+            pointerEvents="none"
+          />
+        )}
+        <text
+          x={BAR_X + BAR_W / 2}
+          y={TOTAL_H / 2 + 4}
+          textAnchor="middle"
+          fontSize="10"
+          fontFamily="var(--cg-font-mono, monospace)"
+          fill="var(--cg-fg-4, #4A4339)"
+        >
+          BAR
+        </text>
+
+        {/* Clickable Overlay */}
+        <rect
+          x={BAR_X}
+          y={FRAME}
+          width={BAR_W}
+          height={INNER_H}
+          fill="transparent"
+          cursor={onBarClick ? "pointer" : "default"}
+          onClick={() => onBarClick && onBarClick()}
+          onPointerDown={(e) => {
+            if (p0Bar > 0 && turn === 0) handlePointerDown(e, "bar", true);
+          }}
+          style={{ touchAction: "none" }}
+        />
+
+        {/* P1 Bar Checkers (Top Down) */}
+        <g pointerEvents="none">
+          {Array.from({ length: Math.min(p1Bar, 3) }).map((_, i) => (
+            renderChecker(BAR_X + BAR_W / 2, FRAME + 60 + i * CHECKER_GAP, false, `bar-p1-${i}`)
+          ))}
+          {p1Bar > 3 && (
+            <text
+              x={BAR_X + BAR_W / 2}
+              y={FRAME + 60 + 3 * CHECKER_GAP + 4}
+              textAnchor="middle"
+              fontSize="12"
+              fontFamily="var(--cg-font-mono, monospace)"
+              fill="var(--cg-fg-4, #4A4339)"
+            >
+              +{p1Bar - 3}
+            </text>
+          )}
+        </g>
+
+        {/* P0 Bar Checkers (Bottom Up) */}
+        <g pointerEvents="none">
+          {Array.from({ length: Math.min(p0Display, 3) }).map((_, i) => (
+            renderChecker(BAR_X + BAR_W / 2, TOTAL_H - FRAME - 60 - i * CHECKER_GAP, true, `bar-p0-${i}`)
+          ))}
+          {p0Display > 3 && (
+            <text
+              x={BAR_X + BAR_W / 2}
+              y={TOTAL_H - FRAME - 60 - 3 * CHECKER_GAP + 4}
+              textAnchor="middle"
+              fontSize="12"
+              fontFamily="var(--cg-font-mono, monospace)"
+              fill="var(--cg-fg-4, #4A4339)"
+            >
+              +{p0Display - 3}
+            </text>
+          )}
+        </g>
+      </g>
+    );
+  };
+
+  const renderBearOff = () => {
+    // Left Tray = P1
+    // Right Tray = P0
+    const [p0Off, p1Off] = off;
+
+    const p1MiniRadius = 6;
+    const p0MiniRadius = 6;
+
+    return (
+      <g>
+        {/* Left Tray Background */}
+        <rect
+          x={L_BEAR_X}
+          y={FRAME}
+          width={BEAR_W}
+          height={INNER_H}
+          fill="rgba(0,0,0,0.15)"
+        />
+        {/* P1 Off Mini Checkers */}
+        <g pointerEvents="none">
+          {Array.from({ length: p1Off }).map((_, i) => (
+            <rect
+              key={`p1off-${i}`}
+              x={L_BEAR_X + 10}
+              y={TOTAL_H - FRAME - 20 - i * 14}
+              width={BEAR_W - 20}
+              height={10}
+              rx={3}
+              fill="url(#cg-p1)"
+              stroke="rgba(0,0,0,0.5)"
+            />
+          ))}
+          <text
+             x={L_BEAR_X + BEAR_W/2}
+             y={TOTAL_H - FRAME - 5}
+             textAnchor="middle"
+             fontSize="10"
+             fontFamily="var(--cg-font-mono, monospace)"
+             fill="var(--cg-player-cool, #E8E1CF)"
+          >
+            {p1Off}
+          </text>
+        </g>
+
+        {/* Right Tray Background */}
+        <rect
+          x={R_BEAR_X}
+          y={FRAME}
+          width={BEAR_W}
+          height={INNER_H}
+          fill="rgba(0,0,0,0.15)"
+        />
+        {/* P0 Off Mini Checkers */}
+        <g pointerEvents="none">
+          {Array.from({ length: p0Off }).map((_, i) => (
+            <rect
+              key={`p0off-${i}`}
+              x={R_BEAR_X + 10}
+              y={TOTAL_H - FRAME - 20 - i * 14}
+              width={BEAR_W - 20}
+              height={10}
+              rx={3}
+              fill="url(#cg-p0)"
+              stroke="rgba(0,0,0,0.5)"
+            />
+          ))}
+          <text
+             x={R_BEAR_X + BEAR_W/2}
+             y={TOTAL_H - FRAME - 5}
+             textAnchor="middle"
+             fontSize="10"
+             fontFamily="var(--cg-font-mono, monospace)"
+             fill="var(--cg-player-warm, #E3B779)"
+          >
+            {p0Off}
+          </text>
+        </g>
+      </g>
+    );
+  };
+
+  let pip0 = (bar[0] ?? 0) * 25;
+  let pip1 = (bar[1] ?? 0) * 25;
+  for (let i = 0; i < 24; i++) {
+    if (board[i] > 0) pip0 += (i + 1) * board[i];
+    if (board[i] < 0) pip1 += (24 - i) * (-board[i]);
+  }
 
   return (
     <div className="flex flex-col gap-2">
-      {/* Turn indicator */}
-      <p className={`text-sm font-semibold ${turnColor}`}>{turnLabel}</p>
+      <p style={{ color: turnColor, fontWeight: "bold", fontSize: "14px" }}>
+        {turnLabel}
+      </p>
 
-      <div className="overflow-x-auto">
-        <div className="inline-flex flex-col gap-0 rounded-lg border border-zinc-300 bg-amber-50 p-2 dark:border-zinc-600 dark:bg-zinc-900">
-          {/* Top row — points 13..24 */}
-          <div className="flex items-start gap-0.5">
-            {topPoints.slice(0, 6).map((pt) => (
-              <PointCell
-                key={pt}
-                point={pt}
-                count={board[pt - 1]}
-                flip={true}
-                onClick={onPointClick ? () => onPointClick(pt) : undefined}
-                isSelected={selectedPoint === pt}
-                onDragStart={onDragStart ? () => onDragStart(pt) : undefined}
-                onDrop={onDrop ? () => onDrop(pt) : undefined}
-              />
-            ))}
-            <BarCell
-              p0Bar={bar[0]}
-              p1Bar={bar[1]}
-              onBarClick={onBarClick}
-              isBarSelected={selectedPoint === 25}
-            />
-            {topPoints.slice(6).map((pt) => (
-              <PointCell
-                key={pt}
-                point={pt}
-                count={board[pt - 1]}
-                flip={true}
-                onClick={onPointClick ? () => onPointClick(pt) : undefined}
-                isSelected={selectedPoint === pt}
-                onDragStart={onDragStart ? () => onDragStart(pt) : undefined}
-                onDrop={onDrop ? () => onDrop(pt) : undefined}
-              />
-            ))}
-          </div>
+      <div style={{ width: "100%", maxWidth: `${TOTAL_W}px`, overflow: "hidden" }}>
+        <svg
+          ref={svgRef}
+          viewBox={`0 0 ${TOTAL_W} ${TOTAL_H}`}
+          width="100%"
+          style={{ touchAction: dragState ? "none" : "auto", display: "block" }}
+          onPointerMove={handlePointerMove}
+          onPointerUp={handlePointerUp}
+          onPointerLeave={handlePointerUp}
+        >
+          <defs>
+            <pattern id="cg-wood" patternUnits="userSpaceOnUse" width="80" height="80">
+              <rect width="80" height="80" fill="#5C3A1E" />
+              <rect x="0" y="0" width="10" height="120" fill="#6B4423" opacity="0.6" transform="rotate(-12)" />
+              <rect x="20" y="-10" width="15" height="120" fill="#4A2D14" opacity="0.7" transform="rotate(-12)" />
+              <rect x="50" y="-20" width="8" height="120" fill="#6B4423" opacity="0.5" transform="rotate(-12)" />
+              <rect x="70" y="-10" width="12" height="120" fill="#4A2D14" opacity="0.8" transform="rotate(-12)" />
+            </pattern>
+            <radialGradient id="cg-felt" cx="50%" cy="50%" r="60%">
+              <stop offset="0%" stopColor="#3D2220" />
+              <stop offset="100%" stopColor="var(--cg-bg-felt, #2D1A18)" />
+            </radialGradient>
+            <radialGradient id="cg-p0" cx="38%" cy="30%" r="70%">
+              <stop offset="0%" stopColor="#F5D49A" />
+              <stop offset="38%" stopColor="var(--cg-player-warm, #E3B779)" />
+              <stop offset="100%" stopColor="#A07830" />
+            </radialGradient>
+            <radialGradient id="cg-p1" cx="38%" cy="30%" r="70%">
+              <stop offset="0%" stopColor="#FDFAF4" />
+              <stop offset="38%" stopColor="var(--cg-player-cool, #E8E1CF)" />
+              <stop offset="100%" stopColor="#B0A898" />
+            </radialGradient>
+            <filter id="cg-glow" x="-50%" y="-50%" width="200%" height="200%">
+              <feGaussianBlur in="SourceGraphic" stdDeviation="4" result="blur" />
+              <feMerge>
+                <feMergeNode in="blur" />
+                <feMergeNode in="SourceGraphic" />
+              </feMerge>
+            </filter>
+          </defs>
 
-          {/* Spacer */}
-          <div className="h-3 border-y border-zinc-300 dark:border-zinc-600" />
+          {/* Outer Frame */}
+          <rect x="0" y="0" width={TOTAL_W} height={TOTAL_H} fill="url(#cg-wood)" rx="4" />
 
-          {/* Bottom row — points 12..1 */}
-          <div className="flex items-end gap-0.5">
-            {bottomPoints.slice(0, 6).map((pt) => (
-              <PointCell
-                key={pt}
-                point={pt}
-                count={board[pt - 1]}
-                flip={false}
-                onClick={onPointClick ? () => onPointClick(pt) : undefined}
-                isSelected={selectedPoint === pt}
-                onDragStart={onDragStart ? () => onDragStart(pt) : undefined}
-                onDrop={onDrop ? () => onDrop(pt) : undefined}
+          {/* Inner Felt */}
+          <rect x={FRAME} y={FRAME} width={TOTAL_W - 2 * FRAME} height={INNER_H} fill="url(#cg-felt)" />
+
+          {/* Bear-Off Trays */}
+          {renderBearOff()}
+
+          {/* Points */}
+          {Array.from({ length: 24 }).map((_, i) => renderPoint(i + 1))}
+
+          {/* Center Bar */}
+          {renderBar()}
+
+          {/* Drag Ghost */}
+          {dragState && (
+            <g filter="url(#cg-glow)" style={{ pointerEvents: "none" }}>
+              <circle
+                cx={dragState.svgX}
+                cy={dragState.svgY}
+                r={CHECKER_R}
+                fill={dragState.isP0 ? "url(#cg-p0)" : "url(#cg-p1)"}
+                stroke="var(--cg-brass, #C99B5C)"
+                strokeWidth="2"
               />
-            ))}
-            <div className="flex w-8 items-center justify-center">
-              <div className="h-3 w-px bg-zinc-300 dark:bg-zinc-600" />
-            </div>
-            {bottomPoints.slice(6).map((pt) => (
-              <PointCell
-                key={pt}
-                point={pt}
-                count={board[pt - 1]}
-                flip={false}
-                onClick={onPointClick ? () => onPointClick(pt) : undefined}
-                isSelected={selectedPoint === pt}
-                onDragStart={onDragStart ? () => onDragStart(pt) : undefined}
-                onDrop={onDrop ? () => onDrop(pt) : undefined}
+              <ellipse
+                cx={dragState.svgX}
+                cy={dragState.svgY - CHECKER_R * 0.3}
+                rx={CHECKER_R * 0.6}
+                ry={CHECKER_R * 0.3}
+                fill="rgba(255,255,255,0.2)"
+                transform={`rotate(-20 ${dragState.svgX} ${dragState.svgY - CHECKER_R * 0.3})`}
               />
-            ))}
-          </div>
-        </div>
+            </g>
+          )}
+        </svg>
       </div>
 
-      {/* Bear-off button — shown only when a source checker is selected */}
       {onOffClick && (
         <button
           type="button"
@@ -309,27 +592,16 @@ export function Board({
         </button>
       )}
 
-      {/* Off-board checkers + pip counts */}
-      {(() => {
-        let pip0 = (bar[0] ?? 0) * 25;
-        let pip1 = (bar[1] ?? 0) * 25;
-        for (let i = 0; i < 24; i++) {
-          if (board[i] > 0) pip0 += (i + 1) * board[i];
-          if (board[i] < 0) pip1 += (24 - i) * (-board[i]);
-        }
-        return (
-          <div className="flex gap-6 text-sm text-zinc-600 dark:text-zinc-400">
-            <span>
-              <span className="text-blue-500 dark:text-blue-400 font-semibold">You</span>{" "}
-              borne off: {off[0]} / 15 · <span className="font-mono">{pip0} pip{pip0 !== 1 ? "s" : ""}</span>
-            </span>
-            <span>
-              <span className="text-red-500 dark:text-red-400 font-semibold">Agent</span>{" "}
-              borne off: {off[1]} / 15 · <span className="font-mono">{pip1} pip{pip1 !== 1 ? "s" : ""}</span>
-            </span>
-          </div>
-        );
-      })()}
+      <div className="flex gap-6 text-sm text-zinc-600 dark:text-zinc-400">
+        <span>
+          <span style={{ color: "var(--cg-player-warm)" }} className="font-semibold">You</span>{" "}
+          borne off: {off[0]} / 15 · <span className="font-mono">{pip0} pip{pip0 !== 1 ? "s" : ""}</span>
+        </span>
+        <span>
+          <span style={{ color: "var(--cg-player-cool)" }} className="font-semibold">Agent</span>{" "}
+          borne off: {off[1]} / 15 · <span className="font-mono">{pip1} pip{pip1 !== 1 ? "s" : ""}</span>
+        </span>
+      </div>
     </div>
   );
 }
