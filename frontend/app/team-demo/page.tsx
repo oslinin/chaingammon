@@ -5,10 +5,24 @@
 "use client";
 
 import React, { Suspense, useEffect, useRef, useState } from "react";
-import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 
-import { useAccount, useReadContract, useReadContracts } from "wagmi";
+import {
+  useAccount,
+  useReadContract,
+  useReadContracts,
+  useSignMessage,
+  useWaitForTransactionReceipt,
+  useWriteContract,
+} from "wagmi";
+import {
+  encodeAbiParameters,
+  keccak256,
+  parseAbiParameters,
+  toHex,
+  type PrivateKeyAccount,
+} from "viem";
+import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 
 import { Board } from "../Board";
 import { AgentTeammatePanel } from "../ChiefOfStaffPanel";
@@ -27,7 +41,25 @@ import {
 } from "../../lib/match_engine";
 import { type Board as GameBoard } from "../../lib/rules_engine";
 
-const SERVER = process.env.NEXT_PUBLIC_SERVER_URL ?? "http://localhost:8000";
+const ZERO_HASH =
+  "0x0000000000000000000000000000000000000000000000000000000000000000" as `0x${string}`;
+
+function settleSessionKey(
+  chainId: number | undefined,
+  address: `0x${string}` | undefined,
+  agentId: number | undefined,
+  matchLength: number,
+): string | null {
+  if (!chainId || !address || !agentId) return null;
+  return `cg.settleSession.v1.${chainId}.${address.toLowerCase()}.${agentId}.${matchLength}`;
+}
+
+interface PersistedSettleSession {
+  sessionPrivateKey: `0x${string}`;
+  humanAuthSig: `0x${string}`;
+  authNonce: string;
+  forfeitResultSig: `0x${string}`;
+}
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -104,6 +136,89 @@ const card: React.CSSProperties = {
   boxShadow: "var(--cg-shadow-1)",
 };
 
+function SettlementBanner({
+  status,
+  txHash,
+  error,
+  onRetry,
+}: {
+  status:
+    | "idle"
+    | "awaiting-auth"
+    | "auth-rejected"
+    | "ready"
+    | "settling"
+    | "settled"
+    | "error";
+  txHash: `0x${string}` | null;
+  error: string | null;
+  onRetry: () => void;
+}) {
+  if (status === "settling") {
+    return (
+      <div style={{ marginTop: 12 }}>
+        <p style={{ fontSize: 14, color: "var(--cg-fg-3)" }} className="animate-pulse">
+          Submitting on-chain settlement…
+        </p>
+        {txHash && (
+          <p style={{ marginTop: 4, fontSize: 12, fontFamily: "var(--cg-font-mono)", color: "var(--cg-fg-3)" }}>
+            tx: {txHash.slice(0, 10)}…{txHash.slice(-8)}
+          </p>
+        )}
+      </div>
+    );
+  }
+  if (status === "settled") {
+    return (
+      <div
+        style={{
+          marginTop: 12,
+          borderRadius: "var(--cg-radius-sm)",
+          background: "rgba(125,155,74,0.12)",
+          border: "1px solid rgba(125,155,74,0.30)",
+          padding: "8px 12px",
+        }}
+      >
+        <p style={{ fontSize: 14, fontWeight: 600, color: "var(--cg-success)" }}>
+          Match recorded on-chain.
+        </p>
+        {txHash && (
+          <p style={{ marginTop: 4, fontSize: 12, fontFamily: "var(--cg-font-mono)", color: "var(--cg-fg-3)" }}>
+            tx: {txHash.slice(0, 10)}…{txHash.slice(-8)}
+          </p>
+        )}
+      </div>
+    );
+  }
+  if (status === "error") {
+    return (
+      <div style={{ marginTop: 12 }}>
+        <p style={{ fontSize: 12, color: "var(--cg-danger)" }}>
+          Settlement failed: {error ?? "unknown error"}
+        </p>
+        <button
+          type="button"
+          onClick={onRetry}
+          style={{
+            marginTop: 8,
+            background: "var(--cg-brass)",
+            color: "var(--cg-brass-ink)",
+            borderRadius: "var(--cg-radius-sm)",
+            padding: "6px 12px",
+            fontSize: 12,
+            fontWeight: 600,
+            border: "none",
+            cursor: "pointer",
+          }}
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
+  return null;
+}
+
 // ── Component ─────────────────────────────────────────────────────────────
 
 export default function TeamDemoPage() {
@@ -157,15 +272,30 @@ function TeamDemoPageInner() {
 
   const [fastForward, setFastForward] = useState(false);
 
-  const [finalizing, setFinalizing] = useState(false);
-  const [finalizeError, setFinalizeError] = useState<string | null>(null);
-  const [keeperMatchId, setKeeperMatchId] = useState<number | null>(null);
-  const [keeperRunning, setKeeperRunning] = useState(false);
+  const [sessionAccount, setSessionAccount] = useState<PrivateKeyAccount | null>(null);
+  const [humanAuthSig, setHumanAuthSig] = useState<`0x${string}` | null>(null);
+  const [authNonce, setAuthNonce] = useState<bigint | null>(null);
+  const [forfeitResultSig, setForfeitResultSig] = useState<`0x${string}` | null>(null);
+  const [settleStatus, setSettleStatus] = useState<
+    | "idle"
+    | "awaiting-auth"
+    | "auth-rejected"
+    | "ready"
+    | "settling"
+    | "settled"
+    | "error"
+  >("idle");
+  const [settleError, setSettleError] = useState<string | null>(null);
+  const [settleTxHash, setSettleTxHash] = useState<`0x${string}` | null>(null);
+  const [hasStaleSession, setHasStaleSession] = useState(false);
 
   const { address } = useAccount();
   const chainId = useActiveChainId();
   const activeChain = useActiveChain();
   const { agentRegistry, matchRegistry } = useChainContracts();
+  const { signMessageAsync } = useSignMessage();
+  const { writeContractAsync } = useWriteContract();
+  const txReceipt = useWaitForTransactionReceipt({ hash: settleTxHash ?? undefined });
 
   const primaryOpponentId = opponentIds[0];
   const eloQuery = useReadContracts({
@@ -180,12 +310,152 @@ function TeamDemoPageInner() {
   });
   const opponentElo = eloQuery.data?.[0]?.result as bigint | undefined;
 
+  // Wallet nonce on MatchRegistry — drives `settleWithSessionKeys` replay protection.
+  const noncesRead = useReadContract({
+    address: matchRegistry,
+    abi: MatchRegistryABI,
+    functionName: "nonces",
+    args: address ? [address] : undefined,
+    chainId,
+    query: { enabled: !!address && settleOnChain && !!primaryOpponentId },
+  });
+
   const agentMoving = useRef(false);
   const autoStarted = useRef(false);
+  const authStarted = useRef(false);
 
+  // Auth-signature ceremony at game open. Generates an ephemeral session key,
+  // has the wallet sign the open-match auth, and pre-signs a forfeit result
+  // with the session key (reused by Resign + tab-close paths). Persists to
+  // sessionStorage so a refresh / abandoned tab can resume.
+  useEffect(() => {
+    if (!settleOnChain || !hasUrlParams || !address || !primaryOpponentId) return;
+    if (authStarted.current || humanAuthSig) return;
+    if (matchRegistry === "0x0000000000000000000000000000000000000000") return;
+    if (noncesRead.data === undefined) return;
+
+    authStarted.current = true;
+
+    const matchLength = 3;
+    const storageKey = settleSessionKey(chainId, address, primaryOpponentId, matchLength);
+
+    // ── Recovery: a previous tab left a signed forfeit on disk for this
+    //    (chain, wallet, agent, match-length). Surface it via the banner
+    //    instead of starting a fresh auth ceremony — submitting the stale
+    //    forfeit closes out the abandoned match and consumes the nonce.
+    if (storageKey && typeof window !== "undefined") {
+      const raw = window.sessionStorage.getItem(storageKey);
+      if (raw) {
+        try {
+          const parsed = JSON.parse(raw) as PersistedSettleSession;
+          const acct = privateKeyToAccount(parsed.sessionPrivateKey);
+          setSessionAccount(acct);
+          setHumanAuthSig(parsed.humanAuthSig);
+          setAuthNonce(BigInt(parsed.authNonce));
+          setForfeitResultSig(parsed.forfeitResultSig);
+          setHasStaleSession(true);
+          setSettleStatus("ready");
+          return;
+        } catch {
+          window.sessionStorage.removeItem(storageKey);
+        }
+      }
+    }
+
+    void (async () => {
+      setSettleStatus("awaiting-auth");
+      try {
+        const pk = generatePrivateKey();
+        const acct = privateKeyToAccount(pk);
+        const nonce = noncesRead.data as bigint;
+
+        const authHashRaw = keccak256(
+          encodeAbiParameters(
+            parseAbiParameters(
+              "string, uint256, address, address, uint256, uint256, uint16, address",
+            ),
+            [
+              "Chaingammon:open",
+              BigInt(chainId ?? 0),
+              matchRegistry,
+              address,
+              nonce,
+              BigInt(primaryOpponentId),
+              matchLength,
+              acct.address,
+            ],
+          ),
+        );
+
+        const authSig = await signMessageAsync({
+          message: { raw: authHashRaw },
+          account: address,
+        });
+
+        // Pre-sign a forfeit result for this nonce. The session key holds
+        // its own private key, so this is silent — no second wallet popup.
+        // gameRecordHash = 0x0 because no record is archived for a walk-off.
+        const forfeitHashRaw = keccak256(
+          encodeAbiParameters(
+            parseAbiParameters(
+              "string, uint256, address, address, uint256, uint256, bool, bytes32",
+            ),
+            [
+              "Chaingammon:result",
+              BigInt(chainId ?? 0),
+              matchRegistry,
+              address,
+              nonce,
+              BigInt(primaryOpponentId),
+              false,
+              ZERO_HASH,
+            ],
+          ),
+        );
+        const forfeitSig = await acct.signMessage({
+          message: { raw: forfeitHashRaw },
+        });
+
+        setSessionAccount(acct);
+        setHumanAuthSig(authSig);
+        setAuthNonce(nonce);
+        setForfeitResultSig(forfeitSig);
+        setSettleStatus("ready");
+
+        if (storageKey && typeof window !== "undefined") {
+          const payload: PersistedSettleSession = {
+            sessionPrivateKey: pk,
+            humanAuthSig: authSig,
+            authNonce: nonce.toString(),
+            forfeitResultSig: forfeitSig,
+          };
+          window.sessionStorage.setItem(storageKey, JSON.stringify(payload));
+        }
+      } catch (e) {
+        setSettleStatus("auth-rejected");
+        setSettleError(e instanceof Error ? e.message : String(e));
+        authStarted.current = false; // allow retry on next render
+      }
+    })();
+  }, [
+    settleOnChain,
+    hasUrlParams,
+    address,
+    primaryOpponentId,
+    matchRegistry,
+    chainId,
+    noncesRead.data,
+    humanAuthSig,
+    signMessageAsync,
+  ]);
+
+  // Auto-start the match. For settle-on-chain games, gate on auth complete so
+  // the user signs first and the game state isn't generated against a stale
+  // (possibly already-consumed) nonce. Off-chain games start immediately.
   useEffect(() => {
     if (!hasUrlParams || autoStarted.current || game) return;
     if (initialOpponents.length === 0) return;
+    if (settleOnChain && settleStatus !== "ready") return;
     autoStarted.current = true;
     try {
       const state = newMatch(3);
@@ -194,7 +464,7 @@ function TeamDemoPageInner() {
       setError(String(e));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [settleStatus]);
 
   const panelRef = useRef<HTMLDivElement>(null);
   const [panelPos, setPanelPos] = useState<{ x: number; y: number } | null>(null);
@@ -385,55 +655,135 @@ function TeamDemoPageInner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fastForward]);
 
-  const doFinalizeAndTriggerKeeper = async (g: typeof game) => {
-    if (!g?.game_over) return;
-    const agentId = opponentIds[0];
-    if (!agentId) return;
-    if (finalizing || keeperMatchId !== null) return;
-    setFinalizing(true);
-    setFinalizeError(null);
-    window.localStorage.removeItem("keeperMatchId");
-    const ZERO = "0x0000000000000000000000000000000000000000";
+  // Wallet-direct settlement via MatchRegistry.settleWithSessionKeys.
+  // - useForfeitSig=true: submit the forfeit pre-signed at game open.
+  //   Used by the Resign button, the tab-close handler, and the recovery
+  //   banner. Skips a result-sig hash compute since we already have one.
+  // - useForfeitSig=false: session key signs a result hash binding the
+  //   actual game outcome. The wallet then sends the tx.
+  const settleOnChainDirect = async (
+    humanWins: boolean,
+    options?: { useForfeitSig?: boolean },
+  ) => {
+    if (!sessionAccount || !humanAuthSig || authNonce === null || !address) return;
+    if (!primaryOpponentId) return;
+    if (settleStatus === "settling" || settleStatus === "settled") return;
+
+    const useForfeitSig = options?.useForfeitSig === true;
+    if (useForfeitSig && (humanWins || !forfeitResultSig)) return;
+
+    setSettleStatus("settling");
+    setSettleError(null);
+
     try {
-      const humanWins = g.winner === 0;
-      const body = {
-        winner_agent_id: humanWins ? 0 : agentId,
-        winner_human_address: humanWins && address ? address : ZERO,
-        loser_agent_id: humanWins ? agentId : 0,
-        loser_human_address: !humanWins && address ? address : ZERO,
-        match_length: g.match_length,
-        position_id: g.position_id,
-        gnubg_match_id: g.match_id,
-        score: g.score,
-      };
-      const res = await fetch(`${SERVER}/finalize-direct`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      if (!res.ok) {
-        const text = await res.text().catch(() => res.statusText);
-        throw new Error(text);
+      const matchLength = 3;
+      const gameRecordHash = useForfeitSig
+        ? ZERO_HASH
+        : (keccak256(
+            toHex(
+              JSON.stringify({
+                match_id: game?.match_id ?? null,
+                position_id: game?.position_id ?? null,
+                score: game?.score ?? null,
+                match_length: game?.match_length ?? matchLength,
+                winner: game?.winner ?? null,
+              }),
+            ),
+          ) as `0x${string}`);
+
+      let resultSig: `0x${string}`;
+      if (useForfeitSig) {
+        resultSig = forfeitResultSig as `0x${string}`;
+      } else {
+        const resultHashRaw = keccak256(
+          encodeAbiParameters(
+            parseAbiParameters(
+              "string, uint256, address, address, uint256, uint256, bool, bytes32",
+            ),
+            [
+              "Chaingammon:result",
+              BigInt(chainId ?? 0),
+              matchRegistry,
+              address,
+              authNonce,
+              BigInt(primaryOpponentId),
+              humanWins,
+              gameRecordHash,
+            ],
+          ),
+        );
+        resultSig = await sessionAccount.signMessage({
+          message: { raw: resultHashRaw },
+        });
       }
-      const data = (await res.json()) as { match_id: number };
-      setKeeperMatchId(data.match_id);
-      window.localStorage.setItem("keeperMatchId", String(data.match_id));
-      setKeeperRunning(true);
-      fetch(`${SERVER}/keeper-workflow/${data.match_id}/run?stake_wei=0`, { method: "POST" })
-        .finally(() => setKeeperRunning(false));
+
+      const txHash = await writeContractAsync({
+        address: matchRegistry,
+        abi: MatchRegistryABI,
+        functionName: "settleWithSessionKeys",
+        args: [
+          address,
+          BigInt(primaryOpponentId),
+          matchLength,
+          humanWins,
+          gameRecordHash,
+          authNonce,
+          sessionAccount.address,
+          humanAuthSig,
+          resultSig,
+        ],
+        chainId,
+      });
+      setSettleTxHash(txHash);
     } catch (e) {
-      setFinalizeError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setFinalizing(false);
+      setSettleStatus("error");
+      setSettleError(e instanceof Error ? e.message : String(e));
     }
   };
 
+  // Tx receipt → mark settled and clear persisted session.
   useEffect(() => {
-    if (game?.game_over && settleOnChain && opponentIds.length > 0) {
-      void doFinalizeAndTriggerKeeper(game);
+    if (!settleTxHash || !txReceipt.isSuccess) return;
+    setSettleStatus("settled");
+    setHasStaleSession(false);
+    const storageKey = settleSessionKey(chainId, address, primaryOpponentId, 3);
+    if (storageKey && typeof window !== "undefined") {
+      window.sessionStorage.removeItem(storageKey);
     }
+  }, [settleTxHash, txReceipt.isSuccess, chainId, address, primaryOpponentId]);
+
+  // Surface a tx-level revert if the receipt comes back with status !== "success".
+  useEffect(() => {
+    if (!txReceipt.error) return;
+    setSettleStatus("error");
+    setSettleError(txReceipt.error.message);
+  }, [txReceipt.error]);
+
+  // Fire settlement when the game ends. Win → fresh result sig.
+  // Loss (whether played out or via Resign) → reuse the pre-signed forfeit.
+  useEffect(() => {
+    if (!game?.game_over || !settleOnChain || opponentIds.length === 0) return;
+    if (settleStatus !== "ready") return;
+    const humanWins = game.winner === 0;
+    void settleOnChainDirect(humanWins, { useForfeitSig: !humanWins });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [game?.game_over]);
+  }, [game?.game_over, settleStatus]);
+
+  // Tab-close = forfeit (best-effort). beforeunload can't reliably await a
+  // wallet popup, so the recovery banner on next visit is the real safety
+  // net. We attempt the submission anyway in case the wallet is configured
+  // for auto-approval (some embedded / passkey wallets).
+  useEffect(() => {
+    if (!settleOnChain || settleStatus !== "ready") return;
+    if (!game || game.game_over) return;
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      void settleOnChainDirect(false, { useForfeitSig: true });
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settleOnChain, settleStatus, game?.game_over]);
 
   const doMoveWithNotation = async (notation: string) => {
     if (!game || !game.dice) return;
@@ -699,6 +1049,75 @@ function TeamDemoPageInner() {
           </h1>
         </header>
 
+        {settleOnChain && settleStatus === "awaiting-auth" && !humanAuthSig && (
+          <div
+            style={{
+              borderRadius: "var(--cg-radius-sm)",
+              border: "1px solid var(--cg-line-2)",
+              background: "var(--cg-bg-2)",
+              padding: "10px 14px",
+              fontSize: 13,
+              color: "var(--cg-fg-2)",
+            }}
+            className="animate-pulse"
+          >
+            Sign the match authorization in your wallet to start.
+          </div>
+        )}
+        {settleOnChain && settleStatus === "auth-rejected" && (
+          <div
+            style={{
+              borderRadius: "var(--cg-radius-sm)",
+              border: "1px solid var(--cg-danger)",
+              background: "rgba(220,90,90,0.08)",
+              padding: "10px 14px",
+              fontSize: 13,
+              color: "var(--cg-danger)",
+            }}
+          >
+            Authorization rejected. Reload to try again.
+            {settleError && (
+              <span style={{ display: "block", marginTop: 4, fontSize: 11, color: "var(--cg-fg-3)" }}>
+                {settleError}
+              </span>
+            )}
+          </div>
+        )}
+        {settleOnChain && hasStaleSession && settleStatus === "ready" && !game?.game_over && (
+          <div
+            style={{
+              borderRadius: "var(--cg-radius-sm)",
+              border: "1px solid var(--cg-line-2)",
+              background: "rgba(240,180,80,0.08)",
+              padding: "10px 14px",
+              fontSize: 13,
+              color: "var(--cg-fg-2)",
+            }}
+          >
+            <p style={{ marginBottom: 6 }}>
+              You left a previous match against agent {primaryOpponentId} unfinished. Submit the
+              forfeit to update ratings — or just keep playing this new match (the unfinished one
+              will overwrite when you settle).
+            </p>
+            <button
+              type="button"
+              onClick={() => void settleOnChainDirect(false, { useForfeitSig: true })}
+              style={{
+                background: "var(--cg-brass)",
+                color: "var(--cg-brass-ink)",
+                borderRadius: "var(--cg-radius-sm)",
+                padding: "4px 12px",
+                fontSize: 12,
+                fontWeight: 600,
+                border: "none",
+                cursor: "pointer",
+              }}
+            >
+              Submit forfeit
+            </button>
+          </div>
+        )}
+
         {game && (
           <div className="flex flex-col gap-6">
             <Board
@@ -841,70 +1260,16 @@ function TeamDemoPageInner() {
                     : "Opponents win."}
                 </p>
 
-                {keeperMatchId !== null ? (
-                  <div
-                    style={{
-                      marginTop: 12,
-                      borderRadius: "var(--cg-radius-sm)",
-                      background: "rgba(125,155,74,0.12)",
-                      border: "1px solid rgba(125,155,74,0.30)",
-                      padding: "8px 12px",
+                {settleOnChain ? (
+                  <SettlementBanner
+                    status={settleStatus}
+                    txHash={settleTxHash}
+                    error={settleError}
+                    onRetry={() => {
+                      const humanWins = game.winner === 0;
+                      void settleOnChainDirect(humanWins, { useForfeitSig: !humanWins });
                     }}
-                  >
-                    <p style={{ fontSize: 14, fontWeight: 600, color: "var(--cg-success)" }}>
-                      Match settled. Rating updated.
-                    </p>
-                    <Link
-                      href="/keeper/no-match"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      style={{ marginTop: 4, display: "block", fontSize: 12, color: "var(--cg-brass)" }}
-                    >
-                      View KeeperHub audit trail ↗
-                    </Link>
-                    {keeperRunning && (
-                      <p style={{ marginTop: 4, fontSize: 12, color: "var(--cg-fg-3)" }}>
-                        Workflow running…
-                      </p>
-                    )}
-                  </div>
-                ) : finalizing ? (
-                  <div style={{ marginTop: 12 }}>
-                    <p style={{ fontSize: 14, color: "var(--cg-fg-3)" }} className="animate-pulse">
-                      Settling…
-                    </p>
-                    <Link
-                      href="/keeper/no-match"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      style={{ marginTop: 4, display: "block", fontSize: 12, color: "var(--cg-brass)" }}
-                    >
-                      View KeeperHub audit trail ↗
-                    </Link>
-                  </div>
-                ) : finalizeError ? (
-                  <div style={{ marginTop: 12 }}>
-                    <p style={{ fontSize: 12, color: "var(--cg-danger)" }}>
-                      Settlement failed: {finalizeError}
-                    </p>
-                    <button
-                      type="button"
-                      onClick={() => void doFinalizeAndTriggerKeeper(game)}
-                      style={{
-                        marginTop: 8,
-                        background: "var(--cg-brass)",
-                        color: "var(--cg-brass-ink)",
-                        borderRadius: "var(--cg-radius-sm)",
-                        padding: "6px 12px",
-                        fontSize: 12,
-                        fontWeight: 600,
-                        border: "none",
-                        cursor: "pointer",
-                      }}
-                    >
-                      Retry
-                    </button>
-                  </div>
+                  />
                 ) : null}
               </div>
             )}
