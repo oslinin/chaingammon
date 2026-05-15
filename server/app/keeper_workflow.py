@@ -553,6 +553,7 @@ def step_audit_append(
     upload = ctx.og_put_blob(audit_blob)
     workflow.audit_root_hash = getattr(upload, "root_hash", None) \
         or getattr(upload, "rootHash", None)
+    step.tx_hash = workflow.audit_root_hash
     step.detail = f"Audit JSON pinned to 0G Storage at rootHash={workflow.audit_root_hash}."
 
 

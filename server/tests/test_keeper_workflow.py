@@ -249,7 +249,7 @@ def test_step_audit_append_uploads_workflow_json():
     workflow = kw._empty_workflow("42")
     kw.step_audit_append(ctx, step, workflow=workflow)
     assert workflow.audit_root_hash == "0xaudit-root"
-    assert step.tx_hash is None  # storage hash — not a chain tx
+    assert step.tx_hash == "0xaudit-root"
     assert "0xaudit-root" in step.detail
     parsed = json.loads(captured["blob"])
     assert parsed["matchId"] == "42"

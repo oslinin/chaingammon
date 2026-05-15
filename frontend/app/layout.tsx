@@ -91,6 +91,21 @@ export default function RootLayout({
                 </a>
                 <div className="flex flex-wrap items-center justify-end gap-3">
                   <ComputeBackendsPill />
+                  <a
+                    href="/help"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="cg-nav-link"
+                    style={{
+                      fontSize: 13,
+                      textDecoration: "none",
+                      fontFamily: "var(--cg-font-sans)",
+                      padding: "4px 8px",
+                      borderRadius: "var(--cg-radius-sm)",
+                    }}
+                  >
+                    Help
+                  </a>
                   <ConnectButton />
                 </div>
               </header>

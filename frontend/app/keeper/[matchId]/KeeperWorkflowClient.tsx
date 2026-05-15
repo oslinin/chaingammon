@@ -225,7 +225,7 @@ export default function KeeperWorkflowClient() {
                 </div>
 
                 {run.steps.map((step, i) => (
-                  <StepRow key={step.id} step={step} index={i} explorerUrl="https://chainscan-galileo.0g.ai" />
+                  <StepRow key={step.id} step={step} index={i} explorerUrl="https://chainscan-galileo.0g.ai" serverUrl={SERVER} />
                 ))}
               </>
             )}
@@ -268,10 +268,12 @@ function StepRow({
   step,
   index,
   explorerUrl,
+  serverUrl,
 }: {
   step: WorkflowStep;
   index: number;
   explorerUrl: string;
+  serverUrl: string;
 }) {
   return (
     <div
@@ -317,12 +319,16 @@ function StepRow({
             )}
             {step.tx_hash && (
               <a
-                href={`${explorerUrl}/tx/${step.tx_hash}`}
+                href={
+                  step.id === "audit_append"
+                    ? `${serverUrl}/game-records/${step.tx_hash}`
+                    : `${explorerUrl}/tx/${step.tx_hash}`
+                }
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-indigo-500 underline hover:text-indigo-400 dark:text-indigo-400"
               >
-                tx ↗
+                {step.id === "audit_append" ? "view audit ↗" : "tx ↗"}
               </a>
             )}
           </div>
