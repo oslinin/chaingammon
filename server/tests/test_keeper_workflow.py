@@ -97,15 +97,23 @@ def _stub_chain_with_match(record_hash="0x" + "ab" * 32):
 
 def test_step_escrow_deposit_ok():
     chain = _stub_chain_with_match()
-    ctx = kw.WorkflowContext(match_id="42", chain=chain)
+    ctx = kw.WorkflowContext(match_id="42", chain=chain, stake_wei=1000)
     step = kw.WorkflowStep(id="escrow_deposit", name="x")
     kw.step_escrow_deposit(ctx, step)
     assert ctx.match_info is not None
     assert "MatchInfo found on-chain" in step.detail
 
 
+def test_step_escrow_deposit_skipped_for_elo_only():
+    ctx = kw.WorkflowContext(match_id="42", chain=MagicMock(), stake_wei=0)
+    step = kw.WorkflowStep(id="escrow_deposit", name="x")
+    kw.step_escrow_deposit(ctx, step)
+    assert ctx.match_info is None
+    assert "ELO-only" in step.detail
+
+
 def test_step_escrow_deposit_missing_chain_raises():
-    ctx = kw.WorkflowContext(match_id="42")
+    ctx = kw.WorkflowContext(match_id="42", stake_wei=1000)
     step = kw.WorkflowStep(id="escrow_deposit", name="x")
     with pytest.raises(RuntimeError, match="chain client"):
         kw.step_escrow_deposit(ctx, step)
@@ -122,31 +130,38 @@ def test_step_escrow_deposit_zero_timestamp_raises():
         "matchLength": 0,
         "gameRecordHash": "0x" + "00" * 32,
     }
-    ctx = kw.WorkflowContext(match_id="42", chain=chain)
+    ctx = kw.WorkflowContext(match_id="42", chain=chain, stake_wei=1000)
     step = kw.WorkflowStep(id="escrow_deposit", name="x")
     with pytest.raises(RuntimeError, match="zero MatchInfo"):
         kw.step_escrow_deposit(ctx, step)
 
 
 def test_step_escrow_deposit_non_int_match_id_raises():
-    ctx = kw.WorkflowContext(match_id="abc-not-an-int", chain=MagicMock())
+    ctx = kw.WorkflowContext(match_id="abc-not-an-int", chain=MagicMock(), stake_wei=1000)
     step = kw.WorkflowStep(id="escrow_deposit", name="x")
     with pytest.raises(RuntimeError, match="on-chain matchId"):
         kw.step_escrow_deposit(ctx, step)
 
 
 def test_step_vrf_rolls_ok():
-    ctx = kw.WorkflowContext(match_id="42", drand_check=lambda: True)
+    ctx = kw.WorkflowContext(match_id="42", drand_check=lambda: True, stake_wei=1000)
     step = kw.WorkflowStep(id="vrf_rolls", name="x")
     kw.step_vrf_rolls(ctx, step)
     assert "Drand" in step.detail
 
 
 def test_step_vrf_rolls_unreachable_raises():
-    ctx = kw.WorkflowContext(match_id="42", drand_check=lambda: False)
+    ctx = kw.WorkflowContext(match_id="42", drand_check=lambda: False, stake_wei=1000)
     step = kw.WorkflowStep(id="vrf_rolls", name="x")
     with pytest.raises(RuntimeError, match="drand network unreachable"):
         kw.step_vrf_rolls(ctx, step)
+
+
+def test_step_vrf_rolls_skipped_for_elo_only():
+    ctx = kw.WorkflowContext(match_id="42", stake_wei=0)
+    step = kw.WorkflowStep(id="vrf_rolls", name="x")
+    kw.step_vrf_rolls(ctx, step)
+    assert step.status == "skipped"
 
 
 def test_step_og_storage_fetch_ok():
@@ -160,6 +175,7 @@ def test_step_og_storage_fetch_ok():
         match_id="42",
         match_info={"gameRecordHash": "0xab" + "cd" * 31},
         og_get_blob=lambda h: blob,
+        stake_wei=1000,
     )
     step = kw.WorkflowStep(id="og_storage_fetch", name="x")
     kw.step_og_storage_fetch(ctx, step)
@@ -173,10 +189,18 @@ def test_step_og_storage_fetch_zero_hash_raises():
         match_id="42",
         match_info={"gameRecordHash": "0x" + "00" * 32},
         og_get_blob=lambda h: b"",
+        stake_wei=1000,
     )
     step = kw.WorkflowStep(id="og_storage_fetch", name="x")
     with pytest.raises(RuntimeError, match="game_record_hash"):
         kw.step_og_storage_fetch(ctx, step)
+
+
+def test_step_og_storage_fetch_skipped_for_elo_only():
+    ctx = kw.WorkflowContext(match_id="42", stake_wei=0)
+    step = kw.WorkflowStep(id="og_storage_fetch", name="x")
+    kw.step_og_storage_fetch(ctx, step)
+    assert step.status == "skipped"
 
 
 
@@ -184,10 +208,27 @@ def test_step_relay_tx_surfaces_record_hash():
     ctx = kw.WorkflowContext(
         match_id="42",
         match_info={"gameRecordHash": "0xab" + "cd" * 31},
+        stake_wei=1000,
     )
     step = kw.WorkflowStep(id="relay_tx", name="x")
     kw.step_relay_tx(ctx, step)
-    assert step.tx_hash == "0xab" + "cd" * 31
+    assert step.tx_hash is None  # storage hash — not a chain tx
+    assert "0xab" + "cd" * 31 in step.detail
+
+
+def test_step_relay_tx_skipped_for_elo_only():
+    ctx = kw.WorkflowContext(match_id="42", stake_wei=0)
+    step = kw.WorkflowStep(id="relay_tx", name="x")
+    kw.step_relay_tx(ctx, step)
+    assert step.status == "skipped"
+
+
+def test_step_ens_update_skipped_for_elo_only():
+    ctx = kw.WorkflowContext(match_id="42", stake_wei=0)
+    step = kw.WorkflowStep(id="ens_update", name="x")
+    kw.step_ens_update(ctx, step)
+    assert step.status == "skipped"
+    assert "finalize-direct" in step.detail
 
 
 def test_step_audit_append_uploads_workflow_json():
@@ -208,7 +249,8 @@ def test_step_audit_append_uploads_workflow_json():
     workflow = kw._empty_workflow("42")
     kw.step_audit_append(ctx, step, workflow=workflow)
     assert workflow.audit_root_hash == "0xaudit-root"
-    assert step.tx_hash == "0xaudit-root"
+    assert step.tx_hash is None  # storage hash — not a chain tx
+    assert "0xaudit-root" in step.detail
     parsed = json.loads(captured["blob"])
     assert parsed["matchId"] == "42"
     assert "steps" in parsed

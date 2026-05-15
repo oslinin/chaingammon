@@ -9,7 +9,7 @@
     "lint": "eslint",
     "test": "next build --webpack",
     "test:e2e": "playwright test",
-    "copy:wasm": "mkdir -p public/js && cp node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.mjs node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.wasm public/js/",
+    "copy:wasm": "mkdir -p public/js && cp node_modules/onnxruntime-web/dist/ort-wasm-simd.wasm node_modules/onnxruntime-web/dist/ort-wasm.wasm public/js/",
     "postinstall": "pnpm run copy:wasm"
   },
   "dependencies": {
@@ -20,7 +20,7 @@
     "@walletconnect/ethereum-provider": "^2.21.1",
     "ethers": "^6.16.0",
     "next": "16.2.4",
-    "onnxruntime-web": "^1.26.0",
+    "onnxruntime-web": "1.16.3",
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "viem": "^2.48.4",

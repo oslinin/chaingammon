@@ -4,22 +4,25 @@
 // Phase 57: consolidated top navbar — brand, compute-backends, and wallet
 // connect (with ELO + match count from ENS) in a single global header.
 import type { Metadata, Viewport } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Space_Grotesk, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import { ComputeBackendsPill } from "./ComputeBackendsPill";
 import { ConnectButton } from "./ConnectButton";
 import { Providers } from "./providers";
-import { Sidebar } from "./Sidebar";
 import { MobileNav } from "./MobileNav";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
+const cgSans = Space_Grotesk({
+  variable: "--font-cg-sans",
   subsets: ["latin"],
+  weight: ["300", "400", "500", "600", "700"],
+  display: "swap",
 });
 
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
+const cgMono = JetBrains_Mono({
+  variable: "--font-cg-mono",
   subsets: ["latin"],
+  weight: ["400", "500", "600"],
+  display: "swap",
 });
 
 export const metadata: Metadata = {
@@ -43,18 +46,22 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      className={`${cgSans.variable} ${cgMono.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col">
         <Providers>
           <div className="flex flex-1">
-            <Sidebar />
-            {/* pb-16 md:pb-0 reserves space for the fixed mobile bottom nav */}
+            {/* pb-16 reserves space for the fixed mobile bottom nav */}
             <div className="flex flex-1 flex-col min-w-0 pb-16 md:pb-0">
               {/* Global top navbar: brand on the left, compute backends
-                  + wallet connect (ELO, matches played) on the right.
-                  Visible on every page so users always see their stats. */}
-              <header className="flex items-center justify-between gap-4 border-b border-indigo-100 px-4 py-2 dark:border-indigo-950/50">
+                  + wallet connect (ELO, matches played) on the right. */}
+              <header
+                style={{
+                  background: "var(--cg-bg-1)",
+                  borderBottom: "1px solid var(--cg-line-1)",
+                }}
+                className="flex items-center justify-between gap-4 px-4 py-2"
+              >
                 <a
                   href="/"
                   className="flex items-center gap-2"
@@ -67,8 +74,19 @@ export default function RootLayout({
                     height={24}
                     className="shrink-0"
                   />
-                  <span className="text-sm font-semibold tracking-tight text-indigo-700 dark:text-indigo-300">
-                    Chaingammon
+                  <span
+                    style={{
+                      fontFamily: "var(--cg-font-display)",
+                      fontSize: "16px",
+                      lineHeight: 1,
+                      letterSpacing: "-0.02em",
+                      display: "inline-flex",
+                      alignItems: "baseline",
+                    }}
+                  >
+                    <span style={{ color: "var(--cg-fg-2)", fontStyle: "italic" }}>Chain</span>
+                    <span style={{ color: "var(--cg-brass)", padding: "0 0.05em" }}>·</span>
+                    <span style={{ color: "var(--cg-fg-1)" }}>Gammon</span>
                   </span>
                 </a>
                 <div className="flex flex-wrap items-center justify-end gap-3">

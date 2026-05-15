@@ -62,41 +62,33 @@ interface Props {
   noLLM?: boolean;
 }
 
-// ── Tag colour palette ─────────────────────────────────────────────────────
+// ── Tag colour palette — mapped to CG semantic tokens ─────────────────────
+// One accent color per tag; all use CG-approved values from the design system.
 
-const TAG_STYLES: Record<string, { bg: string; text: string; border: string }> = {
-  Safe: {
-    bg: "bg-emerald-50 dark:bg-emerald-900/20",
-    text: "text-emerald-800 dark:text-emerald-300",
-    border: "border-emerald-300 dark:border-emerald-700/60",
-  },
-  Aggressive: {
-    bg: "bg-orange-50 dark:bg-orange-900/20",
-    text: "text-orange-800 dark:text-orange-300",
-    border: "border-orange-300 dark:border-orange-700/60",
-  },
-  Priming: {
-    bg: "bg-violet-50 dark:bg-violet-900/20",
-    text: "text-violet-800 dark:text-violet-300",
-    border: "border-violet-300 dark:border-violet-700/60",
-  },
-  Anchor: {
-    bg: "bg-blue-50 dark:bg-blue-900/20",
-    text: "text-blue-800 dark:text-blue-300",
-    border: "border-blue-300 dark:border-blue-700/60",
-  },
-  Blitz: {
-    bg: "bg-red-50 dark:bg-red-900/20",
-    text: "text-red-800 dark:text-red-300",
-    border: "border-red-300 dark:border-red-700/60",
-  },
+const TAG_COLORS: Record<string, { bg: string; text: string; border: string }> = {
+  Safe:       { bg: "rgba(125,155,74,0.12)",  text: "#7D9B4A", border: "rgba(125,155,74,0.35)" },
+  Aggressive: { bg: "rgba(208,138,60,0.12)",  text: "#D08A3C", border: "rgba(208,138,60,0.35)" },
+  Priming:    { bg: "rgba(201,155,92,0.12)",  text: "#E3B779", border: "rgba(201,155,92,0.35)" },
+  Anchor:     { bg: "rgba(107,138,166,0.12)", text: "#6B8AA6", border: "rgba(107,138,166,0.35)" },
+  Blitz:      { bg: "rgba(192,74,59,0.12)",   text: "#C04A3B", border: "rgba(192,74,59,0.35)" },
 };
 
 function TagBadge({ tag }: { tag: string }) {
-  const s = TAG_STYLES[tag] ?? TAG_STYLES.Safe;
+  const c = TAG_COLORS[tag] ?? TAG_COLORS.Safe;
   return (
     <span
-      className={`inline-block rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide border ${s.bg} ${s.text} ${s.border}`}
+      style={{
+        display: "inline-block",
+        borderRadius: "var(--cg-radius-sm)",
+        padding: "1px 6px",
+        fontSize: 9,
+        fontWeight: 600,
+        letterSpacing: "0.1em",
+        textTransform: "uppercase",
+        background: c.bg,
+        color: c.text,
+        border: `1px solid ${c.border}`,
+      }}
     >
       {tag}
     </span>
@@ -126,7 +118,6 @@ export function AgentTeammatePanel({
   const [strategyInput, setStrategyInput] = useState("");
   const [sending, setSending] = useState(false);
 
-  // Last Agent Teammate response for the recommendation highlight + deep-dive.
   const [lastResponse, setLastResponse] = useState<TeammateResponse | null>(null);
 
   const inputRef = useRef<HTMLInputElement>(null);
@@ -157,7 +148,6 @@ export function AgentTeammatePanel({
         setTaggedCandidates(tagged);
         setCandidatesRanked(true);
       } catch {
-        // ONNX unavailable — fall back to unranked legal moves tagged by heuristic.
         if (cancelled) return;
         try {
           const moves = generateLegalMoves(gameBoard, turn, dice);
@@ -178,10 +168,6 @@ export function AgentTeammatePanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [disabled, positionId, matchId, dice?.[0], dice?.[1]]);
 
-  // Auto-suggest once candidates are ready — waits for ONNX evaluation to
-  // complete before sending so the LLM receives actual tagged moves to pick
-  // from. Fires once per (positionId, dice) pair; guard is set synchronously
-  // (no timer) so React Strict Mode's double-invoke only sends one request.
   const autoSentRef = useRef<string>("");
   useEffect(() => {
     if (noLLM || disabled || !dice || taggedCandidates.length === 0) return;
@@ -192,7 +178,6 @@ export function AgentTeammatePanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [noLLM, disabled, positionId, dice?.[0], dice?.[1], taggedCandidates.length]);
 
-  // Scroll to latest message whenever dialogue grows.
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [dialogue, lastResponse]);
@@ -223,7 +208,6 @@ export function AgentTeammatePanel({
           opponent_features: opponentFeatures ?? null,
           agent_id: opponentId ?? null,
           turn_index: 0,
-          // Use compute backend since the Route Handler only supports 0G Compute
           backend: "compute",
         }),
       });
@@ -234,12 +218,8 @@ export function AgentTeammatePanel({
       const data = (await res.json()) as TeammateResponse;
 
       setLastResponse(data);
-      setDialogue([
-        ...newDialogue,
-        { role: "agent", text: data.reply },
-      ]);
+      setDialogue([...newDialogue, { role: "agent", text: data.reply }]);
 
-      // Pre-select the recommended move in the parent's move input.
       if (data.recommended_move && onMoveSelect) {
         onMoveSelect(data.recommended_move);
       }
@@ -248,7 +228,7 @@ export function AgentTeammatePanel({
         ...newDialogue,
         {
           role: "agent",
-          text: `Agent Teammate (0G Compute) encountered an error: ${e.message}. Please ensure your wallet has a sufficient OG balance and your connection to the 0G network is stable.`,
+          text: `Agent teammate encountered an error: ${e.message}. Ensure your wallet has OG balance and your 0G connection is stable.`,
         },
       ]);
     } finally {
@@ -257,8 +237,6 @@ export function AgentTeammatePanel({
   };
 
   const handleSend = () => void sendStrategy(strategyInput);
-
-  // ── Quick-action chips ────────────────────────────────────────────────
 
   const QUICK_ACTIONS = [
     "Play safe",
@@ -270,36 +248,83 @@ export function AgentTeammatePanel({
   // ── Render ─────────────────────────────────────────────────────────────
 
   return (
-    <div className="flex h-full flex-col rounded-xl border border-indigo-200 bg-indigo-50/50 dark:border-indigo-800/40 dark:bg-indigo-900/10">
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        height: "100%",
+        background: "var(--cg-bg-2)",
+      }}
+    >
       {/* Header */}
-      <div className="shrink-0 flex items-center justify-between border-b border-indigo-200 px-4 py-2 dark:border-indigo-800/40">
-        <div className="flex items-center gap-2">
-          <span className="text-xs font-semibold uppercase tracking-wide text-indigo-700 dark:text-indigo-400">
-            {noLLM ? "Move Advisor" : "Agent Teammate"}
+      <div
+        style={{
+          flexShrink: 0,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          borderBottom: "1px solid var(--cg-line-1)",
+          padding: "8px 16px",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span
+            style={{
+              fontSize: 10,
+              fontWeight: 600,
+              letterSpacing: "0.12em",
+              textTransform: "uppercase",
+              color: "var(--cg-brass)",
+              fontFamily: "var(--cg-font-sans)",
+            }}
+          >
+            {noLLM ? "Move advisor" : "Agent teammate"}
           </span>
-          <span className="text-[10px] text-indigo-500/70 dark:text-indigo-400/50">
-            {noLLM ? "· ONNX-ranked moves, you decide" : "· AI micro-tactics, you set the strategy"}
+          <span style={{ fontSize: 10, color: "var(--cg-fg-4)" }}>
+            {noLLM ? "· ONNX-ranked moves" : "· AI micro-tactics"}
           </span>
         </div>
       </div>
 
-      {/* Pinned candidates row — always visible above the conversation */}
+      {/* Pinned candidates row */}
       {(loadingCandidates || taggedCandidates.length > 0) && (
-        <div className="shrink-0 border-b border-indigo-200 px-4 py-2.5 dark:border-indigo-800/40">
+        <div
+          style={{
+            flexShrink: 0,
+            borderBottom: "1px solid var(--cg-line-1)",
+            padding: "10px 16px",
+          }}
+        >
           {loadingCandidates && (
-            <p className="text-xs text-indigo-500 animate-pulse dark:text-indigo-400">
+            <p
+              style={{
+                fontSize: 12,
+                color: "var(--cg-fg-3)",
+                fontFamily: "var(--cg-font-sans)",
+              }}
+              className="animate-pulse"
+            >
               Evaluating moves…
             </p>
           )}
           {taggedCandidates.length > 0 && (
             <>
-              <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-indigo-600/70 dark:text-indigo-400/60">
+              <p
+                style={{
+                  marginBottom: 8,
+                  fontSize: 10,
+                  fontWeight: 600,
+                  letterSpacing: "0.12em",
+                  textTransform: "uppercase",
+                  color: "var(--cg-fg-4)",
+                }}
+              >
                 {candidatesRanked ? "Top moves this turn" : "Legal moves this turn"}
               </p>
-              <div className="flex flex-wrap gap-2">
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
                 {taggedCandidates.map((c, i) => {
                   const isRecommended = lastResponse?.recommended_move === c.move;
-                  const s = TAG_STYLES[c.tag] ?? TAG_STYLES.Safe;
+                  const col = TAG_COLORS[c.tag] ?? TAG_COLORS.Safe;
                   return (
                     <button
                       key={i}
@@ -307,27 +332,35 @@ export function AgentTeammatePanel({
                       disabled={disabled}
                       onClick={() => onMoveSelect?.(c.move)}
                       title={c.tag_reason}
-                      className={[
-                        "flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-mono transition-shadow",
-                        s.bg,
-                        s.border,
-                        s.text,
-                        isRecommended
-                          ? "ring-2 ring-indigo-500 ring-offset-1 shadow-md"
-                          : "hover:shadow-sm",
-                        disabled ? "cursor-not-allowed opacity-50" : "cursor-pointer",
-                      ].join(" ")}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 6,
+                        borderRadius: "var(--cg-radius)",
+                        border: isRecommended
+                          ? "1px solid var(--cg-brass)"
+                          : `1px solid var(--cg-line-2)`,
+                        background: isRecommended ? "rgba(201,155,92,0.10)" : "var(--cg-bg-3)",
+                        padding: "5px 10px",
+                        fontFamily: "var(--cg-font-mono)",
+                        fontSize: 12,
+                        color: "var(--cg-fg-1)",
+                        cursor: disabled ? "not-allowed" : "pointer",
+                        opacity: disabled ? 0.5 : 1,
+                        boxShadow: isRecommended ? "var(--cg-glow-brass)" : "none",
+                        transition: "border-color 120ms, background 120ms",
+                      }}
                     >
                       <TagBadge tag={c.tag} />
                       <span>{c.move}</span>
                       {candidatesRanked && (
-                        <span className="text-[10px] opacity-60">
+                        <span style={{ fontSize: 10, color: "var(--cg-fg-3)" }}>
                           {c.equity >= 0 ? "+" : ""}
                           {c.equity.toFixed(3)}
                         </span>
                       )}
                       {isRecommended && (
-                        <span className="text-[10px] font-semibold text-indigo-600 dark:text-indigo-300">
+                        <span style={{ fontSize: 10, fontWeight: 600, color: "var(--cg-brass-hi)" }}>
                           ✓
                         </span>
                       )}
@@ -340,31 +373,58 @@ export function AgentTeammatePanel({
         </div>
       )}
 
-      {/* Scrollable content — hidden in noLLM mode (only the pinned moves row is shown) */}
-      <div className={`flex flex-1 flex-col gap-3 overflow-y-auto p-4 min-h-0 ${noLLM ? "hidden" : ""}`}>
+      {/* Scrollable conversation — hidden in noLLM mode */}
+      <div
+        style={{
+          flex: 1,
+          display: noLLM ? "none" : "flex",
+          flexDirection: "column",
+          gap: 12,
+          overflowY: "auto",
+          padding: 16,
+          minHeight: 0,
+        }}
+      >
         {/* Deep-dive panel */}
         {lastResponse?.deep_dive && (
-          <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-700/40 dark:bg-amber-900/10 dark:text-amber-200">
-            <span className="mr-1.5 font-semibold">Historical analysis</span>
+          <div
+            style={{
+              borderRadius: "var(--cg-radius)",
+              border: "1px solid rgba(208,138,60,0.30)",
+              background: "rgba(208,138,60,0.08)",
+              padding: "8px 12px",
+              fontSize: 12,
+              color: "var(--cg-warn)",
+            }}
+          >
+            <span style={{ fontWeight: 600, marginRight: 6 }}>Historical analysis</span>
             {lastResponse.deep_dive}
           </div>
         )}
 
         {/* Conversation history */}
         {dialogue.length > 0 && (
-          <div className="flex flex-col gap-2 pr-1">
+          <div style={{ display: "flex", flexDirection: "column", gap: 8, paddingRight: 4 }}>
             {dialogue.map((msg, i) => (
               <div
                 key={i}
-                className={`flex ${msg.role === "human" ? "justify-end" : "justify-start"}`}
+                style={{
+                  display: "flex",
+                  justifyContent: msg.role === "human" ? "flex-end" : "flex-start",
+                }}
               >
                 <div
-                  className={[
-                    "max-w-[80%] rounded-lg px-3 py-1.5 text-xs leading-5",
-                    msg.role === "human"
-                      ? "bg-indigo-600 text-white"
-                      : "bg-white text-zinc-800 shadow-sm dark:bg-zinc-800 dark:text-zinc-200",
-                  ].join(" ")}
+                  style={{
+                    maxWidth: "80%",
+                    borderRadius: "var(--cg-radius)",
+                    padding: "6px 12px",
+                    fontSize: 12,
+                    lineHeight: 1.5,
+                    background: msg.role === "human" ? "var(--cg-brass)" : "var(--cg-bg-3)",
+                    color: msg.role === "human" ? "var(--cg-brass-ink)" : "var(--cg-fg-2)",
+                    border: msg.role === "human" ? "none" : "1px solid var(--cg-line-2)",
+                    boxShadow: "var(--cg-shadow-1)",
+                  }}
                 >
                   {msg.text}
                 </div>
@@ -376,13 +436,22 @@ export function AgentTeammatePanel({
 
         {/* Quick-action chips */}
         {!disabled && dialogue.length === 0 && (
-          <div className="flex flex-wrap gap-1.5">
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
             {QUICK_ACTIONS.map((action) => (
               <button
                 key={action}
                 type="button"
                 onClick={() => void sendStrategy(action)}
-                className="rounded-full border border-indigo-300 bg-white px-2.5 py-0.5 text-[11px] text-indigo-700 hover:bg-indigo-50 dark:border-indigo-700/60 dark:bg-zinc-900 dark:text-indigo-300 dark:hover:bg-indigo-900/20"
+                style={{
+                  borderRadius: "var(--cg-radius-pill)",
+                  border: "1px solid var(--cg-line-2)",
+                  background: "var(--cg-bg-3)",
+                  padding: "3px 10px",
+                  fontSize: 11,
+                  color: "var(--cg-fg-2)",
+                  cursor: "pointer",
+                  transition: "border-color 120ms, background 120ms",
+                }}
               >
                 {action}
               </button>
@@ -391,14 +460,25 @@ export function AgentTeammatePanel({
         )}
 
         {sending && (
-          <p className="text-xs text-indigo-500 animate-pulse dark:text-indigo-400">
-            Agent Teammate is thinking…
+          <p
+            style={{ fontSize: 12, color: "var(--cg-fg-3)", fontFamily: "var(--cg-font-sans)" }}
+            className="animate-pulse"
+          >
+            Agent teammate is thinking…
           </p>
         )}
       </div>
 
       {/* Strategy input — hidden in noLLM mode */}
-      <div className={`shrink-0 flex gap-2 border-t border-indigo-200 px-4 py-3 dark:border-indigo-800/40 ${noLLM ? "hidden" : ""}`}>
+      <div
+        style={{
+          flexShrink: 0,
+          display: noLLM ? "none" : "flex",
+          gap: 8,
+          borderTop: "1px solid var(--cg-line-1)",
+          padding: "10px 16px",
+        }}
+      >
         <input
           ref={inputRef}
           value={strategyInput}
@@ -407,16 +487,36 @@ export function AgentTeammatePanel({
           placeholder={
             disabled
               ? "Waiting for your turn…"
-              : "Tell me your strategy (or ask to validate your intuition)"
+              : "Tell me your strategy…"
           }
           disabled={disabled || sending}
-          className="flex-1 rounded-lg border border-indigo-200 bg-white px-3 py-2 text-xs placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-indigo-400 disabled:bg-zinc-50 disabled:text-zinc-400 dark:border-indigo-700/40 dark:bg-zinc-900 dark:text-zinc-100 dark:placeholder-zinc-600 dark:disabled:bg-zinc-950"
+          style={{
+            flex: 1,
+            borderRadius: "var(--cg-radius-sm)",
+            border: "1px solid var(--cg-line-2)",
+            background: "var(--cg-bg-1)",
+            color: "var(--cg-fg-1)",
+            fontFamily: "var(--cg-font-sans)",
+            fontSize: 12,
+            padding: "6px 12px",
+            outline: "none",
+          }}
         />
         <button
           type="button"
           onClick={handleSend}
           disabled={disabled || !strategyInput.trim() || sending}
-          className="rounded-lg bg-indigo-600 px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-500 disabled:cursor-not-allowed disabled:bg-zinc-400"
+          style={{
+            borderRadius: "var(--cg-radius-sm)",
+            background: "var(--cg-brass)",
+            color: "var(--cg-brass-ink)",
+            padding: "6px 12px",
+            fontSize: 12,
+            fontWeight: 600,
+            cursor: "pointer",
+            transition: "background 120ms",
+          }}
+          className="disabled:opacity-40 disabled:cursor-not-allowed"
         >
           {sending ? "…" : "Ask"}
         </button>

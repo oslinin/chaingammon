@@ -87,11 +87,38 @@ function applyMoveSegment(
   return { board: newBoard, bar: newBar, off: newOff };
 }
 
+// ── Shared style helpers ───────────────────────────────────────────────────
+
+const eyebrow: React.CSSProperties = {
+  fontSize: 11,
+  fontWeight: 500,
+  letterSpacing: "0.18em",
+  textTransform: "uppercase",
+  color: "var(--cg-fg-3)",
+  fontFamily: "var(--cg-font-sans)",
+};
+
+const card: React.CSSProperties = {
+  background: "var(--cg-bg-2)",
+  border: "1px solid var(--cg-line-2)",
+  borderRadius: "var(--cg-radius)",
+  boxShadow: "var(--cg-shadow-1)",
+};
+
 // ── Component ─────────────────────────────────────────────────────────────
 
 export default function TeamDemoPage() {
   return (
-    <Suspense fallback={<div className="flex flex-1 items-center justify-center">Loading…</div>}>
+    <Suspense
+      fallback={
+        <div
+          style={{ color: "var(--cg-fg-3)", fontFamily: "var(--cg-font-sans)" }}
+          className="flex flex-1 items-center justify-center"
+        >
+          Loading…
+        </div>
+      }
+    >
       <TeamDemoPageInner />
     </Suspense>
   );
@@ -101,7 +128,6 @@ function TeamDemoPageInner() {
   const params = useSearchParams();
   const router = useRouter();
 
-  // URL params ?opponents=1,2 and ?teammates=3 auto-populate IDs and skip setup.
   const opponentsParam = params.get("opponents");
   const teammatesParam = params.get("teammates");
   const initialOpponents = opponentsParam
@@ -113,9 +139,6 @@ function TeamDemoPageInner() {
   const hasUrlParams = initialOpponents.length > 0;
   const settleOnChain = params.get("settle") === "1";
 
-  // Show setup only when no opponents were pre-supplied via URL.
-  // With ?opponents=N&settle=1 the user already passed through /match for
-  // KeeperHub setup, so go straight to the game.
   const [setup, setSetup] = useState(!hasUrlParams);
   const [teammateIds, setTeammateIds] = useState<number[]>(initialTeammates);
   const [opponentIds, setOpponentIds] = useState<number[]>(initialOpponents);
@@ -160,8 +183,6 @@ function TeamDemoPageInner() {
   const agentMoving = useRef(false);
   const autoStarted = useRef(false);
 
-  // Auto-start the game when opponents come from URL params (off-chain or on-chain).
-  // On-chain games arrive here after /match has already handled KeeperHub setup.
   useEffect(() => {
     if (!hasUrlParams || autoStarted.current || game) return;
     if (initialOpponents.length === 0) return;
@@ -312,6 +333,7 @@ function TeamDemoPageInner() {
     if (finalizing || keeperMatchId !== null) return;
     setFinalizing(true);
     setFinalizeError(null);
+    window.localStorage.removeItem("keeperMatchId");
     const ZERO = "0x0000000000000000000000000000000000000000";
     try {
       const humanWins = g.winner === 0;
@@ -338,7 +360,7 @@ function TeamDemoPageInner() {
       setKeeperMatchId(data.match_id);
       window.localStorage.setItem("keeperMatchId", String(data.match_id));
       setKeeperRunning(true);
-      fetch(`${SERVER}/keeper-workflow/${data.match_id}/run`, { method: "POST" })
+      fetch(`${SERVER}/keeper-workflow/${data.match_id}/run?stake_wei=0`, { method: "POST" })
         .finally(() => setKeeperRunning(false));
     } catch (e) {
       setFinalizeError(e instanceof Error ? e.message : String(e));
@@ -347,7 +369,6 @@ function TeamDemoPageInner() {
     }
   };
 
-  // Auto-finalize when the game ends — only when ?settle=1 (came via KeeperHub card).
   useEffect(() => {
     if (game?.game_over && settleOnChain && opponentIds.length > 0) {
       void doFinalizeAndTriggerKeeper(game);
@@ -376,7 +397,7 @@ function TeamDemoPageInner() {
 
   const doForfeit = () => {
     if (!game || game.game_over) return;
-    if (!window.confirm("Forfeit this match? You'll be marked as the loser.")) return;
+    if (!window.confirm("Resign this match? You'll be marked as the loser.")) return;
     try {
       setGame(resignMatch(game));
     } catch (e) {
@@ -440,6 +461,8 @@ function TeamDemoPageInner() {
     }
   };
 
+  // ── Setup screen ──────────────────────────────────────────────────────────
+
   if (setup) {
     const onClickSetupStart = () => {
       if (opponentIds.length === 0) return;
@@ -453,19 +476,24 @@ function TeamDemoPageInner() {
     return (
       <main className="mx-auto flex w-full max-w-xl flex-1 flex-col gap-8 p-8">
         <header className="flex flex-col gap-2">
-          <h1 className="text-2xl font-bold text-zinc-900 dark:text-zinc-50">
+          <h1
+            style={{ color: "var(--cg-fg-1)", fontWeight: 500, fontSize: 24, fontFamily: "var(--cg-font-sans)" }}
+          >
             {settleOnChain ? "On-chain game" : "Off-chain game"}
           </h1>
-          <p className="text-sm text-zinc-600 dark:text-zinc-400">
+          <p style={{ color: "var(--cg-fg-2)", fontSize: 14 }}>
             {settleOnChain
-              ? "Pick your opponent, then review the KeeperHub settlement terms before the match starts. Your ELO is updated on-chain when the game ends."
-              : "Configure a training match (no settlement). Play alongside an AI teammate against an opposing team of agents."}
+              ? "Pick your opponent, then review the KeeperHub settlement terms before the match starts. Your rating is updated on-chain when the game ends."
+              : "Configure a training match (no settlement). Play alongside an AI teammate against an opposing agent."}
           </p>
         </header>
 
         <section className="flex flex-col gap-4">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">
-            Choose your Teammate <span className="normal-case font-normal text-zinc-400">(optional — skip to play solo)</span>
+          <h2 style={eyebrow}>
+            Choose your teammate{" "}
+            <span style={{ textTransform: "none", fontWeight: 400, color: "var(--cg-fg-4)" }}>
+              (optional — skip to play solo)
+            </span>
           </h2>
           <div className="flex flex-wrap gap-2">
             {agentsQuery.data?.map((a) => {
@@ -483,14 +511,23 @@ function TeamDemoPageInner() {
                       setTeammateIds((prev) => [...prev, a.agent_id]);
                     }
                   }}
-                  className={`rounded-md border px-3 py-1.5 text-xs font-mono disabled:opacity-30 disabled:cursor-not-allowed ${
-                    active
-                      ? "border-indigo-600 bg-indigo-50 text-indigo-900 dark:bg-indigo-950 dark:text-indigo-100"
-                      : "border-zinc-300 bg-white text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300"
-                  }`}
+                  style={{
+                    borderRadius: "var(--cg-radius)",
+                    border: `1px solid ${active ? "var(--cg-brass)" : "var(--cg-line-2)"}`,
+                    background: active ? "rgba(201,155,92,0.12)" : "var(--cg-bg-2)",
+                    color: active ? "var(--cg-brass-hi)" : "var(--cg-fg-2)",
+                    fontFamily: "var(--cg-font-mono)",
+                    fontSize: 12,
+                    padding: "6px 12px",
+                    cursor: "pointer",
+                    transition: "border-color 120ms, background 120ms",
+                  }}
+                  className="disabled:opacity-30 disabled:cursor-not-allowed"
                 >
                   Agent #{a.agent_id}
-                  {isOpponent && <span className="ml-1 text-[10px] opacity-60">(Opp)</span>}
+                  {isOpponent && (
+                    <span style={{ marginLeft: 4, fontSize: 10, opacity: 0.6 }}>(Opp)</span>
+                  )}
                 </button>
               );
             })}
@@ -498,9 +535,7 @@ function TeamDemoPageInner() {
         </section>
 
         <section className="flex flex-col gap-4">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">
-            Choose Opponents
-          </h2>
+          <h2 style={eyebrow}>Choose opponents</h2>
           <div className="flex flex-wrap gap-2">
             {agentsQuery.data?.map((a) => {
               const active = opponentIds.includes(a.agent_id);
@@ -515,14 +550,23 @@ function TeamDemoPageInner() {
                       setOpponentIds(opponentIds.filter((id) => id !== a.agent_id));
                     else setOpponentIds([...opponentIds, a.agent_id]);
                   }}
-                  className={`rounded-md border px-3 py-1.5 text-xs font-mono disabled:opacity-30 disabled:cursor-not-allowed ${
-                    active
-                      ? "border-red-600 bg-red-50 text-red-900 dark:bg-red-950 dark:text-red-100"
-                      : "border-zinc-300 bg-white text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300"
-                  }`}
+                  style={{
+                    borderRadius: "var(--cg-radius)",
+                    border: `1px solid ${active ? "var(--cg-fg-1)" : "var(--cg-line-2)"}`,
+                    background: active ? "var(--cg-bg-3)" : "var(--cg-bg-2)",
+                    color: active ? "var(--cg-fg-1)" : "var(--cg-fg-2)",
+                    fontFamily: "var(--cg-font-mono)",
+                    fontSize: 12,
+                    padding: "6px 12px",
+                    cursor: "pointer",
+                    transition: "border-color 120ms, background 120ms",
+                  }}
+                  className="disabled:opacity-30 disabled:cursor-not-allowed"
                 >
                   Agent #{a.agent_id}
-                  {isTeammate && <span className="ml-1 text-[10px] opacity-60">(Team)</span>}
+                  {isTeammate && (
+                    <span style={{ marginLeft: 4, fontSize: 10, opacity: 0.6 }}>(Team)</span>
+                  )}
                 </button>
               );
             })}
@@ -532,25 +576,59 @@ function TeamDemoPageInner() {
         <button
           onClick={onClickSetupStart}
           disabled={opponentIds.length === 0}
-          className="rounded-lg bg-indigo-600 px-6 py-3 text-base font-semibold text-white shadow hover:bg-indigo-500 disabled:opacity-40"
+          style={{
+            background: "var(--cg-brass)",
+            color: "var(--cg-brass-ink)",
+            borderRadius: "var(--cg-radius)",
+            boxShadow: "var(--cg-shadow-1)",
+            padding: "12px 24px",
+            fontSize: 15,
+            fontWeight: 600,
+            fontFamily: "var(--cg-font-sans)",
+            cursor: "pointer",
+            border: "none",
+            transition: "background 120ms",
+          }}
+          className="disabled:opacity-40"
         >
-          {settleOnChain ? "Next: KeeperHub Setup →" : "Start Off-chain Game"}
+          {settleOnChain ? "Next: KeeperHub setup →" : "Start off-chain game"}
         </button>
       </main>
     );
   }
 
+  // ── Loading state ─────────────────────────────────────────────────────────
+
   if (loading && !game) {
-    return <div className="flex flex-1 items-center justify-center">Loading board…</div>;
+    return (
+      <div
+        style={{ color: "var(--cg-fg-3)", fontFamily: "var(--cg-font-sans)" }}
+        className="flex flex-1 items-center justify-center"
+      >
+        Loading board…
+      </div>
+    );
   }
+
+  // ── Game screen ───────────────────────────────────────────────────────────
 
   return (
     <main className="mx-auto flex w-full max-w-5xl flex-1 flex-col gap-6 p-6 lg:flex-row">
       <div className="flex flex-1 flex-col gap-6">
-        <header className="flex items-center justify-between border-b border-zinc-200 pb-4 dark:border-zinc-800">
-          <h1 className="font-mono text-sm text-zinc-500">
+        {/* Match header */}
+        <header
+          style={{ borderBottom: "1px solid var(--cg-line-2)", paddingBottom: 16 }}
+          className="flex items-center justify-between"
+        >
+          <h1
+            style={{
+              fontFamily: "var(--cg-font-mono)",
+              fontSize: 13,
+              color: "var(--cg-fg-3)",
+            }}
+          >
             {(() => {
-              const prefix = settleOnChain ? "Official Game" : "Off-Chain Game";
+              const prefix = settleOnChain ? "Official game" : "Off-chain game";
               const oppLabel = primaryOpponentId
                 ? `Agent ${primaryOpponentId}${opponentElo !== undefined ? ` (ELO ${opponentElo})` : ""}`
                 : `Agents [${opponentIds.join(",")}]`;
@@ -560,12 +638,6 @@ function TeamDemoPageInner() {
               return `${prefix}: ${matchup}`;
             })()}
           </h1>
-          <button 
-            onClick={() => setSetup(true)}
-            className="text-xs text-indigo-600 underline"
-          >
-            Reset
-          </button>
         </header>
 
         {game && (
@@ -594,14 +666,14 @@ function TeamDemoPageInner() {
 
             {game.dice && (
               <div className="flex items-center gap-3">
-                <span className="text-sm text-zinc-500">Rolled:</span>
+                <span style={{ color: "var(--cg-fg-3)", fontSize: 13 }}>Rolled:</span>
                 <DiceRoll dice={game.dice} />
               </div>
             )}
 
             {stagedMoves.length > 0 && (
               <div className="flex items-center gap-3">
-                <p className="text-xs text-indigo-600">
+                <p style={{ color: "var(--cg-brass)", fontSize: 12 }}>
                   {stagedMoves.length}/{diceCount} moves staged
                 </p>
                 <button
@@ -610,27 +682,41 @@ function TeamDemoPageInner() {
                     setDisplayBoardState(null);
                     setSelectedSource(null);
                   }}
-                  className="text-xs text-zinc-500 underline"
+                  style={{ color: "var(--cg-fg-3)", fontSize: 12, background: "none", border: "none", cursor: "pointer" }}
+                  className="underline"
                 >
                   Undo
                 </button>
                 {stagedMoves.length > 0 && (
                   <button
                     onClick={() => void doMoveWithNotation(stagedMoves.join(" "))}
-                    className="rounded-md bg-indigo-600 px-3 py-1 text-xs font-semibold text-white shadow-sm hover:bg-indigo-500 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600"
+                    style={{
+                      background: "var(--cg-brass)",
+                      color: "var(--cg-brass-ink)",
+                      borderRadius: "var(--cg-radius-sm)",
+                      padding: "4px 12px",
+                      fontSize: 12,
+                      fontWeight: 600,
+                      border: "none",
+                      cursor: "pointer",
+                      boxShadow: "var(--cg-shadow-1)",
+                    }}
                   >
-                    Commit Move
+                    Commit move
                   </button>
                 )}
               </div>
             )}
 
             {error && (
-              <p className="text-sm text-red-500">{error}</p>
+              <p style={{ color: "var(--cg-danger)", fontSize: 14 }}>{error}</p>
             )}
 
             {(!isHumanTurn || fastForward) && !game.game_over && (
-              <p className="text-sm text-zinc-500 animate-pulse">
+              <p
+                style={{ color: "var(--cg-fg-3)", fontSize: 14 }}
+                className="animate-pulse"
+              >
                 {fastForward ? "Fast forwarding…" : "Opponent team is thinking…"}
               </p>
             )}
@@ -641,63 +727,121 @@ function TeamDemoPageInner() {
                   type="button"
                   onClick={() => setFastForward(true)}
                   disabled={loading || fastForward}
-                  className="rounded-md border border-zinc-300 px-3 py-1 text-xs font-medium text-zinc-600 hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-700/60 dark:text-zinc-400 dark:hover:bg-zinc-800"
+                  style={{
+                    border: "1px solid var(--cg-line-2)",
+                    borderRadius: "var(--cg-radius-sm)",
+                    padding: "4px 12px",
+                    fontSize: 12,
+                    color: "var(--cg-fg-2)",
+                    background: "var(--cg-bg-2)",
+                    cursor: "pointer",
+                    transition: "background 120ms",
+                  }}
+                  className="disabled:opacity-50"
                 >
-                  {fastForward ? "Fast forwarding…" : "⏩ Fast forward"}
+                  {fastForward ? "Fast forwarding…" : "Fast forward"}
                 </button>
                 <button
                   type="button"
                   onClick={doForfeit}
                   disabled={loading || fastForward}
-                  className="rounded-md border border-red-300 px-3 py-1 text-xs font-medium text-red-700 hover:bg-red-50 disabled:opacity-50 dark:border-red-700/60 dark:text-red-400 dark:hover:bg-red-900/20"
+                  style={{
+                    border: "1px solid var(--cg-danger)",
+                    borderRadius: "var(--cg-radius-sm)",
+                    padding: "4px 12px",
+                    fontSize: 12,
+                    color: "var(--cg-danger)",
+                    background: "transparent",
+                    cursor: "pointer",
+                    transition: "background 120ms",
+                    opacity: 0.85,
+                  }}
+                  className="disabled:opacity-50"
                 >
-                  Forfeit match
+                  Resign
                 </button>
               </div>
             )}
 
             {game.game_over && (
-              <div className="rounded-lg bg-indigo-50 p-4 dark:bg-indigo-900/20">
-                <p className="text-lg font-bold text-indigo-700 dark:text-indigo-300">
-                  Game Over!{" "}
+              <div style={{ ...card, padding: 16 }}>
+                <p
+                  style={{
+                    fontSize: 18,
+                    fontWeight: 600,
+                    color: game.winner === 0 ? "var(--cg-brass-hi)" : "var(--cg-fg-2)",
+                    fontFamily: "var(--cg-font-sans)",
+                  }}
+                >
                   {game.winner === 0
                     ? teammateIds.length > 0
-                      ? "Your team wins!"
-                      : "You win!"
+                      ? "Your team wins."
+                      : "You win."
                     : primaryOpponentId
                     ? `Agent ${primaryOpponentId} wins.`
                     : "Opponents win."}
                 </p>
+
                 {keeperMatchId !== null ? (
-                  <div className="mt-3 rounded-md bg-emerald-50 px-3 py-2 dark:bg-emerald-900/20">
-                    <p className="text-sm font-semibold text-emerald-700 dark:text-emerald-400">
-                      KeeperHub settled — ELO updated!
+                  <div
+                    style={{
+                      marginTop: 12,
+                      borderRadius: "var(--cg-radius-sm)",
+                      background: "rgba(125,155,74,0.12)",
+                      border: "1px solid rgba(125,155,74,0.30)",
+                      padding: "8px 12px",
+                    }}
+                  >
+                    <p style={{ fontSize: 14, fontWeight: 600, color: "var(--cg-success)" }}>
+                      Match settled. Rating updated.
                     </p>
                     <Link
                       href="/keeper/no-match"
-                      className="mt-1 block text-xs text-indigo-600 underline dark:text-indigo-400"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{ marginTop: 4, display: "block", fontSize: 12, color: "var(--cg-brass)" }}
                     >
                       View KeeperHub audit trail ↗
                     </Link>
                     {keeperRunning && (
-                      <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                      <p style={{ marginTop: 4, fontSize: 12, color: "var(--cg-fg-3)" }}>
                         Workflow running…
                       </p>
                     )}
                   </div>
                 ) : finalizing ? (
-                  <p className="mt-3 animate-pulse text-sm text-zinc-500 dark:text-zinc-400">
-                    KeeperHub settling…
-                  </p>
+                  <div style={{ marginTop: 12 }}>
+                    <p style={{ fontSize: 14, color: "var(--cg-fg-3)" }} className="animate-pulse">
+                      Settling…
+                    </p>
+                    <Link
+                      href="/keeper/no-match"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{ marginTop: 4, display: "block", fontSize: 12, color: "var(--cg-brass)" }}
+                    >
+                      View KeeperHub audit trail ↗
+                    </Link>
+                  </div>
                 ) : finalizeError ? (
-                  <div className="mt-3">
-                    <p className="text-xs text-red-600 dark:text-red-400">
-                      Auto-settle failed: {finalizeError}
+                  <div style={{ marginTop: 12 }}>
+                    <p style={{ fontSize: 12, color: "var(--cg-danger)" }}>
+                      Settlement failed: {finalizeError}
                     </p>
                     <button
                       type="button"
                       onClick={() => void doFinalizeAndTriggerKeeper(game)}
-                      className="mt-2 rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-500"
+                      style={{
+                        marginTop: 8,
+                        background: "var(--cg-brass)",
+                        color: "var(--cg-brass-ink)",
+                        borderRadius: "var(--cg-radius-sm)",
+                        padding: "6px 12px",
+                        fontSize: 12,
+                        fontWeight: 600,
+                        border: "none",
+                        cursor: "pointer",
+                      }}
                     >
                       Retry
                     </button>
@@ -709,26 +853,51 @@ function TeamDemoPageInner() {
         )}
       </div>
 
+      {/* Advisor panel — floatable and resizable */}
       <div
         ref={panelRef}
-        style={panelPos
-          ? { position: "fixed", left: panelPos.x, top: panelPos.y, zIndex: 50, width: panelSize?.w ?? 320, height: panelSize?.h ?? 560 }
-          : { width: panelSize?.w, height: panelSize?.h ?? 560 }}
-        className={`w-full lg:w-80 flex flex-col${panelPos ? " shadow-2xl rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950" : ""}`}
+        style={{
+          ...(panelPos
+            ? { position: "fixed", left: panelPos.x, top: panelPos.y, zIndex: 50, width: panelSize?.w ?? 320, height: panelSize?.h ?? 560 }
+            : { width: panelSize?.w, height: panelSize?.h ?? 560 }),
+          ...card,
+          display: "flex",
+          flexDirection: "column",
+          overflow: "hidden",
+          ...(panelPos ? { boxShadow: "var(--cg-shadow-2)" } : {}),
+        }}
+        className="w-full lg:w-80"
       >
-        {/* Drag handle — grab to float and reposition */}
+        {/* Drag handle */}
         <div
           onPointerDown={onDragStart}
           onPointerMove={onDragMove}
           onPointerUp={onDragEnd}
-          className="flex h-6 shrink-0 cursor-grab items-center justify-center rounded-t-xl bg-zinc-100 select-none active:cursor-grabbing dark:bg-zinc-800"
+          style={{
+            flexShrink: 0,
+            height: 24,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            background: "var(--cg-bg-3)",
+            borderBottom: "1px solid var(--cg-line-1)",
+            cursor: "grab",
+            userSelect: "none",
+          }}
           title="Drag to move panel"
         >
-          <div className="h-1 w-10 rounded-full bg-zinc-400 dark:bg-zinc-500" />
+          <div
+            style={{
+              width: 40,
+              height: 4,
+              borderRadius: 2,
+              background: "var(--cg-line-3)",
+            }}
+          />
         </div>
 
-        {/* Scrollable chat area */}
-        <div className="flex flex-1 overflow-y-auto min-h-0">
+        {/* Scrollable advisor area */}
+        <div style={{ flex: 1, overflow: "hidden", minHeight: 0 }}>
           {game && (
             <AgentTeammatePanel
               positionId={game.position_id}
@@ -746,21 +915,51 @@ function TeamDemoPageInner() {
           )}
         </div>
 
-        {/* Manual Move — pinned above the resize handle */}
+        {/* Manual move — pinned above resize handle */}
         {isHumanTurn && !game?.game_over && (
-          <div className="shrink-0 flex flex-col gap-2 border-t border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-900">
-            <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Manual Move</h3>
+          <div
+            style={{
+              flexShrink: 0,
+              display: "flex",
+              flexDirection: "column",
+              gap: 8,
+              borderTop: "1px solid var(--cg-line-1)",
+              background: "var(--cg-bg-2)",
+              padding: 12,
+            }}
+          >
+            <h3 style={eyebrow}>Manual move</h3>
             <div className="flex gap-2">
               <input
                 value={moveInput}
                 onChange={(e) => setMoveInput(e.target.value)}
                 placeholder='e.g. "8/5 6/5"'
-                className="flex-1 rounded-md border border-zinc-300 px-3 py-1.5 font-mono text-sm dark:border-zinc-700 dark:bg-zinc-950"
+                style={{
+                  flex: 1,
+                  borderRadius: "var(--cg-radius-sm)",
+                  border: "1px solid var(--cg-line-2)",
+                  background: "var(--cg-bg-1)",
+                  color: "var(--cg-fg-1)",
+                  fontFamily: "var(--cg-font-mono)",
+                  fontSize: 13,
+                  padding: "6px 10px",
+                  outline: "none",
+                }}
               />
               <button
                 onClick={() => doMoveWithNotation(moveInput)}
                 disabled={!moveInput.trim() || loading}
-                className="rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white"
+                style={{
+                  background: "var(--cg-brass)",
+                  color: "var(--cg-brass-ink)",
+                  borderRadius: "var(--cg-radius-sm)",
+                  padding: "6px 12px",
+                  fontSize: 12,
+                  fontWeight: 600,
+                  border: "none",
+                  cursor: "pointer",
+                }}
+                className="disabled:opacity-40"
               >
                 Go
               </button>
@@ -768,16 +967,27 @@ function TeamDemoPageInner() {
           </div>
         )}
 
-        {/* Resize handle — drag in any direction to resize width and/or height */}
+        {/* Resize handle */}
         <div
           onPointerDown={onResizeStart}
           onPointerMove={onResizeMove}
           onPointerUp={onResizeEnd}
-          className="flex h-4 shrink-0 cursor-nwse-resize items-center justify-end rounded-b-xl bg-zinc-100 px-2 select-none hover:bg-zinc-200 active:bg-zinc-300 dark:bg-zinc-800 dark:hover:bg-zinc-700"
+          style={{
+            flexShrink: 0,
+            height: 16,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "flex-end",
+            background: "var(--cg-bg-3)",
+            borderTop: "1px solid var(--cg-line-1)",
+            paddingRight: 8,
+            cursor: "nwse-resize",
+            userSelect: "none",
+          }}
           title="Drag to resize"
         >
-          <svg width="10" height="10" viewBox="0 0 10 10" className="text-zinc-400 dark:text-zinc-500">
-            <path d="M9 1L1 9M9 5L5 9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+          <svg width="10" height="10" viewBox="0 0 10 10" style={{ color: "var(--cg-line-3)" }}>
+            <path d="M9 1L1 9M9 5L5 9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
           </svg>
         </div>
       </div>

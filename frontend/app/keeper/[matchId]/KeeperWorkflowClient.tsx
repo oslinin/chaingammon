@@ -29,7 +29,7 @@ const SERVER = process.env.NEXT_PUBLIC_SERVER_URL ?? "http://localhost:8000";
 const NO_MATCH_SENTINEL = "no-match";
 
 // Status values for workflow steps and the overall run.
-type StepStatus = "pending" | "running" | "ok" | "failed";
+type StepStatus = "pending" | "running" | "ok" | "failed" | "skipped";
 
 // Shape of a single KeeperHub workflow step — mirrors the server's response.
 interface WorkflowStep {
@@ -252,6 +252,7 @@ function StatusBadge({ status }: { status: StepStatus }) {
     failed: "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300",
     running: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300",
     pending: "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400",
+    skipped: "bg-zinc-100 text-zinc-400 dark:bg-zinc-800 dark:text-zinc-500",
   };
   return (
     <span
@@ -286,7 +287,7 @@ function StepRow({
         {/* Step name + status */}
         <div className="flex min-w-0 flex-1 flex-col gap-1">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-sm font-medium text-zinc-900 dark:text-zinc-50">
+            <span className={`text-sm font-medium ${step.status === "skipped" ? "text-zinc-400 line-through dark:text-zinc-500" : "text-zinc-900 dark:text-zinc-50"}`}>
               {step.name}
             </span>
             <StatusBadge status={step.status} />
