@@ -21,6 +21,7 @@ import {
   skipTurn,
 } from "../../lib/match_engine";
 import { type Board as GameBoard } from "../../lib/rules_engine";
+import { getSession } from "../../lib/onnx_eval";
 
 const SERVER = process.env.NEXT_PUBLIC_SERVER_URL ?? "http://localhost:8000";
 
@@ -103,6 +104,10 @@ export default function TeamDemoPage() {
 
   const agentMoving = useRef(false);
 
+  // Warm up the ONNX session as soon as the page loads so the first
+  // evaluation during a game doesn't pay the cold-start latency.
+  useEffect(() => { void getSession(); }, []);
+
   const panelRef = useRef<HTMLDivElement>(null);
   const [panelPos, setPanelPos] = useState<{ x: number; y: number } | null>(null);
   const dragState = useRef<{ startX: number; startY: number; origX: number; origY: number } | null>(null);
@@ -168,7 +173,7 @@ export default function TeamDemoPage() {
   });
 
   const startTrainingGame = () => {
-    if (teammateIds.length === 0 || opponentIds.length === 0) return;
+    if (opponentIds.length === 0) return;
     setSetup(false);
     setLoading(true);
     try {
@@ -182,7 +187,7 @@ export default function TeamDemoPage() {
   };
 
   useEffect(() => {
-    if (setup || !game || game.game_over || agentMoving.current) return;
+    if (setup || !game || game.game_over) return;
     if (game.turn !== 1) return;
     if (!game.dice) return;
 
@@ -298,7 +303,7 @@ export default function TeamDemoPage() {
 
         <section className="flex flex-col gap-4">
           <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">
-            Choose your Teammate
+            Choose your Teammate <span className="normal-case font-normal text-zinc-400">(optional — skip to play solo)</span>
           </h2>
           <div className="flex flex-wrap gap-2">
             {agentsQuery.data?.map((a) => {
@@ -364,7 +369,7 @@ export default function TeamDemoPage() {
 
         <button
           onClick={startTrainingGame}
-          disabled={teammateIds.length === 0 || opponentIds.length === 0}
+          disabled={opponentIds.length === 0}
           className="rounded-lg bg-indigo-600 px-6 py-3 text-base font-semibold text-white shadow hover:bg-indigo-500 disabled:opacity-40"
         >
           Start Training Game
@@ -382,7 +387,9 @@ export default function TeamDemoPage() {
       <div className="flex flex-1 flex-col gap-6">
         <header className="flex items-center justify-between border-b border-zinc-200 pb-4 dark:border-zinc-800">
           <h1 className="font-mono text-sm text-zinc-500">
-            Training: You + [{teammateIds.join(",")}] vs. [{opponentIds.join(",")}]
+            {teammateIds.length > 0
+              ? `Training: You + [${teammateIds.join(",")}] vs. [${opponentIds.join(",")}]`
+              : `Training: You vs. [${opponentIds.join(",")}]`}
           </h1>
           <button 
             onClick={() => setSetup(true)}
@@ -399,6 +406,11 @@ export default function TeamDemoPage() {
               bar={currentBar}
               off={currentOff}
               turn={game.turn}
+              opponentName={
+                opponentIds.length === 1
+                  ? `Agent #${opponentIds[0]}`
+                  : `Agents [${opponentIds.join(",")}]`
+              }
               onPointClick={isHumanTurn ? (pt) => {
                 if (selectedSource === null) {
                   if (currentBar[0] > 0) return;
@@ -442,6 +454,10 @@ export default function TeamDemoPage() {
                   </button>
                 )}
               </div>
+            )}
+
+            {error && (
+              <p className="text-sm text-red-500">{error}</p>
             )}
 
             {!isHumanTurn && !game.game_over && (
@@ -491,6 +507,7 @@ export default function TeamDemoPage() {
               opponentId={opponentIds[0]}
               disabled={!isHumanTurn || game.game_over}
               onMoveSelect={previewMove}
+              noLLM={teammateIds.length === 0}
             />
           )}
         </div>

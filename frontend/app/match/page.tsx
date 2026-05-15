@@ -496,12 +496,13 @@ function MatchInner() {
   // below handles all turns without per-render delays or the 400 ms pause.
   useEffect(() => {
     if (fastForward) return;
-    if (!game || game.game_over || agentMoving.current) return;
+    if (!game || game.game_over) return;
     if (game.turn !== 1) return;
     if (!game.dice) return; // dice are seeded by withFreshDice on the previous step
-    agentMoving.current = true;
 
     const step = async () => {
+      if (agentMoving.current) return;
+      agentMoving.current = true;
       try {
         const board: GameBoard = { points: game.board, bar: game.bar, off: game.off };
         const best = await getBestMove(board, 1, game.dice!);
@@ -1307,6 +1308,7 @@ function MatchInner() {
           bar={currentBar}
           off={currentOff}
           turn={game.turn}
+          opponentName={agentId > 0 ? `Agent #${agentId}` : undefined}
           onPointClick={needsMove ? handlePointClick : undefined}
           onBarClick={needsMove ? handleBarClick : undefined}
           onOffClick={
