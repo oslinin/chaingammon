@@ -4,7 +4,7 @@
 
 Built for ETHGlobal Open Agents. The three sponsor protocols Chaingammon targets:
 
-- **0G** — full game records (Log), per-player style profiles (KV), encrypted agent weights (Blob, hash-committed to the iNFT) on **0G Storage**; TEE-attested agent NN inference and coach LLM (Qwen 2.5 7B) on **0G Compute**.
+- **0G** — full game records (Log, content-addressed blob), per-player style profiles and agent weights/overlays (KV, key-addressed) on **0G Storage**; TEE-attested agent NN inference and coach LLM (Qwen 2.5 7B) on **0G Compute**.
 - **ENS** — `<name>.chaingammon.eth` subnames carry verified ELO and a pointer to the match archive. Protocol-reserved text records cannot be self-claimed.
 - **KeeperHub** — orchestrates the per-match workflow: deposit verification, drand round pulls, WASM rules-engine validation, settlement broadcast, audit trail.
 
@@ -545,12 +545,11 @@ The keeper-orchestrated settlement workflow is real, not a Phase-36 mock. `serve
 | 1 | `escrow_deposit` | Reads MatchInfo from MatchRegistry; fails if the match isn't on-chain (i.e. `/finalize-game` was never called). |
 | 2 | `vrf_rolls` | Probes the drand mainnet HTTP endpoint to confirm the VRF source the trainer uses (`agent/drand_dice.py`) is reachable. |
 | 3 | `og_storage_fetch` | Pulls the GameRecord blob from 0G Storage by the rootHash in MatchInfo. |
-| 4 | `gnubg_replay` | Walks every recorded move through `gnubg.submit_move` from the canonical opening; asserts the final `position_id` matches the recorded value. A mismatch means the GameRecord doesn't faithfully describe play and the match shouldn't settle. |
-| 5 | `agent_move_replay` | Phase 38: deterministic move-selection audit. For each agent side, resolves `iNFT.dataHashes[1]` → `BackgammonNet`, scores every legal candidate via `net(features, extras)` argmax, asserts the recorded move equals the argmax. Closes the ELO-audit gap that step 4 alone couldn't (legality vs selection correctness). Abstains cleanly with disclosure when the agent has only an overlay/race/null profile — full-board NN audit is enabled once the agent has a `gnubg_full` checkpoint registered. |
-| 6 | `settlement_signed` | Confirms the MatchInfo presence (session-key flow pre-authorizes; the relay tx itself is the proof). |
-| 7 | `relay_tx` | Surfaces `gameRecordHash` as the canonical audit anchor — the same value KeeperHub commits to its run-audit log. |
-| 8 | `ens_update` | Cross-checks elo + last_match_id text records on each labelled subname; cleanly skips for unnamed / agent-vs-agent matches. |
-| 9 | `audit_append` | Serializes the entire workflow run to JSON, uploads to 0G Storage, and surfaces the rootHash as the audit-trail anchor. |
+| 4 | `rules_check` | Walks every recorded move through the pure-Python rules engine (`agent/rules_engine.py`): checks each move with `is_legal`, advances the board with `apply_move`. A single illegal move fails the step and halts the workflow so the match cannot settle. Auto-played moves are skipped; moves without dice are rejected as malformed. |
+| 5 | `settlement_signed` | Confirms the MatchInfo presence (session-key flow pre-authorizes; the relay tx itself is the proof). |
+| 6 | `relay_tx` | Surfaces `gameRecordHash` as the canonical audit anchor — the same value KeeperHub commits to its run-audit log. |
+| 7 | `ens_update` | Cross-checks elo + last_match_id text records on each labelled subname; cleanly skips for unnamed / agent-vs-agent matches. |
+| 8 | `audit_append` | Serializes the entire workflow run to JSON, uploads to 0G Storage, and surfaces the rootHash as the audit-trail anchor. |
 
 Trigger via `POST /keeper-workflow/{matchId}/run` (the Run button on `/keeper/[matchId]` does this). The workflow runs on a background thread; `GET /keeper-workflow/{matchId}` polls return live mid-run progress, persisted to `/tmp/chaingammon-keeper-workflows/<matchId>.json` so navigating away and back during a long-running step doesn't lose state. A step failure marks itself "failed" with the exception message in `error`, the workflow status flips to "failed", and remaining steps stay "pending" — an audit reader can immediately see *which* step broke and *why*.
 
@@ -616,7 +615,7 @@ Or use the VS Code Tasks workflow (`.vscode/tasks.json`) — `Tasks: Run Task` �
 ```bash
 cd contracts && pnpm exec hardhat node            # local chain (chainId 31337)
 cd contracts && pnpm exec hardhat run script/deploy.js --network localhost
-# copy addresses from contracts/deployments/localhost.json into frontend/.env.local
+# addresses are written to contracts/deployments/localhost.json and read by the frontend automatically
 ```
 
 Switch chains in MetaMask; the frontend re-targets the new chain's contracts automatically (see `frontend/app/chains.ts`).
@@ -637,10 +636,11 @@ pnpm frontend:test
 | Route | Page | Data source |
 | --- | --- | --- |
 | `/` | Agent discovery + matchmaking | On-chain reads via wagmi |
-| `/play/new` | Pick two players or teams, start a match | Wallet + `AgentRegistry` |
-| `/match?agentId=N` | Live match against agent N | ONNX Runtime Web (browser-side BackgammonNet) |
+| `/team-demo` | Off-chain game vs agent (no stake) | ONNX Runtime Web (browser-side BackgammonNet) |
+| `/team-demo?settle=1` | On-chain game vs agent (ELO + optional stake) | ONNX Runtime Web + `MatchRegistry` |
+| `/match?agentId=N` | KeeperHub pre-game card; forwards to `/team-demo?opponents=N&settle=1` | `AgentRegistry` + `MatchEscrow` |
 | `/profile/[ensName]` | Player profile (ENS text records) | `PlayerSubnameRegistrar.text()` |
-| `/match/[matchId]` | Match replay + audit trail | 0G Storage |
+| `/log/[matchId]` | Match replay + audit trail | 0G Storage |
 
 ---
 
@@ -682,7 +682,7 @@ See [ROADMAP.md](ROADMAP.md) for the full version. Architecture: [ARCHITECTURE.m
 
 **KeeperHub:**
 
-- [x] Workflow live (Phase 37): 8-step orchestrator at `server/app/keeper_workflow.py` runs sequentially — escrow_deposit (on-chain MatchInfo lookup), vrf_rolls (drand reachability), og_storage_fetch (GameRecord blob from 0G Storage), gnubg_replay (re-walk every move + assert final position), settlement_signed (MatchInfo presence proof), relay_tx (audit anchor surfaced as gameRecordHash), ens_update (cross-check ENS text records on labelled subnames), audit_append (workflow JSON pinned to 0G Storage). Triggered via `POST /keeper-workflow/{matchId}/run`; live progress via `GET /keeper-workflow/{matchId}` polled every 1.5s by `/keeper/[matchId]` page.
+- [x] Workflow live (Phase 37): 8-step orchestrator at `server/app/keeper_workflow.py` runs sequentially — escrow_deposit (on-chain MatchInfo lookup), vrf_rolls (drand reachability), og_storage_fetch (GameRecord blob from 0G Storage), rules_check (pure-Python rules-engine re-walk, rejects any illegal move), settlement_signed (MatchInfo presence proof), relay_tx (audit anchor surfaced as gameRecordHash), ens_update (cross-check ENS text records on labelled subnames), audit_append (workflow JSON pinned to 0G Storage). Triggered via `POST /keeper-workflow/{matchId}/run`; live progress via `GET /keeper-workflow/{matchId}` polled every 1.5s by `/keeper/[matchId]` page.
 - [x] Write-up: workflow definition + audit trail UX (this section + module docstring at `server/app/keeper_workflow.py:1-50`).
 - [x] Feedback document ([docs/keeperhub-feedback.md](docs/keeperhub-feedback.md)) — concrete pain points (no `kh` SDK, recordMatch tx not in MatchInfo, match_id type mismatch between gnubg and chain, per-move drand round not in GameRecord, session-key signature verification has no on-chain query) + suggestions for a future KeeperHub Python client / workflow-definition format / reference per-step protocol.
 
