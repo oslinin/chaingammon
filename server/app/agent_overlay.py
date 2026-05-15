@@ -1,10 +1,14 @@
 """
-Agent experience overlay (Phase 9).
+Agent experience overlay.
 
 Every agent iNFT carries a small per-agent preference vector — the
 "experience overlay" — that biases gnubg's move recommendations and
-grows after every match. The overlay's bytes go to 0G Storage; the
-resulting Merkle hash sits at `dataHashes[1]` of the agent iNFT.
+grows after every match.
+
+Overlays are stored in **0G KV** under `chaingammon/overlay/agent/{id}`
+and updated per game by the finalize endpoints (no on-chain tx required).
+Training runs overwrite the weights KV key but leave the overlay KV key
+unchanged — the two update paths are independent.
 
 Two iNFTs minted at the same `tier` with the same shared base weights
 will play identically *out of the box*, then drift into measurably
@@ -13,7 +17,7 @@ what makes the iNFT meaningful as an asset rather than a label.
 
 What this module does:
   - Defines the canonical category list (`CATEGORIES`).
-  - `Overlay` — the dataclass uploaded to 0G Storage.
+  - `Overlay` — the dataclass stored in 0G KV as canonical JSON.
   - `classify_move(move) → {category: score}` — hand-coded heuristics
     that read a gnubg-format move string and emit category scores in
     [0, 1]. v2 will replace with a learned classifier.
