@@ -48,7 +48,13 @@ export default function Home() {
               href="/team-demo"
               className="rounded border border-zinc-200 bg-white px-2 py-0.5 text-xs font-medium text-zinc-600 hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800"
             >
-              Team play
+              Off-chain game
+            </a>
+            <a
+              href="/team-demo?settle=1"
+              className="rounded border border-indigo-300 bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-700 hover:bg-indigo-100 dark:border-indigo-700 dark:bg-indigo-950 dark:text-indigo-300 dark:hover:bg-indigo-900"
+            >
+              On-chain game
             </a>
           </div>
           <AgentsList />

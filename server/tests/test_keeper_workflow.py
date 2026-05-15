@@ -52,7 +52,7 @@ def test_get_workflow_returns_all_pending_for_unrun_match():
     wf = kw.get_workflow("match-never-run")
     assert wf.match_id == "match-never-run"
     assert wf.status == "pending"
-    assert len(wf.steps) == 10   # Phase 68: +rules_check
+    assert len(wf.steps) == 8   # gnubg_replay + agent_move_replay removed
     assert [s.id for s in wf.steps] == list(kw.STEP_IDS)
     assert all(s.status == "pending" for s in wf.steps)
     assert all(s.duration_ms is None for s in wf.steps)
@@ -179,94 +179,6 @@ def test_step_og_storage_fetch_zero_hash_raises():
         kw.step_og_storage_fetch(ctx, step)
 
 
-def test_step_gnubg_replay_ok():
-    """Stubbed gnubg returns a sequence of position_ids; replay walks
-    them; final position matches recorded value."""
-    gnubg = MagicMock()
-    gnubg.new_match.return_value = {"position_id": "P0", "match_id": "M0"}
-    # Three moves; after each, gnubg returns a deterministic next pos.
-    gnubg.submit_move.side_effect = [
-        {"position_id": "P1", "match_id": "M1", "output": ""},
-        {"position_id": "P2", "match_id": "M2", "output": ""},
-        {"position_id": "FINAL", "match_id": "M3", "output": ""},
-    ]
-    ctx = kw.WorkflowContext(
-        match_id="42",
-        gnubg=gnubg,
-        game_record={
-            "match_length": 1,
-            "moves": [
-                {"move": "13/10 24/23"},
-                {"move": "8/5 6/5"},
-                {"move": "off"},
-            ],
-            "final_position_id": "FINAL",
-        },
-    )
-    step = kw.WorkflowStep(id="gnubg_replay", name="x")
-    kw.step_gnubg_replay(ctx, step)
-    assert "Replayed 3 moves" in step.detail
-
-
-def test_step_gnubg_replay_position_mismatch_raises():
-    gnubg = MagicMock()
-    gnubg.new_match.return_value = {"position_id": "P0", "match_id": "M0"}
-    gnubg.submit_move.side_effect = [
-        {"position_id": "DIFFERENT", "match_id": "M1", "output": ""},
-    ]
-    ctx = kw.WorkflowContext(
-        match_id="42",
-        gnubg=gnubg,
-        game_record={
-            "match_length": 1,
-            "moves": [{"move": "13/10 24/23"}],
-            "final_position_id": "EXPECTED_FINAL",
-        },
-    )
-    step = kw.WorkflowStep(id="gnubg_replay", name="x")
-    with pytest.raises(RuntimeError, match="final position mismatch"):
-        kw.step_gnubg_replay(ctx, step)
-
-
-def test_step_gnubg_replay_skips_auto_played_moves():
-    """Bar-dance moves are recorded as '(auto-played)' in MoveEntry — the
-    replayer must skip them rather than ask gnubg to apply an empty move."""
-    gnubg = MagicMock()
-    gnubg.new_match.return_value = {"position_id": "FINAL", "match_id": "M0"}
-    ctx = kw.WorkflowContext(
-        match_id="42",
-        gnubg=gnubg,
-        game_record={
-            "match_length": 1,
-            "moves": [{"move": "(auto-played)"}],
-            "final_position_id": "FINAL",
-        },
-    )
-    step = kw.WorkflowStep(id="gnubg_replay", name="x")
-    kw.step_gnubg_replay(ctx, step)
-    # No real submit_move call should have happened.
-    assert gnubg.submit_move.call_count == 0
-
-
-def test_step_gnubg_replay_rejected_move_raises():
-    gnubg = MagicMock()
-    gnubg.new_match.return_value = {"position_id": "P0", "match_id": "M0"}
-    gnubg.submit_move.return_value = {
-        "position_id": "", "match_id": "", "output": "illegal",
-    }
-    ctx = kw.WorkflowContext(
-        match_id="42",
-        gnubg=gnubg,
-        game_record={
-            "match_length": 1,
-            "moves": [{"move": "13/10 24/23"}],
-            "final_position_id": "X",
-        },
-    )
-    step = kw.WorkflowStep(id="gnubg_replay", name="x")
-    with pytest.raises(RuntimeError, match="gnubg rejected move"):
-        kw.step_gnubg_replay(ctx, step)
-
 
 def test_step_relay_tx_surfaces_record_hash():
     ctx = kw.WorkflowContext(
@@ -326,22 +238,21 @@ def test_run_workflow_happy_path_marks_all_ok():
 
 
 def test_run_workflow_step_failure_aborts_remainder():
-    """gnubg_replay raises; remaining steps stay pending."""
+    """rules_check raises; remaining steps stay pending."""
     def _fail(ctx, step):
-        raise RuntimeError("simulated mismatch")
+        raise RuntimeError("simulated illegal move")
 
     runners = {sid: lambda ctx, step: None for sid in kw.STEP_IDS}
-    runners["gnubg_replay"] = _fail
+    runners["rules_check"] = _fail
     runners["audit_append"] = lambda ctx, step, *, workflow: None
     wf = kw.run_workflow("42", runners=runners)
     assert wf.status == "failed"
     statuses = [s.status for s in wf.steps]
-    gnubg_idx = list(kw.STEP_IDS).index("gnubg_replay")
-    assert all(s == "ok" for s in statuses[:gnubg_idx])
-    assert statuses[gnubg_idx] == "failed"
-    assert wf.steps[gnubg_idx].error == "simulated mismatch"
-    # Remainder pending.
-    assert all(s == "pending" for s in statuses[gnubg_idx + 1:])
+    fail_idx = list(kw.STEP_IDS).index("rules_check")
+    assert all(s == "ok" for s in statuses[:fail_idx])
+    assert statuses[fail_idx] == "failed"
+    assert wf.steps[fail_idx].error == "simulated illegal move"
+    assert all(s == "pending" for s in statuses[fail_idx + 1:])
 
 
 def test_run_workflow_persists_to_disk():
@@ -455,7 +366,7 @@ def test_phase36_response_shape_preserved():
     assert "matchId" in body
     assert "status" in body
     assert "steps" in body
-    assert len(body["steps"]) == 10   # Phase 68: +rules_check
+    assert len(body["steps"]) == 8   # gnubg_replay + agent_move_replay removed
     expected_fields = {"id", "name", "status", "duration_ms", "retry_count",
                        "tx_hash", "error", "detail"}
     for step in body["steps"]:
@@ -469,255 +380,19 @@ def test_phase36_deterministic_same_id():
     assert r1 == r2
 
 
-# ─── Phase 38: agent_move_replay ───────────────────────────────────────────
 
-
-def _gr_human_vs_human():
-    return {
-        "winner": {"kind": "human", "address": "0x" + "11" * 20},
-        "loser":  {"kind": "human", "address": "0x" + "22" * 20},
-        "moves": [], "match_length": 1,
-    }
-
-
-def _gr_winner_agent(agent_id=7, moves=None):
-    return {
-        "winner": {"kind": "agent", "agent_id": agent_id},
-        "loser":  {"kind": "human", "address": "0x" + "22" * 20},
-        "moves": moves or [],
-        "match_length": 1,
-    }
-
-
-def test_step_agent_move_replay_human_only_match_skips():
-    """Both sides human → step ok with 'no agent moves' note."""
-    ctx = kw.WorkflowContext(
-        match_id="42",
-        chain=MagicMock(),
-        gnubg=MagicMock(),
-        game_record=_gr_human_vs_human(),
-    )
-    step = kw.WorkflowStep(id="agent_move_replay", name="x")
-    kw.step_agent_move_replay(ctx, step)
-    assert "human" in step.detail.lower() or "nothing to audit" in step.detail.lower()
-
-
-def test_step_agent_move_replay_null_profile_abstains(monkeypatch):
-    """Agent has zero on-chain weights hash → audit abstains, not fails."""
-    chain = MagicMock()
-    chain.agent_data_hashes.return_value = ["0x" + "00" * 32, "0x" + "00" * 32]
-    ctx = kw.WorkflowContext(
-        match_id="42", chain=chain, gnubg=MagicMock(),
-        game_record=_gr_winner_agent(),
-    )
-    step = kw.WorkflowStep(id="agent_move_replay", name="x")
-    kw.step_agent_move_replay(ctx, step)
-    # Step doesn't raise; detail explains abstention.
-    assert step.detail
-    assert "no on-chain weights" in step.detail or "abstains" in step.detail
-
-
-def test_step_agent_move_replay_overlay_only_abstains(monkeypatch):
-    """OverlayProfile → audit abstains (overlay is style; legality
-    already covered by gnubg_replay)."""
-    chain = MagicMock()
-    chain.agent_data_hashes.return_value = ["0x" + "00" * 32, "0x" + "ab" * 32]
-    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "agent"))
-    import agent_profile as ap
-    overlay = ap.OverlayProfile({"hits_blot": 0.2}, match_count=3)
-    monkeypatch.setattr(ap, "load_profile", lambda h, fetch=None: overlay)
-
-    ctx = kw.WorkflowContext(
-        match_id="42", chain=chain, gnubg=MagicMock(),
-        og_get_blob=lambda h: b"",
-        game_record=_gr_winner_agent(),
-    )
-    step = kw.WorkflowStep(id="agent_move_replay", name="x")
-    kw.step_agent_move_replay(ctx, step)
-    assert "Overlay" in step.detail or "style-only" in step.detail
-
-
-def test_step_agent_move_replay_race_model_abstains(monkeypatch):
-    """Race-only ModelProfile → audit abstains (full-board encoder
-    blocked until agent retrains)."""
-    chain = MagicMock()
-    chain.agent_data_hashes.return_value = ["0x" + "00" * 32, "0x" + "ab" * 32]
-    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "agent"))
-    import agent_profile as ap
-    from sample_trainer import BackgammonNet
-    net = BackgammonNet(extras_dim=16, core_seed=0xBACC, extras_seed=7)
-    race = ap.ModelProfile(
-        {"feature_encoder": "race", "match_count": 3, "extras_dim": 16, "in_dim": 198},
-        net=net,
-    )
-    monkeypatch.setattr(ap, "load_profile", lambda h, fetch=None: race)
-
-    ctx = kw.WorkflowContext(
-        match_id="42", chain=chain, gnubg=MagicMock(),
-        og_get_blob=lambda h: b"",
-        game_record=_gr_winner_agent(),
-    )
-    step = kw.WorkflowStep(id="agent_move_replay", name="x")
-    kw.step_agent_move_replay(ctx, step)
-    assert "race" in step.detail.lower() or "full-board audit blocked" in step.detail
-
-
-def test_step_agent_move_replay_gnubg_full_match_argmax(monkeypatch):
-    """gnubg_full ModelProfile + stub gnubg + stub net that picks the
-    recorded move every time → step ok with 'audited N moves' detail."""
-    chain = MagicMock()
-    chain.agent_data_hashes.return_value = ["0x" + "00" * 32, "0x" + "ab" * 32]
-    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "agent"))
-    import agent_profile as ap
-    import torch as _torch
-
-    # Stub net always returns 0.9 for the first candidate, 0.1 for others
-    # — so argmax is always candidate[0]. We arrange the recorded move
-    # to match candidate[0].
-    class StubNet:
-        extras = MagicMock()  # truthy; attribute access used by step
-        call_count = {"i": 0}
-
-        def __call__(self, feat, extras=None):
-            self.call_count["i"] += 1
-            # First call per turn returns 0.9; subsequent calls 0.1.
-            # We round-robin via a class-level counter mod number of
-            # candidates per turn (2 in this test).
-            seq_i = self.call_count["i"]
-            return _torch.tensor([[0.9 if seq_i % 2 == 1 else 0.1]])
-
-    full = ap.ModelProfile(
-        {"feature_encoder": "gnubg_full", "match_count": 3,
-         "extras_dim": 16, "in_dim": 198},
-        net=StubNet(),
-    )
-    monkeypatch.setattr(ap, "load_profile", lambda h, fetch=None: full)
-
-    # gnubg returns 2 candidates per turn; first one's submit returns
-    # POS_A, second returns POS_B. Recorded move == candidate[0]
-    # ('move_A'), so argmax == recorded → audit passes.
-    gnubg = MagicMock()
-    gnubg.new_match.return_value = {"position_id": "P0", "match_id": "M0"}
-    gnubg.get_candidate_moves.return_value = [
-        {"move": "move_A", "equity": 0.4},
-        {"move": "move_B", "equity": 0.3},
-    ]
-    submit_calls = {"i": 0}
-    def _submit(p, m, mv):
-        submit_calls["i"] += 1
-        # Each candidate evaluation submits once. The recorded-move
-        # apply also submits. Distinguish by whether mv matches a
-        # candidate move name.
-        return {"position_id": f"POS_{mv}_{submit_calls['i']}", "match_id": f"M{submit_calls['i']}"}
-    gnubg.submit_move.side_effect = _submit
-
-    # decode_position_id stub: any string → empty board.
-    import gnubg_state as gs
-    monkeypatch.setattr(gs, "decode_position_id",
-                        lambda pid: ([0] * 24, [0, 0], [15, 15]))
-
-    record = _gr_winner_agent(moves=[
-        {"turn": 0, "move": "move_A", "dice": [3, 1]},
-        {"turn": 0, "move": "move_A", "dice": [4, 2]},
-    ])
-    ctx = kw.WorkflowContext(
-        match_id="42", chain=chain, gnubg=gnubg,
-        og_get_blob=lambda h: b"",
-        game_record=record,
-    )
-    step = kw.WorkflowStep(id="agent_move_replay", name="x")
-    kw.step_agent_move_replay(ctx, step)
-    assert step.tx_hash == "0x" + "ab" * 32
-    assert "audited" in step.detail.lower() or "argmax" in step.detail.lower()
-
-
-def test_step_agent_move_replay_argmax_consistent_mismatch_fails(monkeypatch):
-    """gnubg_full ModelProfile + stub net that consistently disagrees
-    with the recorded move → step fails (the iNFT didn't actually pick
-    these moves). Must have <40% match-rate to trigger the strict-fail
-    branch (the heuristic-abstain triggers at ≥40% mismatch)."""
-    chain = MagicMock()
-    chain.agent_data_hashes.return_value = ["0x" + "00" * 32, "0x" + "ab" * 32]
-    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "agent"))
-    import agent_profile as ap
-    import torch as _torch
-
-    # Stub net always prefers candidate B; recorded moves are all A.
-    # Every audited move mismatches → 100% mismatch rate → fails.
-    class StubNet:
-        extras = MagicMock()
-        call_count = {"i": 0}
-
-        def __call__(self, feat, extras=None):
-            self.call_count["i"] += 1
-            # Return higher equity for the SECOND candidate (mv B):
-            # candidate index alternates, so second eval per turn (i%2==0)
-            # gets 0.9.
-            return _torch.tensor([[0.1 if self.call_count["i"] % 2 == 1 else 0.9]])
-
-    full = ap.ModelProfile(
-        {"feature_encoder": "gnubg_full", "match_count": 3,
-         "extras_dim": 16, "in_dim": 198},
-        net=StubNet(),
-    )
-    monkeypatch.setattr(ap, "load_profile", lambda h, fetch=None: full)
-
-    gnubg = MagicMock()
-    gnubg.new_match.return_value = {"position_id": "P0", "match_id": "M0"}
-    gnubg.get_candidate_moves.return_value = [
-        {"move": "move_A", "equity": 0.4},
-        {"move": "move_B", "equity": 0.3},
-    ]
-    submit_calls = {"i": 0}
-    def _submit(p, m, mv):
-        submit_calls["i"] += 1
-        return {"position_id": f"POS_{submit_calls['i']}", "match_id": f"M{submit_calls['i']}"}
-    gnubg.submit_move.side_effect = _submit
-
-    import gnubg_state as gs
-    monkeypatch.setattr(gs, "decode_position_id",
-                        lambda pid: ([0] * 24, [0, 0], [15, 15]))
-
-    # 5 recorded moves so the heuristic-abstain rate (<40%) doesn't trip.
-    record = _gr_winner_agent(moves=[
-        {"turn": 0, "move": "move_A", "dice": [3, 1]},
-    ])
-    ctx = kw.WorkflowContext(
-        match_id="42", chain=chain, gnubg=gnubg,
-        og_get_blob=lambda h: b"",
-        game_record=record,
-    )
-    step = kw.WorkflowStep(id="agent_move_replay", name="x")
-    # 100% mismatch rate ≥ 40% → step abstains (heuristic-abstain),
-    # not raises. The MVP behaviour. A real fail requires the per-side
-    # bit, which is documented as a follow-up. Verify abstain.
-    kw.step_agent_move_replay(ctx, step)
-    assert "inconclusive" in step.detail.lower() or "diverged" in step.detail.lower()
-
-
-def test_phase68_step_count_is_ten():
-    """Locked: workflow has 10 steps after Phase 68 (+rules_check)."""
+def test_step_count_is_eight():
+    """gnubg_replay and agent_move_replay removed; workflow is 8 steps."""
     r = client.get("/keeper-workflow/test-id")
     body = r.json()
-    assert len(body["steps"]) == 10
+    assert len(body["steps"]) == 8
 
 
-def test_phase38_includes_agent_move_replay_step():
-    """Locked: agent_move_replay is in the canonical step list."""
-    r = client.get("/keeper-workflow/test-id")
-    step_ids = [s["id"] for s in r.json()["steps"]]
-    assert "agent_move_replay" in step_ids
-    # Position: between gnubg_replay and settlement_signed.
-    i = step_ids.index("agent_move_replay")
-    assert step_ids[i - 1] == "gnubg_replay"
-    assert step_ids[i + 1] == "settlement_signed"
-
-
-def test_phase68_includes_rules_check_step():
-    """Locked: rules_check is in the canonical step list, between og_storage_fetch and gnubg_replay."""
+def test_rules_check_step_present_and_ordered():
+    """rules_check is between og_storage_fetch and settlement_signed."""
     r = client.get("/keeper-workflow/test-id")
     step_ids = [s["id"] for s in r.json()["steps"]]
     assert "rules_check" in step_ids
     i = step_ids.index("rules_check")
     assert step_ids[i - 1] == "og_storage_fetch"
-    assert step_ids[i + 1] == "gnubg_replay"
+    assert step_ids[i + 1] == "settlement_signed"

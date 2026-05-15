@@ -124,8 +124,26 @@ export function isLegal(
   const available = [...pool];
 
   for (const piece of pieces) {
-    const pip = pipConsumed(piece, side);
-    const pipIdx = available.indexOf(pip);
+    const offDst = side === 0 ? OFF_DST : OFF_DST_P1;
+    let pip = pipConsumed(piece, side);
+    let pipIdx = available.indexOf(pip);
+
+    // Overshot bear-off: backgammon allows using a larger die when no checker
+    // sits on a higher-valued point. generateLegalMoves handles this in
+    // getSingleMoves; isLegal must match that logic or it will reject the move.
+    if (pipIdx === -1 && piece.dst === offDst && allInHome(simPoints, simBar, side)) {
+      const hasHigher = side === 0
+        ? simPoints.slice(piece.src).some((c) => c > 0)
+        : simPoints.slice(piece.src).some((c) => c < 0);
+      if (!hasHigher) {
+        const overshotDie = available.filter((d) => d > pip).sort((a, b) => a - b)[0];
+        if (overshotDie !== undefined) {
+          pip = overshotDie;
+          pipIdx = available.indexOf(pip);
+        }
+      }
+    }
+
     if (pipIdx === -1) return false;
     available.splice(pipIdx, 1);
 
@@ -142,7 +160,6 @@ export function isLegal(
     }
 
     // Validate and place at destination.
-    const offDst = side === 0 ? OFF_DST : OFF_DST_P1;
     if (piece.dst === offDst) {
       if (!allInHome(simPoints, simBar, side)) return false;
     } else {

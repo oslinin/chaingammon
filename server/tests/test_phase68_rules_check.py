@@ -208,7 +208,7 @@ def test_rules_check_step_fails_workflow_on_illegal_move():
     rules_step = next(s for s in wf.steps if s.id == "rules_check")
     assert rules_step.status == "failed"
     assert "violates backgammon rules" in (rules_step.error or "")
-    # gnubg_replay and later steps must still be pending.
+    # agent_move_replay and later steps must still be pending.
     subsequent = [s for s in wf.steps
                   if list(kw.STEP_IDS).index(s.id) > list(kw.STEP_IDS).index("rules_check")]
     assert all(s.status == "pending" for s in subsequent)
