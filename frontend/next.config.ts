@@ -37,6 +37,23 @@ const nextConfig: NextConfig = {
   // Set BASE_PATH=/chaingammon in the GitHub Actions workflow environment.
   basePath,
 
+  // COOP/COEP headers allow SharedArrayBuffer in the browser, which the
+  // threaded ONNX WASM binary can use when numThreads > 1.  With numThreads=1
+  // these headers are not strictly needed, but they're harmless in dev and
+  // prevent a cryptic fallback-chain if a future build re-enables threading.
+  // `headers` is ignored for `output: "export"` — static hosts must add them
+  // via their own config (e.g. GitHub Pages does not support SAB without a
+  // service-worker shim, which is why we keep numThreads=1).
+  headers: async () => [
+    {
+      source: "/(.*)",
+      headers: [
+        { key: "Cross-Origin-Opener-Policy", value: "same-origin" },
+        { key: "Cross-Origin-Embedder-Policy", value: "require-corp" },
+      ],
+    },
+  ],
+
   // Next 16 blocks cross-origin requests to /_next/* dev resources by
   // default. Without this, hitting the dev server from a non-localhost
   // host (phone / another laptop on the LAN) causes the JS bundles and

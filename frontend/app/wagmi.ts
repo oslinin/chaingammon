@@ -30,7 +30,7 @@ const projectId = process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID;
 const connectors =
   typeof window !== "undefined" && projectId
     ? [
-        injected({ shimDisconnect: true }),
+        injected(),
         walletConnect({
           projectId,
           metadata: {
@@ -42,13 +42,16 @@ const connectors =
           showQrModal: true,
         }),
       ]
-    : [injected({ shimDisconnect: true })];
+    : [injected()];
 
 export const config = createConfig({
   chains: ALL_CHAINS,
   connectors,
   transports,
   ssr: true,
+  // Default localStorage persistence — wagmi restores the connection on page
+  // load/refresh. "Chain not configured" toasts are suppressed by Phase 100's
+  // error-hiding logic in the UI; noopStorage is not needed here.
 });
 
 declare module "wagmi" {

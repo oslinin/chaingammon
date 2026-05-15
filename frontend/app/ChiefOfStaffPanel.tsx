@@ -21,6 +21,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { evaluateMoves } from "../lib/onnx_eval";
+import { generateLegalMoves } from "../lib/rules_engine";
 import { tagCandidates } from "../lib/move_tagger";
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -57,6 +58,8 @@ interface Props {
   opponentId?: number;
   onMoveSelect?: (move: string) => void;
   disabled?: boolean;
+  /** When true, skip the LLM entirely — show ONNX-ranked moves only. */
+  noLLM?: boolean;
 }
 
 // ── Tag colour palette ─────────────────────────────────────────────────────
@@ -113,9 +116,11 @@ export function AgentTeammatePanel({
   opponentId,
   onMoveSelect,
   disabled = false,
+  noLLM = false,
 }: Props) {
   const [taggedCandidates, setTaggedCandidates] = useState<TaggedCandidate[]>([]);
   const [loadingCandidates, setLoadingCandidates] = useState(false);
+  const [candidatesRanked, setCandidatesRanked] = useState(false);
 
   const [dialogue, setDialogue] = useState<TeammateMessage[]>([]);
   const [strategyInput, setStrategyInput] = useState("");
@@ -132,24 +137,37 @@ export function AgentTeammatePanel({
   useEffect(() => {
     if (disabled || !dice || !board) return;
     setTaggedCandidates([]);
+    setCandidatesRanked(false);
     setLastResponse(null);
     setDialogue([]);
     setLoadingCandidates(true);
 
+    const gameBoard = {
+      points: board,
+      bar: bar ?? ([0, 0] as [number, number]),
+      off: off ?? ([0, 0] as [number, number]),
+    };
+
     let cancelled = false;
     void (async () => {
       try {
-        const gameBoard = {
-          points: board,
-          bar: bar ?? ([0, 0] as [number, number]),
-          off: off ?? ([0, 0] as [number, number]),
-        };
         const candidates = await evaluateMoves(gameBoard, turn, dice);
         if (cancelled) return;
-        const tagged = tagCandidates(candidates, board, 5) as TaggedCandidate[];
+        const tagged = tagCandidates(candidates, board, 10) as TaggedCandidate[];
         setTaggedCandidates(tagged);
+        setCandidatesRanked(true);
       } catch {
-        // ONNX model unavailable — panel shows nothing but doesn't block the game.
+        // ONNX unavailable — fall back to unranked legal moves tagged by heuristic.
+        if (cancelled) return;
+        try {
+          const moves = generateLegalMoves(gameBoard, turn, dice);
+          const unranked = moves.map((m, i) => ({ move: m, equity: -i * 0.0001 }));
+          const tagged = tagCandidates(unranked, board, 10) as TaggedCandidate[];
+          setTaggedCandidates(tagged);
+          setCandidatesRanked(false);
+        } catch {
+          // rules engine also unavailable — panel stays empty
+        }
       } finally {
         if (!cancelled) setLoadingCandidates(false);
       }
@@ -160,24 +178,19 @@ export function AgentTeammatePanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [disabled, positionId, matchId, dice?.[0], dice?.[1]]);
 
-  // Auto-suggest on each new turn — fires once per (positionId, dice) pair
-  // so the teammate opens with a recommendation without waiting to be asked.
-  // The ref is set inside the callback (not before) so React Strict Mode's
-  // double-invoke + cleanup doesn't permanently mark the turn as sent before
-  // the timer actually fires.
+  // Auto-suggest once candidates are ready — waits for ONNX evaluation to
+  // complete before sending so the LLM receives actual tagged moves to pick
+  // from. Fires once per (positionId, dice) pair; guard is set synchronously
+  // (no timer) so React Strict Mode's double-invoke only sends one request.
   const autoSentRef = useRef<string>("");
   useEffect(() => {
-    if (disabled || !dice) return;
+    if (noLLM || disabled || !dice || taggedCandidates.length === 0) return;
     const key = `${positionId}-${dice[0]}-${dice[1]}`;
     if (autoSentRef.current === key) return;
-    const t = setTimeout(() => {
-      if (autoSentRef.current === key) return;
-      autoSentRef.current = key;
-      void sendStrategy("What's the best move here?");
-    }, 400);
-    return () => clearTimeout(t);
+    autoSentRef.current = key;
+    void sendStrategy("What's the best move here?");
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [disabled, positionId, dice?.[0], dice?.[1]]);
+  }, [noLLM, disabled, positionId, dice?.[0], dice?.[1], taggedCandidates.length]);
 
   // Scroll to latest message whenever dialogue grows.
   useEffect(() => {
@@ -262,68 +275,73 @@ export function AgentTeammatePanel({
       <div className="shrink-0 flex items-center justify-between border-b border-indigo-200 px-4 py-2 dark:border-indigo-800/40">
         <div className="flex items-center gap-2">
           <span className="text-xs font-semibold uppercase tracking-wide text-indigo-700 dark:text-indigo-400">
-            Agent Teammate
+            {noLLM ? "Move Advisor" : "Agent Teammate"}
           </span>
           <span className="text-[10px] text-indigo-500/70 dark:text-indigo-400/50">
-            · AI micro-tactics, you set the strategy
+            {noLLM ? "· ONNX-ranked moves, you decide" : "· AI micro-tactics, you set the strategy"}
           </span>
         </div>
       </div>
 
-      {/* Scrollable content */}
-      <div className="flex flex-1 flex-col gap-3 overflow-y-auto p-4 min-h-0">
-        {/* Tagged candidates row */}
-        {loadingCandidates && (
-          <p className="text-xs text-indigo-500 animate-pulse dark:text-indigo-400">
-            Evaluating moves…
-          </p>
-        )}
-        {taggedCandidates.length > 0 && (
-          <div>
-            <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-indigo-600/70 dark:text-indigo-400/60">
-              Top moves this turn
+      {/* Pinned candidates row — always visible above the conversation */}
+      {(loadingCandidates || taggedCandidates.length > 0) && (
+        <div className="shrink-0 border-b border-indigo-200 px-4 py-2.5 dark:border-indigo-800/40">
+          {loadingCandidates && (
+            <p className="text-xs text-indigo-500 animate-pulse dark:text-indigo-400">
+              Evaluating moves…
             </p>
-            <div className="flex flex-wrap gap-2">
-              {taggedCandidates.map((c, i) => {
-                const isRecommended =
-                  lastResponse?.recommended_move === c.move;
-                const s = TAG_STYLES[c.tag] ?? TAG_STYLES.Safe;
-                return (
-                  <button
-                    key={i}
-                    type="button"
-                    disabled={disabled}
-                    onClick={() => onMoveSelect?.(c.move)}
-                    title={c.tag_reason}
-                    className={[
-                      "flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-mono transition-shadow",
-                      s.bg,
-                      s.border,
-                      s.text,
-                      isRecommended
-                        ? "ring-2 ring-indigo-500 ring-offset-1 shadow-md"
-                        : "hover:shadow-sm",
-                      disabled ? "cursor-not-allowed opacity-50" : "cursor-pointer",
-                    ].join(" ")}
-                  >
-                    <TagBadge tag={c.tag} />
-                    <span>{c.move}</span>
-                    <span className="text-[10px] opacity-60">
-                      {c.equity >= 0 ? "+" : ""}
-                      {c.equity.toFixed(3)}
-                    </span>
-                    {isRecommended && (
-                      <span className="text-[10px] font-semibold text-indigo-600 dark:text-indigo-300">
-                        ✓
-                      </span>
-                    )}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        )}
+          )}
+          {taggedCandidates.length > 0 && (
+            <>
+              <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-indigo-600/70 dark:text-indigo-400/60">
+                {candidatesRanked ? "Top moves this turn" : "Legal moves this turn"}
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {taggedCandidates.map((c, i) => {
+                  const isRecommended = lastResponse?.recommended_move === c.move;
+                  const s = TAG_STYLES[c.tag] ?? TAG_STYLES.Safe;
+                  return (
+                    <button
+                      key={i}
+                      type="button"
+                      disabled={disabled}
+                      onClick={() => onMoveSelect?.(c.move)}
+                      title={c.tag_reason}
+                      className={[
+                        "flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-mono transition-shadow",
+                        s.bg,
+                        s.border,
+                        s.text,
+                        isRecommended
+                          ? "ring-2 ring-indigo-500 ring-offset-1 shadow-md"
+                          : "hover:shadow-sm",
+                        disabled ? "cursor-not-allowed opacity-50" : "cursor-pointer",
+                      ].join(" ")}
+                    >
+                      <TagBadge tag={c.tag} />
+                      <span>{c.move}</span>
+                      {candidatesRanked && (
+                        <span className="text-[10px] opacity-60">
+                          {c.equity >= 0 ? "+" : ""}
+                          {c.equity.toFixed(3)}
+                        </span>
+                      )}
+                      {isRecommended && (
+                        <span className="text-[10px] font-semibold text-indigo-600 dark:text-indigo-300">
+                          ✓
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            </>
+          )}
+        </div>
+      )}
 
+      {/* Scrollable content — hidden in noLLM mode (only the pinned moves row is shown) */}
+      <div className={`flex flex-1 flex-col gap-3 overflow-y-auto p-4 min-h-0 ${noLLM ? "hidden" : ""}`}>
         {/* Deep-dive panel */}
         {lastResponse?.deep_dive && (
           <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-700/40 dark:bg-amber-900/10 dark:text-amber-200">
@@ -379,8 +397,8 @@ export function AgentTeammatePanel({
         )}
       </div>
 
-      {/* Strategy input — pinned at the bottom */}
-      <div className="shrink-0 flex gap-2 border-t border-indigo-200 px-4 py-3 dark:border-indigo-800/40">
+      {/* Strategy input — hidden in noLLM mode */}
+      <div className={`shrink-0 flex gap-2 border-t border-indigo-200 px-4 py-3 dark:border-indigo-800/40 ${noLLM ? "hidden" : ""}`}>
         <input
           ref={inputRef}
           value={strategyInput}

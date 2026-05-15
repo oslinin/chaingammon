@@ -30,6 +30,7 @@ interface BoardProps {
   bar: number[]; // [p0_bar, p1_bar]
   off: number[]; // [p0_off, p1_off]
   turn: number; // 0 = human, 1 = agent
+  opponentName?: string; // display name for the agent (player 1)
   // Click-to-move (all optional — Board is a pure visual component when omitted).
   onPointClick?: (point: number) => void;
   onBarClick?: () => void;
@@ -199,6 +200,7 @@ export function Board({
   bar,
   off,
   turn,
+  opponentName,
   onPointClick,
   onBarClick,
   onOffClick,
@@ -211,7 +213,8 @@ export function Board({
   // Bottom row: points 12–1 (indices 11–0), displayed left→right (12 down to 1).
   const bottomPoints = Array.from({ length: 12 }, (_, i) => 12 - i); // [12..1]
 
-  const turnLabel = turn === 0 ? "Your turn (blue)" : "Agent's turn (red)";
+  const turnLabel =
+    turn === 0 ? "Your turn" : `${opponentName ?? "Agent"}'s turn`;
   const turnColor =
     turn === 0
       ? "text-blue-600 dark:text-blue-400"
@@ -306,21 +309,27 @@ export function Board({
         </button>
       )}
 
-      {/* Off-board checkers */}
-      <div className="flex gap-6 text-sm text-zinc-600 dark:text-zinc-400">
-        <span>
-          <span className="text-blue-500 dark:text-blue-400 font-semibold">
-            You
-          </span>{" "}
-          borne off: {off[0]} / 15
-        </span>
-        <span>
-          <span className="text-red-500 dark:text-red-400 font-semibold">
-            Agent
-          </span>{" "}
-          borne off: {off[1]} / 15
-        </span>
-      </div>
+      {/* Off-board checkers + pip counts */}
+      {(() => {
+        let pip0 = (bar[0] ?? 0) * 25;
+        let pip1 = (bar[1] ?? 0) * 25;
+        for (let i = 0; i < 24; i++) {
+          if (board[i] > 0) pip0 += (i + 1) * board[i];
+          if (board[i] < 0) pip1 += (24 - i) * (-board[i]);
+        }
+        return (
+          <div className="flex gap-6 text-sm text-zinc-600 dark:text-zinc-400">
+            <span>
+              <span className="text-blue-500 dark:text-blue-400 font-semibold">You</span>{" "}
+              borne off: {off[0]} / 15 · <span className="font-mono">{pip0} pip{pip0 !== 1 ? "s" : ""}</span>
+            </span>
+            <span>
+              <span className="text-red-500 dark:text-red-400 font-semibold">Agent</span>{" "}
+              borne off: {off[1]} / 15 · <span className="font-mono">{pip1} pip{pip1 !== 1 ? "s" : ""}</span>
+            </span>
+          </div>
+        );
+      })()}
     </div>
   );
 }
