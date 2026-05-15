@@ -23,10 +23,6 @@ import {
   type PrivateKeyAccount,
 } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
-import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
-
-import { useAccount, useReadContract, useReadContracts } from "wagmi";
 
 import { Board } from "../Board";
 import { AgentTeammatePanel } from "../ChiefOfStaffPanel";
