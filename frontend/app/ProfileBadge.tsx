@@ -244,17 +244,31 @@ export function ProfileBadge({ address }: { address: `0x${string}` }) {
     return (
       <span
         data-testid="profile-badge"
-        style={{ display: "flex", alignItems: "center", gap: 8, fontFamily: "var(--cg-font-mono)", fontSize: 13 }}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          flexWrap: "wrap",
+          justifyContent: "flex-end",
+          gap: 8,
+          fontFamily: "var(--cg-font-mono)",
+          fontSize: 13,
+        }}
       >
         <a
           href={`https://app.ens.domains/${name}`}
           target="_blank"
           rel="noreferrer"
+          title={name ?? undefined}
           style={{ color: "var(--cg-fg-1)", textDecoration: "none" }}
           onMouseEnter={(e) => { (e.currentTarget as HTMLAnchorElement).style.color = "var(--cg-brass)"; }}
           onMouseLeave={(e) => { (e.currentTarget as HTMLAnchorElement).style.color = "var(--cg-fg-1)"; }}
         >
-          {name}
+          {/* Narrow screens see just the label (e.g. "oleg") so the connected
+              header fits inside a phone-width viewport without horizontal
+              scroll; ≥640px (sm: breakpoint) sees the full subname. The
+              tooltip exposes the full name on either size. */}
+          <span className="sm:hidden">{label}</span>
+          <span className="hidden sm:inline">{name}</span>
         </a>
         {elo ? (
           <span
