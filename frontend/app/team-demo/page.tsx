@@ -4,24 +4,29 @@
 // and LLM coaching window (0G Compute). No on-chain settlement.
 "use client";
 
-import React, { useEffect, useRef, useState } from "react";
+import React, { Suspense, useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
+
+import { useAccount, useReadContracts } from "wagmi";
 
 import { Board } from "../Board";
 import { AgentTeammatePanel } from "../ChiefOfStaffPanel";
 import { DiceRoll } from "../DiceRoll";
 import { rollDice } from "../dice";
-import { useComputeBackends } from "../ComputeBackendsContext";
+import { useActiveChainId } from "../chains";
+import { MatchRegistryABI, useChainContracts } from "../contracts";
 import {
   type MatchState,
   newMatch,
   applyMoveToState,
   getBestMove,
   skipTurn,
+  playMatchToEnd,
+  resignMatch,
 } from "../../lib/match_engine";
 import { type Board as GameBoard } from "../../lib/rules_engine";
-import { getSession } from "../../lib/onnx_eval";
 
 const SERVER = process.env.NEXT_PUBLIC_SERVER_URL ?? "http://localhost:8000";
 
@@ -85,9 +90,35 @@ function applyMoveSegment(
 // ── Component ─────────────────────────────────────────────────────────────
 
 export default function TeamDemoPage() {
-  const [setup, setSetup] = useState(true);
-  const [teammateIds, setTeammateIds] = useState<number[]>([]);
-  const [opponentIds, setOpponentIds] = useState<number[]>([]);
+  return (
+    <Suspense fallback={<div className="flex flex-1 items-center justify-center">Loading…</div>}>
+      <TeamDemoPageInner />
+    </Suspense>
+  );
+}
+
+function TeamDemoPageInner() {
+  const params = useSearchParams();
+  const router = useRouter();
+
+  // URL params ?opponents=1,2 and ?teammates=3 auto-populate IDs and skip setup.
+  const opponentsParam = params.get("opponents");
+  const teammatesParam = params.get("teammates");
+  const initialOpponents = opponentsParam
+    ? opponentsParam.split(",").map(Number).filter((n) => Number.isFinite(n) && n > 0)
+    : [];
+  const initialTeammates = teammatesParam
+    ? teammatesParam.split(",").map(Number).filter((n) => Number.isFinite(n) && n > 0)
+    : [];
+  const hasUrlParams = initialOpponents.length > 0;
+  const settleOnChain = params.get("settle") === "1";
+
+  // Show setup only when no opponents were pre-supplied via URL.
+  // With ?opponents=N&settle=1 the user already passed through /match for
+  // KeeperHub setup, so go straight to the game.
+  const [setup, setSetup] = useState(!hasUrlParams);
+  const [teammateIds, setTeammateIds] = useState<number[]>(initialTeammates);
+  const [opponentIds, setOpponentIds] = useState<number[]>(initialOpponents);
 
   const [game, setGame] = useState<MatchState | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -102,11 +133,47 @@ export default function TeamDemoPage() {
   } | null>(null);
   const [selectedSource, setSelectedSource] = useState<number | null>(null);
 
-  const agentMoving = useRef(false);
+  const [fastForward, setFastForward] = useState(false);
 
-  // Warm up the ONNX session as soon as the page loads so the first
-  // evaluation during a game doesn't pay the cold-start latency.
-  useEffect(() => { void getSession(); }, []);
+  const [finalizing, setFinalizing] = useState(false);
+  const [finalizeError, setFinalizeError] = useState<string | null>(null);
+  const [keeperMatchId, setKeeperMatchId] = useState<number | null>(null);
+  const [keeperRunning, setKeeperRunning] = useState(false);
+
+  const { address } = useAccount();
+  const chainId = useActiveChainId();
+  const { matchRegistry } = useChainContracts();
+
+  const primaryOpponentId = opponentIds[0];
+  const eloQuery = useReadContracts({
+    contracts: primaryOpponentId ? [{
+      address: matchRegistry,
+      abi: MatchRegistryABI,
+      functionName: "agentElo",
+      args: [BigInt(primaryOpponentId)],
+      chainId,
+    }] : [],
+    query: { enabled: !!primaryOpponentId, refetchInterval: 15000 },
+  });
+  const opponentElo = eloQuery.data?.[0]?.result as bigint | undefined;
+
+  const agentMoving = useRef(false);
+  const autoStarted = useRef(false);
+
+  // Auto-start the game when opponents come from URL params (off-chain or on-chain).
+  // On-chain games arrive here after /match has already handled KeeperHub setup.
+  useEffect(() => {
+    if (!hasUrlParams || autoStarted.current || game) return;
+    if (initialOpponents.length === 0) return;
+    autoStarted.current = true;
+    try {
+      const state = newMatch(3);
+      setGame({ ...state, dice: rollDice() });
+    } catch (e) {
+      setError(String(e));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const panelRef = useRef<HTMLDivElement>(null);
   const [panelPos, setPanelPos] = useState<{ x: number; y: number } | null>(null);
@@ -187,7 +254,7 @@ export default function TeamDemoPage() {
   };
 
   useEffect(() => {
-    if (setup || !game || game.game_over) return;
+    if (fastForward || setup || !game || game.game_over) return;
     if (game.turn !== 1) return;
     if (!game.dice) return;
 
@@ -211,7 +278,82 @@ export default function TeamDemoPage() {
       }
     }, 800);
     return () => clearTimeout(timer);
-  }, [game, setup]);
+  }, [game, setup, fastForward]);
+
+  useEffect(() => {
+    if (!fastForward || !game || game.game_over) return;
+    if (agentMoving.current) return;
+    let cancelled = false;
+    agentMoving.current = true;
+    void (async () => {
+      try {
+        const final = await playMatchToEnd(game);
+        if (!cancelled) {
+          setGame(final);
+          setFastForward(false);
+        }
+      } catch (e) {
+        if (!cancelled) {
+          setError(String(e));
+          setFastForward(false);
+        }
+      } finally {
+        agentMoving.current = false;
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fastForward]);
+
+  const doFinalizeAndTriggerKeeper = async (g: typeof game) => {
+    if (!g?.game_over) return;
+    const agentId = opponentIds[0];
+    if (!agentId) return;
+    if (finalizing || keeperMatchId !== null) return;
+    setFinalizing(true);
+    setFinalizeError(null);
+    const ZERO = "0x0000000000000000000000000000000000000000";
+    try {
+      const humanWins = g.winner === 0;
+      const body = {
+        winner_agent_id: humanWins ? 0 : agentId,
+        winner_human_address: humanWins && address ? address : ZERO,
+        loser_agent_id: humanWins ? agentId : 0,
+        loser_human_address: !humanWins && address ? address : ZERO,
+        match_length: g.match_length,
+        position_id: g.position_id,
+        gnubg_match_id: g.match_id,
+        score: g.score,
+      };
+      const res = await fetch(`${SERVER}/finalize-direct`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        const text = await res.text().catch(() => res.statusText);
+        throw new Error(text);
+      }
+      const data = (await res.json()) as { match_id: number };
+      setKeeperMatchId(data.match_id);
+      window.localStorage.setItem("keeperMatchId", String(data.match_id));
+      setKeeperRunning(true);
+      fetch(`${SERVER}/keeper-workflow/${data.match_id}/run`, { method: "POST" })
+        .finally(() => setKeeperRunning(false));
+    } catch (e) {
+      setFinalizeError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setFinalizing(false);
+    }
+  };
+
+  // Auto-finalize when the game ends — only when ?settle=1 (came via KeeperHub card).
+  useEffect(() => {
+    if (game?.game_over && settleOnChain && opponentIds.length > 0) {
+      void doFinalizeAndTriggerKeeper(game);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [game?.game_over]);
 
   const doMoveWithNotation = async (notation: string) => {
     if (!game || !game.dice) return;
@@ -229,6 +371,16 @@ export default function TeamDemoPage() {
       setDisplayBoardState(null);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const doForfeit = () => {
+    if (!game || game.game_over) return;
+    if (!window.confirm("Forfeit this match? You'll be marked as the loser.")) return;
+    try {
+      setGame(resignMatch(game));
+    } catch (e) {
+      setError(String(e));
     }
   };
 
@@ -289,15 +441,25 @@ export default function TeamDemoPage() {
   };
 
   if (setup) {
+    const onClickSetupStart = () => {
+      if (opponentIds.length === 0) return;
+      if (settleOnChain) {
+        router.push(`/match?agentId=${opponentIds[0]}`);
+      } else {
+        startTrainingGame();
+      }
+    };
+
     return (
       <main className="mx-auto flex w-full max-w-xl flex-1 flex-col gap-8 p-8">
         <header className="flex flex-col gap-2">
           <h1 className="text-2xl font-bold text-zinc-900 dark:text-zinc-50">
-            Team training game
+            {settleOnChain ? "On-chain game" : "Off-chain game"}
           </h1>
           <p className="text-sm text-zinc-600 dark:text-zinc-400">
-            Configure a training match (no settlement). Play alongside an AI
-            teammate against an opposing team of agents.
+            {settleOnChain
+              ? "Pick your opponent, then review the KeeperHub settlement terms before the match starts. Your ELO is updated on-chain when the game ends."
+              : "Configure a training match (no settlement). Play alongside an AI teammate against an opposing team of agents."}
           </p>
         </header>
 
@@ -368,11 +530,11 @@ export default function TeamDemoPage() {
         </section>
 
         <button
-          onClick={startTrainingGame}
+          onClick={onClickSetupStart}
           disabled={opponentIds.length === 0}
           className="rounded-lg bg-indigo-600 px-6 py-3 text-base font-semibold text-white shadow hover:bg-indigo-500 disabled:opacity-40"
         >
-          Start Training Game
+          {settleOnChain ? "Next: KeeperHub Setup →" : "Start Off-chain Game"}
         </button>
       </main>
     );
@@ -387,9 +549,16 @@ export default function TeamDemoPage() {
       <div className="flex flex-1 flex-col gap-6">
         <header className="flex items-center justify-between border-b border-zinc-200 pb-4 dark:border-zinc-800">
           <h1 className="font-mono text-sm text-zinc-500">
-            {teammateIds.length > 0
-              ? `Training: You + [${teammateIds.join(",")}] vs. [${opponentIds.join(",")}]`
-              : `Training: You vs. [${opponentIds.join(",")}]`}
+            {(() => {
+              const prefix = settleOnChain ? "Official Game" : "Off-Chain Game";
+              const oppLabel = primaryOpponentId
+                ? `Agent ${primaryOpponentId}${opponentElo !== undefined ? ` (ELO ${opponentElo})` : ""}`
+                : `Agents [${opponentIds.join(",")}]`;
+              const matchup = teammateIds.length > 0
+                ? `You + [${teammateIds.join(",")}] v. ${oppLabel}`
+                : `You v. ${oppLabel}`;
+              return `${prefix}: ${matchup}`;
+            })()}
           </h1>
           <button 
             onClick={() => setSetup(true)}
@@ -448,7 +617,7 @@ export default function TeamDemoPage() {
                 {stagedMoves.length > 0 && (
                   <button
                     onClick={() => void doMoveWithNotation(stagedMoves.join(" "))}
-                    className="rounded-md bg-indigo-600 px-3 py-1 text-xs font-semibold text-white shadow-sm hover:bg-indigo-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600"
+                    className="rounded-md bg-indigo-600 px-3 py-1 text-xs font-semibold text-white shadow-sm hover:bg-indigo-500 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600"
                   >
                     Commit Move
                   </button>
@@ -460,15 +629,80 @@ export default function TeamDemoPage() {
               <p className="text-sm text-red-500">{error}</p>
             )}
 
-            {!isHumanTurn && !game.game_over && (
-              <p className="text-sm text-zinc-500 animate-pulse">Opponent team is thinking…</p>
+            {(!isHumanTurn || fastForward) && !game.game_over && (
+              <p className="text-sm text-zinc-500 animate-pulse">
+                {fastForward ? "Fast forwarding…" : "Opponent team is thinking…"}
+              </p>
+            )}
+
+            {!game.game_over && (
+              <div className="flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setFastForward(true)}
+                  disabled={loading || fastForward}
+                  className="rounded-md border border-zinc-300 px-3 py-1 text-xs font-medium text-zinc-600 hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-700/60 dark:text-zinc-400 dark:hover:bg-zinc-800"
+                >
+                  {fastForward ? "Fast forwarding…" : "⏩ Fast forward"}
+                </button>
+                <button
+                  type="button"
+                  onClick={doForfeit}
+                  disabled={loading || fastForward}
+                  className="rounded-md border border-red-300 px-3 py-1 text-xs font-medium text-red-700 hover:bg-red-50 disabled:opacity-50 dark:border-red-700/60 dark:text-red-400 dark:hover:bg-red-900/20"
+                >
+                  Forfeit match
+                </button>
+              </div>
             )}
 
             {game.game_over && (
               <div className="rounded-lg bg-indigo-50 p-4 dark:bg-indigo-900/20">
                 <p className="text-lg font-bold text-indigo-700 dark:text-indigo-300">
-                  Game Over! {game.winner === 0 ? "Your team wins!" : "Opponent team wins."}
+                  Game Over!{" "}
+                  {game.winner === 0
+                    ? teammateIds.length > 0
+                      ? "Your team wins!"
+                      : "You win!"
+                    : primaryOpponentId
+                    ? `Agent ${primaryOpponentId} wins.`
+                    : "Opponents win."}
                 </p>
+                {keeperMatchId !== null ? (
+                  <div className="mt-3 rounded-md bg-emerald-50 px-3 py-2 dark:bg-emerald-900/20">
+                    <p className="text-sm font-semibold text-emerald-700 dark:text-emerald-400">
+                      KeeperHub settled — ELO updated!
+                    </p>
+                    <Link
+                      href="/keeper/no-match"
+                      className="mt-1 block text-xs text-indigo-600 underline dark:text-indigo-400"
+                    >
+                      View KeeperHub audit trail ↗
+                    </Link>
+                    {keeperRunning && (
+                      <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                        Workflow running…
+                      </p>
+                    )}
+                  </div>
+                ) : finalizing ? (
+                  <p className="mt-3 animate-pulse text-sm text-zinc-500 dark:text-zinc-400">
+                    KeeperHub settling…
+                  </p>
+                ) : finalizeError ? (
+                  <div className="mt-3">
+                    <p className="text-xs text-red-600 dark:text-red-400">
+                      Auto-settle failed: {finalizeError}
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => void doFinalizeAndTriggerKeeper(game)}
+                      className="mt-2 rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-500"
+                    >
+                      Retry
+                    </button>
+                  </div>
+                ) : null}
               </div>
             )}
           </div>

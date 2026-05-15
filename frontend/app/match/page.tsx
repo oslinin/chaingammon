@@ -1,87 +1,30 @@
-// match/page.tsx — browser-owned backgammon match flow.
+// match/page.tsx — KeeperHub pre-game card.
 //
-// URL: /match?agentId=<N>
-//
-// All game logic runs client-side via the match engine:
-//   on mount         → newMatch(3) → opening MatchState
-//                       → roll dice client-side for whichever side starts
-//   if turn === 0    → render board + dice + move input, wait for human
-//   human submits    → applyMoveToState(state, move)
-//                       on success → replace state, roll next side's dice
-//                       on error   → surface error, leave state unchanged
-//   agent loop (turn === 1)
-//                    → getBestMove(board, 1, dice) via ONNX BackgammonNet
-//                    → applyMoveToState with that move
-//                    → replace state, roll next side's dice
-//   forfeit          → resignMatch(state) → game_over response
-//
-// Phase 31: drag-and-drop checker movement with optimistic board display and undo.
-//   stagedMoves      — array of "from/to" segments the human has clicked/dragged
-//   displayBoardState — optimistic board/bar/off after applying staged moves locally
-//   stageMove        — appends a segment, applies it to displayBoardState, and
-//                       auto-submits via doMoveWithNotation when all dice are used
-//   Undo button      — clears staged moves and resets display to start-of-turn
-//   Drag events      — onDragStart/onDrop forwarded to Board
-//   Text input + Move button still present for power users who prefer notation.
-//
-// After each move a non-blocking coach hint is requested (skipped during
-// fast-forward since the human is not choosing moves):
-//   → evaluateCandidates(board, side, dice) via ONNX
-//   → POST /api/coach/hint (Next.js Route Handler → 0G Compute / Qwen 2.5 7B)
-// Coach calls are best-effort — any failure is silently swallowed so
-// the game continues regardless of 0G Compute availability.
-//
-// Move notation: "8/5 6/5" (from-point/to-point, space-separated).
+// Shows the KeeperHub mode info and optional ETH stake/escrow flow.
+// On "Start Game" the user is forwarded to /team-demo?opponents=<agentId>
+// for gameplay; KeeperHub auto-settlement runs via the server after the
+// game ends regardless of which page hosts the board.
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
-import { Suspense, useEffect, useRef, useState } from "react";
+import { Suspense, useState } from "react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   useAccount,
-  useChainId,
-  useWalletClient,
   usePublicClient,
   useWriteContract,
 } from "wagmi";
-import { encodeAbiParameters, keccak256, parseEther } from "viem";
-import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
+import { parseEther } from "viem";
+import { generatePrivateKey } from "viem/accounts";
 
 import { AgentWalletPanel } from "../AgentWalletPanel";
-import { Board } from "../Board";
-import { AgentTeammatePanel } from "../ChiefOfStaffPanel";
-import { DiceRoll } from "../DiceRoll";
-import { rollDice } from "../dice";
-import { recordTransaction } from "../transactions";
-import { useActiveChain } from "../chains";
-import { useComputeBackends } from "../ComputeBackendsContext";
-import { MatchEscrowABI, MatchRegistryABI, useChainContracts } from "../contracts";
-import { useChaingammonName } from "../useChaingammonName";
-import {
-  type MatchState,
-  newMatch,
-  applyMoveToState,
-  getBestMove,
-  evaluateCandidates,
-  skipTurn,
-  resignMatch,
-  playMatchToEnd,
-  hasLegalMoves,
-} from "../../lib/match_engine";
-import { type Board as GameBoard } from "../../lib/rules_engine";
-
-// ── API helpers ───────────────────────────────────────────────────────────
+import { MatchEscrowABI, useChainContracts } from "../contracts";
 
 const SERVER = process.env.NEXT_PUBLIC_SERVER_URL ?? "http://localhost:8000";
 
 const ZERO_ADDR = "0x0000000000000000000000000000000000000000" as `0x${string}`;
-
 const ZERO_BIG = BigInt(0);
 
-/** Lenient parseEther that returns 0 on empty / unparseable input —
- * the stake input field is free-form text and we don't want a rogue
- * keystroke to throw mid-render. */
 function safeParseEther(value: string): bigint {
   try {
     const trimmed = value.trim();
@@ -91,118 +34,6 @@ function safeParseEther(value: string): bigint {
     return ZERO_BIG;
   }
 }
-
-
-// Coach backend choices the user can pick in the toggle. "compute" is the
-// paid 0G Compute path (Qwen 2.5 7B Instruct via @0glabs/0g-serving-broker);
-// "local" is the historical free path (flan-t5-base in the now-disabled
-// coach_service). The Next.js Route Handler currently only serves "compute"
-// — keep the type alias so the global ComputeBackendsContext can still
-// surface a "local" pill state, but expect "local" requests to no-op.
-type CoachBackend = "compute" | "local";
-
-interface HintResult {
-  hint: string;
-  // What actually served the request. May differ from the user's pick when
-  // the server falls back from "compute" → "local" because 0G Compute is
-  // unreachable. The UI surfaces this so the choice isn't silently ignored.
-  backend: CoachBackend;
-}
-
-/**
- * Request a coaching hint from the Next.js Route Handler at
- * /api/coach/hint, which routes the request to Qwen 2.5 7B Instruct on
- * 0G Compute. Returns the hint + which backend served it, or null on
- * any failure. Non-blocking: callers should fire-and-forget and update
- * state only if still mounted.
- */
-async function fetchHint(
-  state: MatchState,
-  docsHash: string,
-  backend: CoachBackend,
-): Promise<HintResult | null> {
-  try {
-    if (!state.dice) return null;
-    // Step 1: evaluate candidates with ONNX BackgammonNet.
-    const board: GameBoard = { points: state.board, bar: state.bar, off: state.off };
-    const candidates = await evaluateCandidates(board, state.turn, state.dice);
-    if (!candidates || candidates.length === 0) return null;
-
-    // Step 2: ask the Next.js Route Handler to narrate the top move.
-    const res = await fetch("/api/coach/hint", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        position_id: state.position_id,
-        match_id: state.match_id,
-        dice: state.dice,
-        candidates,
-        docs_hash: docsHash,
-        backend,
-      }),
-    });
-    if (!res.ok) return null;
-    const data = (await res.json()) as { hint?: string; backend?: string };
-    if (!data.hint) return null;
-    const served: CoachBackend =
-      data.backend === "compute" ? "compute" : "local";
-    return { hint: data.hint, backend: served };
-  } catch {
-    // Coach offline or unreachable — game continues without hint.
-    return null;
-  }
-}
-
-/**
- * Roll dice for the side that's about to play and return a new
- * MatchState. Pure helper so the match-end branch (where we want the
- * dice to stay null) is a one-liner: skip this call.
- */
-function withFreshDice(state: MatchState): MatchState {
-  return { ...state, dice: rollDice() };
-}
-
-// ── Phase 31: Optimistic board helper ────────────────────────────────────
-
-/**
- * Apply one checker movement to board/bar/off and return the new state.
- * Player 0 (human) is always the mover. Handles blot hits (single
- * opponent checker at destination is sent to the bar).
- */
-function applyMoveSegment(
-  board: number[],
-  bar: [number, number],
-  off: [number, number],
-  from: number | "bar",
-  to: number | "off",
-): { board: number[]; bar: [number, number]; off: [number, number] } {
-  const newBoard = [...board];
-  const newBar: [number, number] = [bar[0], bar[1]];
-  const newOff: [number, number] = [off[0], off[1]];
-
-  // Remove one checker from the source.
-  if (from === "bar") {
-    newBar[0] = Math.max(0, newBar[0] - 1);
-  } else {
-    newBoard[from - 1] -= 1;
-  }
-
-  // Place the checker at the destination (or bear it off).
-  if (to === "off") {
-    newOff[0] += 1;
-  } else {
-    // Hit a blot: if exactly one opponent checker is there, send it to the bar.
-    if (newBoard[to - 1] === -1) {
-      newBoard[to - 1] = 0;
-      newBar[1] += 1;
-    }
-    newBoard[to - 1] += 1;
-  }
-
-  return { board: newBoard, bar: newBar, off: newOff };
-}
-
-// ── Component ─────────────────────────────────────────────────────────────
 
 export default function MatchPage() {
   return (
@@ -218,1391 +49,176 @@ export default function MatchPage() {
   );
 }
 
-// Default candidate pool for the team-mode teammate-recommendation chip.
-// Read from `?candidates=2,3,4` if present; otherwise fall back to a small
-// demo list. The requester (agentId) is filtered out before the call.
-const DEFAULT_TEAMMATE_CANDIDATES = [1, 2, 3, 4, 5];
-
-interface TeammateRec {
-  best_teammate_id: number;
-  equities: Record<string, number>;
-  spread: number;
-  requester_kind: "model" | "overlay" | "null";
-  candidate_kinds: Record<string, "model" | "overlay" | "null">;
-}
-
 function MatchInner() {
   const params = useSearchParams();
+  const router = useRouter();
   const agentId = Number(params.get("agentId") ?? "1");
 
-  // Read team-mode + candidates from the URL. `?teamMode=1` enables the
-  // teammate-recommendation chip; `?candidates=2,3,4` overrides the
-  // default candidate pool. Both are optional — without `?teamMode=1`
-  // the chip never renders so existing match flows are unaffected.
-  const teamMode = params.get("teamMode") === "1";
-  const candidatesParam = params.get("candidates");
-  const teammateCandidates = candidatesParam
-    ? candidatesParam
-        .split(",")
-        .map((s) => Number(s.trim()))
-        .filter((n) => Number.isFinite(n))
-    : DEFAULT_TEAMMATE_CANDIDATES;
-
-  // Phase 28: persist the most-recently-played agentId so the sidebar can
-  // link back to this agent on subsequent visits.
-  useEffect(() => {
-    window.localStorage.setItem("lastAgentId", String(agentId));
-  }, [agentId]);
-
-  // Career-mode teammate recommendation. Fires once on mount when team
-  // mode is on; result feeds the read-only chip in the main column.
-  // Failures are silent — the chip is a hint, not the page's reason
-  // for existing.
-  const [teammateRec, setTeammateRec] = useState<TeammateRec | null>(null);
-  useEffect(() => {
-    if (!teamMode) return;
-    const filtered = teammateCandidates.filter((c) => c !== agentId);
-    if (filtered.length === 0) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await fetch(
-          `${SERVER}/agents/${agentId}/recommend-teammate`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ candidates: filtered }),
-          },
-        );
-        if (!res.ok) return;
-        const data = (await res.json()) as TeammateRec;
-        if (!cancelled) setTeammateRec(data);
-      } catch {
-        // Endpoint unreachable — keep teammateRec null so the chip
-        // renders nothing.
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-    // teamMode + agentId change → page is effectively re-loaded; the
-    // candidate list is derived once per mount.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [teamMode, agentId]);
-
-  // Phase 36: write a stable UUID for this match session so the sidebar's
-  // 0G Storage log / ENS / KeeperHub entries deep-link to the current match.
-  // A new UUID is generated on each page load (= each new game session).
-  // The archive URI (set after keeper settlement) is stored separately under
-  // "currentMatchArchiveUri" and keyed by this UUID.
-  useEffect(() => {
-    // crypto.randomUUID exists only in secure contexts (HTTPS / localhost),
-    // so it's undefined when the dev server is reached over plain-HTTP via
-    // a LAN IP (e.g. 192.168.x.x:3000). Fall back to a non-cryptographic
-    // unique-enough id — this only keys local match-session state.
-    const matchSessionId =
-      typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
-        ? crypto.randomUUID()
-        : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
-    window.localStorage.setItem("currentMatchId", matchSessionId);
-    // Clear any archive URI from a previous match so the log page correctly
-    // shows "in progress" until this match is settled.
-    window.localStorage.removeItem("currentMatchArchiveUri");
-  }, []);
-
-  const [game, setGame] = useState<MatchState | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [moveInput, setMoveInput] = useState("");
-
-  // Phase 27: click-to-move state.
-  // null = no checker selected, 1-24 = board point, 25 = bar (player 0).
-  const [selectedSource, setSelectedSource] = useState<number | null>(null);
-
-  // Phase 31: staged moves and optimistic board display.
-  // Each element is a "from/to" notation segment, e.g. "8/5" or "bar/24".
-  const [stagedMoves, setStagedMoves] = useState<string[]>([]);
-  // Optimistic board state while moves are staged; null = show game.board.
-  const [displayBoardState, setDisplayBoardState] = useState<{
-    board: number[];
-    bar: [number, number];
-    off: [number, number];
-  } | null>(null);
-
-  // Coach state — best-effort; failures leave hint null.
-  const [coachHint, setCoachHint] = useState<string | null>(null);
-  const [coachLoading, setCoachLoading] = useState(false);
-  // Which backend actually served the last hint. Distinct from the user's
-  // pick because the server may fall back from "compute" to "local" when
-  // 0G Compute is unreachable.
-  const [coachServedBy, setCoachServedBy] = useState<CoachBackend | null>(null);
-
-  // User's coach-backend pick. Default to the free local path so no 0G tokens
-  // are charged without the user explicitly opting in. Persisted to
-  // localStorage so a user who switches to "compute" stays on it across
-  // page loads. SSR-safe: ComputeBackendsContext defers localStorage
-  // reads behind a `hydrated` flag so the server-rendered HTML matches
-  // the initial client render ("local").
-  //
-  // Phase I.4: derive coachBackend from the global ComputeBackendsContext
-  // (the pill in layout.tsx) so flipping Coach in the pill updates this
-  // page's coach calls — and vice versa via the per-match buttons below.
-  // The context value is "local" | "0g"; the coach API's wire format is
-  // "local" | "compute"; we adapt at the boundary.
-  const { backends: computeBackends, setBackend: setComputeBackend } =
-    useComputeBackends();
-  const coachBackend: CoachBackend =
-    computeBackends.coach === "0g" ? "compute" : "local";
-  const setCoachBackend = (value: CoachBackend) => {
-    setComputeBackend("coach", value === "compute" ? "0g" : "local");
-  };
-
-  // Always carry the latest pick into fire-and-forget callbacks without
-  // re-creating closures (which would force every move handler to depend
-  // on `coachBackend` and re-render).
-  const coachBackendRef = useRef<CoachBackend>(coachBackend);
-  useEffect(() => {
-    coachBackendRef.current = coachBackend;
-  }, [coachBackend]);
-
-  // Docs hash for the coach RAG context (uploaded once to 0G Storage).
-  const docsHash = process.env.NEXT_PUBLIC_GNUBG_DOCS_HASH ?? "";
-
-  // Concurrency guard — prevents duplicate /move + /apply cascades when
-  // React re-renders while an agent step is mid-flight.
-  const agentMoving = useRef(false);
-
-  // Whether the human has handed off the ONNX engine to finish the game.
-  const [fastForward, setFastForward] = useState(false);
-
-  // KeeperHub mode: game hasn't started yet (show "Start Game" card first).
-  // Always true for agent matches — the card explains KeeperHub will auto-settle.
-  const [gameStarted, setGameStarted] = useState(agentId === 0);
-
-  // KeeperHub auto-finalize state. After game-end the frontend automatically
-  // calls /finalize-direct then /keeper-workflow/{matchId}/run so settlement
-  // is never gated on a manual "Settle on-chain" click.
-  const [finalizing, setFinalizing] = useState(false);
-  const [finalizeError, setFinalizeError] = useState<string | null>(null);
-  const [keeperMatchId, setKeeperMatchId] = useState<number | null>(null);
-  const [keeperRunning, setKeeperRunning] = useState(false);
-
-  // Staked-match state. `stakeEth` is the per-side stake the user typed in
-  // (empty / "0" → free match). `escrowMatchId` is the bytes32 the human
-  // and the agent both deposited under; null until both deposits land.
-  // `depositStatus` drives the pre-game UI through human-deposit then
-  // agent-deposit before the game can start.
   const [stakeEth, setStakeEth] = useState("");
-  const [escrowMatchId, setEscrowMatchId] = useState<`0x${string}` | null>(null);
   const [depositStatus, setDepositStatus] = useState<
     "idle" | "human-pending" | "agent-pending" | "ready" | "error"
   >("idle");
   const [depositError, setDepositError] = useState<string | null>(null);
 
-  // ── Settlement via settleWithSessionKeys ──────────────────────────────────
-  // Wallet hooks — used only when a wallet is connected.
   const { address, isConnected } = useAccount();
-  const { label: chaingammonLabel } = useChaingammonName(address);
-  const { data: walletClient } = useWalletClient();
   const publicClient = usePublicClient();
-  const chainId = useChainId();
-  const { matchRegistry, matchEscrow } = useChainContracts();
+  const { matchEscrow } = useChainContracts();
   const { writeContractAsync } = useWriteContract();
-  const activeChain = useActiveChain();
-  const explorerUrl = activeChain?.chain.blockExplorers?.default?.url;
 
-  const [settling, setSettling] = useState(false);
-  const [settleError, setSettleError] = useState<string | null>(null);
-  const [settleTxHash, setSettleTxHash] = useState<`0x${string}` | null>(null);
+  const stakeWei = stakeEth.trim() ? safeParseEther(stakeEth) : ZERO_BIG;
+  const isStaked = stakeWei > ZERO_BIG;
+  const isDepositing =
+    depositStatus === "human-pending" || depositStatus === "agent-pending";
 
-  // ── Phase 31: Derived board display state ─────────────────────────────
-
-  // Current visual board — optimistic while moves are staged, otherwise
-  // the authoritative server state.
-  const currentBoard = displayBoardState?.board ?? game?.board ?? [];
-  const currentBar = (displayBoardState?.bar ?? game?.bar ?? [0, 0]) as [
-    number,
-    number,
-  ];
-  const currentOff = (displayBoardState?.off ?? game?.off ?? [0, 0]) as [
-    number,
-    number,
-  ];
-
-  // How many move segments we expect before auto-submitting.
-  // Doubles → 4 moves; any other roll → 2 moves.
-  const diceCount = game?.dice ? (game.dice[0] === game.dice[1] ? 4 : 2) : 0;
-
-  // ── Coach hint after each move ─────────────────────────────────────────
-
-  /**
-   * Fire-and-forget coach hint request. Called with the state *after* a
-   * move was applied so the hint reflects the new position. Silently
-   * does nothing when the coach node isn't running.
-   */
-  const requestCoachHint = (state: MatchState) => {
-    if (fastForward) return; // human is not choosing moves — coach not needed
-    if (state.game_over || !state.dice) return;
-    setCoachHint(null);
-    setCoachServedBy(null);
-    setCoachLoading(true);
-    fetchHint(
-      state,
-      docsHash,
-      coachBackendRef.current,
-    )
-      .then((result) => {
-        if (!result) return;
-        setCoachHint(result.hint);
-        setCoachServedBy(result.backend);
-        // Record an expense entry whenever 0G Compute actually served the
-        // hint (the server may fall back to local even when "compute" is
-        // requested, so we key off the *served* backend, not the user's pick).
-        if (result.backend === "compute") {
-          recordTransaction({
-            type: "coach_hint",
-            description: `Coach hint · Agent #${agentId} · Qwen 2.5 7B via 0G Compute`,
-          });
-        }
-      })
-      .finally(() => {
-        setCoachLoading(false);
-      });
-  };
-
-  // ── Start a new game ──────────────────────────────────────────────────
-  // For agent matches, waits until the user clicks "Start Game" so KeeperHub
-  // mode is clearly communicated before play begins. Human-vs-human starts
-  // immediately (gameStarted initialises to true when agentId === 0).
-  useEffect(() => {
-    if (!gameStarted) return;
-    setLoading(true);
-    setError(null);
-    try {
-      const state = newMatch(3);
-      const withDice = withFreshDice(state);
-      setGame(withDice);
-      requestCoachHint(withDice);
-    } catch (e: unknown) {
-      setError(String(e));
-    } finally {
-      setLoading(false);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gameStarted]);
-
-  // ── Auto-drive the agent when it's their turn (normal pace) ──────────────
-  // In fast-forward mode this effect is bypassed entirely; the tight loop
-  // below handles all turns without per-render delays or the 400 ms pause.
-  useEffect(() => {
-    if (fastForward) return;
-    if (!game || game.game_over) return;
-    if (game.turn !== 1) return;
-    if (!game.dice) return; // dice are seeded by withFreshDice on the previous step
-
-    const step = async () => {
-      if (agentMoving.current) return;
-      agentMoving.current = true;
-      try {
-        const board: GameBoard = { points: game.board, bar: game.bar, off: game.off };
-        const best = await getBestMove(board, 1, game.dice!);
-        if (!best) {
-          // No legal moves — bar dance. Skip turn and roll for the new side.
-          const skipped = skipTurn(game);
-          const skippedWithDice = skipped.game_over
-            ? skipped
-            : withFreshDice(skipped);
-          setGame(skippedWithDice);
-          return;
-        }
-        const next = applyMoveToState(game, best);
-        const nextWithDice = next.game_over ? next : withFreshDice(next);
-        setGame(nextWithDice);
-        requestCoachHint(nextWithDice);
-      } catch (e: unknown) {
-        setError(String(e));
-      } finally {
-        agentMoving.current = false;
-      }
-    };
-
-    // Small delay so the human sees the agent's dice land before its move.
-    const timer = setTimeout(step, 400);
-    return () => clearTimeout(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [game, fastForward]);
-
-  // ── Fast-forward (client-side ONNX) ─────────────────────────────────────
-  // Runs the full remaining match in the browser via playMatchToEnd, which
-  // uses the ONNX BackgammonNet to pick moves for both sides. Dice come from
-  // Math.random — acceptable since fast-forward is a UX shortcut, not rated.
-  useEffect(() => {
-    if (!fastForward || !game || game.game_over) return;
-    if (agentMoving.current) return;
-
-    let cancelled = false;
-    agentMoving.current = true;
-
-    void (async () => {
-      try {
-        const final = await playMatchToEnd(game);
-        if (!cancelled) setGame(final);
-      } catch (e: unknown) {
-        if (!cancelled) setError(String(e));
-      } finally {
-        agentMoving.current = false;
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fastForward]);
-
-  // ── Auto-skip the human's turn when they have no legal moves ──────────────
-  // Symmetric counterpart to the agent loop above. Runs only on the human's
-  // turn outside fast-forward. Uses hasLegalMoves from the rules engine to
-  // detect bar-dance; when no moves exist, skipTurn flips the turn.
-  useEffect(() => {
-    if (!game || game.game_over) return;
-    if (game.turn !== 0 || fastForward) return;
-    if (!game.dice) return;
-    if (agentMoving.current) return;
-    const board: GameBoard = { points: game.board, bar: game.bar, off: game.off };
-    if (!hasLegalMoves(board, 0, game.dice)) {
-      const skipped = skipTurn(game);
-      const skippedWithDice = skipped.game_over ? skipped : withFreshDice(skipped);
-      setGame(skippedWithDice);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [game, fastForward]);
-
-  // ── Human actions ──────────────────────────────────────────────────────
-
-  // Clear click selection and staged moves whenever it is no longer the human's turn.
-  useEffect(() => {
-    if (!game || game.turn !== 0) {
-      setSelectedSource(null);
-      setStagedMoves([]);
-      setDisplayBoardState(null);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [game?.turn]);
-
-  /**
-   * Apply a move notation string via the client-side engine. Shared by the
-   * manual Move button (text input) and the auto-submit path (click/drag
-   * staging). Clears all staged state on success or error.
-   */
-  const doMoveWithNotation = async (notation: string) => {
-    if (!game || !game.dice) return;
-    setLoading(true);
-    setError(null);
-    setSelectedSource(null);
-    try {
-      const next = applyMoveToState(game, notation);
-      const nextWithDice = next.game_over ? next : withFreshDice(next);
-      setGame(nextWithDice);
-      setStagedMoves([]);
-      setDisplayBoardState(null);
-      setMoveInput("");
-      requestCoachHint(nextWithDice);
-    } catch (e: unknown) {
-      setError(String(e));
-      // On error, reset optimistic state so the board snaps back.
-      setStagedMoves([]);
-      setDisplayBoardState(null);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  /**
-   * Stage one checker movement (Phase 31 click/drag-to-move).
-   *
-   * Appends the segment to stagedMoves, applies it to displayBoardState
-   * so the checker appears at its destination immediately, then
-   * auto-submits when all dice have been used.
-   */
-  const stageMove = (from: number | "bar", to: number | "off") => {
-    if (!game || !game.dice) return;
-
-    const fromStr = from === "bar" ? "bar" : String(from);
-    const toStr = to === "off" ? "off" : String(to);
-    const seg = `${fromStr}/${toStr}`;
-    const newStaged = [...stagedMoves, seg];
-
-    // Apply the move locally for immediate visual feedback.
-    const curBoard = displayBoardState?.board ?? game.board;
-    const curBar = displayBoardState?.bar ?? game.bar;
-    const curOff = displayBoardState?.off ?? game.off;
-    const newDisplay = applyMoveSegment(curBoard, curBar, curOff, from, to);
-
-    setStagedMoves(newStaged);
-    setDisplayBoardState(newDisplay);
-    setSelectedSource(null);
-
-    // Auto-submit when all dice are consumed.
-    if (newStaged.length >= diceCount) {
-      void doMoveWithNotation(newStaged.join(" "));
-    }
-  };
-
-  /**
-   * Handle a click on a board point (Phase 27 click-to-move, extended in Phase 31).
-   *
-   * First click: selects the point as the move source (only valid if the point
-   * has a player-0 checker and player-0 has no checkers on the bar).
-   * Second click on the same point: deselects.
-   * Second click on a different point: stages the move and updates the display
-   * board optimistically.
-   */
-  const handlePointClick = (point: number) => {
-    if (!game || !game.dice || game.turn !== 0) return;
-
-    // Use the display board (post-staging) for source validation.
-    const curBar = displayBoardState?.bar ?? game.bar;
-    const curBoard = displayBoardState?.board ?? game.board;
-
-    if (selectedSource === null) {
-      // Player 0 must clear the bar before moving board checkers.
-      if (curBar[0] > 0) return;
-      if (curBoard[point - 1] > 0) setSelectedSource(point);
-    } else if (selectedSource === point) {
-      setSelectedSource(null); // deselect
-    } else {
-      const from: number | "bar" =
-        selectedSource === 25 ? "bar" : selectedSource;
-      stageMove(from, point);
-    }
-  };
-
-  /** Click the bar zone to select it as the move source (enter from bar). */
-  const handleBarClick = () => {
-    if (!game || !game.dice || game.turn !== 0) return;
-    const curBar = displayBoardState?.bar ?? game.bar;
-    if (curBar[0] === 0) return;
-    setSelectedSource(25);
-  };
-
-  /** Click the bear-off zone when a source is already selected. */
-  const handleOffClick = () => {
-    if (!game || !game.dice || game.turn !== 0 || selectedSource === null)
-      return;
-    const from: number | "bar" = selectedSource === 25 ? "bar" : selectedSource;
-    stageMove(from, "off");
-  };
-
-  /** Phase 31: drag-start — select the dragged point as the move source. */
-  const handleDragStart = (point: number) => {
-    if (!game || !game.dice || game.turn !== 0) return;
-    const curBar = displayBoardState?.bar ?? game.bar;
-    const curBoard = displayBoardState?.board ?? game.board;
-    if (curBar[0] > 0) return; // must enter from bar first
-    if (curBoard[point - 1] > 0) setSelectedSource(point);
-  };
-
-  /** Phase 31: drop — stage the move from selectedSource to the dropped point. */
-  const handleDrop = (point: number) => {
-    if (selectedSource === null || !game || !game.dice || game.turn !== 0)
-      return;
-    const from: number | "bar" = selectedSource === 25 ? "bar" : selectedSource;
-    stageMove(from, point);
-  };
-
-  /** Manual submit via the text input + Move button (backward compat). */
-  const doMove = async () => {
-    if (!game || !moveInput.trim() || !game.dice) return;
-    await doMoveWithNotation(moveInput.trim());
-  };
-
-  const doForfeit = async () => {
-    if (!game || game.game_over) return;
-    if (!window.confirm("Forfeit this match? You'll be marked as the loser.")) {
+  const onClickStart = async () => {
+    // Once both sides have deposited (or no stake), navigate to gameplay.
+    if (depositStatus === "ready" || !isStaked) {
+      router.push(`/team-demo?opponents=${agentId}&settle=1`);
       return;
     }
-    setLoading(true);
-    setError(null);
-    try {
-      const next = resignMatch(game);
-      setGame(next);
-    } catch (e: unknown) {
-      setError(String(e));
-    } finally {
-      setLoading(false);
+    if (!isConnected || !address) {
+      setDepositError("Connect your wallet to stake.");
+      setDepositStatus("error");
+      return;
     }
-  };
-
-  // ── Trustless on-chain settlement ─────────────────────────────────────────
-  //
-  // Flow (two MetaMask interactions, both initiated by the user):
-  //   1. Generate an ephemeral session key (in-browser, no network).
-  //   2. Read the human's current nonce from MatchRegistry.
-  //   3. Human wallet signs "Chaingammon:open" auth (MetaMask popup #1).
-  //   4. Session key signs "Chaingammon:result" instantly (no popup).
-  //   5. Send settleWithSessionKeys tx (MetaMask popup #2 — the actual tx).
-  //
-  // On success the contract updates ELO for both the human and the agent.
-  // gameRecordHash is left as bytes32(0) here; 0G Storage upload is a
-  // follow-up task.
-  const doSettle = async () => {
-    if (!game?.game_over || !address || !walletClient || !publicClient) return;
-
-    setSettleError(null);
-    setSettling(true);
-
-    try {
-      // Step 1 — fresh session key (ephemeral, browser-only).
-      const privKey = generatePrivateKey();
-      const sessAccount = privateKeyToAccount(privKey);
-
-      // Step 2 — read the human's current nonce from MatchRegistry.
-      const nonce = (await publicClient.readContract({
-        address: matchRegistry,
-        abi: MatchRegistryABI,
-        functionName: "nonces",
-        args: [address],
-      })) as bigint;
-
-      // Step 3 — human signs "Chaingammon:open" (MetaMask popup #1).
-      // Encoding mirrors the contract's abi.encode call exactly:
-      //   keccak256(abi.encode("Chaingammon:open", chainid, address(this),
-      //                        human, nonce, agentId, matchLength, sessionKey))
-      const humanWins = game.winner === 0;
-      const gameRecordHash = `0x${"00".repeat(32)}` as `0x${string}`;
-
-      const authInner = keccak256(
-        encodeAbiParameters(
-          [
-            { type: "string" },
-            { type: "uint256" },
-            { type: "address" },
-            { type: "address" },
-            { type: "uint256" },
-            { type: "uint256" },
-            { type: "uint16" },
-            { type: "address" },
-          ],
-          [
-            "Chaingammon:open",
-            BigInt(chainId),
-            matchRegistry,
-            address,
-            nonce,
-            BigInt(agentId),
-            game.match_length,
-            sessAccount.address,
-          ],
-        ),
-      );
-      // signMessage with { raw } applies EIP-191 personal_sign prefix,
-      // matching MessageHashUtils.toEthSignedMessageHash in the contract.
-      const humanAuthSig = await walletClient.signMessage({
-        message: { raw: authInner },
-      });
-
-      // Step 4 — session key signs "Chaingammon:result" (instant, no popup).
-      const resultInner = keccak256(
-        encodeAbiParameters(
-          [
-            { type: "string" },
-            { type: "uint256" },
-            { type: "address" },
-            { type: "address" },
-            { type: "uint256" },
-            { type: "uint256" },
-            { type: "bool" },
-            { type: "bytes32" },
-          ],
-          [
-            "Chaingammon:result",
-            BigInt(chainId),
-            matchRegistry,
-            address,
-            nonce,
-            BigInt(agentId),
-            humanWins,
-            gameRecordHash,
-          ],
-        ),
-      );
-      const resultSig = await sessAccount.signMessage({
-        message: { raw: resultInner },
-      });
-
-      // Step 5 — submit the settlement tx (MetaMask popup #2).
-      const txHash = await writeContractAsync({
-        address: matchRegistry,
-        abi: MatchRegistryABI,
-        functionName: "settleWithSessionKeys",
-        args: [
-          address,
-          BigInt(agentId),
-          game.match_length,
-          humanWins,
-          gameRecordHash,
-          nonce,
-          sessAccount.address,
-          humanAuthSig,
-          resultSig,
-        ],
-      });
-      setSettleTxHash(txHash);
-      recordTransaction({
-        type: "game_settlement",
-        description: `Match settled on-chain · Agent #${agentId} · tx ${txHash.slice(0, 10)}…`,
-      });
-    } catch (e: unknown) {
-      setSettleError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setSettling(false);
+    if (matchEscrow === ZERO_ADDR) {
+      setDepositError("MatchEscrow not deployed on this chain.");
+      setDepositStatus("error");
+      return;
     }
-  };
-
-  // ── KeeperHub auto-finalize + workflow trigger ────────────────────────────
-  // Called automatically when the game ends (agent mode). Uploads the game
-  // record to 0G Storage, commits recordMatch on-chain, then kicks off the
-  // 9-step audit workflow. No wallet interaction required — the server's
-  // deployer key signs the recordMatch tx.
-  const doFinalizeAndTriggerKeeper = async () => {
-    if (!game?.game_over || finalizing || keeperMatchId !== null) return;
-    setFinalizing(true);
-    setFinalizeError(null);
     try {
-      const humanWins = game.winner === 0;
-      const ZERO = "0x0000000000000000000000000000000000000000";
-      // Staked matches go through /finalize-direct-staked so the ELO
-      // update and the escrow payout happen atomically on-chain. Free
-      // matches (no escrowMatchId) keep the existing /finalize-direct
-      // path that only writes the registry record.
-      const isStakedSettlement =
-        escrowMatchId !== null && depositStatus === "ready";
-      const stakeWei = stakeEth.trim() ? safeParseEther(stakeEth) : ZERO_BIG;
-      const endpoint = isStakedSettlement
-        ? "/finalize-direct-staked"
-        : "/finalize-direct";
-      const body: Record<string, unknown> = {
-        winner_agent_id: humanWins ? 0 : agentId,
-        winner_human_address: humanWins && address ? address : ZERO,
-        loser_agent_id: humanWins ? agentId : 0,
-        loser_human_address: !humanWins && address ? address : ZERO,
-        match_length: game.match_length,
-        position_id: game.position_id,
-        gnubg_match_id: game.match_id,
-        score: game.score,
-      };
-      if (chaingammonLabel) {
-        if (humanWins) body.winner_label = chaingammonLabel;
-        else body.loser_label = chaingammonLabel;
+      setDepositError(null);
+      setDepositStatus("human-pending");
+      const newMatchId = generatePrivateKey() as `0x${string}`;
+      const humanTxHash = await writeContractAsync({
+        abi: MatchEscrowABI,
+        address: matchEscrow,
+        functionName: "deposit",
+        args: [newMatchId, stakeWei],
+        value: stakeWei,
+      });
+      if (publicClient) {
+        await publicClient.waitForTransactionReceipt({ hash: humanTxHash });
       }
-      if (isStakedSettlement && escrowMatchId) {
-        body.escrow_match_id = escrowMatchId;
-        body.stake_wei = stakeWei.toString();
-      }
-      const res = await fetch(`${SERVER}${endpoint}`, {
+      setDepositStatus("agent-pending");
+      const res = await fetch(`${SERVER}/agents/${agentId}/deposit`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
+        body: JSON.stringify({
+          match_id: newMatchId,
+          stake_wei: stakeWei.toString(),
+        }),
       });
       if (!res.ok) {
-        const text = await res.text().catch(() => res.statusText);
-        let detail = text;
-        try {
-          const parsed = JSON.parse(text);
-          if (parsed?.detail) detail = String(parsed.detail);
-        } catch {
-          /* keep raw */
-        }
-        throw new Error(detail);
+        const detail = await res.text().catch(() => res.statusText);
+        throw new Error(`agent deposit failed: ${detail}`);
       }
-      const data = (await res.json()) as { match_id: number };
-      const mid = data.match_id;
-      setKeeperMatchId(mid);
-      // Trigger the audit workflow in the background.
-      setKeeperRunning(true);
-      fetch(`${SERVER}/keeper-workflow/${mid}/run`, { method: "POST" }).finally(
-        () => {
-          setKeeperRunning(false);
-        },
-      );
-    } catch (e: unknown) {
-      setFinalizeError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setFinalizing(false);
+      setDepositStatus("ready");
+      // Both sides funded — navigate immediately.
+      router.push(`/team-demo?opponents=${agentId}&settle=1`);
+    } catch (err) {
+      setDepositError(err instanceof Error ? err.message : String(err));
+      setDepositStatus("error");
     }
   };
-
-  // Auto-trigger finalize when the game ends (agent mode only).
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => {
-    if (game?.game_over && agentId > 0) {
-      void doFinalizeAndTriggerKeeper();
-    }
-    // Intentional: only re-run when game_over transitions to true.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [game?.game_over]);
-
-  // ── Render ─────────────────────────────────────────────────────────────
-
-  // Pre-game "Start Game" card for agent matches. KeeperHub mode is always
-  // active when playing against an agent — this card makes that visible before
-  // the first move so the user understands settlement is automatic.
-  if (!gameStarted && agentId > 0) {
-    const stakeWei = stakeEth.trim() ? safeParseEther(stakeEth) : ZERO_BIG;
-    const isStaked = stakeWei > ZERO_BIG;
-    const isDepositing =
-      depositStatus === "human-pending" || depositStatus === "agent-pending";
-    const canStart = !isStaked || depositStatus === "ready";
-
-    const onClickStart = async () => {
-      if (!isStaked) {
-        setGameStarted(true);
-        return;
-      }
-      if (!isConnected || !address) {
-        setDepositError("Connect your wallet to stake.");
-        setDepositStatus("error");
-        return;
-      }
-      if (matchEscrow === ZERO_ADDR) {
-        setDepositError("MatchEscrow not deployed on this chain.");
-        setDepositStatus("error");
-        return;
-      }
-      try {
-        setDepositError(null);
-        setDepositStatus("human-pending");
-        const newMatchId = generatePrivateKey() as `0x${string}`;
-        // Human deposits side A.
-        const humanTxHash = await writeContractAsync({
-          abi: MatchEscrowABI,
-          address: matchEscrow,
-          functionName: "deposit",
-          args: [newMatchId, stakeWei],
-          value: stakeWei,
-        });
-        if (publicClient) {
-          await publicClient.waitForTransactionReceipt({ hash: humanTxHash });
-        }
-        // Agent (server-managed wallet) deposits side B.
-        setDepositStatus("agent-pending");
-        const res = await fetch(`${SERVER}/agents/${agentId}/deposit`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            match_id: newMatchId,
-            stake_wei: stakeWei.toString(),
-          }),
-        });
-        if (!res.ok) {
-          const detail = await res.text().catch(() => res.statusText);
-          throw new Error(`agent deposit failed: ${detail}`);
-        }
-        setEscrowMatchId(newMatchId);
-        setDepositStatus("ready");
-      } catch (err) {
-        setDepositError(err instanceof Error ? err.message : String(err));
-        setDepositStatus("error");
-      }
-    };
-
-    return (
-      <div className="flex min-h-screen flex-col bg-zinc-50 dark:bg-black">
-        <header className="flex items-center justify-between border-b border-zinc-200 px-8 py-4 dark:border-zinc-800">
-          <Link
-            href="/"
-            className="text-sm text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-50"
-          >
-            ← Agents
-          </Link>
-          <span className="font-mono text-sm text-zinc-500 dark:text-zinc-400">
-            Agent #{agentId}
-          </span>
-        </header>
-        <main className="mx-auto flex w-full max-w-lg flex-1 flex-col items-center justify-center gap-6 px-4 py-16">
-          <div className="w-full rounded-xl border border-emerald-200 bg-emerald-50 p-6 dark:border-emerald-700/40 dark:bg-emerald-900/10">
-            <h2 className="mb-2 text-lg font-semibold text-emerald-900 dark:text-emerald-200">
-              KeeperHub mode
-            </h2>
-            <p className="text-sm leading-6 text-emerald-800 dark:text-emerald-300">
-              When you click <strong>Start Game</strong>, KeeperHub takes over
-              settlement. Your result is recorded on 0G Chain and your ELO is
-              updated automatically — even if you close the tab before the game
-              ends.
-            </p>
-            <ul className="mt-3 space-y-1 text-xs text-emerald-700 dark:text-emerald-400">
-              <li>✓ drand dice — publicly verifiable randomness each turn</li>
-              <li>✓ ONNX move validation — every move audited on-chain</li>
-              <li>
-                ✓ automatic ELO settlement — no manual "Settle on-chain" click
-              </li>
-            </ul>
-          </div>
-          <div className="w-full rounded-xl border border-zinc-200 bg-white p-6 dark:border-zinc-800 dark:bg-zinc-900">
-            <label
-              htmlFor="stake-eth"
-              className="mb-2 block text-sm font-medium text-zinc-700 dark:text-zinc-300"
-            >
-              Stake per side (ETH) — leave 0 for a free match
-            </label>
-            <input
-              id="stake-eth"
-              type="number"
-              min="0"
-              step="0.001"
-              placeholder="0"
-              disabled={isDepositing || depositStatus === "ready"}
-              value={stakeEth}
-              onChange={(e) => setStakeEth(e.target.value)}
-              className="w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm font-mono dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
-            />
-            {isStaked && (
-              <>
-                <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
-                  You and the agent each deposit {stakeEth} ETH; winner takes
-                  the pot. Agent funds come from its server-managed wallet
-                  below — top it up before staking.
-                </p>
-                <div className="mt-3">
-                  <AgentWalletPanel agentId={agentId} stakeWei={stakeWei} />
-                </div>
-              </>
-            )}
-            {depositStatus === "human-pending" && (
-              <p className="mt-3 text-xs text-amber-600 dark:text-amber-400">
-                Confirm the deposit in your wallet…
-              </p>
-            )}
-            {depositStatus === "agent-pending" && (
-              <p className="mt-3 text-xs text-amber-600 dark:text-amber-400">
-                Agent depositing…
-              </p>
-            )}
-            {depositStatus === "ready" && (
-              <p className="mt-3 text-xs text-emerald-600 dark:text-emerald-400">
-                Both sides funded. Click Start to play.
-              </p>
-            )}
-            {depositStatus === "error" && depositError && (
-              <p className="mt-3 text-xs text-red-600 dark:text-red-400">
-                {depositError}
-              </p>
-            )}
-          </div>
-          <button
-            type="button"
-            onClick={onClickStart}
-            disabled={isDepositing || (isStaked && !canStart && depositStatus !== "idle" && depositStatus !== "error")}
-            className="w-full rounded-lg bg-indigo-600 px-6 py-3 text-base font-semibold text-white shadow hover:bg-indigo-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 disabled:cursor-not-allowed disabled:bg-zinc-400"
-          >
-            {isStaked
-              ? canStart
-                ? `Start Game vs Agent #${agentId}`
-                : isDepositing
-                  ? "Staking…"
-                  : `Stake ${stakeEth} ETH & Start`
-              : `Start Game vs Agent #${agentId}`}
-          </button>
-        </main>
-      </div>
-    );
-  }
-
-  if (!game && loading) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-zinc-50 dark:bg-black">
-        <p className="text-zinc-500 dark:text-zinc-400">Starting game…</p>
-      </div>
-    );
-  }
-
-  if (!game && error) {
-    return (
-      <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-zinc-50 dark:bg-black p-8">
-        <p className="text-red-600 dark:text-red-400">
-          Could not start game: {error}
-        </p>
-        <Link
-          href="/"
-          className="text-sm text-indigo-600 underline dark:text-indigo-400"
-        >
-          ← Back to agents
-        </Link>
-      </div>
-    );
-  }
-
-  if (!game) return null;
-
-  const isHumanTurn = game.turn === 0;
-  const isAgentTurn = game.turn === 1;
-  const needsMove = !!game.dice && isHumanTurn;
-
-  // Show the Undo button whenever there is something to undo.
-  const canUndo =
-    stagedMoves.length > 0 ||
-    moveInput.trim() !== "" ||
-    selectedSource !== null;
-
-  // Show Apply button when moves are staged but not all dice are used (player
-  // can't use remaining dice — let them submit a partial move for the rules engine to validate).
-  const canApplyPartial =
-    stagedMoves.length > 0 && diceCount > 0 && stagedMoves.length < diceCount;
-
-  const winnerLabel =
-    game.winner === 0 ? "You win!" : game.winner === 1 ? "Agent wins." : "Draw";
 
   return (
     <div className="flex min-h-screen flex-col bg-zinc-50 dark:bg-black">
-      {/* Header — sidebar Home link and the global navbar's ConnectButton
-          already cover navigation + wallet, so the match page only renders
-          the match metadata strip here. */}
-      <header className="flex flex-wrap items-center justify-center gap-2 border-b border-zinc-200 px-4 py-3 sm:gap-4 sm:px-8 sm:py-4 dark:border-zinc-800">
-        <span className="truncate font-mono text-xs text-zinc-500 sm:text-sm dark:text-zinc-400">
-          Agent #{agentId} · {game.match_length}-pt match
-        </span>
-        <span className="shrink-0 font-mono text-xs text-zinc-900 sm:text-sm dark:text-zinc-50">
-          {game.score[0]} – {game.score[1]}
+      <header className="flex items-center justify-between border-b border-zinc-200 px-8 py-4 dark:border-zinc-800">
+        <Link
+          href="/"
+          className="text-sm text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-50"
+        >
+          ← Agents
+        </Link>
+        <span className="font-mono text-sm text-zinc-500 dark:text-zinc-400">
+          Agent #{agentId}
         </span>
       </header>
 
-      {/* Main */}
-      <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-6 px-3 py-6 sm:px-8 sm:py-8">
-        {/* Inference-backend chip. Mirrors the global Compute pill so the
-            user can see which backend the per-move ONNX evaluation runs on. */}
-        <InferenceChip />
+      <main className="mx-auto flex w-full max-w-lg flex-1 flex-col items-center justify-center gap-6 px-4 py-16">
+        {/* KeeperHub info card */}
+        <div className="w-full rounded-xl border border-emerald-200 bg-emerald-50 p-6 dark:border-emerald-700/40 dark:bg-emerald-900/10">
+          <h2 className="mb-2 text-lg font-semibold text-emerald-900 dark:text-emerald-200">
+            KeeperHub mode
+          </h2>
+          <p className="text-sm leading-6 text-emerald-800 dark:text-emerald-300">
+            When you click <strong>Start Game</strong>, KeeperHub takes over
+            settlement. Your result is recorded on 0G Chain and your ELO is
+            updated automatically — even if you close the tab before the game
+            ends.
+          </p>
+          <ul className="mt-3 space-y-1 text-xs text-emerald-700 dark:text-emerald-400">
+            <li>✓ drand dice — publicly verifiable randomness each turn</li>
+            <li>✓ ONNX move validation — every move audited on-chain</li>
+            <li>
+              ✓ automatic ELO settlement — no manual "Settle on-chain" click
+            </li>
+          </ul>
+        </div>
 
-        {/* Career-mode teammate-preference chip. Renders only when the
-            page is loaded with ?teamMode=1 AND the endpoint returned
-            a recommendation. Read-only — clicking does nothing in this
-            phase; swap-to-teammate is a follow-up. */}
-        {teamMode && teammateRec && (
-          <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm text-emerald-900 dark:border-emerald-700/40 dark:bg-emerald-900/10 dark:text-emerald-200">
-            <span className="mr-2" aria-hidden>
-              🤝
-            </span>
-            <span className="font-medium">
-              Agent prefers teammate #{teammateRec.best_teammate_id}
-            </span>
-            <span className="ml-2 font-mono text-xs text-emerald-700 dark:text-emerald-400">
-              (+{teammateRec.spread.toFixed(3)} eq · vs{" "}
-              {Object.keys(teammateRec.equities).length - 1} other
-              {Object.keys(teammateRec.equities).length === 2 ? "" : "s"})
-            </span>
-            {teammateRec.requester_kind === "overlay" && (
-              <span className="ml-2 italic text-xs text-emerald-700/80 dark:text-emerald-400/80">
-                (based on style only — agent not yet trained)
-              </span>
-            )}
-          </div>
-        )}
-        {game.game_over && (
-          <div
-            className={`rounded-lg border p-4 ${
-              game.winner === 0
-                ? "border-blue-300 bg-blue-50 dark:border-blue-700 dark:bg-blue-900/20"
-                : "border-red-300 bg-red-50 dark:border-red-700 dark:bg-red-900/20"
-            }`}
+        {/* Stake card */}
+        <div className="w-full rounded-xl border border-zinc-200 bg-white p-6 dark:border-zinc-800 dark:bg-zinc-900">
+          <label
+            htmlFor="stake-eth"
+            className="mb-2 block text-sm font-medium text-zinc-700 dark:text-zinc-300"
           >
-            <p
-              className={`text-lg font-bold ${
-                game.winner === 0
-                  ? "text-blue-700 dark:text-blue-300"
-                  : "text-red-700 dark:text-red-300"
-              }`}
-            >
-              {winnerLabel}
-            </p>
-            <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
-              Final score: {game.score[0]} – {game.score[1]}
-            </p>
-            {/* KeeperHub auto-settle for agent matches — no manual button needed */}
-            {agentId > 0 ? (
-              keeperMatchId !== null ? (
-                <div className="mt-3 rounded-md bg-emerald-50 px-3 py-2 dark:bg-emerald-900/20">
-                  <p className="text-sm font-semibold text-emerald-700 dark:text-emerald-400">
-                    KeeperHub settled — ELO updated!
-                  </p>
-                  <Link
-                    href={`/keeper/${keeperMatchId}`}
-                    className="mt-1 block text-xs text-indigo-600 underline dark:text-indigo-400"
-                  >
-                    View KeeperHub audit trail ↗
-                  </Link>
-                  {keeperRunning && (
-                    <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-                      Workflow running…
-                    </p>
-                  )}
-                </div>
-              ) : finalizing ? (
-                <p className="mt-3 animate-pulse text-sm text-zinc-500 dark:text-zinc-400">
-                  KeeperHub settling…
-                </p>
-              ) : finalizeError ? (
-                <div className="mt-3">
-                  <p className="text-xs text-red-600 dark:text-red-400">
-                    Auto-settle failed: {finalizeError}
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => void doFinalizeAndTriggerKeeper()}
-                    className="mt-2 rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-500"
-                  >
-                    Retry
-                  </button>
-                </div>
-              ) : null
-            ) : /* Human-vs-human: keep the manual settle path */
-            isConnected ? (
-              settleTxHash ? (
-                <div className="mt-3">
-                  <p className="text-sm font-semibold text-green-700 dark:text-green-400">
-                    Settled on-chain — ELO updated!
-                  </p>
-                  {explorerUrl && (
-                    <a
-                      href={`${explorerUrl}/tx/${settleTxHash}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="mt-1 block text-xs text-indigo-600 underline dark:text-indigo-400"
-                    >
-                      View transaction ↗
-                    </a>
-                  )}
-                </div>
-              ) : (
-                <>
-                  <button
-                    type="button"
-                    onClick={() => void doSettle()}
-                    disabled={settling}
-                    className="mt-3 rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-60"
-                    title="Record result and update ELO on-chain (2 wallet interactions)"
-                  >
-                    {settling ? "Settling…" : "Settle on-chain"}
-                  </button>
-                  {settleError && (
-                    <p className="mt-2 text-xs text-red-600 dark:text-red-400">
-                      {settleError}
-                    </p>
-                  )}
-                </>
-              )
-            ) : (
-              <button
-                disabled
-                className="mt-3 cursor-not-allowed rounded-md bg-zinc-200 px-4 py-2 text-sm font-semibold text-zinc-400 dark:bg-zinc-800 dark:text-zinc-600"
-                title="Connect wallet to settle on-chain"
-              >
-                Settle on-chain (connect wallet)
-              </button>
-            )}
-          </div>
-        )}
-
-        {/* Board renders the optimistic display state during staging, otherwise game.board */}
-        <Board
-          board={currentBoard}
-          bar={currentBar}
-          off={currentOff}
-          turn={game.turn}
-          opponentName={agentId > 0 ? `Agent #${agentId}` : undefined}
-          onPointClick={needsMove ? handlePointClick : undefined}
-          onBarClick={needsMove ? handleBarClick : undefined}
-          onOffClick={
-            needsMove && selectedSource !== null ? handleOffClick : undefined
-          }
-          selectedPoint={selectedSource}
-          onDragStart={needsMove ? handleDragStart : undefined}
-          onDrop={needsMove ? handleDrop : undefined}
-        />
-
-        {game.dice && (
-          <div className="flex items-center gap-3">
-            <span className="text-sm text-zinc-500 dark:text-zinc-400">
-              Rolled:
-            </span>
-            <DiceRoll dice={game.dice} />
-          </div>
-        )}
-
-        {error && (
-          <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-600 dark:bg-red-900/20 dark:text-red-400">
-            {error}
-          </p>
-        )}
-
-        {!game.game_over && isHumanTurn && needsMove && !fastForward && (
-          <div className="flex flex-col gap-3">
-            {/* Instruction */}
-            <p className="text-xs text-zinc-500 dark:text-zinc-400">
-              <span className="font-medium text-zinc-700 dark:text-zinc-300">
-                Drag or click
-              </span>{" "}
-              a blue checker to select it (amber highlight), then drag or click
-              a destination point. The checker moves immediately — after using
-              all dice the move is submitted automatically. Use the{" "}
-              <span className="font-medium text-zinc-700 dark:text-zinc-300">
-                Bear off →
-              </span>{" "}
-              button to bear off. Or type the notation directly below.
-            </p>
-
-            {/* Staged-move status */}
-            {stagedMoves.length > 0 && (
-              <p className="text-xs text-indigo-600 dark:text-indigo-400">
-                {stagedMoves.length}/{diceCount} move
-                {stagedMoves.length !== 1 ? "s" : ""} staged
-                {stagedMoves.length < diceCount &&
-                  " — click the next checker to continue"}
-              </p>
-            )}
-
-            <div className="flex gap-2">
-              <input
-                value={moveInput}
-                onChange={(e) => setMoveInput(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && doMove()}
-                placeholder='e.g. "8/5 6/5" or "off"'
-                className="flex-1 rounded-md border border-zinc-300 bg-white px-3 py-2 font-mono text-sm text-zinc-900 placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50"
-              />
-              {/* Undo clears staged moves, the text input, and any click selection */}
-              {canUndo && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setStagedMoves([]);
-                    setDisplayBoardState(null);
-                    setMoveInput("");
-                    setSelectedSource(null);
-                  }}
-                  className="rounded-md border border-zinc-300 px-3 py-2 text-sm text-zinc-500 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800"
-                >
-                  Undo
-                </button>
-              )}
-              {/* Apply button lets player submit with fewer moves than diceCount
-                  when some dice cannot legally be used. */}
-              {canApplyPartial && (
-                <button
-                  type="button"
-                  onClick={() => void doMoveWithNotation(stagedMoves.join(" "))}
-                  disabled={loading}
-                  className="rounded-md border border-indigo-300 px-3 py-2 text-sm text-indigo-600 hover:bg-indigo-50 disabled:opacity-50 dark:border-indigo-700 dark:text-indigo-400 dark:hover:bg-indigo-900/20"
-                >
-                  Apply ({stagedMoves.length}/{diceCount})
-                </button>
-              )}
-              <button
-                onClick={doMove}
-                disabled={loading || !moveInput.trim()}
-                className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
-              >
-                {loading ? "…" : "Move"}
-              </button>
-            </div>
-          </div>
-        )}
-
-        {!game.game_over && (isAgentTurn || fastForward) && (
-          <p className="text-sm text-zinc-500 dark:text-zinc-400 animate-pulse">
-            {fastForward ? "Fast forwarding…" : "Agent is thinking…"}
-          </p>
-        )}
-
-        {/* ── Coach panel ───────────────────────────────────────────────── */}
-        {!game.game_over && !fastForward && (
-          <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 dark:border-amber-700/40 dark:bg-amber-900/10">
-            <div className="mb-1 flex items-center justify-between gap-3">
-              <p className="text-xs font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-400">
-                Coach
-              </p>
-              <div
-                className="inline-flex overflow-hidden rounded-md border border-amber-300 text-[11px] font-medium dark:border-amber-700/60"
-                role="group"
-                aria-label="Coach backend"
-              >
-                <button
-                  type="button"
-                  aria-pressed={coachBackend === "compute"}
-                  onClick={() => setCoachBackend("compute")}
-                  className={
-                    coachBackend === "compute"
-                      ? "bg-amber-600 px-2 py-0.5 text-white"
-                      : "bg-transparent px-2 py-0.5 text-amber-700 hover:bg-amber-100 dark:text-amber-300 dark:hover:bg-amber-900/30"
-                  }
-                  title="0G Compute · Qwen 2.5 7B (paid, verifiable inference)"
-                >
-                  Paid · 0G
-                </button>
-                <button
-                  type="button"
-                  aria-pressed={coachBackend === "local"}
-                  onClick={() => setCoachBackend("local")}
-                  className={
-                    coachBackend === "local"
-                      ? "bg-amber-600 px-2 py-0.5 text-white"
-                      : "bg-transparent px-2 py-0.5 text-amber-700 hover:bg-amber-100 dark:text-amber-300 dark:hover:bg-amber-900/30"
-                  }
-                  title="Local coach is disabled — coach LLM now runs only on 0G Compute"
-                >
-                  Free · Local
-                </button>
-              </div>
-            </div>
-            {coachLoading ? (
-              <p className="text-sm text-amber-600 dark:text-amber-400 animate-pulse">
-                Thinking…
-              </p>
-            ) : coachHint ? (
-              <>
-                <p className="text-sm text-amber-900 dark:text-amber-200">
-                  {coachHint}
-                </p>
-                {coachServedBy && (
-                  <p className="mt-1 text-[10px] uppercase tracking-wide text-amber-600/80 dark:text-amber-400/70">
-                    Served by{" "}
-                    {coachServedBy === "compute"
-                      ? "0G Compute · Qwen 2.5 7B"
-                      : "local flan-t5-base"}
-                    {coachBackend === "compute" &&
-                      coachServedBy === "local" && (
-                        <span> (0G Compute unreachable — fell back)</span>
-                      )}
-                  </p>
-                )}
-              </>
-            ) : (
-              <p className="text-sm text-amber-500 dark:text-amber-600">
-                Pick the <strong>Paid · 0G</strong> backend above to get
-                per-turn hints from the 0G Compute coach.
-              </p>
-            )}
-          </div>
-        )}
-
-        {/* ── Agent Teammate panel (Phase 76) ─────────────────────────────
-            DeepMind-inspired collaborative agent. Human sets macro-strategy;
-            LLM picks the specific tagged move that fits it. Rendered for
-            the human's turn outside fast-forward — same visibility rule as
-            the existing Coach panel above. */}
-        {!game.game_over && !fastForward && (
-          <AgentTeammatePanel
-            positionId={game.position_id}
-            matchId={game.match_id}
-            dice={game.dice}
-            board={game.board}
-            bar={game.bar}
-            off={game.off}
-            turn={game.turn}
-            opponentId={agentId}
-            disabled={!isHumanTurn || game.game_over}
-            onMoveSelect={(move) => {
-              // Pre-fill the text move input so the human can review and
-              // submit, or click to stage — whichever they prefer.
-              setMoveInput(move);
-            }}
+            Stake per side (ETH) — leave 0 for a free match
+          </label>
+          <input
+            id="stake-eth"
+            type="number"
+            min="0"
+            step="0.001"
+            placeholder="0"
+            disabled={isDepositing || depositStatus === "ready"}
+            value={stakeEth}
+            onChange={(e) => setStakeEth(e.target.value)}
+            className="w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm font-mono dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
           />
-        )}
+          {isStaked && (
+            <>
+              <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
+                You and the agent each deposit {stakeEth} ETH; winner takes the
+                pot. Agent funds come from its server-managed wallet below — top
+                it up before staking.
+              </p>
+              <div className="mt-3">
+                <AgentWalletPanel agentId={agentId} stakeWei={stakeWei} />
+              </div>
+            </>
+          )}
+          {depositStatus === "human-pending" && (
+            <p className="mt-3 text-xs text-amber-600 dark:text-amber-400">
+              Confirm the deposit in your wallet…
+            </p>
+          )}
+          {depositStatus === "agent-pending" && (
+            <p className="mt-3 text-xs text-amber-600 dark:text-amber-400">
+              Agent depositing…
+            </p>
+          )}
+          {depositStatus === "ready" && (
+            <p className="mt-3 text-xs text-emerald-600 dark:text-emerald-400">
+              Both sides funded. Click Start to play.
+            </p>
+          )}
+          {depositStatus === "error" && depositError && (
+            <p className="mt-3 text-xs text-red-600 dark:text-red-400">
+              {depositError}
+            </p>
+          )}
+        </div>
 
-        {!game.game_over && (
-          <div className="mt-2 flex justify-end gap-2">
-            <button
-              type="button"
-              onClick={() => setFastForward(true)}
-              disabled={loading || fastForward}
-              className="rounded-md border border-zinc-300 px-3 py-1 text-xs font-medium text-zinc-600 hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-700/60 dark:text-zinc-400 dark:hover:bg-zinc-800"
-            >
-              {fastForward ? "Fast forwarding…" : "⏩ Fast forward"}
-            </button>
-            <button
-              type="button"
-              onClick={doForfeit}
-              disabled={loading || fastForward}
-              className="rounded-md border border-red-300 px-3 py-1 text-xs font-medium text-red-700 hover:bg-red-50 disabled:opacity-50 dark:border-red-700/60 dark:text-red-400 dark:hover:bg-red-900/20"
-            >
-              Forfeit match
-            </button>
-          </div>
-        )}
+        <button
+          type="button"
+          onClick={onClickStart}
+          disabled={isDepositing}
+          className="w-full rounded-lg bg-indigo-600 px-6 py-3 text-base font-semibold text-white shadow hover:bg-indigo-500 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 disabled:cursor-not-allowed disabled:bg-zinc-400"
+        >
+          {isDepositing ? "Staking…" : `Start Game vs Agent #${agentId}`}
+        </button>
       </main>
-    </div>
-  );
-}
-
-// InferenceChip: mirrors the global Compute pill's inference backend.
-// When 0G is on, fetches a one-shot probe from /training/estimate so
-// the chip can render real provider state + per-inference cost when a
-// backgammon-net provider is registered. When local, shows a static
-// label. Agent moves now run via ONNX BackgammonNet in the browser;
-// 0G Compute is used for the coach LLM only.
-function InferenceChip() {
-  const { backends, hydrated } = useComputeBackends();
-  const is0G = hydrated && backends.inference === "0g";
-
-  // One-shot probe via /training/estimate (epochs=1, agent_ids=1,2 ->
-  // per_inference_og + available). Cheap; backed by React Query so
-  // re-renders don't re-fetch.
-  const probe = useQuery({
-    enabled: is0G,
-    queryKey: ["inference-probe"],
-    staleTime: 60_000,
-    queryFn: async () => {
-      const url = new URL(`${SERVER}/training/estimate`);
-      url.searchParams.set("epochs", "1");
-      url.searchParams.set("agent_ids", "1,2");
-      url.searchParams.set("use_0g_inference", "true");
-      const r = await fetch(url.toString());
-      if (!r.ok) throw new Error(`${r.status}`);
-      return (await r.json()) as {
-        available: boolean;
-        per_inference_og: number;
-        gas_og: number;
-        note?: string;
-      };
-    },
-  });
-
-  if (!hydrated) return null;
-
-  let label: string;
-  let title: string;
-  let className: string;
-  if (!is0G) {
-    label = "Inference: local";
-    title = "Agent inference runs locally";
-    className =
-      "border-zinc-300 text-zinc-600 dark:border-zinc-700 dark:text-zinc-400";
-  } else if (probe.isLoading) {
-    label = "Inference: 0G (probing…)";
-    title = "Checking the 0G eval bridge for a backgammon-net provider";
-    className =
-      "border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-300";
-  } else if (probe.error || !probe.data?.available) {
-    const note = probe.data?.note ?? "provider unavailable";
-    label = "Inference: 0G · provider unavailable";
-    title = `0G eval bridge: ${note}. Local inference will be used during play.`;
-    className =
-      "border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-300";
-  } else {
-    const cost = probe.data.per_inference_og.toFixed(6);
-    label = `Inference: 0G · ~${cost} OG/move`;
-    title = `0G compute provider live; per-move cost ≈ ${cost} OG`;
-    className =
-      "border-emerald-300 bg-emerald-50 text-emerald-800 dark:border-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300";
-  }
-
-  return (
-    <div
-      className={[
-        "self-start rounded-md border px-2 py-1 text-xs font-mono",
-        className,
-      ].join(" ")}
-      title={title}
-    >
-      {label}
     </div>
   );
 }

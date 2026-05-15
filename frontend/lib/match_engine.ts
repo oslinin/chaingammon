@@ -190,27 +190,41 @@ export function hasLegalMoves(
 }
 
 /**
- * Fast-forward: run the full remaining match with both sides picking their
- * best move from the ONNX BackgammonNet. Returns the final MatchState.
+ * Fast-forward: run the full remaining match with both sides picking a random
+ * legal move. Returns the final MatchState.
  *
- * Bound to 300 half-moves to prevent infinite loops in degenerate positions.
+ * Intentionally avoids ONNX inference — evaluating every candidate position
+ * through the neural net would take 10–30 s for a full match. Random play
+ * is sufficient for a UX fast-forward.
+ *
+ * Yields to the browser every 100 half-moves so the UI stays responsive.
+ * Bound to 3000 half-moves (enough for a multi-game match with random play).
  * Dice are rolled locally (Math.random) — this is a UX shortcut, not the
  * rated path (which uses drand for verifiable randomness).
  */
 export async function playMatchToEnd(state: MatchState): Promise<MatchState> {
   let s = state;
 
-  for (let i = 0; i < 300 && !s.game_over; i++) {
+  for (let i = 0; i < 3000 && !s.game_over; i++) {
+    if (i % 100 === 0) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    }
+
     const dice: [number, number] = s.dice ?? [randomDie(), randomDie()];
     const stateWithDice: MatchState = { ...s, dice };
     const board = toBoard(stateWithDice);
 
-    const candidates = await evaluateMoves(board, s.turn, dice);
-    if (candidates.length === 0) {
-      // No legal moves — skip turn, roll fresh dice for the new side.
+    const moves = generateLegalMoves(board, s.turn, dice).filter((m) => m.trim());
+    if (moves.length === 0) {
       s = skipTurn(stateWithDice);
-    } else {
-      s = applyMoveToState(stateWithDice, candidates[0].move);
+      continue;
+    }
+
+    const move = moves[Math.floor(Math.random() * moves.length)];
+    try {
+      s = applyMoveToState(stateWithDice, move);
+    } catch {
+      s = skipTurn(stateWithDice);
     }
   }
 

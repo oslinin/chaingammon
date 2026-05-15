@@ -5,6 +5,8 @@
 
 import LogClient from "./LogClient";
 
+export const dynamicParams = false;
+
 export function generateStaticParams() {
   return [{ matchId: "placeholder" }, { matchId: "no-match" }];
 }

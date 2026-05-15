@@ -9,6 +9,8 @@ import KeeperWorkflowClient from "./KeeperWorkflowClient";
 
 const NO_MATCH_SENTINEL = "no-match";
 
+export const dynamicParams = false;
+
 export function generateStaticParams() {
   return [{ matchId: "placeholder" }, { matchId: NO_MATCH_SENTINEL }];
 }

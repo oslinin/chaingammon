@@ -84,6 +84,8 @@ sequenceDiagram
 | **ENS** (real) | Portable identity. `<name>.chaingammon.eth` subnames; protocol-reserved text records carry ELO + style profile pointer. | `contracts/src/PlayerSubnameRegistrar.sol` |
 | **KeeperHub** | Per-match workflow: deposit verification, drand round pulls, move validation via WASM rules engine, settlement broadcast, audit JSON on 0G Storage. | [`docs/keeperhub-workflow.md`](docs/keeperhub-workflow.md), `docs/keeperhub-feedback.md` |
 
+> **WASM (WebAssembly)** — a compact binary instruction format that runs at near-native speed inside any modern browser or server runtime (Node, Deno, Wasmtime). Chaingammon compiles the backgammon rules engine and the ONNX neural-net inference runtime to WASM so move validation and AI evaluation run entirely client-side — no server round-trip, no trust assumption. KeeperHub uses the same WASM rules engine server-side to independently verify every submitted move before settlement.
+
 **Other infrastructure** (chosen for fit, not a sponsor track):
 
 | Layer | Choice | Why |

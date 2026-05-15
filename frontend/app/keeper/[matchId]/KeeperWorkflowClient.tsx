@@ -57,12 +57,20 @@ export default function KeeperWorkflowClient() {
   const [loading, setLoading] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
 
+  const [localMatchId, setLocalMatchId] = useState<string | null>(null);
+
   useEffect(() => {
     setMounted(true);
-  }, []);
+    const urlParam = params?.matchId as string;
+    if (urlParam === NO_MATCH_SENTINEL || urlParam === "placeholder") {
+      const stored = window.localStorage.getItem("keeperMatchId");
+      if (stored) setLocalMatchId(stored);
+    }
+  }, []);  // eslint-disable-line react-hooks/exhaustive-deps
 
-  const matchId = mounted ? (params?.matchId as string) : null;
-  const isNoMatch = matchId === NO_MATCH_SENTINEL || matchId === "placeholder";
+  const urlMatchId = mounted ? (params?.matchId as string) : null;
+  const matchId = localMatchId ?? urlMatchId;
+  const isNoMatch = !matchId || matchId === NO_MATCH_SENTINEL || matchId === "placeholder";
 
   // Initial fetch + polling while running. Phase 37: polls /keeper-workflow/{id}
   // every 1.5s as long as the workflow is "running"; stops on terminal state

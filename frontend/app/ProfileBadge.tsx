@@ -222,8 +222,9 @@ export function ProfileBadge({ address }: { address: `0x${string}` }) {
   const { elo: ensElo, matchCount } = useChaingammonProfile(label);
   const [renaming, setRenaming] = useState(false);
 
-  // Fallback: read ELO directly from MatchRegistry.humanElo when the ENS
-  // text record hasn't been written yet (settlement flow omitted the label).
+  // Always read humanElo from MatchRegistry — it's updated immediately by
+  // /finalize-direct at game end. ENS text record may lag until the keeper
+  // workflow writes it, so prefer the chain value when it's available.
   const chainId = useActiveChainId();
   const { matchRegistry } = useChainContracts();
   const { data: chainEloRaw } = useReadContract({
@@ -232,9 +233,10 @@ export function ProfileBadge({ address }: { address: `0x${string}` }) {
     functionName: "humanElo",
     args: [address],
     chainId,
-    query: { enabled: !!address && !ensElo },
+    query: { enabled: !!address, refetchInterval: 10000 },
   });
-  const elo = ensElo ?? (chainEloRaw != null ? String(chainEloRaw) : undefined);
+  const chainElo = chainEloRaw != null ? String(chainEloRaw) : undefined;
+  const elo = chainElo ?? ensElo;
 
   if (nameLoading) {
     return (
