@@ -48,7 +48,7 @@ export default function RootLayout({
       lang="en"
       className={`${cgSans.variable} ${cgMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col">
+      <body className="min-h-full flex flex-col overflow-x-hidden">
         <Providers>
           <div className="flex flex-1">
             {/* pb-16 reserves space for the fixed mobile bottom nav */}
@@ -90,7 +90,9 @@ export default function RootLayout({
                   </span>
                 </a>
                 <div className="flex flex-wrap items-center justify-end gap-3">
-                  <ComputeBackendsPill />
+                  <span className="hidden md:block">
+                    <ComputeBackendsPill />
+                  </span>
                   <a
                     href="/help"
                     target="_blank"

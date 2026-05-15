@@ -2,12 +2,20 @@
 
 // Connect / disconnect button with injected-wallet and WalletConnect support.
 //
-// Four states:
-//   1. Not mounted (SSR)          → null (avoids hydration mismatch)
-//   2. No wallet / no WC config   → "Install MetaMask" link
-//   3. Not connected, wallet(s) available → injected button + WalletConnect
-//      button (if projectId is configured)
-//   4. Connected                  → network dropdown, profile badge, disconnect
+// Five states:
+//   1. Not mounted (SSR)                  → null (avoids hydration mismatch)
+//   2. Mobile, no injected wallet         → "Open in MetaMask" deep link
+//      (+ WalletConnect button if projectId is configured)
+//   3. Desktop, no wallet / no WC config  → "Install MetaMask" link
+//   4. Not connected, wallet(s) available → "Browser wallet" button
+//      + WalletConnect button (if projectId is configured)
+//   5. Connected                          → network dropdown, profile badge, disconnect
+//
+// Mobile MetaMask note: on a regular mobile browser window.ethereum is not
+// injected — wagmi's injected connector is absent. The deep link
+// `metamask.app.link/dapp/…` opens the dapp inside MetaMask Mobile's own
+// in-app browser, which *does* inject window.ethereum, restoring the normal
+// "Browser wallet" flow. WalletConnect is shown alongside as an alternative.
 //
 // SSR note: wagmi is configured with ssr:true so the server renders connectors
 // as []. The `mounted` guard defers the real render until after hydration so
@@ -48,20 +56,64 @@ const secondaryBtn: React.CSSProperties = {
   border: "1px solid var(--cg-line-2)",
 };
 
+/** True when running on a phone or tablet (UA-based; post-mount only). */
+function isMobileBrowser(): boolean {
+  return /Android|iPhone|iPad|iPod|IEMobile|Opera Mini/i.test(navigator.userAgent);
+}
+
+/** Deep link that opens the current page inside MetaMask Mobile's in-app browser. */
+function metaMaskDeepLink(): string {
+  const { hostname, pathname, search } = window.location;
+  return `https://metamask.app.link/dapp/${hostname}${pathname}${search}`;
+}
+
 export function ConnectButton() {
   const { address, isConnected } = useAccount();
   const { connectors, connect, isPending: connectPending, error: connectError } = useConnect();
   const { disconnect } = useDisconnect();
   const [mounted, setMounted] = useState(false);
-  useEffect(() => setMounted(true), []);
+  const [isMobile, setIsMobile] = useState(false);
+  const [userAttempted, setUserAttempted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+    setIsMobile(isMobileBrowser());
+  }, []);
 
   const injectedConnector = connectors.find((c: Connector) => c.type === "injected");
   const wcConnector = connectors.find((c: Connector) => c.type === "walletConnect");
-  const [userAttempted, setUserAttempted] = useState(false);
 
   if (!mounted) return null;
 
   if (!isConnected) {
+    // Mobile browser without window.ethereum — show MetaMask deep link so the
+    // user can open the dapp inside MetaMask Mobile's browser where
+    // window.ethereum is injected.
+    if (isMobile && !injectedConnector) {
+      return (
+        <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "flex-end", gap: 8 }}>
+          <a
+            href={metaMaskDeepLink()}
+            data-testid="open-in-metamask"
+            style={primaryBtn}
+          >
+            Open in MetaMask
+          </a>
+          {wcConnector && (
+            <button
+              type="button"
+              onClick={() => { setUserAttempted(true); connect({ connector: wcConnector }); }}
+              disabled={connectPending}
+              style={secondaryBtn}
+              className="disabled:opacity-60"
+            >
+              WalletConnect
+            </button>
+          )}
+        </div>
+      );
+    }
+
     const hasAnyConnector = injectedConnector || wcConnector;
     if (!hasAnyConnector) {
       return (
@@ -86,7 +138,7 @@ export function ConnectButton() {
               style={primaryBtn}
               className="disabled:opacity-60"
             >
-              {connectPending ? "Connecting…" : "Connect wallet"}
+              {connectPending ? "Connecting…" : "Browser wallet"}
             </button>
           )}
           {wcConnector && (
