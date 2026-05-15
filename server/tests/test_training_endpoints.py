@@ -512,7 +512,21 @@ def test_list_agents_503_when_chain_unavailable(monkeypatch):
     assert r.status_code == 503
 
 
-def test_get_profile_null_when_zero_hash(fake_chain):
+def _make_kv_mock(monkeypatch, store: dict) -> None:
+    """Patch main_module.get_kv to serve from `store`; missing keys raise OgStorageError."""
+    from app.og_storage_client import OgStorageError as _OgStorageError
+
+    def _fake_get_kv(key, **kwargs):
+        if key not in store:
+            raise _OgStorageError(f"Key not found in mock KV: {key}")
+        return store[key]
+
+    monkeypatch.setattr(main_module, "get_kv", _fake_get_kv)
+
+
+def test_get_profile_null_when_no_kv(fake_chain, monkeypatch):
+    """No weights or overlay in KV → NullProfile."""
+    _make_kv_mock(monkeypatch, {})  # empty store → all keys missing
     r = client.get("/agents/1/profile")
     assert r.status_code == 200
     body = r.json()
@@ -522,14 +536,23 @@ def test_get_profile_null_when_zero_hash(fake_chain):
            "fresh" in body["summary"].lower()
 
 
-def test_get_profile_overlay_when_overlay_hash(fake_chain, monkeypatch):
-    """Mock the bytes fetcher so load_profile sees JSON → OverlayProfile."""
+def test_get_profile_overlay_when_kv_has_overlay(fake_chain, monkeypatch):
+    """KV contains an overlay JSON blob → OverlayProfile with correct match_count."""
     import json as _json
+    CATS = [
+        "opening_slot", "opening_split", "opening_builder", "opening_anchor",
+        "build_5_point", "build_bar_point", "bearoff_efficient", "bearoff_safe",
+        "risk_hit_exposure", "risk_blot_leaving", "hits_blot", "runs_back_checker",
+        "anchors_back", "phase_prime_building", "phase_race_conversion",
+        "phase_back_game", "phase_holding_game", "phase_blitz",
+        "cube_offer_aggressive", "cube_take_aggressive",
+    ]
     overlay_blob = _json.dumps({
-        "values": {"hits_blot": 0.4, "phase_prime_building": 0.2},
+        "version": 1,
+        "values": {c: 0.0 for c in CATS},
         "match_count": 7,
     }).encode()
-    monkeypatch.setattr(main_module, "get_blob", lambda h: overlay_blob)
+    _make_kv_mock(monkeypatch, {"chaingammon/weights/agent/2": overlay_blob})
     r = client.get("/agents/2/profile")
     assert r.status_code == 200
     body = r.json()
@@ -537,8 +560,8 @@ def test_get_profile_overlay_when_overlay_hash(fake_chain, monkeypatch):
     assert body["match_count"] == 7
 
 
-def test_get_profile_model_when_checkpoint_hash(fake_chain, monkeypatch):
-    """Mock the fetcher to return a torch checkpoint zip blob → ModelProfile."""
+def test_get_profile_model_when_kv_has_checkpoint(fake_chain, monkeypatch):
+    """KV contains a PyTorch checkpoint → ModelProfile with correct match_count."""
     import io as _io
     sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "agent"))
     import torch
@@ -550,11 +573,154 @@ def test_get_profile_model_when_checkpoint_hash(fake_chain, monkeypatch):
         {"state_dict": net.state_dict(), "match_count": 12, "extras_dim": 16, "in_dim": 198},
         buf,
     )
-
     blob = buf.getvalue()
-    monkeypatch.setattr(main_module, "get_blob", lambda h: blob)
+    _make_kv_mock(monkeypatch, {"chaingammon/weights/agent/3": blob})
     r = client.get("/agents/3/profile")
     assert r.status_code == 200
     body = r.json()
     assert body["kind"] == "model"
     assert body["match_count"] == 12
+
+
+# ─── KV write watcher tests ──────────────────────────────────────────────────
+
+
+def _install_fake_kv(monkeypatch) -> dict:
+    """Patch app.og_storage_client.put_kv to capture writes in a dict."""
+    import app.og_storage_client as _ogc
+
+    kv_store: dict[str, bytes] = {}
+
+    def _fake_put_kv(key, data, **kwargs):
+        kv_store[key] = data
+
+    monkeypatch.setattr(_ogc, "put_kv", _fake_put_kv)
+    return kv_store
+
+
+def test_post_training_chain_writes_uploads_to_kv_not_chain(monkeypatch, tmp_path):
+    """_post_training_chain_writes reads local checkpoint and writes to KV.
+    No chain.update_overlay_hash should be called."""
+    ckpt = tmp_path / "agent-1.pt"
+    ckpt.write_bytes(b"fake-checkpoint-data-for-agent-1")
+
+    status_file = tmp_path / "status.jsonl"
+    status_file.write_text(
+        json.dumps({
+            "event": "agent_saved",
+            "agent_id": 1,
+            "path": str(ckpt),
+            "root_hash": "0x" + "aa" * 32,
+            "ts": time.time(),
+        }) + "\n"
+    )
+
+    kv_written = _install_fake_kv(monkeypatch)
+
+    class _FakeProcess:
+        pid = 1234
+        def wait(self):
+            return 0
+
+    training_service._post_training_chain_writes(_FakeProcess(), status_file)
+
+    assert "chaingammon/weights/agent/1" in kv_written, (
+        "expected KV write for chaingammon/weights/agent/1"
+    )
+    assert kv_written["chaingammon/weights/agent/1"] == b"fake-checkpoint-data-for-agent-1"
+
+    # chain_write event should be appended to the status file.
+    events = [json.loads(ln) for ln in status_file.read_text().splitlines() if ln.strip()]
+    chain_writes = [e for e in events if e.get("event") == "chain_write"]
+    assert len(chain_writes) == 1
+    assert chain_writes[0]["agent_id"] == 1
+    assert chain_writes[0]["kv_key"] == "chaingammon/weights/agent/1"
+    assert chain_writes[0].get("error") is None
+
+
+def test_post_training_chain_writes_errors_when_path_missing(monkeypatch, tmp_path):
+    """If the local checkpoint file is missing, an error is recorded."""
+    status_file = tmp_path / "status.jsonl"
+    status_file.write_text(
+        json.dumps({
+            "event": "agent_saved",
+            "agent_id": 2,
+            "path": str(tmp_path / "does-not-exist.pt"),
+            "ts": time.time(),
+        }) + "\n"
+    )
+
+    kv_written = _install_fake_kv(monkeypatch)
+
+    class _FakeProcess:
+        pid = 5678
+        def wait(self):
+            return 0
+
+    training_service._post_training_chain_writes(_FakeProcess(), status_file)
+
+    assert "chaingammon/weights/agent/2" not in kv_written
+
+    events = [json.loads(ln) for ln in status_file.read_text().splitlines() if ln.strip()]
+    chain_writes = [e for e in events if e.get("event") == "chain_write"]
+    assert len(chain_writes) == 1
+    assert chain_writes[0]["error"] is not None
+
+
+def test_status_chain_writes_include_kv_key(monkeypatch, tmp_path):
+    """chain_write events surface kv_key in the status response."""
+    _install_fake_popen(monkeypatch)
+    client.post("/training/start", json={"epochs": 1, "agent_ids": [1, 2]})
+    fake = _FakePopen.instances[-1]
+    fake.emit_match(epoch=0, agent_a=1, agent_b=2, winner=1)
+    fake._emit(
+        "chain_write",
+        agent_id=1,
+        kv_key="chaingammon/weights/agent/1",
+    )
+    fake.emit_done()
+
+    r = client.get("/training/status")
+    body = r.json()
+    cw = body["chain_writes"]
+    assert len(cw) == 1
+    assert cw[0]["kv_key"] == "chaingammon/weights/agent/1"
+    assert cw[0].get("error") is None
+
+
+def test_get_profile_reads_from_kv(monkeypatch):
+    """get_agent_profile reads weights from KV, not from chain dataHashes."""
+    import json as _json
+
+    overlay_bytes = _json.dumps({
+        "version": 1,
+        "match_count": 5,
+        "values": {c: 0.0 for c in [
+            "opening_slot", "opening_split", "opening_builder", "opening_anchor",
+            "build_5_point", "build_bar_point", "bearoff_efficient", "bearoff_safe",
+            "risk_hit_exposure", "risk_blot_leaving", "hits_blot", "runs_back_checker",
+            "anchors_back", "phase_prime_building", "phase_race_conversion",
+            "phase_back_game", "phase_holding_game", "phase_blitz",
+            "cube_offer_aggressive", "cube_take_aggressive",
+        ]},
+    }).encode()
+
+    kv_store: dict[str, bytes] = {
+        "chaingammon/overlay/agent/1": overlay_bytes,
+    }
+
+    def _fake_get_kv(key, **kwargs):
+        from app.og_storage_client import OgStorageError
+        if key not in kv_store:
+            raise OgStorageError(f"Key not found: {key}")
+        return kv_store[key]
+
+    monkeypatch.setattr(main_module, "get_kv", _fake_get_kv)
+
+    r = client.get("/agents/1/profile")
+    assert r.status_code == 200
+    body = r.json()
+    # No weights in KV → NullProfile; overlay is found → overlay_values populated.
+    assert body["kind"] == "null"
+    assert "kv_key" in body
+    assert body["overlay_values"] is not None

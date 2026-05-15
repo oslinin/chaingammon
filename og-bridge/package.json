@@ -6,11 +6,15 @@
   "type": "module",
   "bin": {
     "og-upload": "src/upload.mjs",
-    "og-download": "src/download.mjs"
+    "og-download": "src/download.mjs",
+    "og-kv-put": "src/kv-put.mjs",
+    "og-kv-get": "src/kv-get.mjs"
   },
   "scripts": {
     "upload": "node src/upload.mjs",
-    "download": "node src/download.mjs"
+    "download": "node src/download.mjs",
+    "kv-put": "node src/kv-put.mjs",
+    "kv-get": "node src/kv-get.mjs"
   },
   "dependencies": {
     "@0gfoundation/0g-ts-sdk": "^1.2.6",

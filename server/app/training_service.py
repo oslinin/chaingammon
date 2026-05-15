@@ -222,14 +222,13 @@ def start_job(
     )
     _current_job = job
 
-    # Phase 66: spawn a daemon watcher that, after the trainer exits with
-    # status 0, walks its JSONL for `agent_saved` events and writes each
-    # new `root_hash` on-chain via `AgentRegistry.updateOverlayHash`.
-    # Bumps `experienceVersion` per agent and updates `dataHashes[1]` so
-    # the on-chain training count reflects the run that just happened.
-    # Failures per agent are logged into the same JSONL as `chain_write`
-    # events so /training/status surfaces them; one bad write doesn't
-    # block the others.
+    # Spawn a daemon watcher that, after the trainer exits with status 0,
+    # walks its JSONL for `agent_saved` events and uploads each checkpoint
+    # to 0G KV (chaingammon/weights/agent/{id}). This replaces the old
+    # blob-upload + on-chain hash commit path: KV writes overwrite in place
+    # with no per-run gas cost and no orphaned blobs.
+    # Failures per agent are logged as `chain_write` events so
+    # /training/status surfaces them; one bad write doesn't block the others.
     if upload_to_0g:
         watcher = threading.Thread(
             target=_post_training_chain_writes,
@@ -245,8 +244,13 @@ def start_job(
 def _post_training_chain_writes(
     process: subprocess.Popen, status_file: Path
 ) -> None:
-    """Wait for the trainer subprocess to exit, then write every
-    `agent_saved` event's `root_hash` on-chain.
+    """Wait for the trainer subprocess to exit, then upload every saved
+    checkpoint to 0G KV (chaingammon/weights/agent/{id}).
+
+    Replaces the old on-chain hash commit path: KV writes overwrite in
+    place with no per-run gas cost and no orphaned blobs. The
+    `chain_write` event name is kept for /training/status compatibility;
+    the `kv_key` field replaces the old `root_hash`/`tx_hash` fields.
     """
     import logging
     logger = logging.getLogger(__name__)
@@ -257,18 +261,20 @@ def _post_training_chain_writes(
         logger.error("Watcher thread wait failed: %s", e)
         _emit_chain_write(status_file, agent_id=None, error=f"wait failed: {e}")
         return
-    
+
     if returncode != 0:
-        logger.warning("Trainer PID %d exited with %d; skipping chain writes", process.pid, returncode)
+        logger.warning(
+            "Trainer PID %d exited with %d; skipping KV writes",
+            process.pid, returncode,
+        )
         _emit_chain_write(
             status_file,
             agent_id=None,
-            error=f"trainer exited {returncode}; skipping chain writes",
+            error=f"trainer exited {returncode}; skipping KV writes",
         )
         return
 
     logger.info("Trainer PID %d finished; parsing status file for saved agents", process.pid)
-    # Parse the JSONL for `agent_saved` events.
     saved: list[dict[str, Any]] = []
     try:
         for line in status_file.read_text().splitlines():
@@ -288,60 +294,54 @@ def _post_training_chain_writes(
         logger.info("No agent_saved events found in status file")
         return
 
-    logger.info("Found %d saved agent(s). Preparing chain client...", len(saved))
+    logger.info("Found %d saved agent(s). Uploading to 0G KV...", len(saved))
     try:
-        from .chain_client import ChainClient, ChainError
+        from .og_storage_client import put_kv, OgStorageError
     except ImportError as e:
-        logger.error("chain_client import failed: %s", e)
-        _emit_chain_write(status_file, agent_id=None, error=f"chain_client import: {e}")
+        logger.error("og_storage_client import failed: %s", e)
+        _emit_chain_write(status_file, agent_id=None, error=f"og_storage_client import: {e}")
         return
-
-    try:
-        chain = ChainClient.from_env()
-    except (ChainError, KeyError, OSError) as e:
-        logger.error("Chain client construction failed: %s", e)
-        _emit_chain_write(status_file, agent_id=None, error=f"chain client unavailable: {e}")
-        return
-    if chain.agent_registry is None:
-        logger.error("AGENT_REGISTRY_ADDRESS not set")
-        _emit_chain_write(
-            status_file,
-            agent_id=None,
-            error="AGENT_REGISTRY_ADDRESS not configured",
-        )
-        return
-
-    # Fetch the nonce once and increment locally after each mined tx.
-    # Querying "pending" before every call is unreliable on Sepolia — the
-    # RPC can return a stale value right after a tx is mined, causing
-    # "nonce too low" on the second and subsequent agents.
-    next_nonce: Optional[int] = chain.w3.eth.get_transaction_count(
-        chain.account.address, "pending"
-    )
 
     for evt in saved:
         agent_id = evt.get("agent_id")
-        root_hash = evt.get("root_hash")
-        if agent_id is None or not root_hash:
+        local_path = evt.get("path")
+        if agent_id is None:
+            continue
+        kv_key = f"chaingammon/weights/agent/{agent_id}"
+        if not local_path:
+            _emit_chain_write(
+                status_file,
+                agent_id=int(agent_id),
+                kv_key=kv_key,
+                error="agent_saved event missing 'path'; cannot upload to KV",
+            )
             continue
         try:
-            logger.info("Writing Agent #%d root_hash %s on-chain (nonce=%s)...", agent_id, root_hash, next_nonce)
-            tx_hash = chain.update_overlay_hash(int(agent_id), root_hash, nonce=next_nonce)
-            if next_nonce is not None:
-                next_nonce += 1
-            logger.info("Agent #%d update successful: %s", agent_id, tx_hash)
+            checkpoint_bytes = Path(local_path).read_bytes()
+        except OSError as e:
+            logger.error("Cannot read checkpoint for Agent #%d at %s: %s", agent_id, local_path, e)
             _emit_chain_write(
                 status_file,
                 agent_id=int(agent_id),
-                root_hash=root_hash,
-                tx_hash=tx_hash,
+                kv_key=kv_key,
+                error=f"checkpoint read failed: {e}",
             )
-        except Exception as e:
-            logger.error("Chain write failed for Agent #%d: %s", agent_id, e)
+            continue
+        try:
+            logger.info("Uploading Agent #%d weights to KV key %s...", agent_id, kv_key)
+            put_kv(kv_key, checkpoint_bytes)
+            logger.info("Agent #%d KV write successful: %s", agent_id, kv_key)
             _emit_chain_write(
                 status_file,
                 agent_id=int(agent_id),
-                root_hash=root_hash,
+                kv_key=kv_key,
+            )
+        except OgStorageError as e:
+            logger.error("KV write failed for Agent #%d: %s", agent_id, e)
+            _emit_chain_write(
+                status_file,
+                agent_id=int(agent_id),
+                kv_key=kv_key,
                 error=str(e),
             )
 
@@ -458,13 +458,11 @@ def _empty_status() -> dict[str, Any]:
         "last_update_ts": 0.0,
         "agents_loaded": False,
         "training_complete": False,
-        # Per-agent checkpoint save/upload results. Each entry is
-        # {agent_id, path, root_hash, error} where root_hash is the
-        # 0G Storage Merkle root (None for local-only saves) and error
-        # is set when the upload failed but the local save succeeded.
+        # Per-agent checkpoint save results from the trainer subprocess.
+        # Each entry is {agent_id, path, root_hash, error}.
         "checkpoints": [],
-        # On-chain hash update results written by _post_training_chain_writes.
-        # Each entry is {agent_id, root_hash, tx_hash, error}.
+        # KV write results from _post_training_chain_writes.
+        # Each entry is {agent_id, kv_key, error}.
         "chain_writes": [],
     }
 
@@ -559,8 +557,7 @@ def _aggregate(events: list[dict], *, job: Optional[TrainingJob],
         elif kind == "chain_write":
             chain_writes.append({
                 "agent_id": e.get("agent_id"),
-                "root_hash": e.get("root_hash"),
-                "tx_hash": e.get("tx_hash"),
+                "kv_key": e.get("kv_key"),
                 "error": e.get("error"),
             })
 
@@ -623,8 +620,7 @@ def _aggregate(events: list[dict], *, job: Optional[TrainingJob],
         "last_update_ts": last_ts,
         "agents_loaded": agents_loaded,
         "training_complete": training_complete,
-        # Per-agent checkpoint save/upload events. Populated by
-        # agent_saved and agent_save_error events from the trainer.
+        # Per-agent checkpoint save events (trainer subprocess output).
         "checkpoints": checkpoints,
         "chain_writes": chain_writes,
     }
