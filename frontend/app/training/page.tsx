@@ -23,9 +23,11 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useReadContract, useReadContracts } from "wagmi";
 
 import { useComputeBackends } from "../ComputeBackendsContext";
-import { useActiveChain } from "../chains";
+import { useActiveChain, useActiveChainId } from "../chains";
+import { AgentRegistryABI, useChainContracts } from "../contracts";
 
 const SERVER = process.env.NEXT_PUBLIC_SERVER_URL ?? "http://localhost:8000";
 
@@ -120,23 +122,84 @@ export default function TrainingPage() {
   const use0gInference = hydrated && backends.inference === "0g";
   const use0gCoaching = hydrated && backends.coach === "0g";
 
-  // Agent list: all checked by default after first load.
-  const agentsQuery = useQuery({
-    queryKey: ["agents"],
-    queryFn: async (): Promise<AgentRow[]> => {
-      const r = await fetch(`${SERVER}/agents`);
-      if (!r.ok) throw new Error(`/agents → ${r.status}`);
-      return r.json();
-    },
+  // Agent list: read straight from AgentRegistry on the wallet's chain
+  // (same shape as the legacy /agents server endpoint) so this page
+  // works in the static Pages build with no FastAPI backend.
+  const chainId = useActiveChainId();
+  const activeChain = useActiveChain();
+  const { agentRegistry } = useChainContracts();
+
+  const { data: activeAgentCountRaw, isLoading: agentCountLoading, error: agentCountError } =
+    useReadContract({
+      address: agentRegistry,
+      abi: AgentRegistryABI,
+      functionName: "activeAgentCount",
+      chainId,
+      query: { enabled: !!activeChain },
+    });
+  const agentCount =
+    activeAgentCountRaw !== undefined ? Number(activeAgentCountRaw) : 0;
+
+  const agentIndexCalls = Array.from({ length: agentCount }, (_, i) => ({
+    address: agentRegistry,
+    abi: AgentRegistryABI,
+    functionName: "activeAgentAt" as const,
+    args: [BigInt(i)] as [bigint],
+    chainId,
+  }));
+  const { data: agentIndexResults } = useReadContracts({
+    contracts: agentIndexCalls,
+    query: { enabled: !!activeChain && agentCount > 0 },
   });
+  const onChainAgentIds = (agentIndexResults ?? [])
+    .map((r) => r?.result as bigint | undefined)
+    .filter((v): v is bigint => v !== undefined)
+    .map((v) => Number(v));
+
+  const agentDetailCalls = onChainAgentIds.flatMap((id) => {
+    const args = [BigInt(id)] as [bigint];
+    return [
+      { address: agentRegistry, abi: AgentRegistryABI, functionName: "dataHashes" as const, args, chainId },
+      { address: agentRegistry, abi: AgentRegistryABI, functionName: "matchCount" as const, args, chainId },
+      { address: agentRegistry, abi: AgentRegistryABI, functionName: "tier" as const, args, chainId },
+    ];
+  });
+  const { data: agentDetailResults, isLoading: agentDetailsLoading } = useReadContracts({
+    contracts: agentDetailCalls,
+    query: { enabled: onChainAgentIds.length > 0 },
+  });
+
+  const agents: AgentRow[] = onChainAgentIds.map((agent_id, i) => {
+    const base = i * 3;
+    const hashes = agentDetailResults?.[base]?.result as
+      | readonly [`0x${string}`, `0x${string}`]
+      | undefined;
+    const matchCountRaw = agentDetailResults?.[base + 1]?.result as
+      | number
+      | bigint
+      | undefined;
+    const tierRaw = agentDetailResults?.[base + 2]?.result as number | undefined;
+    return {
+      agent_id,
+      weights_hash: hashes?.[1] ?? "",
+      match_count:
+        typeof matchCountRaw === "bigint" ? Number(matchCountRaw) : matchCountRaw ?? 0,
+      tier: tierRaw ?? 0,
+    };
+  });
+
+  const agentsLoading = agentCountLoading || (agentCount > 0 && agentDetailsLoading);
+  const agentsError = agentCountError;
+  const agentsLoaded = !agentsLoading && !agentsError;
 
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   // First time we load, pre-select all.
   useEffect(() => {
-    if (agentsQuery.data && selectedIds.length === 0) {
-      setSelectedIds(agentsQuery.data.map((a) => a.agent_id));
+    if (agentsLoaded && agents.length > 0 && selectedIds.length === 0) {
+      setSelectedIds(agents.map((a) => a.agent_id));
     }
-  }, [agentsQuery.data, selectedIds.length]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agentsLoaded, agents.length]);
 
   // Slider position + derived epochs.
   const [sliderPos, setSliderPos] = useState(0); // 1 epoch default
@@ -292,10 +355,22 @@ export default function TrainingPage() {
         inference={backends.inference}
       />
 
+      <div
+        className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-700/50 dark:bg-amber-900/10 dark:text-amber-200"
+      >
+        <strong>Training requires the local FastAPI backend.</strong> The agent
+        list is read straight from the AgentRegistry contract, so the page
+        renders, but <code className="font-mono">Play</code> hits{" "}
+        <code className="font-mono">{SERVER}/training/start</code> and will
+        NetworkError unless that server is running. Run{" "}
+        <code className="font-mono">uvicorn server.app.main:app</code> locally
+        (see repo README) to enable training.
+      </div>
+
       <AgentSelector
-        agents={agentsQuery.data}
-        loading={agentsQuery.isLoading}
-        error={agentsQuery.error}
+        agents={agents}
+        loading={agentsLoading}
+        error={agentsError ?? null}
         selectedIds={selectedIds}
         onChange={setSelectedIds}
         gamesPerEpoch={gamesPerEpoch}
