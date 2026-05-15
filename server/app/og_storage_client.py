@@ -2,15 +2,26 @@
 0G Storage client — thin Python wrapper around the og-bridge Node CLI.
 
 There is no native Python SDK for 0G Storage, so we shell out to the
-TypeScript SDK via two CLI scripts in /og-bridge:
+TypeScript SDK via CLI scripts in /og-bridge:
 
-  - og-bridge/src/upload.mjs    bytes via stdin → JSON {rootHash, txHash}
-  - og-bridge/src/download.mjs  rootHash arg     → bytes via stdout
+Two storage primitives are available, each suited to different artifacts:
 
-put_blob and get_blob round-trip arbitrary bytes against 0G Storage testnet.
-Phase 7 will use this client to upload per-match game records; Phase 8 to
-upload the encrypted gnubg base weights; Phase 9 to upload per-agent
-experience overlays.
+  Blob storage (immutable, content-addressed):
+    - og-bridge/src/upload.mjs    bytes via stdin → JSON {rootHash, txHash}
+    - og-bridge/src/download.mjs  rootHash arg     → bytes via stdout
+    Use for: per-match GameRecord blobs (fetched by root hash from MatchRegistry)
+
+  KV storage (mutable, key-addressed):
+    - og-bridge/src/kv-put.mjs    key arg + bytes via stdin → JSON {key, ok}
+    - og-bridge/src/kv-get.mjs    key arg → bytes via stdout
+    Use for: mutable agent state — NN weights and feature overlays — where
+    every training run or game should overwrite in place without burning gas
+    or orphaning old blobs.
+
+Canonical KV key scheme:
+  chaingammon/weights/agent/{agent_id}       — ONNX/PyTorch checkpoint
+  chaingammon/overlay/agent/{agent_id}       — 21-float JSON style overlay
+  chaingammon/overlay/human/{address_lower}  — future: per-human style profile
 """
 
 from __future__ import annotations
@@ -25,6 +36,8 @@ from pathlib import Path
 _BRIDGE_DIR = Path(__file__).resolve().parents[2] / "og-bridge"
 _UPLOAD_SCRIPT = _BRIDGE_DIR / "src" / "upload.mjs"
 _DOWNLOAD_SCRIPT = _BRIDGE_DIR / "src" / "download.mjs"
+_KV_PUT_SCRIPT = _BRIDGE_DIR / "src" / "kv-put.mjs"
+_KV_GET_SCRIPT = _BRIDGE_DIR / "src" / "kv-get.mjs"
 
 _REQUIRED_ENV = ("OG_STORAGE_RPC", "OG_STORAGE_INDEXER", "OG_STORAGE_PRIVATE_KEY")
 
@@ -90,5 +103,55 @@ def get_blob(root_hash: str, *, timeout: float = 120.0) -> bytes:
     if proc.returncode != 0:
         raise OgStorageError(
             f"og-bridge download failed (exit {proc.returncode}): {proc.stderr.decode(errors='replace')}"
+        )
+    return proc.stdout
+
+
+def put_kv(key: str, data: bytes, *, timeout: float = 30.0) -> None:
+    """Write `data` to 0G KV under `key`. Overwrites any prior value.
+
+    In localhost mode (OG_STORAGE_MODE=localhost) uses a JSON file mock at
+    /tmp/chaingammon-kv-mock.json (or KV_MOCK_PATH env). No env vars required.
+    In testnet mode the underlying script exits with an error until the 0G SDK
+    exposes a KV client.
+    """
+    if not key:
+        raise OgStorageError("put_kv: key must not be empty")
+    if not data:
+        raise OgStorageError("put_kv: data must not be empty")
+    proc = subprocess.run(
+        ["node", str(_KV_PUT_SCRIPT), key],
+        input=data,
+        capture_output=True,
+        env=os.environ.copy(),
+        timeout=timeout,
+        check=False,
+    )
+    if proc.returncode != 0:
+        raise OgStorageError(
+            f"kv-put failed (exit {proc.returncode}): {proc.stderr.decode(errors='replace')}"
+        )
+
+
+def get_kv(key: str, *, timeout: float = 30.0) -> bytes:
+    """Fetch bytes from 0G KV. Raises OgStorageError if the key is not found.
+
+    In localhost mode (OG_STORAGE_MODE=localhost) reads from the JSON file mock.
+    In testnet mode the underlying script exits with an error until the 0G SDK
+    exposes a KV client.
+    """
+    if not key:
+        raise OgStorageError("get_kv: key must not be empty")
+    proc = subprocess.run(
+        ["node", str(_KV_GET_SCRIPT), key],
+        capture_output=True,
+        env=os.environ.copy(),
+        timeout=timeout,
+        check=False,
+    )
+    if proc.returncode != 0:
+        stderr = proc.stderr.decode(errors="replace")
+        raise OgStorageError(
+            f"kv-get failed (exit {proc.returncode}): {stderr}"
         )
     return proc.stdout

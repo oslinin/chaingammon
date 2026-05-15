@@ -273,6 +273,28 @@ class ModelProfile(AgentProfile):
         return cls(metadata, net=net)
 
 
+def load_profile_from_bytes(blob: bytes) -> "AgentProfile":
+    """Load an agent profile directly from raw bytes (e.g. fetched from KV).
+
+    Content-sniffs for overlay JSON (``{``) vs PyTorch checkpoint (``PK\\x03\\x04``);
+    returns NullProfile on any parse error or unrecognized format.
+    """
+    if not blob:
+        return NullProfile()
+    stripped = blob.lstrip()
+    if stripped[:1] == b"{":
+        try:
+            return OverlayProfile.from_bytes(blob)
+        except AgentProfileError:
+            return NullProfile()
+    if stripped[:4] == b"PK\x03\x04":
+        try:
+            return ModelProfile.from_bytes(blob)
+        except AgentProfileError:
+            return NullProfile()
+    return NullProfile()
+
+
 # ─── factory ─────────────────────────────────────────────────────────────────
 
 
