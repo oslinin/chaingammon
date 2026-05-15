@@ -49,6 +49,14 @@ jobs:
         working-directory: frontend
         env:
           BASE_PATH: /chaingammon
+          # WalletConnect Project ID (free, register at https://cloud.reown.com).
+          # When set, the frontend exposes a "WalletConnect" button alongside
+          # "Browser wallet" so mobile users can connect from regular Chrome/
+          # Safari without dropping into MetaMask Mobile's in-app browser
+          # (which has a habit of navigating away from the dapp after the
+          # connect approval). Empty value -> WalletConnect connector is
+          # skipped at build time and the UI degrades gracefully.
+          NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID: ${{ secrets.WALLETCONNECT_PROJECT_ID }}
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
