@@ -15,6 +15,13 @@ const IDB_NAME = "chaingammon-onnx-v1";
 const IDB_STORE = "model";
 const MODEL_KEY = "backgammon_net";
 
+// Next.js `basePath` (e.g. "/chaingammon" on GitHub Pages) only auto-prepends
+// to URLs routed through next/link or next/image — raw fetch() calls do not
+// get the prefix. Read the build-time NEXT_PUBLIC_BASE_PATH (set in
+// next.config.ts) so this worker fetches the model from the correct path
+// when deployed under a subdirectory.
+const MODEL_URL = `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/backgammon_net.onnx`;
+
 function idbOpen(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const req = indexedDB.open(IDB_NAME, 1);
@@ -37,7 +44,7 @@ async function loadModelBytes(): Promise<ArrayBuffer> {
       db.close();
       return cached;
     }
-    const buf = await fetch("/backgammon_net.onnx").then(r => r.arrayBuffer());
+    const buf = await fetch(MODEL_URL).then(r => r.arrayBuffer());
     // Store a copy — buf.slice(0) transfers ownership cleanly.
     const tx = db.transaction(IDB_STORE, "readwrite");
     tx.objectStore(IDB_STORE).put(buf.slice(0), MODEL_KEY);
@@ -45,7 +52,7 @@ async function loadModelBytes(): Promise<ArrayBuffer> {
     return buf;
   } catch {
     // IDB unavailable (private browsing, quota exceeded) — fall back to fetch.
-    return fetch("/backgammon_net.onnx").then(r => r.arrayBuffer());
+    return fetch(MODEL_URL).then(r => r.arrayBuffer());
   }
 }
 

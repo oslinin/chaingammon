@@ -37,6 +37,15 @@ const nextConfig: NextConfig = {
   // Set BASE_PATH=/chaingammon in the GitHub Actions workflow environment.
   basePath,
 
+  // Expose basePath to client code so raw `<img src>`, fetch() calls, and
+  // anything else not routed through next/link or next/image can prepend it.
+  // next/link and next/image handle basePath automatically; this is the
+  // escape hatch for assets fetched outside those abstractions (e.g. the
+  // ONNX model loaded by a Web Worker, brand icons in <img> tags).
+  env: {
+    NEXT_PUBLIC_BASE_PATH: basePath,
+  },
+
   // COOP/COEP headers allow SharedArrayBuffer in the browser, which the
   // threaded ONNX WASM binary can use when numThreads > 1.  With numThreads=1
   // these headers are not strictly needed, but they're harmless in dev and

@@ -6,6 +6,8 @@
 // *.chaingammon.eth ENS subnet and expands inline on click.
 // The page shell is a server component; client islands are AgentsList and
 // DiscoverSection.
+import Link from "next/link";
+
 import { AgentsList } from "./AgentsList";
 import { DiscoveryList } from "./DiscoveryList";
 
@@ -61,7 +63,7 @@ export default function Home() {
             >
               Agents
             </h2>
-            <a
+            <Link
               href="/create-agent"
               style={{
                 ...chipBase,
@@ -71,8 +73,8 @@ export default function Home() {
               }}
             >
               Mint
-            </a>
-            <a
+            </Link>
+            <Link
               href="/training"
               style={{
                 ...chipBase,
@@ -82,8 +84,8 @@ export default function Home() {
               }}
             >
               Train
-            </a>
-            <a
+            </Link>
+            <Link
               href="/team-demo"
               style={{
                 ...chipBase,
@@ -93,8 +95,8 @@ export default function Home() {
               }}
             >
               Off-chain game
-            </a>
-            <a
+            </Link>
+            <Link
               href="/team-demo?settle=1"
               style={{
                 ...chipBase,
@@ -104,7 +106,7 @@ export default function Home() {
               }}
             >
               On-chain game
-            </a>
+            </Link>
           </div>
           <AgentsList />
         </section>
@@ -113,12 +115,12 @@ export default function Home() {
           <DiscoveryList playersOnly />
         </section>
 
-        <a
+        <Link
           href="/transactions"
           style={{ fontSize: 13, color: "var(--cg-fg-4)", textDecoration: "none" }}
         >
           Transactions
-        </a>
+        </Link>
       </main>
     </div>
   );
