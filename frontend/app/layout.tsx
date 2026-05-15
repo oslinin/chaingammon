@@ -5,6 +5,7 @@
 // connect (with ELO + match count from ENS) in a single global header.
 import type { Metadata, Viewport } from "next";
 import { Space_Grotesk, JetBrains_Mono } from "next/font/google";
+import Link from "next/link";
 import "./globals.css";
 import { ComputeBackendsPill } from "./ComputeBackendsPill";
 import { ConnectButton } from "./ConnectButton";
@@ -62,13 +63,13 @@ export default function RootLayout({
                 }}
                 className="flex items-center justify-between gap-4 px-4 py-2"
               >
-                <a
+                <Link
                   href="/"
                   className="flex items-center gap-2"
                   aria-label="Chaingammon home"
                 >
                   <img
-                    src="/chaingammon-icon.svg"
+                    src={`${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/chaingammon-icon.svg`}
                     alt=""
                     width={24}
                     height={24}
@@ -88,12 +89,12 @@ export default function RootLayout({
                     <span style={{ color: "var(--cg-brass)", padding: "0 0.05em" }}>·</span>
                     <span style={{ color: "var(--cg-fg-1)" }}>Gammon</span>
                   </span>
-                </a>
+                </Link>
                 <div className="flex flex-wrap items-center justify-end gap-3">
                   <span className="hidden md:block">
                     <ComputeBackendsPill />
                   </span>
-                  <a
+                  <Link
                     href="/help"
                     target="_blank"
                     rel="noreferrer"
@@ -107,7 +108,7 @@ export default function RootLayout({
                     }}
                   >
                     Help
-                  </a>
+                  </Link>
                   <ConnectButton />
                 </div>
               </header>
