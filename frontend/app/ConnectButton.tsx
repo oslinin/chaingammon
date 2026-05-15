@@ -20,6 +20,34 @@ import { useState, useEffect } from "react";
 import { NetworkDropdown } from "./NetworkDropdown";
 import { ProfileBadge } from "./ProfileBadge";
 
+const pillBase: React.CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  height: 36,
+  borderRadius: "var(--cg-radius-pill)",
+  padding: "0 16px",
+  fontSize: 13,
+  fontWeight: 500,
+  fontFamily: "var(--cg-font-sans)",
+  cursor: "pointer",
+  transition: "background 120ms ease, border-color 120ms ease",
+  whiteSpace: "nowrap",
+};
+
+const primaryBtn: React.CSSProperties = {
+  ...pillBase,
+  background: "var(--cg-brass)",
+  color: "var(--cg-brass-ink)",
+  border: "none",
+};
+
+const secondaryBtn: React.CSSProperties = {
+  ...pillBase,
+  background: "transparent",
+  color: "var(--cg-fg-2)",
+  border: "1px solid var(--cg-line-2)",
+};
+
 export function ConnectButton() {
   const { address, isConnected } = useAccount();
   const { connectors, connect, isPending: connectPending, error: connectError } = useConnect();
@@ -29,8 +57,6 @@ export function ConnectButton() {
 
   const injectedConnector = connectors.find((c: Connector) => c.type === "injected");
   const wcConnector = connectors.find((c: Connector) => c.type === "walletConnect");
-  // Only surface connectError after the user has explicitly clicked connect —
-  // wagmi's auto-reconnect on mount can set this without user interaction.
   const [userAttempted, setUserAttempted] = useState(false);
 
   if (!mounted) return null;
@@ -43,23 +69,24 @@ export function ConnectButton() {
           href="https://metamask.io/download/"
           target="_blank"
           rel="noopener noreferrer"
-          className="inline-flex h-10 items-center rounded-full border border-zinc-300 px-4 text-sm font-medium text-zinc-900 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-100 dark:hover:bg-zinc-900"
+          style={secondaryBtn}
         >
           Install MetaMask
         </a>
       );
     }
     return (
-      <div className="flex flex-col items-end gap-1">
-        <div className="flex flex-wrap justify-end gap-2">
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
+        <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "flex-end", gap: 8 }}>
           {injectedConnector && (
             <button
               type="button"
               onClick={() => { setUserAttempted(true); connect({ connector: injectedConnector }); }}
               disabled={connectPending}
-              className="inline-flex h-10 items-center rounded-full bg-zinc-900 px-4 text-sm font-medium text-zinc-50 hover:bg-zinc-700 disabled:opacity-60 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-300"
+              style={primaryBtn}
+              className="disabled:opacity-60"
             >
-              {connectPending ? "Connecting…" : "Browser wallet"}
+              {connectPending ? "Connecting…" : "Connect wallet"}
             </button>
           )}
           {wcConnector && (
@@ -67,14 +94,15 @@ export function ConnectButton() {
               type="button"
               onClick={() => { setUserAttempted(true); connect({ connector: wcConnector }); }}
               disabled={connectPending}
-              className="inline-flex h-10 items-center rounded-full border border-zinc-300 px-4 text-sm font-medium text-zinc-900 hover:bg-zinc-50 disabled:opacity-60 dark:border-zinc-700 dark:text-zinc-100 dark:hover:bg-zinc-900"
+              style={secondaryBtn}
+              className="disabled:opacity-60"
             >
               WalletConnect
             </button>
           )}
         </div>
         {userAttempted && connectError ? (
-          <span className="text-xs text-red-600 dark:text-red-400">
+          <span style={{ fontSize: 11, color: "var(--cg-danger)" }}>
             {connectError.message}
           </span>
         ) : null}
@@ -83,13 +111,13 @@ export function ConnectButton() {
   }
 
   return (
-    <div className="flex items-center gap-2">
+    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
       <NetworkDropdown />
       {address ? <ProfileBadge address={address} /> : null}
       <button
         type="button"
         onClick={() => disconnect()}
-        className="inline-flex h-9 items-center rounded-full border border-zinc-300 px-3 text-xs font-medium text-zinc-900 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-100 dark:hover:bg-zinc-900"
+        style={{ ...secondaryBtn, height: 32, fontSize: 12 }}
       >
         Disconnect
       </button>

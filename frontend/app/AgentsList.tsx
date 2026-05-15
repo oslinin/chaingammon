@@ -19,7 +19,6 @@ export function AgentsList() {
   const chainId = useActiveChainId();
   const { agentRegistry } = useChainContracts();
 
-  // Step 1 — how many active (non-burned) agents exist?
   const { data: activeCount, isLoading, error } = useReadContract({
     address: agentRegistry,
     abi: AgentRegistryABI,
@@ -30,7 +29,6 @@ export function AgentsList() {
 
   const count = activeCount !== undefined ? Number(activeCount) : 0;
 
-  // Step 2 — fetch the actual agentId at each active index in one batch.
   const indexCalls = Array.from({ length: count }, (_, i) => ({
     address: agentRegistry,
     abi: AgentRegistryABI,
@@ -53,7 +51,7 @@ export function AgentsList() {
 
   if (!active) {
     return (
-      <p className="text-sm text-zinc-500 dark:text-zinc-400">
+      <p style={{ fontSize: 14, color: "var(--cg-fg-3)", fontFamily: "var(--cg-font-sans)" }}>
         No Chaingammon deployment on this chain ({chainName}). Switch your
         wallet to one of the supported chains to see agents.
       </p>
@@ -62,7 +60,7 @@ export function AgentsList() {
 
   if (isLoading) {
     return (
-      <p className="text-sm text-zinc-500 dark:text-zinc-400">
+      <p style={{ fontSize: 14, color: "var(--cg-fg-3)", fontFamily: "var(--cg-font-sans)" }}>
         Loading agents…
       </p>
     );
@@ -70,18 +68,16 @@ export function AgentsList() {
 
   if (error || activeCount === undefined) {
     return (
-      <div className="flex flex-col gap-1 text-sm text-zinc-500 dark:text-zinc-400">
-        <p>No agents found.</p>
-        <p className="text-xs">
-          Could not reach <code className="font-mono">AgentRegistry</code> at{" "}
-          <code className="font-mono">{agentRegistry}</code> on {chainName}.
+      <div style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 14, color: "var(--cg-fg-3)" }}>
+        <p style={{ margin: 0 }}>No agents found.</p>
+        <p style={{ margin: 0, fontSize: 12 }}>
+          Could not reach{" "}
+          <code style={{ fontFamily: "var(--cg-font-mono)" }}>AgentRegistry</code> at{" "}
+          <code style={{ fontFamily: "var(--cg-font-mono)" }}>{agentRegistry}</code> on {chainName}.
           {error ? (
-            <>
-              {" "}
-              <span className="text-red-600 dark:text-red-400">
-                {error.message}
-              </span>
-            </>
+            <span style={{ color: "var(--cg-danger)", marginLeft: 4 }}>
+              {error.message}
+            </span>
           ) : null}
         </p>
       </div>
@@ -90,7 +86,7 @@ export function AgentsList() {
 
   if (count === 0) {
     return (
-      <p className="text-sm text-zinc-500 dark:text-zinc-400">
+      <p style={{ fontSize: 14, color: "var(--cg-fg-3)", fontFamily: "var(--cg-font-sans)" }}>
         No agents registered yet.
       </p>
     );

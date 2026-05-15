@@ -10,14 +10,14 @@ export interface MatchSummary {
 
 export interface PersonCardProps {
   label: string;
-  nameHref?: string; // ENS app link for the label
+  nameHref?: string;
   elo: bigint | string | undefined;
-  balance?: string; // e.g. "0.0432 ETH"; undefined = loading, "" = no data
-  matchSummary: MatchSummary | null | undefined; // undefined = loading, null = no data
+  balance?: string;
+  matchSummary: MatchSummary | null | undefined;
   infoHref?: string;
   infoLabel?: string;
   playHref?: string;
-  extraLines?: string[]; // e.g. ["6 games trained"] for agents
+  extraLines?: string[];
 }
 
 export function PersonCard({
@@ -34,72 +34,167 @@ export function PersonCard({
   const eloDisplay = elo !== undefined ? String(elo) : undefined;
 
   return (
-    <div className="flex flex-col gap-3 rounded-lg border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-900">
-      <div className="flex items-start justify-between gap-2">
-        <h3 className="font-mono text-sm font-semibold text-zinc-900 dark:text-zinc-50 break-all">
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        gap: 12,
+        borderRadius: "var(--cg-radius)",
+        border: "1px solid var(--cg-line-2)",
+        background: "var(--cg-bg-2)",
+        padding: 20,
+        boxShadow: "var(--cg-shadow-1)",
+      }}
+    >
+      {/* Header row: name + info badges */}
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8 }}>
+        <h3
+          style={{
+            fontFamily: "var(--cg-font-mono)",
+            fontSize: 13,
+            fontWeight: 600,
+            color: "var(--cg-fg-1)",
+            wordBreak: "break-all",
+            margin: 0,
+          }}
+        >
           {nameHref ? (
-            <a href={nameHref} target="_blank" rel="noreferrer" className="hover:underline underline-offset-2">
+            <a
+              href={nameHref}
+              target="_blank"
+              rel="noreferrer"
+              style={{ color: "inherit", textDecoration: "none" }}
+              onMouseEnter={(e) => { (e.currentTarget as HTMLAnchorElement).style.color = "var(--cg-brass)"; }}
+              onMouseLeave={(e) => { (e.currentTarget as HTMLAnchorElement).style.color = "var(--cg-fg-1)"; }}
+            >
               {label}
             </a>
           ) : label}
         </h3>
-        <div className="flex shrink-0 items-center gap-1">
+        <div style={{ display: "flex", flexShrink: 0, alignItems: "center", gap: 4 }}>
           {infoHref && (
             <a
               href={infoHref}
               target="_blank"
               rel="noreferrer"
               title="Open info in a new tab"
-              className="rounded bg-zinc-100 px-1.5 py-0.5 text-xs font-mono text-zinc-500 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-400 dark:hover:bg-zinc-700"
+              style={{
+                borderRadius: "var(--cg-radius-sm)",
+                border: "1px solid var(--cg-line-2)",
+                background: "var(--cg-bg-3)",
+                padding: "2px 6px",
+                fontSize: 11,
+                fontFamily: "var(--cg-font-mono)",
+                color: "var(--cg-fg-3)",
+                textDecoration: "none",
+                transition: "border-color 120ms, color 120ms",
+              }}
+              onMouseEnter={(e) => {
+                const el = e.currentTarget as HTMLAnchorElement;
+                el.style.color = "var(--cg-fg-1)";
+                el.style.borderColor = "var(--cg-line-3)";
+              }}
+              onMouseLeave={(e) => {
+                const el = e.currentTarget as HTMLAnchorElement;
+                el.style.color = "var(--cg-fg-3)";
+                el.style.borderColor = "var(--cg-line-2)";
+              }}
             >
               Info ↗
             </a>
           )}
           {infoLabel && (
-            <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-xs font-mono text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+            <span
+              style={{
+                borderRadius: "var(--cg-radius-sm)",
+                border: "1px solid var(--cg-line-2)",
+                background: "var(--cg-bg-3)",
+                padding: "2px 6px",
+                fontSize: 11,
+                fontFamily: "var(--cg-font-mono)",
+                color: "var(--cg-fg-3)",
+              }}
+            >
               {infoLabel}
             </span>
           )}
         </div>
       </div>
 
-      <div className="flex items-baseline justify-between gap-2">
-        <div className="flex items-baseline gap-1.5">
-          <span className="text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+      {/* ELO + balance */}
+      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8 }}>
+        <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
+          <span
+            style={{
+              fontSize: 11,
+              fontWeight: 500,
+              letterSpacing: "0.18em",
+              textTransform: "uppercase",
+              color: "var(--cg-fg-4)",
+              fontFamily: "var(--cg-font-sans)",
+            }}
+          >
             ELO
           </span>
-          <span className="font-mono text-2xl font-bold text-zinc-900 dark:text-zinc-50">
+          <span
+            style={{
+              fontFamily: "var(--cg-font-mono)",
+              fontSize: 28,
+              fontWeight: 700,
+              color: "var(--cg-fg-1)",
+              lineHeight: 1,
+            }}
+          >
             {eloDisplay ?? "—"}
           </span>
         </div>
         {balance !== "" && (
-          <span className="font-mono text-sm text-zinc-500 dark:text-zinc-400">
+          <span style={{ fontFamily: "var(--cg-font-mono)", fontSize: 13, color: "var(--cg-fg-3)" }}>
             {balance ?? "…"}
           </span>
         )}
       </div>
 
-      <div className="flex flex-col gap-0.5 text-xs font-mono">
+      {/* Match record + extra lines */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
         {matchSummary === undefined ? (
-          <p className="text-zinc-400 dark:text-zinc-500">Reading chain…</p>
+          <p style={{ fontFamily: "var(--cg-font-mono)", fontSize: 12, color: "var(--cg-fg-4)" }}>
+            Reading chain…
+          </p>
         ) : matchSummary === null ? null : (
-          <p className="text-zinc-700 dark:text-zinc-300">
-            {matchSummary.matches} played · {matchSummary.wins} won ·{" "}
-            {matchSummary.losses} lost
+          <p style={{ fontFamily: "var(--cg-font-mono)", fontSize: 12, color: "var(--cg-fg-2)" }}>
+            {matchSummary.matches} played · {matchSummary.wins} won · {matchSummary.losses} lost
           </p>
         )}
         {extraLines?.map((line) => (
-          <p key={line} className="text-zinc-500 dark:text-zinc-400">
+          <p key={line} style={{ fontFamily: "var(--cg-font-mono)", fontSize: 12, color: "var(--cg-fg-3)" }}>
             {line}
           </p>
         ))}
       </div>
 
+      {/* Play button */}
       {playHref && (
         <Link
           href={playHref}
           data-testid="person-card-play-button"
-          className="mt-1 rounded-md bg-indigo-600 px-4 py-2 text-center text-sm font-semibold text-white hover:bg-indigo-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600"
+          style={{
+            marginTop: 4,
+            display: "block",
+            borderRadius: "var(--cg-radius)",
+            background: "var(--cg-brass)",
+            color: "var(--cg-brass-ink)",
+            padding: "8px 16px",
+            textAlign: "center",
+            fontSize: 14,
+            fontWeight: 600,
+            fontFamily: "var(--cg-font-sans)",
+            textDecoration: "none",
+            boxShadow: "var(--cg-shadow-1)",
+            transition: "background 120ms",
+          }}
+          onMouseEnter={(e) => { (e.currentTarget as HTMLAnchorElement).style.background = "var(--cg-brass-hi)"; }}
+          onMouseLeave={(e) => { (e.currentTarget as HTMLAnchorElement).style.background = "var(--cg-brass)"; }}
         >
           Play
         </Link>

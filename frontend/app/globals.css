@@ -1,26 +1,86 @@
 @import "tailwindcss";
+@import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&display=swap');
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  /* ChainGammon design tokens — dark-only, no light-mode overrides */
+
+  /* Surfaces (warm near-blacks) */
+  --cg-bg-0:       #0B0908;
+  --cg-bg-1:       #15110E;
+  --cg-bg-2:       #1F1813;
+  --cg-bg-3:       #2A2018;
+  --cg-bg-felt:    #2D1A18;
+  --cg-bg-felt-pt: #3A2620;
+
+  /* Borders */
+  --cg-line-1: #2E251D;
+  --cg-line-2: #3F3326;
+  --cg-line-3: #5A4732;
+
+  /* Text */
+  --cg-fg-1: #F2EBE0;
+  --cg-fg-2: #B5A998;
+  --cg-fg-3: #7A6F60;
+  --cg-fg-4: #4A4339;
+
+  /* Brass accent */
+  --cg-brass:     #C99B5C;
+  --cg-brass-hi:  #E3B779;
+  --cg-brass-lo:  #8B6A3A;
+  --cg-brass-ink: #1A1208;
+
+  /* Player sides */
+  --cg-player-warm:      #E3B779;
+  --cg-player-cool:      #E8E1CF;
+  --cg-player-warm-glow: rgba(227,183,121,0.20);
+  --cg-player-cool-glow: rgba(232,225,207,0.16);
+
+  /* Semantic */
+  --cg-success: #7D9B4A;
+  --cg-danger:  #C04A3B;
+  --cg-warn:    #D08A3C;
+  --cg-info:    #6B8AA6;
+
+  /* Elevation */
+  --cg-shadow-1:    0 1px 0 0 rgba(255,236,196,0.04) inset,
+                    0 1px 2px 0 rgba(0,0,0,0.5);
+  --cg-shadow-2:    0 1px 0 0 rgba(255,236,196,0.05) inset,
+                    0 8px 24px -6px rgba(0,0,0,0.7),
+                    0 2px 6px -2px rgba(0,0,0,0.55);
+  --cg-shadow-coin: 0 1px 0 0 rgba(255,236,196,0.18) inset,
+                    0 -1px 0 0 rgba(0,0,0,0.5) inset,
+                    0 6px 18px -4px rgba(0,0,0,0.65);
+  --cg-glow-brass:  0 0 0 1px rgba(201,155,92,0.25),
+                    0 0 24px -4px rgba(227,183,121,0.35);
+
+  /* Radii */
+  --cg-radius-sm:  4px;
+  --cg-radius:     8px;
+  --cg-radius-lg:  14px;
+  --cg-radius-pill: 999px;
+
+  /* Spacing (4px base) */
+  --cg-space-1: 4px;  --cg-space-2: 8px;  --cg-space-3: 12px;
+  --cg-space-4: 16px; --cg-space-5: 24px; --cg-space-6: 32px;
+  --cg-space-7: 48px; --cg-space-8: 64px; --cg-space-9: 96px;
+
+  /* Type families — next/font variables set by layout.tsx; fall back gracefully */
+  --cg-font-display: 'Instrument Serif', 'Cormorant Garamond', 'Times New Roman', serif;
+  --cg-font-sans:    var(--font-cg-sans, 'Space Grotesk', system-ui, -apple-system, sans-serif);
+  --cg-font-mono:    var(--font-cg-mono, 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace);
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --color-background: var(--cg-bg-0);
+  --color-foreground: var(--cg-fg-1);
+  --font-sans: var(--cg-font-sans);
+  --font-mono: var(--cg-font-mono);
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--cg-bg-0);
+  color: var(--cg-fg-1);
+  font-family: var(--cg-font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }

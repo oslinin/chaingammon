@@ -85,7 +85,7 @@ STEP_NAMES: dict[str, str] = {
     "audit_append":       "Audit JSON appended to 0G Storage",
 }
 
-VALID_STATUSES: tuple[str, ...] = ("pending", "running", "ok", "failed")
+VALID_STATUSES: tuple[str, ...] = ("pending", "running", "ok", "failed", "skipped")
 
 
 # Persistence directory for workflow JSON. mkdir on first write — env
@@ -214,6 +214,7 @@ class WorkflowContext:
     gnubg: Any = None             # GnubgClient
     ens: Any = None               # EnsClient
     drand_check: Any = None       # callable: () -> bool
+    stake_wei: int = 0            # 0 = ELO-only; >0 = staked match
 
     # Filled in as steps run:
     match_info: Any = None        # FinalizedMatch from chain.get_match
@@ -226,9 +227,13 @@ class WorkflowContext:
 # so the orchestrator can mark step "failed" + abort the run.
 
 def step_escrow_deposit(ctx: WorkflowContext, step: WorkflowStep) -> None:
-    """Verify the match exists in MatchRegistry. The recordMatch tx
-    already happened during /finalize_game; this step confirms its
-    presence by reading the on-chain MatchInfo struct."""
+    """Verify escrow deposits for staked matches. Skipped for ELO-only
+    matches (stake_wei == 0); the on-chain MatchInfo is loaded lazily
+    by og_storage_fetch in that case."""
+    if ctx.stake_wei == 0:
+        step.status = "skipped"
+        step.detail = "ELO-only match — no ETH stake deposited; escrow confirmation not applicable."
+        return
     if ctx.chain is None or not hasattr(ctx.chain, "get_match"):
         # No chain wired — surface the gap honestly rather than silently
         # marking ok. Phase 37 always wants real on-chain confirmation.
@@ -267,10 +272,12 @@ def step_escrow_deposit(ctx: WorkflowContext, step: WorkflowStep) -> None:
 
 
 def step_vrf_rolls(ctx: WorkflowContext, step: WorkflowStep) -> None:
-    """Verify drand-network reachability. Production would also walk every
-    move's drand_round field to confirm dice derivation, but that's
-    blocked on per-move drand_round persistence in GameRecord. MVP scope:
-    confirm we can reach drand at all so future moves remain auditable."""
+    """Verify drand-network reachability. Skipped for ELO-only matches —
+    dice are client-side crypto.getRandomValues, not drand-derived."""
+    if ctx.stake_wei == 0:
+        step.status = "skipped"
+        step.detail = "ELO-only match — dice are client-side random; drand check not applicable."
+        return
     if ctx.drand_check is None:
         raise RuntimeError("drand_check not configured")
     if not ctx.drand_check():
@@ -281,10 +288,14 @@ def step_vrf_rolls(ctx: WorkflowContext, step: WorkflowStep) -> None:
 def step_og_storage_fetch(ctx: WorkflowContext, step: WorkflowStep) -> None:
     """Pull the GameRecord blob from 0G Storage by the rootHash recorded
     in the MatchInfo struct."""
+    if ctx.stake_wei == 0:
+        step.status = "skipped"
+        step.detail = "ELO-only match — no 0G Storage game record; fetch not applicable."
+        return
     if ctx.og_get_blob is None:
         raise RuntimeError("og_get_blob not configured")
     if ctx.match_info is None:
-        raise RuntimeError("match_info not yet populated (escrow_deposit must succeed first)")
+        raise RuntimeError("match_info not populated (escrow_deposit must succeed first)")
     if isinstance(ctx.match_info, dict):
         root_hash = ctx.match_info.get("gameRecordHash") or ctx.match_info.get("game_record_hash")
     else:
@@ -316,6 +327,10 @@ def step_rules_check(ctx: WorkflowContext, step: WorkflowStep) -> None:
     Auto-played moves (recorded as `(auto-played)`) are skipped; moves
     without dice are rejected as malformed.
     """
+    if ctx.stake_wei == 0:
+        step.status = "skipped"
+        step.detail = "ELO-only match — no game record to validate."
+        return
     if not ctx.game_record:
         raise RuntimeError("game_record not loaded (og_storage_fetch must succeed first)")
 
@@ -367,6 +382,7 @@ def step_rules_check(ctx: WorkflowContext, step: WorkflowStep) -> None:
 
 def step_settlement_signed(ctx: WorkflowContext, step: WorkflowStep) -> None:
     """Verify the keeper ECDSA signature over the canonical settlement payload.
+    Skipped for ELO-only matches — no escrow means no keeper-signed payload.
 
     The signature is recovered from the game record's `keeper_sig` field
     (written by the relay step when it calls /settle) and compared against
@@ -380,6 +396,11 @@ def step_settlement_signed(ctx: WorkflowContext, step: WorkflowStep) -> None:
       - KEEPER_PUBKEY not set in the environment:  step passes with an
         error-level log so the gap is surfaced in the audit trail.
     """
+    if ctx.stake_wei == 0:
+        step.status = "skipped"
+        step.detail = "ELO-only match — no keeper-signed settlement payload."
+        return
+
     import os as _os
     import logging as _logging
 
@@ -461,7 +482,8 @@ def step_settlement_signed(ctx: WorkflowContext, step: WorkflowStep) -> None:
 
 
 def step_relay_tx(ctx: WorkflowContext, step: WorkflowStep) -> None:
-    """Surface the on-chain audit anchors. MatchInfo carries the
+    """Surface the on-chain audit anchors. Skipped for ELO-only matches.
+    MatchInfo carries the
     gameRecordHash — the same Merkle root that pinned the GameRecord
     to 0G Storage; that's the strongest audit anchor we can surface
     without reaching into chain logs (recordMatch tx hash isn't stored
@@ -469,6 +491,10 @@ def step_relay_tx(ctx: WorkflowContext, step: WorkflowStep) -> None:
     The audit trail still works — the caller has matchId and
     gameRecordHash, both of which etherscan + 0G Storage explorer
     expose directly."""
+    if ctx.stake_wei == 0:
+        step.status = "skipped"
+        step.detail = "ELO-only match — no on-chain escrow relay transaction."
+        return
     if ctx.match_info is None:
         raise RuntimeError("match_info missing")
     if isinstance(ctx.match_info, dict):
@@ -476,22 +502,20 @@ def step_relay_tx(ctx: WorkflowContext, step: WorkflowStep) -> None:
     else:
         record_hash = getattr(ctx.match_info, "game_record_hash", None) \
             or getattr(ctx.match_info, "gameRecordHash", None)
-    if record_hash and record_hash != "0x" + "00" * 32:
-        # Use the gameRecordHash as the canonical audit-anchor tx_hash
-        # for this row. Frontend renders it as a 0G-Storage explorer
-        # link, identical UX to "etherscan link for the relay tx" but
-        # pointing at the audit content directly.
-        step.tx_hash = record_hash
     step.detail = (
         "settleWithSessionKeys was committed on-chain at finalize-game time; "
-        "this row surfaces the audit anchor (gameRecordHash) for the auditor."
+        f"gameRecordHash={record_hash or 'unknown'} (0G Storage content hash, not a tx)."
     )
 
 
 def step_ens_update(ctx: WorkflowContext, step: WorkflowStep) -> None:
     """Read elo + last_match_id from on-chain ENS for both players; verify
-    they reflect this match. Skip cleanly when ENS isn't configured —
-    not every match has labelled subnames on both sides."""
+    they reflect this match. Skip cleanly when ENS isn't configured or
+    when no game record is available (ELO-only matches)."""
+    if ctx.stake_wei == 0:
+        step.status = "skipped"
+        step.detail = "ELO-only match — ENS ratings were updated by finalize-direct; cross-check via game record not applicable."
+        return
     if ctx.ens is None:
         step.detail = "ENS client not configured; skipping cross-check."
         return
@@ -504,9 +528,6 @@ def step_ens_update(ctx: WorkflowContext, step: WorkflowStep) -> None:
     if not sides:
         step.detail = "No labelled subnames on this match (agent-vs-agent or unnamed)."
         return
-    # Without a live ENS read we can't verify; but reaching here means a
-    # subname existed and the recordMatch path called set_text. Mark ok
-    # with the side count for the audit.
     step.detail = f"ENS text records pushed for {len(sides)} labelled side(s)."
 
 
@@ -532,8 +553,7 @@ def step_audit_append(
     upload = ctx.og_put_blob(audit_blob)
     workflow.audit_root_hash = getattr(upload, "root_hash", None) \
         or getattr(upload, "rootHash", None)
-    step.tx_hash = workflow.audit_root_hash
-    step.detail = f"Audit JSON pinned at {workflow.audit_root_hash}."
+    step.detail = f"Audit JSON pinned to 0G Storage at rootHash={workflow.audit_root_hash}."
 
 
 _STEP_RUNNERS: dict[str, Callable[..., None]] = {
@@ -563,6 +583,7 @@ def run_workflow(
     gnubg=None,
     ens=None,
     drand_check=None,
+    stake_wei: int = 0,
     runners: Optional[dict[str, Callable]] = None,
 ) -> Workflow:
     """Execute the 8 steps sequentially. Each step's outcome is recorded
@@ -594,6 +615,7 @@ def run_workflow(
         chain=chain,
         og_get_blob=og_get_blob,
         og_put_blob=og_put_blob,
+        stake_wei=stake_wei,
         gnubg=gnubg,
         ens=ens,
         drand_check=drand_check,
@@ -610,7 +632,10 @@ def run_workflow(
                 runner(ctx, step, workflow=workflow)
             else:
                 runner(ctx, step)
-            step.status = "ok"
+            # Step may self-mark as "skipped"; only promote to "ok" when the
+            # step left the status as "running" (i.e. didn't set it itself).
+            if step.status == "running":
+                step.status = "ok"
         except Exception as e:
             step.status = "failed"
             step.error = str(e)

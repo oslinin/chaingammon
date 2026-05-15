@@ -159,8 +159,15 @@ export async function getBestMove(
   side: 0 | 1,
   dice: [number, number]
 ): Promise<string | null> {
-  const candidates = await evaluateMoves(board, side, dice);
-  return candidates.length > 0 ? candidates[0].move : null;
+  try {
+    const candidates = await evaluateMoves(board, side, dice);
+    return candidates.length > 0 ? candidates[0].move : null;
+  } catch {
+    // ONNX unavailable (OOM, init failure) — pick a random legal move so the
+    // game never freezes. Quality degrades but play continues.
+    const moves = generateLegalMoves(board, side, dice);
+    return moves.length > 0 ? moves[Math.floor(Math.random() * moves.length)] : null;
+  }
 }
 
 /**

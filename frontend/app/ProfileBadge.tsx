@@ -22,9 +22,6 @@ import { useActiveChainId } from "./chains";
 import { MatchRegistryABI, useChainContracts } from "./contracts";
 import { recordTransaction } from "./transactions";
 
-// Inline ABI fragment for selfMintSubname. Kept here instead of relying
-// on the artifact so the component builds independently of the compile
-// step. The full artifact ABI is still used by other contract reads.
 const SELF_MINT_ABI = [
   {
     type: "function",
@@ -39,12 +36,10 @@ function shorten(addr: string) {
   return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
 }
 
-/** ENS label rules: starts/ends with alphanumeric, only a-z 0-9 and hyphens, 1–63 chars. */
 function isValidLabel(s: string): boolean {
   return s.length >= 1 && s.length <= 63 && /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(s);
 }
 
-/** Returns a human-readable validation problem, or null if the label is valid. */
 function labelValidationMessage(s: string): string | null {
   if (!s) return null;
   if (s.length > 63) return "Name must be 63 characters or fewer.";
@@ -54,12 +49,10 @@ function labelValidationMessage(s: string): string | null {
   return null;
 }
 
-/** Deterministic-ish 3-digit suffix for fallback name suggestions. */
 function randomSuffix(): string {
   return String(Math.floor(Math.random() * 900) + 100);
 }
 
-/** True when the wagmi write error indicates the name is already registered. */
 function isSubnameAlreadyTaken(error: Error | null): boolean {
   if (!error) return false;
   const msg = error.message;
@@ -70,19 +63,9 @@ function isSubnameAlreadyTaken(error: Error | null): boolean {
   );
 }
 
-/**
- * Standalone claim form — shown automatically when the wallet has no subname.
- * Exported separately so a test fixture page can render it without the
- * name-lookup hooks that ProfileBadge wraps around it.
- *
- * Calls `selfMintSubname(label)` on the PlayerSubnameRegistrar contract
- * directly via the connected wallet — no central server required.
- */
 export function ClaimForm({ address: _address }: { address: `0x${string}` }) {
   const [claimInput, setClaimInput] = useState("");
   const [suggestion, setSuggestion] = useState<string | null>(null);
-  // Track the label actually submitted so the expense description is accurate
-  // even when the suggestion button changes `claimInput` before confirming.
   const submittedLabelRef = useRef<string>("");
 
   const { playerSubnameRegistrar } = useChainContracts();
@@ -95,12 +78,8 @@ export function ClaimForm({ address: _address }: { address: `0x${string}` }) {
     reset: resetWrite,
   } = useWriteContract();
 
-  const { isLoading: confirming, isSuccess } = useWaitForTransactionReceipt({
-    hash: txHash,
-  });
+  const { isLoading: confirming, isSuccess } = useWaitForTransactionReceipt({ hash: txHash });
 
-  // Record the gas expense and reload after the tx confirms so every component
-  // re-runs its subname lookup with the newly registered name.
   useEffect(() => {
     if (isSuccess) {
       recordTransaction({
@@ -111,23 +90,21 @@ export function ClaimForm({ address: _address }: { address: `0x${string}` }) {
     }
   }, [isSuccess]);
 
-  // Show fallback suggestion when the name is already taken.
   useEffect(() => {
     if (writeError && isSubnameAlreadyTaken(writeError)) {
       setSuggestion(`${claimInput}${randomSuffix()}`);
     } else {
       setSuggestion(null);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [writeError]);
 
   const claiming = signing || confirming;
 
-  // User-facing error string derived from the wagmi write error.
   const claimError = writeError
     ? isSubnameAlreadyTaken(writeError)
       ? `"${claimInput}" is already taken.`
-      : writeError.message.split("\n")[0] // first line only
+      : writeError.message.split("\n")[0]
     : null;
 
   const submit = (labelToUse?: string) => {
@@ -148,28 +125,36 @@ export function ClaimForm({ address: _address }: { address: `0x${string}` }) {
   const canSubmit = !claiming && isValidLabel(claimInput);
 
   return (
-    <div data-testid="profile-badge" className="flex flex-col items-end gap-1">
-      <div className="flex items-center gap-1.5">
+    <div data-testid="profile-badge" style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
         <input
           data-testid="ens-claim-input"
           value={claimInput}
           onChange={(e) => {
-            // Auto-lowercase so users don't need to think about casing.
             setClaimInput(e.target.value.toLowerCase());
             resetWrite();
             setSuggestion(null);
           }}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") submit();
-          }}
+          onKeyDown={(e) => { if (e.key === "Enter") submit(); }}
           placeholder="your-name"
-          className="h-8 w-32 rounded-md border border-zinc-300 bg-white px-2 font-mono text-sm text-zinc-900 placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50"
           disabled={claiming}
           autoFocus
+          style={{
+            height: 32,
+            width: 128,
+            borderRadius: "var(--cg-radius-sm)",
+            border: "1px solid var(--cg-line-2)",
+            background: "var(--cg-bg-1)",
+            color: "var(--cg-fg-1)",
+            fontFamily: "var(--cg-font-mono)",
+            fontSize: 13,
+            padding: "0 8px",
+            outline: "none",
+          }}
         />
         <span
           data-testid="ens-suffix"
-          className="font-mono text-xs text-zinc-500 dark:text-zinc-400"
+          style={{ fontFamily: "var(--cg-font-mono)", fontSize: 12, color: "var(--cg-fg-3)" }}
         >
           .chaingammon.eth
         </span>
@@ -178,7 +163,19 @@ export function ClaimForm({ address: _address }: { address: `0x${string}` }) {
           type="button"
           onClick={() => submit()}
           disabled={!canSubmit}
-          className="h-8 rounded-md bg-indigo-600 px-3 text-xs font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
+          style={{
+            height: 32,
+            borderRadius: "var(--cg-radius-sm)",
+            background: "var(--cg-brass)",
+            color: "var(--cg-brass-ink)",
+            padding: "0 12px",
+            fontSize: 12,
+            fontWeight: 600,
+            border: "none",
+            cursor: canSubmit ? "pointer" : "not-allowed",
+            opacity: canSubmit ? 1 : 0.5,
+            fontFamily: "var(--cg-font-sans)",
+          }}
         >
           {signing ? "Signing…" : confirming ? "Confirming…" : "Claim"}
         </button>
@@ -187,26 +184,23 @@ export function ClaimForm({ address: _address }: { address: `0x${string}` }) {
       {validationError ? (
         <span
           data-testid="ens-validation-error"
-          className="max-w-xs text-right text-xs text-amber-600 dark:text-amber-400"
+          style={{ fontSize: 11, color: "var(--cg-warn)", textAlign: "right", maxWidth: 240 }}
         >
           {validationError}
         </span>
       ) : null}
 
       {claimError ? (
-        <div className="flex flex-col items-end gap-0.5">
-          <span className="max-w-xs text-right text-xs text-red-600 dark:text-red-400">
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2 }}>
+          <span style={{ fontSize: 11, color: "var(--cg-danger)", textAlign: "right", maxWidth: 240 }}>
             {claimError}
           </span>
           {suggestion ? (
             <button
               data-testid="ens-suggestion-button"
               type="button"
-              onClick={() => {
-                setClaimInput(suggestion);
-                submit(suggestion);
-              }}
-              className="text-xs text-indigo-600 hover:underline dark:text-indigo-400"
+              onClick={() => { setClaimInput(suggestion); submit(suggestion); }}
+              style={{ fontSize: 11, color: "var(--cg-brass)", background: "none", border: "none", cursor: "pointer", textDecoration: "underline" }}
             >
               Try &ldquo;{suggestion}.chaingammon.eth&rdquo; instead
             </button>
@@ -222,9 +216,6 @@ export function ProfileBadge({ address }: { address: `0x${string}` }) {
   const { elo: ensElo, matchCount } = useChaingammonProfile(label);
   const [renaming, setRenaming] = useState(false);
 
-  // Always read humanElo from MatchRegistry — it's updated immediately by
-  // /finalize-direct at game end. ENS text record may lag until the keeper
-  // workflow writes it, so prefer the chain value when it's available.
   const chainId = useActiveChainId();
   const { matchRegistry } = useChainContracts();
   const { data: chainEloRaw } = useReadContract({
@@ -242,7 +233,7 @@ export function ProfileBadge({ address }: { address: `0x${string}` }) {
     return (
       <span
         data-testid="profile-badge"
-        className="font-mono text-sm text-zinc-500 dark:text-zinc-400"
+        style={{ fontFamily: "var(--cg-font-mono)", fontSize: 13, color: "var(--cg-fg-3)" }}
       >
         {shorten(address)}
       </span>
@@ -253,20 +244,31 @@ export function ProfileBadge({ address }: { address: `0x${string}` }) {
     return (
       <span
         data-testid="profile-badge"
-        className="flex items-center gap-2 font-mono text-sm text-zinc-700 dark:text-zinc-300"
+        style={{ display: "flex", alignItems: "center", gap: 8, fontFamily: "var(--cg-font-mono)", fontSize: 13 }}
       >
         <a
           href={`https://app.ens.domains/${name}`}
           target="_blank"
           rel="noreferrer"
-          className="hover:underline"
+          style={{ color: "var(--cg-fg-1)", textDecoration: "none" }}
+          onMouseEnter={(e) => { (e.currentTarget as HTMLAnchorElement).style.color = "var(--cg-brass)"; }}
+          onMouseLeave={(e) => { (e.currentTarget as HTMLAnchorElement).style.color = "var(--cg-fg-1)"; }}
         >
           {name}
         </a>
         {elo ? (
           <span
             title="ELO rating"
-            className="rounded bg-indigo-100 px-1.5 py-0.5 text-xs font-semibold text-indigo-700 dark:bg-indigo-900 dark:text-indigo-300"
+            style={{
+              borderRadius: "var(--cg-radius-sm)",
+              background: "rgba(201,155,92,0.15)",
+              border: "1px solid rgba(201,155,92,0.30)",
+              padding: "1px 6px",
+              fontSize: 11,
+              fontWeight: 600,
+              color: "var(--cg-brass-hi)",
+              fontFamily: "var(--cg-font-mono)",
+            }}
           >
             ELO {elo}
           </span>
@@ -274,7 +276,15 @@ export function ProfileBadge({ address }: { address: `0x${string}` }) {
         {matchCount ? (
           <span
             title="Matches played"
-            className="rounded bg-zinc-100 px-1.5 py-0.5 text-xs font-semibold text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300"
+            style={{
+              borderRadius: "var(--cg-radius-sm)",
+              background: "var(--cg-bg-3)",
+              border: "1px solid var(--cg-line-2)",
+              padding: "1px 6px",
+              fontSize: 11,
+              fontWeight: 600,
+              color: "var(--cg-fg-3)",
+            }}
           >
             {matchCount}M
           </span>
@@ -282,7 +292,9 @@ export function ProfileBadge({ address }: { address: `0x${string}` }) {
         <button
           title="Claim a new name"
           onClick={() => setRenaming(true)}
-          className="text-xs text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200"
+          style={{ fontSize: 12, color: "var(--cg-fg-4)", background: "none", border: "none", cursor: "pointer", transition: "color 120ms" }}
+          onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "var(--cg-fg-2)"; }}
+          onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "var(--cg-fg-4)"; }}
         >
           ✎
         </button>
@@ -290,6 +302,5 @@ export function ProfileBadge({ address }: { address: `0x${string}` }) {
     );
   }
 
-  // No subname (or rename requested) — show the claim form.
   return <ClaimForm address={address} />;
 }

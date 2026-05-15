@@ -6,8 +6,8 @@
 //   Bottom row — points 12..1  left→right (player 0 bears off at 1..6)
 //
 // board[i] = checkers on point (i+1).
-//   Positive → player 0 (human, blue)
-//   Negative → player 1 (agent, red)
+//   Positive → player 0 (human, warm gold)
+//   Negative → player 1 (agent, bone ivory)
 //
 // bar[0] = player 0 checkers on bar, bar[1] = player 1 checkers on bar.
 // off[0] = player 0 borne off, off[1] = player 1 borne off.
@@ -44,6 +44,22 @@ interface BoardProps {
 // Maximum checkers shown as dots before falling back to a "+N" label.
 const MAX_DOTS = 5;
 
+// Checker coin — warm gold for player 0, bone ivory for player 1.
+function Checker({ isP0, size = 16 }: { isP0: boolean; size?: number }) {
+  return (
+    <div
+      style={{
+        width: size,
+        height: size,
+        borderRadius: "50%",
+        flexShrink: 0,
+        background: isP0 ? "var(--cg-player-warm)" : "var(--cg-player-cool)",
+        boxShadow: "var(--cg-shadow-coin)",
+      }}
+    />
+  );
+}
+
 interface PointProps {
   point: number; // 1-indexed point number
   count: number; // signed: positive = p0, negative = p1
@@ -61,50 +77,37 @@ function PointCell({ point, count, flip = false, onClick, isSelected, onDragStar
   const dotsToShow = Math.min(abs, MAX_DOTS);
   const extra = abs > MAX_DOTS ? abs - MAX_DOTS : 0;
 
-  const dot = (
-    <div
-      className={`h-4 w-4 shrink-0 rounded-full ${
-        isP0
-          ? "bg-blue-500 dark:bg-blue-400"
-          : "bg-red-500 dark:bg-red-400"
-      }`}
-    />
-  );
-
   const dots = Array.from({ length: dotsToShow }, (_, i) => (
-    <div key={i}>{dot}</div>
+    <Checker key={i} isP0={isP0} size={16} />
   ));
 
   const extraLabel = extra > 0 && (
-    <span className="text-[9px] font-mono text-zinc-500 dark:text-zinc-400">
+    <span style={{ fontSize: 9, fontFamily: "var(--cg-font-mono)", color: "var(--cg-fg-3)" }}>
       +{extra}
     </span>
   );
 
-  // Cell is draggable when it has player-0 (blue) checkers and the drag handler is wired.
   const isDraggable = !!onDragStart && count > 0;
-
-  const classes = [
-    "flex flex-col items-center gap-0.5",
-    onClick ? "cursor-pointer hover:opacity-75" : "",
-    isDraggable ? "cursor-grab" : "",
-    isSelected
-      ? "rounded bg-amber-100 ring-1 ring-amber-400 dark:bg-amber-900/30"
-      : "",
-  ]
-    .filter(Boolean)
-    .join(" ");
 
   return (
     <div
-      // data-testid keyed by zero-based index for match-board-state.spec.ts.
-      // data-point / data-count are 1-indexed signed attrs for piece-stability.spec.ts.
       data-testid={`point-${point - 1}`}
       data-point={point}
       data-count={count}
       data-selected={isSelected ? "true" : undefined}
-      className={classes}
-      style={{ width: 24 }}
+      style={{
+        width: 24,
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        gap: 2,
+        cursor: onClick ? "pointer" : isDraggable ? "grab" : "default",
+        borderRadius: "var(--cg-radius-sm)",
+        background: isSelected ? "rgba(201,155,92,0.12)" : "transparent",
+        outline: isSelected ? "1px solid var(--cg-brass)" : "none",
+        outlineOffset: 1,
+        transition: "background 120ms ease",
+      }}
       onClick={onClick}
       draggable={isDraggable}
       onDragStart={isDraggable ? (e) => { e.dataTransfer.effectAllowed = "move"; onDragStart!(); } : undefined}
@@ -113,24 +116,24 @@ function PointCell({ point, count, flip = false, onClick, isSelected, onDragStar
     >
       {/* Point label */}
       {!flip && (
-        <span className="text-[9px] font-mono text-zinc-400 dark:text-zinc-500">
+        <span style={{ fontSize: 9, fontFamily: "var(--cg-font-mono)", color: "var(--cg-fg-4)" }}>
           {point}
         </span>
       )}
       {/* Checkers — flip reverses order so top-row dots grow downward */}
       {flip ? (
-        <div className="flex flex-col items-center gap-0.5">
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
           {extra > 0 && extraLabel}
           {[...dots].reverse()}
         </div>
       ) : (
-        <div className="flex flex-col items-center gap-0.5">
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
           {dots}
           {extra > 0 && extraLabel}
         </div>
       )}
       {flip && (
-        <span className="text-[9px] font-mono text-zinc-400 dark:text-zinc-500">
+        <span style={{ fontSize: 9, fontFamily: "var(--cg-font-mono)", color: "var(--cg-fg-4)" }}>
           {point}
         </span>
       )}
@@ -146,46 +149,46 @@ interface BarCellProps {
 }
 
 function BarCell({ p0Bar, p1Bar, onBarClick, isBarSelected }: BarCellProps) {
-  const classes = [
-    "flex w-8 flex-col items-center justify-center gap-1 border-x border-zinc-300 dark:border-zinc-600",
-    onBarClick ? "cursor-pointer hover:opacity-75" : "",
-    isBarSelected
-      ? "bg-amber-100 ring-1 ring-amber-400 dark:bg-amber-900/30"
-      : "",
-  ]
-    .filter(Boolean)
-    .join(" ");
-
   return (
-    <div className={classes} onClick={onBarClick}>
+    <div
+      onClick={onBarClick}
+      style={{
+        width: 32,
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 4,
+        borderLeft: "1px solid var(--cg-line-2)",
+        borderRight: "1px solid var(--cg-line-2)",
+        cursor: onBarClick ? "pointer" : "default",
+        background: isBarSelected ? "rgba(201,155,92,0.10)" : "transparent",
+        outline: isBarSelected ? "1px solid var(--cg-brass)" : "none",
+        transition: "background 120ms ease",
+      }}
+    >
       {p1Bar > 0 && (
-        <div className="flex flex-col items-center gap-0.5">
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
           {Array.from({ length: Math.min(p1Bar, 3) }, (_, i) => (
-            <div
-              key={i}
-              className="h-3 w-3 rounded-full bg-red-500 dark:bg-red-400"
-            />
+            <Checker key={i} isP0={false} size={12} />
           ))}
           {p1Bar > 3 && (
-            <span className="text-[9px] font-mono text-zinc-500">
+            <span style={{ fontSize: 9, fontFamily: "var(--cg-font-mono)", color: "var(--cg-fg-3)" }}>
               +{p1Bar - 3}
             </span>
           )}
         </div>
       )}
-      <span className="text-[8px] font-mono text-zinc-400 dark:text-zinc-500">
+      <span style={{ fontSize: 8, fontFamily: "var(--cg-font-mono)", color: "var(--cg-fg-4)", letterSpacing: "0.05em" }}>
         BAR
       </span>
       {p0Bar > 0 && (
-        <div className="flex flex-col items-center gap-0.5">
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
           {Array.from({ length: Math.min(p0Bar, 3) }, (_, i) => (
-            <div
-              key={i}
-              className="h-3 w-3 rounded-full bg-blue-500 dark:bg-blue-400"
-            />
+            <Checker key={i} isP0={true} size={12} />
           ))}
           {p0Bar > 3 && (
-            <span className="text-[9px] font-mono text-zinc-500">
+            <span style={{ fontSize: 9, fontFamily: "var(--cg-font-mono)", color: "var(--cg-fg-3)" }}>
               +{p0Bar - 3}
             </span>
           )}
@@ -208,27 +211,40 @@ export function Board({
   onDragStart,
   onDrop,
 }: BoardProps) {
-  // Top row: points 13–24 (indices 12–23), displayed left→right.
   const topPoints = Array.from({ length: 12 }, (_, i) => i + 13); // [13..24]
-  // Bottom row: points 12–1 (indices 11–0), displayed left→right (12 down to 1).
   const bottomPoints = Array.from({ length: 12 }, (_, i) => 12 - i); // [12..1]
 
-  const turnLabel =
-    turn === 0 ? "Your turn" : `${opponentName ?? "Agent"}'s turn`;
-  const turnColor =
-    turn === 0
-      ? "text-blue-600 dark:text-blue-400"
-      : "text-red-600 dark:text-red-400";
+  const turnLabel = turn === 0 ? "Your turn" : `${opponentName ?? "Agent"}'s turn`;
 
   return (
-    <div className="flex flex-col gap-2">
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
       {/* Turn indicator */}
-      <p className={`text-sm font-semibold ${turnColor}`}>{turnLabel}</p>
+      <p
+        style={{
+          fontSize: 13,
+          fontWeight: 600,
+          color: turn === 0 ? "var(--cg-brass)" : "var(--cg-fg-2)",
+          fontFamily: "var(--cg-font-sans)",
+        }}
+      >
+        {turnLabel}
+      </p>
 
-      <div className="overflow-x-auto">
-        <div className="inline-flex flex-col gap-0 rounded-lg border border-zinc-300 bg-amber-50 p-2 dark:border-zinc-600 dark:bg-zinc-900">
+      <div style={{ overflowX: "auto" }}>
+        <div
+          style={{
+            display: "inline-flex",
+            flexDirection: "column",
+            gap: 0,
+            borderRadius: "var(--cg-radius)",
+            border: "1px solid var(--cg-line-2)",
+            background: "var(--cg-bg-felt)",
+            padding: 8,
+            boxShadow: "var(--cg-shadow-1)",
+          }}
+        >
           {/* Top row — points 13..24 */}
-          <div className="flex items-start gap-0.5">
+          <div style={{ display: "flex", alignItems: "flex-start", gap: 2 }}>
             {topPoints.slice(0, 6).map((pt) => (
               <PointCell
                 key={pt}
@@ -261,11 +277,11 @@ export function Board({
             ))}
           </div>
 
-          {/* Spacer */}
-          <div className="h-3 border-y border-zinc-300 dark:border-zinc-600" />
+          {/* Mid spacer */}
+          <div style={{ height: 12, borderTop: "1px solid var(--cg-line-2)", borderBottom: "1px solid var(--cg-line-2)" }} />
 
           {/* Bottom row — points 12..1 */}
-          <div className="flex items-end gap-0.5">
+          <div style={{ display: "flex", alignItems: "flex-end", gap: 2 }}>
             {bottomPoints.slice(0, 6).map((pt) => (
               <PointCell
                 key={pt}
@@ -278,8 +294,8 @@ export function Board({
                 onDrop={onDrop ? () => onDrop(pt) : undefined}
               />
             ))}
-            <div className="flex w-8 items-center justify-center">
-              <div className="h-3 w-px bg-zinc-300 dark:bg-zinc-600" />
+            <div style={{ width: 32, display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <div style={{ width: 1, height: 12, background: "var(--cg-line-2)" }} />
             </div>
             {bottomPoints.slice(6).map((pt) => (
               <PointCell
@@ -297,13 +313,23 @@ export function Board({
         </div>
       </div>
 
-      {/* Bear-off button — shown only when a source checker is selected */}
+      {/* Bear-off button */}
       {onOffClick && (
         <button
           type="button"
           onClick={onOffClick}
           aria-label="Bear off selected checker"
-          className="self-start rounded border border-zinc-300 px-2 py-1 text-xs text-zinc-600 hover:bg-zinc-100 dark:border-zinc-600 dark:text-zinc-400 dark:hover:bg-zinc-800"
+          style={{
+            alignSelf: "flex-start",
+            border: "1px solid var(--cg-line-2)",
+            borderRadius: "var(--cg-radius-sm)",
+            padding: "4px 10px",
+            fontSize: 12,
+            color: "var(--cg-fg-2)",
+            background: "var(--cg-bg-2)",
+            cursor: "pointer",
+            transition: "background 120ms ease",
+          }}
         >
           Bear off →
         </button>
@@ -318,14 +344,14 @@ export function Board({
           if (board[i] < 0) pip1 += (24 - i) * (-board[i]);
         }
         return (
-          <div className="flex gap-6 text-sm text-zinc-600 dark:text-zinc-400">
+          <div style={{ display: "flex", gap: 24, fontSize: 13, color: "var(--cg-fg-2)", fontFamily: "var(--cg-font-sans)" }}>
             <span>
-              <span className="text-blue-500 dark:text-blue-400 font-semibold">You</span>{" "}
-              borne off: {off[0]} / 15 · <span className="font-mono">{pip0} pip{pip0 !== 1 ? "s" : ""}</span>
+              <span style={{ color: "var(--cg-player-warm)", fontWeight: 600 }}>You</span>{" "}
+              borne off: {off[0]} / 15 · <span style={{ fontFamily: "var(--cg-font-mono)" }}>{pip0} pip{pip0 !== 1 ? "s" : ""}</span>
             </span>
             <span>
-              <span className="text-red-500 dark:text-red-400 font-semibold">Agent</span>{" "}
-              borne off: {off[1]} / 15 · <span className="font-mono">{pip1} pip{pip1 !== 1 ? "s" : ""}</span>
+              <span style={{ color: "var(--cg-player-cool)", fontWeight: 600 }}>{opponentName ?? "Agent"}</span>{" "}
+              borne off: {off[1]} / 15 · <span style={{ fontFamily: "var(--cg-font-mono)" }}>{pip1} pip{pip1 !== 1 ? "s" : ""}</span>
             </span>
           </div>
         );

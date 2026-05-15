@@ -1834,7 +1834,7 @@ def _try_drand_check() -> bool:
 
 
 @app.post("/keeper-workflow/{match_id}/run")
-def keeper_workflow_run(match_id: str):
+def keeper_workflow_run(match_id: str, stake_wei: int = 0):
     """Trigger a fresh KeeperHub workflow run for matchId.
 
     Spawns the 8-step orchestrator on a background thread so the HTTP
@@ -1860,6 +1860,7 @@ def keeper_workflow_run(match_id: str):
         gnubg=gnubg,
         ens=ens,
         drand_check=_try_drand_check,
+        stake_wei=stake_wei,
     )
     # Give the orchestrator a moment to flip the persisted state to
     # "running" before we read it back, so polling doesn't see a stale

@@ -9,50 +9,99 @@
 import { AgentsList } from "./AgentsList";
 import { DiscoveryList } from "./DiscoveryList";
 
+const chipBase: React.CSSProperties = {
+  display: "inline-block",
+  borderRadius: 4,
+  padding: "2px 8px",
+  fontSize: 11,
+  fontWeight: 500,
+  textDecoration: "none",
+  fontFamily: "var(--font-sans)",
+};
+
 export default function Home() {
   return (
-    <div className="flex flex-1 flex-col bg-zinc-50 dark:bg-black">
+    <div style={{ display: "flex", flex: 1, flexDirection: "column", background: "var(--cg-bg-0)" }}>
       <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-8 px-4 py-8 sm:px-8 sm:py-16">
+        {/* Hero */}
         <div className="flex flex-col gap-3">
-          <h2 className="text-3xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
+          <h2
+            style={{
+              fontSize: 30,
+              fontWeight: 500,
+              letterSpacing: "-0.01em",
+              color: "var(--cg-fg-1)",
+              fontFamily: "var(--cg-font-sans)",
+              margin: 0,
+            }}
+          >
             Open backgammon protocol
           </h2>
-          <p className="max-w-xl text-base leading-7 text-zinc-600 dark:text-zinc-400">
+          <p style={{ maxWidth: 480, fontSize: 15, lineHeight: 1.6, color: "var(--cg-fg-2)", margin: 0 }}>
             Every match settles on 0G Chain and updates your portable ENS
             reputation at{" "}
-            <code className="font-mono text-zinc-900 dark:text-zinc-100">
+            <code style={{ fontFamily: "var(--cg-font-mono)", color: "var(--cg-fg-1)", fontSize: 13 }}>
               &lt;name&gt;.chaingammon.eth
             </code>
             . AI agents are NFTs — their skill persists on-chain.
           </p>
         </div>
 
+        {/* Agents section */}
         <section className="flex flex-col gap-4">
-          <div className="flex items-center gap-3">
-            <h2 className="text-xl font-semibold text-zinc-900 dark:text-zinc-50">
+          <div className="flex items-center gap-2 flex-wrap">
+            <h2
+              style={{
+                fontSize: 18,
+                fontWeight: 500,
+                color: "var(--cg-fg-1)",
+                fontFamily: "var(--cg-font-sans)",
+                margin: 0,
+              }}
+            >
               Agents
             </h2>
             <a
               href="/create-agent"
-              className="rounded border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-700 hover:bg-indigo-100 dark:border-indigo-700/40 dark:bg-indigo-900/20 dark:text-indigo-300 dark:hover:bg-indigo-900/40"
+              style={{
+                ...chipBase,
+                border: "1px solid rgba(201,155,92,0.35)",
+                background: "rgba(201,155,92,0.10)",
+                color: "var(--cg-brass-hi)",
+              }}
             >
               Mint
             </a>
             <a
               href="/training"
-              className="rounded border border-zinc-200 bg-white px-2 py-0.5 text-xs font-medium text-zinc-600 hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800"
+              style={{
+                ...chipBase,
+                border: "1px solid var(--cg-line-2)",
+                background: "var(--cg-bg-2)",
+                color: "var(--cg-fg-2)",
+              }}
             >
               Train
             </a>
             <a
               href="/team-demo"
-              className="rounded border border-zinc-200 bg-white px-2 py-0.5 text-xs font-medium text-zinc-600 hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800"
+              style={{
+                ...chipBase,
+                border: "1px solid var(--cg-line-2)",
+                background: "var(--cg-bg-2)",
+                color: "var(--cg-fg-2)",
+              }}
             >
               Off-chain game
             </a>
             <a
               href="/team-demo?settle=1"
-              className="rounded border border-indigo-300 bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-700 hover:bg-indigo-100 dark:border-indigo-700 dark:bg-indigo-950 dark:text-indigo-300 dark:hover:bg-indigo-900"
+              style={{
+                ...chipBase,
+                border: "1px solid var(--cg-brass)",
+                background: "rgba(201,155,92,0.12)",
+                color: "var(--cg-brass)",
+              }}
             >
               On-chain game
             </a>
@@ -66,7 +115,7 @@ export default function Home() {
 
         <a
           href="/transactions"
-          className="text-sm text-zinc-400 hover:text-zinc-600 dark:text-zinc-600 dark:hover:text-zinc-400"
+          style={{ fontSize: 13, color: "var(--cg-fg-4)", textDecoration: "none" }}
         >
           Transactions
         </a>
