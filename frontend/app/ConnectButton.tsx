@@ -61,6 +61,11 @@ function isMobileBrowser(): boolean {
   return /Android|iPhone|iPad|iPod|IEMobile|Opera Mini/i.test(navigator.userAgent);
 }
 
+/** True when an EIP-1193 provider (window.ethereum) is actually injected. */
+function hasInjectedProvider(): boolean {
+  return typeof window !== "undefined" && Boolean((window as { ethereum?: unknown }).ethereum);
+}
+
 /** Deep link that opens the current page inside MetaMask Mobile's in-app browser. */
 function metaMaskDeepLink(): string {
   const { hostname, pathname, search } = window.location;
@@ -73,14 +78,23 @@ export function ConnectButton() {
   const { disconnect } = useDisconnect();
   const [mounted, setMounted] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
+  const [hasProvider, setHasProvider] = useState(false);
   const [userAttempted, setUserAttempted] = useState(false);
 
   useEffect(() => {
     setMounted(true);
     setIsMobile(isMobileBrowser());
+    setHasProvider(hasInjectedProvider());
   }, []);
 
-  const injectedConnector = connectors.find((c: Connector) => c.type === "injected");
+  // wagmi v3 always includes the `injected()` connector in its config regardless
+  // of whether window.ethereum exists, so a truthy `connectors.find(...)` does
+  // NOT mean a wallet is installed. Gate the injected flow on `hasProvider`
+  // (a runtime window.ethereum check) — otherwise clicking "Browser wallet" on
+  // a vanilla mobile browser throws `ProviderNotFoundError`.
+  const injectedConnector = hasProvider
+    ? connectors.find((c: Connector) => c.type === "injected")
+    : undefined;
   const wcConnector = connectors.find((c: Connector) => c.type === "walletConnect");
 
   if (!mounted) return null;
