@@ -9,7 +9,7 @@
     "lint": "eslint",
     "test": "next build --webpack",
     "test:e2e": "playwright test",
-    "copy:wasm": "mkdir -p public/js && cp node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.mjs node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.wasm node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.jsep.mjs node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.jsep.wasm public/js/",
+    "copy:wasm": "mkdir -p public/js && cp node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.mjs node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.wasm public/js/",
     "postinstall": "pnpm run copy:wasm"
   },
   "dependencies": {
