@@ -1,33 +1,34 @@
-// Phase F: round-robin training page.
+// Round-robin training page.
 //
 // Layout (top to bottom):
 //   1. Title + subtitle
-//   2. Compute-backends summary (read from ComputeBackendsContext;
-//      the global pill in layout.tsx is the source of truth)
+//   2. Compute-backends summary
 //   3. Agent selector (checkbox list of all on-chain agents)
 //   4. Logarithmic epoch slider with snap-tick marks
-//   5. Gas estimate row (visible when Inference=0G)
+//   5. Cost estimate row (visible when Inference=0G)
 //   6. Play / Abort buttons
-//   7. Status panel: progress bar + per-agent stats + last-update ts
+//   7. Status panel: progress bar + per-agent stats
 //
-// State machine:
-//   idle      → click Play → POST /training/start → polling=true
-//   running   → poll /training/status every 2s → on running:false → polling=false
-//   ended     → status panel shows ended state until the user clicks Play again
-//   abort     → POST /training/abort → polling=false
-//
-// All backend calls hit NEXT_PUBLIC_SERVER_URL (FastAPI on port 8000),
-// where /agents and /training/* are served (server/app/main.py). The
-// coach service on 8002 only exposes /hint and /chat.
+// Two backends, chosen via the global Compute pill (Training = local | 0G):
+//   local → POST {NEXT_PUBLIC_SERVER_URL}/training/start, poll /training/status,
+//           Abort via /training/abort. Requires the FastAPI server running.
+//   0g    → submitTrainingJob() to a backgammon-train-v1 provider on the 0G
+//           serving network using the user's MetaMask wallet. Falls back to
+//           a "no provider registered" non-fatal message until one stands up.
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useReadContract, useReadContracts } from "wagmi";
+import { useReadContract, useReadContracts, useWalletClient } from "wagmi";
 
 import { useComputeBackends } from "../ComputeBackendsContext";
 import { useActiveChain, useActiveChainId } from "../chains";
 import { AgentRegistryABI, useChainContracts } from "../contracts";
+import {
+  OgTrainingUnavailable,
+  submitTrainingJob,
+  type TrainingJobResult,
+} from "../../lib/og_training";
 
 const SERVER = process.env.NEXT_PUBLIC_SERVER_URL ?? "http://localhost:8000";
 
@@ -74,15 +75,26 @@ interface AgentRow {
   tier: number;
 }
 
-interface EstimateResponse {
-  games: number;
-  total_inferences: number;
-  gas_og: number;
-  per_inference_og: number;
-  available: boolean;
-  note?: string;
+// UI state machine — the 0G branch drives `phase` directly; the local
+// branch derives its phase from the FastAPI status query.
+type TrainingPhase = "idle" | "loading_weights" | "running" | "done" | "error";
+type TrainingMode = "local" | "0g";
+
+interface TrainingState {
+  phase: TrainingPhase;
+  mode?: TrainingMode;
+  step?: string;
+  errorMessage?: string;
+  errorUnavailable?: boolean;
+  startedAt?: number;
+  finishedAt?: number;
+  result?: TrainingJobResult;
+  agentIds: number[];
+  epochs: number;
 }
 
+// FastAPI /training/status response — kept verbatim from server/app/main.py
+// so React Query's `data` lands on this shape.
 interface CheckpointEntry {
   agent_id: number;
   path: string | null;
@@ -98,7 +110,7 @@ interface ChainWriteEntry {
   error: string | null;
 }
 
-interface StatusResponse {
+interface LocalStatusResponse {
   running: boolean;
   completed_games: number;
   total_games: number;
@@ -117,10 +129,25 @@ interface StatusResponse {
   chain_writes?: ChainWriteEntry[];
 }
 
+interface LocalEstimateResponse {
+  games: number;
+  total_inferences: number;
+  gas_og: number;
+  per_inference_og: number;
+  available: boolean;
+  note?: string;
+}
+
+const PER_INFERENCE_OG = 1e-5;
+const MEAN_PLIES_PER_GAME = 60;
+
 export default function TrainingPage() {
   const { backends, hydrated } = useComputeBackends();
   const use0gInference = hydrated && backends.inference === "0g";
   const use0gCoaching = hydrated && backends.coach === "0g";
+  // Default to `local` until hydration completes so SSR matches the
+  // initial client render; the persisted choice takes over after.
+  const trainingMode: TrainingMode = hydrated ? backends.training : "local";
 
   // Agent list: read straight from AgentRegistry on the wallet's chain
   // (same shape as the legacy /agents server endpoint) so this page
@@ -212,12 +239,51 @@ export default function TrainingPage() {
   const n = selectedIds.length;
   const gamesPerEpoch = (n * (n - 1)) / 2;
 
-  // Gas estimate — debounced via React Query staleTime.
-  const estimateQuery = useQuery({
-    enabled: selectedIds.length >= 2,
-    queryKey: ["estimate", epochs, selectedIds.join(","), use0gInference],
+  // Client-side cost estimate (used by both branches when no server estimate
+  // is available — matches the arithmetic the FastAPI /training/estimate
+  // endpoint does, so the row reads the same whether the server is up or not).
+  const clientEstimate = useMemo(() => {
+    if (selectedIds.length < 2) return null;
+    const games = epochs * gamesPerEpoch;
+    const totalInferences = games * MEAN_PLIES_PER_GAME;
+    return {
+      games,
+      totalInferences,
+      gasOg: use0gInference ? totalInferences * PER_INFERENCE_OG : 0,
+    };
+  }, [epochs, gamesPerEpoch, selectedIds.length, use0gInference]);
+
+  const { data: walletClient } = useWalletClient();
+
+  const [training, setTraining] = useState<TrainingState>({
+    phase: "idle",
+    agentIds: [],
+    epochs: 0,
+  });
+  const [modalOpen, setModalOpen] = useState(false);
+  const openedAtRef = useRef<number | null>(null);
+
+  // ── Local FastAPI branch — React Query mutations + status polling ──────────
+  const queryClient = useQueryClient();
+  const [polling, setPolling] = useState(false);
+  const playedAtRef = useRef<number | null>(null);
+  // Records when the local run first transitioned to `running:false` so we
+  // can cap the post-training chain-write polling window at 60 s.
+  const runEndedAtRef = useRef<number | null>(null);
+
+  // Live server estimate — only when local mode is active. Falls back to
+  // the client estimate above when the server is unreachable.
+  const serverEstimateQuery = useQuery({
+    enabled:
+      trainingMode === "local" && selectedIds.length >= 2 && use0gInference,
+    queryKey: [
+      "server-estimate",
+      epochs,
+      selectedIds.join(","),
+      use0gInference,
+    ],
     staleTime: 1500,
-    queryFn: async (): Promise<EstimateResponse> => {
+    queryFn: async (): Promise<LocalEstimateResponse> => {
       const url = new URL(`${SERVER}/training/estimate`);
       url.searchParams.set("epochs", String(epochs));
       url.searchParams.set("agent_ids", selectedIds.join(","));
@@ -228,30 +294,20 @@ export default function TrainingPage() {
     },
   });
 
-  // Training status poll. Polling enables on Play, disables once we
-  // see a `running:false` status whose `last_update_ts` is >= the
-  // Play click. The timestamp guard kills the race where the very
-  // first refetch (kicked off by `invalidateQueries` in onSuccess)
-  // returns the PRIOR run's terminal state before the trainer
-  // subprocess has flipped `running:true` — without it, polling
-  // would stop on stale data and the UI would freeze on "running 0/0"
-  // or the prior "done" until the user manually reloaded.
-  const [polling, setPolling] = useState(false);
-  const [modalOpen, setModalOpen] = useState(false);
-  const playedAtRef = useRef<number | null>(null);
-  const openedAtRef = useRef<number | null>(null);
-  // Records when running first became false so we can cap the
-  // post-training chain-write polling window at 60 s.
-  const runEndedAtRef = useRef<number | null>(null);
   const statusQuery = useQuery({
+    enabled: trainingMode === "local",
     queryKey: ["training-status"],
     refetchInterval: polling ? 1000 : false,
-    queryFn: async (): Promise<StatusResponse> => {
+    queryFn: async (): Promise<LocalStatusResponse> => {
       const r = await fetch(`${SERVER}/training/status`);
       if (!r.ok) throw new Error(`/training/status → ${r.status}`);
       return r.json();
     },
   });
+
+  // Stop polling once a status update produced AFTER our Play click lands
+  // and the trainer has finished (and any post-training chain writes too,
+  // capped at 60 s). Mirrors the pre-f02954d guard logic.
   useEffect(() => {
     if (!polling || !statusQuery.data) return;
     const data = statusQuery.data;
@@ -261,10 +317,6 @@ export default function TrainingPage() {
       return;
     }
     if (playedAt !== null && data.last_update_ts < playedAt) return;
-    // After training ends, keep polling until chain writes arrive (max 60 s).
-    // The watcher thread emits chain_write events several seconds after the
-    // trainer process exits; without this guard polling stops on the "done"
-    // event before those events land.
     if (data.upload_to_0g) {
       const jobAgentCount = data.agent_ids?.length ?? 0;
       const writesCount = data.chain_writes?.length ?? 0;
@@ -274,11 +326,20 @@ export default function TrainingPage() {
       }
     }
     setPolling(false);
+    setTraining((s) =>
+      s.mode === "local"
+        ? {
+            ...s,
+            phase: data.ended === "aborted" ? "error" : "done",
+            finishedAt: Date.now(),
+            errorMessage:
+              data.ended === "aborted" ? "Aborted by user" : undefined,
+          }
+        : s,
+    );
   }, [polling, statusQuery.data]);
 
-  const queryClient = useQueryClient();
-
-  const startMutation = useMutation({
+  const startLocalMutation = useMutation({
     mutationFn: async () => {
       const r = await fetch(`${SERVER}/training/start`, {
         method: "POST",
@@ -288,12 +349,7 @@ export default function TrainingPage() {
           agent_ids: selectedIds,
           use_0g_inference: use0gInference,
           use_0g_coaching: use0gCoaching,
-          // Always upload weights to 0G so the iNFT's dataHashes[1] stays
-          // current after training, regardless of whether 0G inference
-          // is active.
           upload_to_0g: true,
-          // Always skip encryption in the demo so the server (which
-          // has no key file) can fetch the checkpoint via load_profile.
           no_encrypt: true,
         }),
       });
@@ -304,19 +360,33 @@ export default function TrainingPage() {
       return r.json();
     },
     onSuccess: () => {
-      // Stamp the click time (server-side seconds, matching
-      // last_update_ts on /training/status). Polling won't stop
-      // until a status update produced AFTER this stamp lands.
       const now = Date.now();
       playedAtRef.current = now / 1000;
       openedAtRef.current = now;
+      runEndedAtRef.current = null;
       setPolling(true);
       setModalOpen(true);
+      setTraining({
+        phase: "running",
+        mode: "local",
+        step: "FastAPI trainer subprocess started",
+        agentIds: selectedIds,
+        epochs,
+        startedAt: now,
+      });
       queryClient.invalidateQueries({ queryKey: ["training-status"] });
+    },
+    onError: (e: Error) => {
+      setTraining((s) => ({
+        ...s,
+        phase: "error",
+        mode: "local",
+        errorMessage: e.message,
+      }));
     },
   });
 
-  const abortMutation = useMutation({
+  const abortLocalMutation = useMutation({
     mutationFn: async () => {
       const r = await fetch(`${SERVER}/training/abort`, { method: "POST" });
       if (!r.ok) throw new Error(`/training/abort → ${r.status}`);
@@ -328,13 +398,114 @@ export default function TrainingPage() {
     },
   });
 
-  const isRunning = statusQuery.data?.running ?? false;
+  const handleOgPlay = async () => {
+    if (!walletClient) {
+      setTraining((s) => ({
+        ...s,
+        phase: "error",
+        mode: "0g",
+        errorMessage:
+          "Connect your wallet first — 0G training pays for compute from your MetaMask account.",
+      }));
+      return;
+    }
+
+    const now = Date.now();
+    openedAtRef.current = now;
+    setModalOpen(true);
+    setTraining({
+      phase: "loading_weights",
+      mode: "0g",
+      step: "Fetching current agent weights",
+      agentIds: selectedIds,
+      epochs,
+      startedAt: now,
+    });
+
+    // For each selected agent, fetch its current ONNX weights. The base
+    // `/backgammon_net.onnx` is the shared starting point until per-agent
+    // weights are uploaded to 0G Storage (deferred — see plan).
+    let weightsByAgentId: Record<number, Uint8Array>;
+    try {
+      const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
+      const buf = (await fetch(`${basePath}/backgammon_net.onnx`).then((r) =>
+        r.arrayBuffer(),
+      )) as ArrayBuffer;
+      const baseBytes = new Uint8Array(buf);
+      weightsByAgentId = Object.fromEntries(
+        selectedIds.map((id) => [id, baseBytes.slice()]),
+      );
+    } catch (e) {
+      setTraining((s) => ({
+        ...s,
+        phase: "error",
+        errorMessage: `Could not load base ONNX weights: ${(e as Error).message}`,
+      }));
+      return;
+    }
+
+    try {
+      setTraining((s) => ({
+        ...s,
+        phase: "running",
+        step: "Connecting to 0G Compute",
+      }));
+      const result = await submitTrainingJob({
+        agentIds: selectedIds,
+        epochs,
+        weightsByAgentId,
+        walletClient,
+        onProgress: (evt) =>
+          setTraining((s) => ({ ...s, step: evt.detail ?? evt.step })),
+      });
+      setTraining({
+        phase: "done",
+        mode: "0g",
+        agentIds: selectedIds,
+        epochs,
+        startedAt: now,
+        finishedAt: Date.now(),
+        result,
+      });
+    } catch (e) {
+      if (e instanceof OgTrainingUnavailable) {
+        setTraining((s) => ({
+          ...s,
+          phase: "error",
+          errorMessage: e.message,
+          errorUnavailable: true,
+        }));
+      } else {
+        setTraining((s) => ({
+          ...s,
+          phase: "error",
+          errorMessage: (e as Error).message,
+        }));
+      }
+    }
+  };
+
+  const handlePlay = () => {
+    if (trainingMode === "local") {
+      startLocalMutation.mutate();
+    } else {
+      void handleOgPlay();
+    }
+  };
+
+  const localIsRunning =
+    trainingMode === "local" && (statusQuery.data?.running ?? false);
+  const ogIsRunning =
+    trainingMode === "0g" &&
+    (training.phase === "loading_weights" || training.phase === "running");
+  const isRunning = localIsRunning || ogIsRunning;
+
   const canPlay =
     selectedIds.length >= 2 &&
     !isRunning &&
-    !startMutation.isPending &&
-    !estimateQuery.isFetching;
-  const canAbort = isRunning && !abortMutation.isPending;
+    !startLocalMutation.isPending;
+  const canAbort =
+    trainingMode === "local" && localIsRunning && !abortLocalMutation.isPending;
 
   return (
     <main className="flex flex-1 flex-col gap-6 p-6">
@@ -353,19 +524,28 @@ export default function TrainingPage() {
       <BackendsSummary
         coach={backends.coach}
         inference={backends.inference}
+        training={trainingMode}
       />
 
-      <div
-        className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-700/50 dark:bg-amber-900/10 dark:text-amber-200"
-      >
-        <strong>Training requires the local FastAPI backend.</strong> The agent
-        list is read straight from the AgentRegistry contract, so the page
-        renders, but <code className="font-mono">Play</code> hits{" "}
-        <code className="font-mono">{SERVER}/training/start</code> and will
-        NetworkError unless that server is running. Run{" "}
-        <code className="font-mono">uvicorn server.app.main:app</code> locally
-        (see repo README) to enable training.
-      </div>
+      {trainingMode === "local" ? (
+        <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-700/50 dark:bg-amber-900/10 dark:text-amber-200">
+          <strong>Training=local routes through the FastAPI server.</strong>{" "}
+          Play hits <code className="font-mono">{SERVER}/training/start</code>{" "}
+          and will NetworkError unless that server is running. Run{" "}
+          <code className="font-mono">uvicorn server.app.main:app</code>{" "}
+          locally (see README) to enable. Switch Training=0G in the Compute
+          pill to use 0G Compute instead.
+        </div>
+      ) : (
+        <div className="rounded-md border border-emerald-300 bg-emerald-50 px-3 py-2 text-xs text-emerald-900 dark:border-emerald-700/50 dark:bg-emerald-900/10 dark:text-emerald-200">
+          <strong>Training=0G runs on 0G Compute.</strong> Play submits a
+          round-robin job to a{" "}
+          <code className="font-mono">backgammon-train-v1</code> provider on
+          the 0G serving network — your MetaMask wallet pays for the compute
+          directly. Until a provider is registered, Play returns a non-fatal
+          &quot;no provider&quot; message.
+        </div>
+      )}
 
       <AgentSelector
         agents={agents}
@@ -390,9 +570,19 @@ export default function TrainingPage() {
 
       {use0gInference && (
         <GasEstimate
-          estimate={estimateQuery.data}
-          isFetching={estimateQuery.isFetching}
-          error={estimateQuery.error}
+          games={
+            serverEstimateQuery.data?.games ?? clientEstimate?.games ?? 0
+          }
+          totalInferences={
+            serverEstimateQuery.data?.total_inferences ??
+            clientEstimate?.totalInferences ??
+            0
+          }
+          gasOg={
+            serverEstimateQuery.data?.gas_og ?? clientEstimate?.gasOg ?? 0
+          }
+          note={serverEstimateQuery.data?.note}
+          available={serverEstimateQuery.data?.available ?? true}
         />
       )}
 
@@ -400,35 +590,52 @@ export default function TrainingPage() {
         <button
           type="button"
           disabled={!canPlay}
-          onClick={() => startMutation.mutate()}
+          onClick={handlePlay}
           className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-40"
         >
-          {startMutation.isPending ? "Starting…" : "Play"}
+          {startLocalMutation.isPending
+            ? "Starting…"
+            : isRunning
+            ? "Running…"
+            : "Play"}
         </button>
-        <button
-          type="button"
-          disabled={!canAbort}
-          onClick={() => abortMutation.mutate()}
-          className="rounded-md border border-zinc-300 px-4 py-2 text-sm font-semibold text-zinc-900 hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-40 dark:border-zinc-700 dark:text-zinc-50 dark:hover:bg-zinc-800"
-        >
-          {abortMutation.isPending ? "Aborting…" : "Abort"}
-        </button>
-        {startMutation.error && (
-          <span className="self-center text-xs text-red-600">
-            {(startMutation.error as Error).message}
+        {trainingMode === "local" && (
+          <button
+            type="button"
+            disabled={!canAbort}
+            onClick={() => abortLocalMutation.mutate()}
+            className="rounded-md border border-zinc-300 px-4 py-2 text-sm font-semibold text-zinc-900 hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-40 dark:border-zinc-700 dark:text-zinc-50 dark:hover:bg-zinc-800"
+          >
+            {abortLocalMutation.isPending ? "Aborting…" : "Abort"}
+          </button>
+        )}
+        {training.phase === "error" && (
+          <span
+            className={`self-center text-xs ${
+              training.errorUnavailable
+                ? "text-amber-700 dark:text-amber-400"
+                : "text-red-600"
+            }`}
+          >
+            {training.errorMessage}
           </span>
         )}
       </div>
 
-      <StatusPanel status={statusQuery.data} />
+      <StatusPanel
+        training={training}
+        localStatus={trainingMode === "local" ? statusQuery.data : undefined}
+      />
 
-      <CheckpointsPanel status={statusQuery.data} />
+      {trainingMode === "local" && (
+        <CheckpointsPanel status={statusQuery.data} />
+      )}
 
       <TrainingProgressModal
         key={openedAtRef.current ?? 0}
         open={modalOpen}
-        status={statusQuery.data}
-        openedAt={openedAtRef.current}
+        training={training}
+        localStatus={trainingMode === "local" ? statusQuery.data : undefined}
         agentCount={selectedIds.length}
         onClose={() => setModalOpen(false)}
       />
@@ -441,15 +648,17 @@ export default function TrainingPage() {
 function BackendsSummary({
   coach,
   inference,
+  training,
 }: {
   coach: string;
   inference: string;
+  training: string;
 }) {
   return (
     <div className="flex flex-wrap gap-3 text-xs">
       <Chip label="Coach" value={coach} />
       <Chip label="Inference" value={inference} />
-      <Chip label="Training" value="local (control loop)" disabled />
+      <Chip label="Training" value={training} />
     </div>
   );
 }
@@ -604,131 +813,190 @@ function EpochSlider({
 }
 
 function GasEstimate({
-  estimate,
-  isFetching,
-  error,
+  games,
+  totalInferences,
+  gasOg,
+  note,
+  available,
 }: {
-  estimate: EstimateResponse | undefined;
-  isFetching: boolean;
-  error: unknown;
+  games: number;
+  totalInferences: number;
+  gasOg: number;
+  note?: string;
+  available: boolean;
 }) {
-  if (error)
-    return (
-      <p className="text-sm text-red-600">
-        Estimate failed: {(error as Error).message}
-      </p>
-    );
-  if (!estimate) return <p className="text-sm text-zinc-500">Estimating…</p>;
-
   return (
     <section
       className={[
         "rounded-md border p-3",
-        estimate.available
+        available
           ? "border-emerald-300 bg-emerald-50 dark:border-emerald-700 dark:bg-emerald-950/30"
           : "border-amber-300 bg-amber-50 dark:border-amber-700 dark:bg-amber-950/30",
       ].join(" ")}
     >
       <div className="grid grid-cols-3 gap-3 font-mono text-xs">
-        <Stat label="Games" value={estimate.games.toLocaleString()} />
+        <Stat label="Games" value={games.toLocaleString()} />
+        <Stat label="Inferences" value={totalInferences.toLocaleString()} />
         <Stat
-          label="Inferences"
-          value={estimate.total_inferences.toLocaleString()}
-        />
-        <Stat
-          label="Gas"
-          value={`~${estimate.gas_og.toFixed(6)} OG`}
-          accent={estimate.available}
+          label="Est. cost"
+          value={`~${gasOg.toFixed(6)} OG`}
+          accent={available}
         />
       </div>
-      {!estimate.available && estimate.note && (
-        <p className="mt-2 text-xs text-amber-800 dark:text-amber-300">
-          {estimate.note}
+      {note && !available && (
+        <p className="mt-2 text-[10px] text-amber-800 dark:text-amber-300">
+          {note}
         </p>
-      )}
-      {isFetching && (
-        <p className="mt-1 text-[10px] text-zinc-500">refreshing…</p>
       )}
     </section>
   );
 }
 
-function StatusPanel({ status }: { status: StatusResponse | undefined }) {
-  if (!status) return null;
-  const pct =
-    status.total_games > 0
-      ? Math.round((status.completed_games / status.total_games) * 100)
-      : 0;
+function StatusPanel({
+  training,
+  localStatus,
+}: {
+  training: TrainingState;
+  localStatus: LocalStatusResponse | undefined;
+}) {
+  // Local-mode rendering takes precedence whenever a FastAPI status is
+  // available (running OR a finished/aborted run we still want to show).
+  const showLocal = !!localStatus && (localStatus.running || localStatus.ended != null);
+  if (!showLocal && training.phase === "idle") return null;
+
+  if (showLocal && localStatus) {
+    const pct =
+      localStatus.total_games > 0
+        ? Math.round(
+            (localStatus.completed_games / localStatus.total_games) * 100,
+          )
+        : 0;
+    return (
+      <section className="rounded-md border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">
+            Status
+          </h2>
+          <LocalStatusBadge status={localStatus} />
+        </div>
+
+        <div className="mb-3 h-2 overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800">
+          <div
+            className="h-full bg-emerald-600 transition-all"
+            style={{ width: `${pct}%` }}
+          />
+        </div>
+        <p className="mb-3 text-xs text-zinc-500">
+          {localStatus.completed_games} / {localStatus.total_games} games ·
+          epoch {localStatus.current_epoch} / {localStatus.total_epochs}
+          {localStatus.last_update_ts ? (
+            <span className="ml-2 font-mono text-[10px] text-zinc-400">
+              · updated{" "}
+              {new Date(
+                localStatus.last_update_ts * 1000,
+              ).toLocaleTimeString()}
+            </span>
+          ) : null}
+        </p>
+
+        {Object.keys(localStatus.per_agent).length > 0 && (
+          <StatsTable
+            entries={Object.entries(localStatus.per_agent).map(([aid, s]) => ({
+              agentId: aid,
+              games: s.games,
+              wins: s.wins,
+            }))}
+          />
+        )}
+      </section>
+    );
+  }
+
+  const stats = training.result?.statsByAgentId;
   return (
     <section className="rounded-md border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
       <div className="mb-3 flex items-center justify-between">
         <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">
           Status
         </h2>
-        <StatusBadge status={status} />
+        <OgStatusBadge training={training} />
       </div>
 
-      <div className="mb-3 h-2 overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800">
-        <div
-          className="h-full bg-emerald-600 transition-all"
-          style={{ width: `${pct}%` }}
-        />
-      </div>
-      <p className="mb-3 text-xs text-zinc-500">
-        {status.completed_games} / {status.total_games} games · epoch{" "}
-        {status.current_epoch} / {status.total_epochs}
-        {status.last_update_ts ? (
-          <span className="ml-2 font-mono text-[10px] text-zinc-400">
-            · updated {new Date(status.last_update_ts * 1000).toLocaleTimeString()}
+      {training.step && training.phase !== "done" && (
+        <p className="mb-3 text-xs text-zinc-500">{training.step}</p>
+      )}
+
+      {training.phase === "done" && training.result && (
+        <p className="mb-3 text-xs text-zinc-500">
+          {training.result.totalGames.toLocaleString()} games · provider{" "}
+          <span className="font-mono">
+            {training.result.providerAddress.slice(0, 8)}…
+            {training.result.providerAddress.slice(-6)}
           </span>
-        ) : null}
-      </p>
+        </p>
+      )}
 
-      {Object.keys(status.per_agent).length > 0 && (
-        <table className="w-full text-xs">
-          <thead>
-            <tr className="border-b border-zinc-200 dark:border-zinc-800">
-              <th className="py-1 text-left font-mono uppercase text-zinc-500">
-                Agent
-              </th>
-              <th className="text-right font-mono uppercase text-zinc-500">
-                Games
-              </th>
-              <th className="text-right font-mono uppercase text-zinc-500">
-                Wins
-              </th>
-              <th className="text-right font-mono uppercase text-zinc-500">
-                Win rate
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {Object.entries(status.per_agent).map(([aid, s]) => {
-              const wr = s.games > 0 ? (s.wins / s.games) * 100 : 0;
-              return (
-                <tr
-                  key={aid}
-                  className="border-b border-zinc-100 dark:border-zinc-800"
-                >
-                  <td className="py-1 font-mono">#{aid}</td>
-                  <td className="text-right font-mono">{s.games}</td>
-                  <td className="text-right font-mono">{s.wins}</td>
-                  <td className="text-right font-mono">{wr.toFixed(1)}%</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+      {stats && Object.keys(stats).length > 0 && (
+        <StatsTable
+          entries={Object.entries(stats).map(([aid, s]) => ({
+            agentId: aid,
+            games: s.games,
+            wins: s.wins,
+          }))}
+        />
       )}
     </section>
   );
 }
 
-function StatusBadge({ status }: { status: StatusResponse }) {
+function StatsTable({
+  entries,
+}: {
+  entries: Array<{ agentId: string; games: number; wins: number }>;
+}) {
+  return (
+    <table className="w-full text-xs">
+      <thead>
+        <tr className="border-b border-zinc-200 dark:border-zinc-800">
+          <th className="py-1 text-left font-mono uppercase text-zinc-500">
+            Agent
+          </th>
+          <th className="text-right font-mono uppercase text-zinc-500">
+            Games
+          </th>
+          <th className="text-right font-mono uppercase text-zinc-500">
+            Wins
+          </th>
+          <th className="text-right font-mono uppercase text-zinc-500">
+            Win rate
+          </th>
+        </tr>
+      </thead>
+      <tbody>
+        {entries.map(({ agentId, games, wins }) => {
+          const wr = games > 0 ? (wins / games) * 100 : 0;
+          return (
+            <tr
+              key={agentId}
+              className="border-b border-zinc-100 dark:border-zinc-800"
+            >
+              <td className="py-1 font-mono">#{agentId}</td>
+              <td className="text-right font-mono">{games}</td>
+              <td className="text-right font-mono">{wins}</td>
+              <td className="text-right font-mono">{wr.toFixed(1)}%</td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  );
+}
+
+function LocalStatusBadge({ status }: { status: LocalStatusResponse }) {
   if (status.running) {
     return (
       <span className="rounded bg-emerald-100 px-2 py-0.5 text-xs font-mono text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
-        running{status.use_0g_inference ? " · 0G inference" : ""}
+        running · FastAPI{status.use_0g_inference ? " · 0G inference" : ""}
       </span>
     );
   }
@@ -743,6 +1011,35 @@ function StatusBadge({ status }: { status: StatusResponse }) {
     return (
       <span className="rounded bg-amber-100 px-2 py-0.5 text-xs font-mono text-amber-800 dark:bg-amber-950 dark:text-amber-300">
         aborted
+      </span>
+    );
+  }
+  return (
+    <span className="rounded bg-zinc-100 px-2 py-0.5 text-xs font-mono text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+      idle
+    </span>
+  );
+}
+
+function OgStatusBadge({ training }: { training: TrainingState }) {
+  if (training.phase === "running" || training.phase === "loading_weights") {
+    return (
+      <span className="rounded bg-emerald-100 px-2 py-0.5 text-xs font-mono text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
+        running · 0G compute
+      </span>
+    );
+  }
+  if (training.phase === "done") {
+    return (
+      <span className="rounded bg-zinc-100 px-2 py-0.5 text-xs font-mono text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
+        done
+      </span>
+    );
+  }
+  if (training.phase === "error") {
+    return (
+      <span className="rounded bg-amber-100 px-2 py-0.5 text-xs font-mono text-amber-800 dark:bg-amber-950 dark:text-amber-300">
+        {training.errorUnavailable ? "no provider" : "error"}
       </span>
     );
   }
@@ -788,14 +1085,14 @@ function formatBig(n: number): string {
 
 function TrainingProgressModal({
   open,
-  status,
-  openedAt,
+  training,
+  localStatus,
   agentCount,
   onClose,
 }: {
   open: boolean;
-  status: StatusResponse | undefined;
-  openedAt: number | null;
+  training: TrainingState;
+  localStatus: LocalStatusResponse | undefined;
   agentCount: number;
   onClose: () => void;
 }) {
@@ -806,33 +1103,47 @@ function TrainingProgressModal({
     return () => clearInterval(id);
   }, [open]);
 
-  // Step completion predicates derived from live status.
-  // Each uses a distinct JSONL event so the timer reflects actual work:
-  //   s1: agents_loaded  — 0G download finished inside trainer subprocess
-  //   s2: training_complete — training loop done, save/upload loop starting
-  //   s3: all agent_saved  — trainer-side 0G upload done per agent
-  //   s4: all chain_write  — server watcher on-chain write done
-  const s1done =
-    status?.agents_loaded === true || status?.ended != null;
-  const s2done =
-    status?.training_complete === true || status?.ended != null;
-  const s3done =
-    agentCount > 0 && (status?.checkpoints?.length ?? 0) >= agentCount;
-  const s4done =
-    !status?.upload_to_0g ||
-    (agentCount > 0 && (status?.chain_writes?.length ?? 0) >= agentCount);
+  const isLocal = training.mode === "local";
 
-  // Client-side timestamps for each step transition (ms).
-  // [0]=modal open, [1]=step1 done, [2]=step2 done, [3]=step3 done, [4]=step4 done.
+  // Step completion predicates — distinct for the two modes:
+  //   local: s1=trainer loaded agents, s2=training done, s3=checkpoints
+  //          saved, s4=on-chain writes finished
+  //   0g:    s1=weights loaded, s2=provider call returned, s3=done (no s4)
+  const s1done = isLocal
+    ? localStatus?.agents_loaded === true || localStatus?.ended != null
+    : training.phase === "running" ||
+      training.phase === "done" ||
+      training.phase === "error";
+  const s2done = isLocal
+    ? localStatus?.training_complete === true || localStatus?.ended != null
+    : training.phase === "done" || training.phase === "error";
+  const s3done = isLocal
+    ? agentCount > 0 && (localStatus?.checkpoints?.length ?? 0) >= agentCount
+    : training.phase === "done";
+  const s4done = isLocal
+    ? !localStatus?.upload_to_0g ||
+      (agentCount > 0 &&
+        (localStatus?.chain_writes?.length ?? 0) >= agentCount)
+    : true;
+
   const t = useRef<(number | null)[]>([null, null, null, null, null]);
   useEffect(() => {
-    if (!open || openedAt === null) return;
-    if (t.current[0] === null) t.current[0] = openedAt;
+    if (!open) return;
+    if (t.current[0] === null) t.current[0] = training.startedAt ?? Date.now();
     if (s1done && t.current[1] === null) t.current[1] = Date.now();
     if (s2done && t.current[2] === null) t.current[2] = Date.now();
     if (s3done && t.current[3] === null) t.current[3] = Date.now();
-    if (s4done && t.current[4] === null) t.current[4] = Date.now();
-  }, [open, openedAt, s1done, s2done, s3done, s4done]);
+    if (s4done && t.current[4] === null)
+      t.current[4] = training.finishedAt ?? Date.now();
+  }, [
+    open,
+    training.startedAt,
+    training.finishedAt,
+    s1done,
+    s2done,
+    s3done,
+    s4done,
+  ]);
 
   if (!open) return null;
 
@@ -842,32 +1153,53 @@ function TrainingProgressModal({
     return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`;
   };
 
-  const steps = [
-    {
-      label: "Load checkpoints from 0G",
-      active: t.current[0] !== null && !s1done,
-      done: s1done,
-      time: fmtElapsed(t.current[0], s1done ? t.current[1] : null),
-    },
-    {
-      label: "Train",
-      active: s1done && !s2done,
-      done: s2done,
-      time: fmtElapsed(t.current[1], s2done ? t.current[2] : null),
-    },
-    {
-      label: `Upload to 0G (${status?.checkpoints?.length ?? 0}/${agentCount})`,
-      active: s2done && !s3done,
-      done: s3done,
-      time: fmtElapsed(t.current[2], s3done ? t.current[3] : null),
-    },
-    {
-      label: `Write on-chain (${status?.chain_writes?.length ?? 0}/${agentCount})`,
-      active: s3done && !s4done,
-      done: s4done,
-      time: fmtElapsed(t.current[3], s4done ? t.current[4] : null),
-    },
-  ];
+  const steps = isLocal
+    ? [
+        {
+          label: "Load checkpoints from 0G",
+          active: t.current[0] !== null && !s1done,
+          done: s1done,
+          time: fmtElapsed(t.current[0], s1done ? t.current[1] : null),
+        },
+        {
+          label: "Train",
+          active: s1done && !s2done,
+          done: s2done,
+          time: fmtElapsed(t.current[1], s2done ? t.current[2] : null),
+        },
+        {
+          label: `Upload to 0G (${localStatus?.checkpoints?.length ?? 0}/${agentCount})`,
+          active: s2done && !s3done,
+          done: s3done,
+          time: fmtElapsed(t.current[2], s3done ? t.current[3] : null),
+        },
+        {
+          label: `Write on-chain (${localStatus?.chain_writes?.length ?? 0}/${agentCount})`,
+          active: s3done && !s4done,
+          done: s4done,
+          time: fmtElapsed(t.current[3], s4done ? t.current[4] : null),
+        },
+      ]
+    : [
+        {
+          label: `Load ONNX weights (${agentCount} agent${agentCount === 1 ? "" : "s"})`,
+          active: t.current[0] !== null && !s1done,
+          done: s1done,
+          time: fmtElapsed(t.current[0], s1done ? t.current[1] : null),
+        },
+        {
+          label: "Submit to 0G Compute provider",
+          active: s1done && !s2done,
+          done: s2done,
+          time: fmtElapsed(t.current[1], s2done ? t.current[2] : null),
+        },
+        {
+          label: "Provider runs round-robin training",
+          active: s2done && !s3done,
+          done: s3done,
+          time: fmtElapsed(t.current[2], s3done ? t.current[4] : null),
+        },
+      ];
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
@@ -906,6 +1238,107 @@ function TrainingProgressModal({
         </ol>
       </div>
     </div>
+  );
+}
+
+// Local-mode checkpoints panel — surfaces per-agent .pt path + 0G Storage
+// root hash after the trainer subprocess finishes, plus errors when an
+// upload failed but the local save may have succeeded.
+function CheckpointsPanel({
+  status,
+}: {
+  status: LocalStatusResponse | undefined;
+}) {
+  const active = useActiveChain();
+  const explorerUrl = active?.chain.blockExplorers?.default?.url;
+
+  const entries = status?.checkpoints;
+  if (!entries || entries.length === 0) return null;
+
+  return (
+    <section className="rounded-md border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
+      <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-500">
+        Checkpoints
+      </h2>
+      <table className="w-full text-xs">
+        <thead>
+          <tr className="border-b border-zinc-200 dark:border-zinc-800">
+            <th className="py-1 text-left font-mono uppercase text-zinc-500">
+              Agent
+            </th>
+            <th className="text-left font-mono uppercase text-zinc-500">
+              Agent wallet
+            </th>
+            <th className="text-left font-mono uppercase text-zinc-500">
+              0G root hash
+            </th>
+            <th className="text-left font-mono uppercase text-zinc-500">
+              Status
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {entries.map((ck, i) => (
+            <tr
+              key={i}
+              className="border-b border-zinc-100 dark:border-zinc-800"
+            >
+              <td className="py-1 font-mono">#{ck.agent_id}</td>
+              <td className="py-1 font-mono text-[10px] text-zinc-500 break-all">
+                {ck.address ? (
+                  explorerUrl ? (
+                    <a
+                      href={`${explorerUrl}/address/${ck.address}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-indigo-600 underline-offset-2 hover:underline dark:text-indigo-400"
+                    >
+                      {ck.address.slice(0, 8)}…{ck.address.slice(-6)}
+                    </a>
+                  ) : (
+                    <span>
+                      {ck.address.slice(0, 8)}…{ck.address.slice(-6)}
+                    </span>
+                  )
+                ) : (
+                  "—"
+                )}
+              </td>
+              <td className="py-1 font-mono text-[10px] text-zinc-500 break-all">
+                {ck.root_hash ? (
+                  <span className="text-emerald-700 dark:text-emerald-400">
+                    {ck.root_hash.slice(0, 10)}…{ck.root_hash.slice(-8)}
+                  </span>
+                ) : ck.error ? (
+                  <span className="text-red-600 dark:text-red-400">
+                    upload failed
+                  </span>
+                ) : (
+                  <span className="text-zinc-400">local only</span>
+                )}
+              </td>
+              <td className="py-1 text-[10px]">
+                {ck.error ? (
+                  <span
+                    className="text-red-600 dark:text-red-400"
+                    title={ck.error}
+                  >
+                    ✗ {ck.error.slice(0, 60)}
+                    {ck.error.length > 60 ? "…" : ""}
+                  </span>
+                ) : ck.root_hash ? (
+                  <span className="text-emerald-700 dark:text-emerald-400">
+                    ✓ saved to 0G
+                  </span>
+                ) : (
+                  <span className="text-zinc-500">✓ saved locally</span>
+                )}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </section>
   );
 }
 
@@ -955,82 +1388,3 @@ function StepIcon({ done, active }: { done: boolean; active: boolean }) {
   );
 }
 
-// CheckpointsPanel — shows per-agent checkpoint save/upload results
-// after the training run ends. Each entry shows the agent ID, the local
-// .pt path, and the 0G Storage Merkle root (root_hash) if uploaded. An
-// error field is shown instead when the upload failed (e.g. missing env
-// vars) but the local save may still have succeeded.
-function CheckpointsPanel({ status }: { status: StatusResponse | undefined }) {
-  const active = useActiveChain();
-  const explorerUrl = active?.chain.blockExplorers?.default?.url;
-
-  const entries = status?.checkpoints;
-  if (!entries || entries.length === 0) return null;
-
-  return (
-    <section className="rounded-md border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
-      <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-500">
-        Checkpoints
-      </h2>
-      <table className="w-full text-xs">
-        <thead>
-          <tr className="border-b border-zinc-200 dark:border-zinc-800">
-            <th className="py-1 text-left font-mono uppercase text-zinc-500">Agent</th>
-            <th className="text-left font-mono uppercase text-zinc-500">Agent wallet</th>
-            <th className="text-left font-mono uppercase text-zinc-500">0G root hash</th>
-            <th className="text-left font-mono uppercase text-zinc-500">Status</th>
-          </tr>
-        </thead>
-        <tbody>
-          {entries.map((ck, i) => (
-            <tr key={i} className="border-b border-zinc-100 dark:border-zinc-800">
-              <td className="py-1 font-mono">#{ck.agent_id}</td>
-              <td className="py-1 font-mono text-[10px] text-zinc-500 break-all">
-                {ck.address ? (
-                  explorerUrl ? (
-                    <a
-                      href={`${explorerUrl}/address/${ck.address}`}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-indigo-600 underline-offset-2 hover:underline dark:text-indigo-400"
-                    >
-                      {ck.address.slice(0, 8)}…{ck.address.slice(-6)}
-                    </a>
-                  ) : (
-                    <span>
-                      {ck.address.slice(0, 8)}…{ck.address.slice(-6)}
-                    </span>
-                  )
-                ) : (
-                  "—"
-                )}
-              </td>
-              <td className="py-1 font-mono text-[10px] text-zinc-500 break-all">
-                {ck.root_hash ? (
-                  <span className="text-emerald-700 dark:text-emerald-400">
-                    {ck.root_hash.slice(0, 10)}…{ck.root_hash.slice(-8)}
-                  </span>
-                ) : ck.error ? (
-                  <span className="text-red-600 dark:text-red-400">upload failed</span>
-                ) : (
-                  <span className="text-zinc-400">local only</span>
-                )}
-              </td>
-              <td className="py-1 text-[10px]">
-                {ck.error ? (
-                  <span className="text-red-600 dark:text-red-400" title={ck.error}>
-                    ✗ {ck.error.slice(0, 60)}{ck.error.length > 60 ? "…" : ""}
-                  </span>
-                ) : ck.root_hash ? (
-                  <span className="text-emerald-700 dark:text-emerald-400">✓ saved to 0G</span>
-                ) : (
-                  <span className="text-zinc-500">✓ saved locally</span>
-                )}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </section>
-  );
-}

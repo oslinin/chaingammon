@@ -9,7 +9,10 @@
 //               local (flan-t5 fallback) is greyed out to direct users to 0G.
 //   inference — always runs locally (browser-side value-net); both backends
 //               are disabled to show this is not a user-configurable option.
-//   training  — always runs locally (TD(λ) self-play loop); same as inference.
+//   training  — user-selectable. `local` posts to the FastAPI server
+//               (POST /training/start). `0g` submits to a backgammon-train-v1
+//               provider on 0G Compute via the user's wallet — falls back to
+//               a "no provider" message until one is registered.
 "use client";
 
 import {
@@ -57,12 +60,11 @@ const OPS: readonly OpRow[] = [
   {
     key: "training",
     label: "Training",
-    // Training (TD(λ) self-play) runs locally. Both segments are disabled.
-    available: { local: false, "0g": false },
-    forcedValue: "local",
+    // Training is user-selectable: local FastAPI vs 0G Compute provider.
+    available: { local: true, "0g": true },
     unavailableTooltip: {
-      local: "Training runs locally (TD(λ) self-play loop).",
-      "0g": "Training runs locally (TD(λ) self-play loop).",
+      local: "Train via the local FastAPI server (POST /training/start).",
+      "0g": "Train via a backgammon-train-v1 provider on 0G Compute.",
     },
   },
 ] as const;
