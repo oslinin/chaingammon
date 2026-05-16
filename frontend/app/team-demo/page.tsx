@@ -12,6 +12,7 @@ import {
   useReadContract,
   useReadContracts,
   useSignMessage,
+  useSwitchChain,
   useWaitForTransactionReceipt,
   useWriteContract,
 } from "wagmi";
@@ -289,13 +290,27 @@ function TeamDemoPageInner() {
   const [settleTxHash, setSettleTxHash] = useState<`0x${string}` | null>(null);
   const [hasStaleSession, setHasStaleSession] = useState(false);
 
-  const { address } = useAccount();
+  const { address, chain: walletChain, chainId: walletChainId } = useAccount();
   const chainId = useActiveChainId();
   const activeChain = useActiveChain();
   const { agentRegistry, matchRegistry } = useChainContracts();
   const { signMessageAsync } = useSignMessage();
   const { writeContractAsync } = useWriteContract();
+  const { switchChain, isPending: isSwitchingChain, error: switchChainError } =
+    useSwitchChain();
   const txReceipt = useWaitForTransactionReceipt({ hash: settleTxHash ?? undefined });
+
+  // The wallet's actual chain may not match the dApp's selected chain
+  // — useChainId() clamps to a configured chain on reconnect (e.g. after
+  // a Firefox restart) even when the wallet itself stayed on mainnet or
+  // some other chain we don't deploy to. signMessageAsync /
+  // writeContractAsync end up calling getProvider({ chainId: walletChainId })
+  // which calls switchChain on the WC connector and throws
+  // ChainNotConfiguredError. Detect that mismatch up front so the page
+  // can prompt the user to switch instead of barreling into a failing
+  // signature ceremony.
+  const walletOnSupportedChain =
+    walletChainId !== undefined && walletChainId === chainId && !!walletChain;
 
   const primaryOpponentId = opponentIds[0];
   const eloQuery = useReadContracts({
@@ -333,6 +348,7 @@ function TeamDemoPageInner() {
     if (authStarted.current || humanAuthSig) return;
     if (matchRegistry === "0x0000000000000000000000000000000000000000") return;
     if (noncesRead.data === undefined) return;
+    if (!walletOnSupportedChain) return;
 
     authStarted.current = true;
 
@@ -447,6 +463,7 @@ function TeamDemoPageInner() {
     noncesRead.data,
     humanAuthSig,
     signMessageAsync,
+    walletOnSupportedChain,
   ]);
 
   // Auto-start the match. For settle-on-chain games, gate on auth complete so
@@ -668,6 +685,16 @@ function TeamDemoPageInner() {
     if (!sessionAccount || !humanAuthSig || authNonce === null || !address) return;
     if (!primaryOpponentId) return;
     if (settleStatus === "settling" || settleStatus === "settled") return;
+    // Block writeContract if the wallet isn't on our selected chain —
+    // wagmi would otherwise call switchChain on the wallet's actual
+    // (unconfigured) chainId and throw ChainNotConfiguredError.
+    if (!walletOnSupportedChain) {
+      setSettleStatus("error");
+      setSettleError(
+        "Switch your wallet to Sepolia (or 0G Galileo Testnet) before settling.",
+      );
+      return;
+    }
 
     const useForfeitSig = options?.useForfeitSig === true;
     if (useForfeitSig && (humanWins || !forfeitResultSig)) return;
@@ -1049,7 +1076,61 @@ function TeamDemoPageInner() {
           </h1>
         </header>
 
-        {settleOnChain && settleStatus === "awaiting-auth" && !humanAuthSig && (
+        {settleOnChain && address && !walletOnSupportedChain && (
+          <div
+            style={{
+              borderRadius: "var(--cg-radius-sm)",
+              border: "1px solid var(--cg-warn)",
+              background: "rgba(208,138,60,0.10)",
+              padding: "10px 14px",
+              fontSize: 13,
+              color: "var(--cg-fg-2)",
+              display: "flex",
+              flexDirection: "column",
+              gap: 8,
+            }}
+          >
+            <div>
+              Your wallet is on{" "}
+              <strong>
+                {walletChain?.name ??
+                  (walletChainId !== undefined
+                    ? `chain ${walletChainId}`
+                    : "an unknown chain")}
+              </strong>
+              . Switch to <strong>{activeChain?.chain.name ?? "Sepolia"}</strong>{" "}
+              to continue. Don't reload — the page is waiting for the switch.
+            </div>
+            <button
+              type="button"
+              onClick={() => switchChain({ chainId })}
+              disabled={isSwitchingChain}
+              style={{
+                alignSelf: "flex-start",
+                borderRadius: "var(--cg-radius-sm)",
+                border: "1px solid var(--cg-warn)",
+                background: "transparent",
+                color: "var(--cg-warn)",
+                padding: "6px 12px",
+                fontSize: 12,
+                fontWeight: 500,
+                cursor: isSwitchingChain ? "not-allowed" : "pointer",
+                opacity: isSwitchingChain ? 0.6 : 1,
+              }}
+            >
+              {isSwitchingChain
+                ? "Switching…"
+                : `Switch to ${activeChain?.chain.name ?? "Sepolia"}`}
+            </button>
+            {switchChainError && (
+              <span style={{ fontSize: 11, color: "var(--cg-danger)" }}>
+                {switchChainError.message}
+              </span>
+            )}
+          </div>
+        )}
+
+        {settleOnChain && settleStatus === "awaiting-auth" && !humanAuthSig && walletOnSupportedChain && (
           <div
             style={{
               borderRadius: "var(--cg-radius-sm)",
