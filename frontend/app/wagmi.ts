@@ -4,7 +4,7 @@
 // To add a chain: edit `chains.ts`, not this file.
 
 import { http } from "viem";
-import { createConfig } from "wagmi";
+import { createConfig, createStorage, noopStorage } from "wagmi";
 // Import `injected` from `@wagmi/core` rather than `wagmi/connectors` to
 // avoid the latter's umbrella export, which transitively pulls in
 // `@wagmi/core/tempo` — that file imports a missing `accounts` package
@@ -19,6 +19,15 @@ import { walletConnect } from "@wagmi/connectors";
 import { ALL_CHAINS, CHAIN_REGISTRY } from "./chains";
 
 const transports = Object.fromEntries(ALL_CHAINS.map((c) => [c.id, http()]));
+
+// Explicit localStorage so the connection survives a page reload — required
+// for MetaMask Mobile, which reloads its in-app browser when the dapp calls
+// `wallet_switchEthereumChain`. wagmi's default storage is `localStorage`,
+// but pinning it here documents the dependency and avoids future regressions
+// (e.g. if a contributor toggles `ssr` and triggers a different default).
+const storage = createStorage({
+  storage: typeof window !== "undefined" ? window.localStorage : noopStorage,
+});
 
 // WalletConnect requires a Project ID from cloud.walletconnect.com.
 // Set NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID in your .env (or GitHub secrets
@@ -49,9 +58,7 @@ export const config = createConfig({
   connectors,
   transports,
   ssr: true,
-  // Default localStorage persistence — wagmi restores the connection on page
-  // load/refresh. "Chain not configured" toasts are suppressed by Phase 100's
-  // error-hiding logic in the UI; noopStorage is not needed here.
+  storage,
 });
 
 declare module "wagmi" {
