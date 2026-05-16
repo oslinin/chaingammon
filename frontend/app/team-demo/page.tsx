@@ -137,6 +137,95 @@ const card: React.CSSProperties = {
   boxShadow: "var(--cg-shadow-1)",
 };
 
+// Banner shown when the wallet is on a chain we don't deploy to (e.g.
+// mainnet) and the match needs an on-chain settlement. The dapp's
+// switchChain button calls `wallet_switchEthereumChain` on the injected
+// provider; on MetaMask Mobile this reloads the in-app browser, so the
+// banner explains what to do if the page comes back and the wallet is
+// still on the wrong chain.
+function WrongNetworkBanner({
+  walletChainName,
+  walletChainId,
+  targetChainName,
+  isSwitching,
+  switchError,
+  onSwitch,
+}: {
+  walletChainName: string | undefined;
+  walletChainId: number | undefined;
+  targetChainName: string;
+  isSwitching: boolean;
+  switchError: string | null;
+  onSwitch: () => void;
+}) {
+  const [isMobile, setIsMobile] = useState(false);
+  useEffect(() => {
+    setIsMobile(
+      typeof navigator !== "undefined" &&
+        /Android|iPhone|iPad|iPod|IEMobile|Opera Mini/i.test(navigator.userAgent),
+    );
+  }, []);
+
+  const fromLabel =
+    walletChainName ??
+    (walletChainId !== undefined ? `chain ${walletChainId}` : "an unknown chain");
+
+  return (
+    <div
+      style={{
+        borderRadius: "var(--cg-radius-sm)",
+        border: "1px solid var(--cg-warn)",
+        background: "rgba(208,138,60,0.10)",
+        padding: "10px 14px",
+        fontSize: 13,
+        color: "var(--cg-fg-2)",
+        display: "flex",
+        flexDirection: "column",
+        gap: 8,
+      }}
+    >
+      <div>
+        Your wallet is on <strong>{fromLabel}</strong>. Switch to{" "}
+        <strong>{targetChainName}</strong> to continue.
+      </div>
+      <button
+        type="button"
+        onClick={onSwitch}
+        disabled={isSwitching}
+        style={{
+          alignSelf: "flex-start",
+          borderRadius: "var(--cg-radius-sm)",
+          border: "1px solid var(--cg-warn)",
+          background: "transparent",
+          color: "var(--cg-warn)",
+          padding: "6px 12px",
+          fontSize: 12,
+          fontWeight: 500,
+          cursor: isSwitching ? "not-allowed" : "pointer",
+          opacity: isSwitching ? 0.6 : 1,
+        }}
+      >
+        {isSwitching ? "Switching…" : `Switch to ${targetChainName}`}
+      </button>
+      {isMobile && (
+        <div style={{ fontSize: 11, color: "var(--cg-fg-3)", lineHeight: 1.5 }}>
+          On MetaMask Mobile the in-app browser may reload after the switch.
+          If the page comes back and still says wrong network, switch
+          directly inside MetaMask: tap the network selector at the top of
+          the app, pick <strong>{targetChainName}</strong>, then return to
+          this tab. Enable test networks under Settings → Advanced if{" "}
+          {targetChainName} isn&apos;t listed.
+        </div>
+      )}
+      {switchError && (
+        <span style={{ fontSize: 11, color: "var(--cg-danger)" }}>
+          {switchError}
+        </span>
+      )}
+    </div>
+  );
+}
+
 function SettlementBanner({
   status,
   txHash,
@@ -1079,57 +1168,14 @@ function TeamDemoPageInner() {
         </header>
 
         {settleOnChain && address && !walletOnSupportedChain && (
-          <div
-            style={{
-              borderRadius: "var(--cg-radius-sm)",
-              border: "1px solid var(--cg-warn)",
-              background: "rgba(208,138,60,0.10)",
-              padding: "10px 14px",
-              fontSize: 13,
-              color: "var(--cg-fg-2)",
-              display: "flex",
-              flexDirection: "column",
-              gap: 8,
-            }}
-          >
-            <div>
-              Your wallet is on{" "}
-              <strong>
-                {walletChain?.name ??
-                  (walletChainId !== undefined
-                    ? `chain ${walletChainId}`
-                    : "an unknown chain")}
-              </strong>
-              . Switch to <strong>{activeChain?.chain.name ?? "Sepolia"}</strong>{" "}
-              to continue. Don't reload — the page is waiting for the switch.
-            </div>
-            <button
-              type="button"
-              onClick={() => switchChain({ chainId })}
-              disabled={isSwitchingChain}
-              style={{
-                alignSelf: "flex-start",
-                borderRadius: "var(--cg-radius-sm)",
-                border: "1px solid var(--cg-warn)",
-                background: "transparent",
-                color: "var(--cg-warn)",
-                padding: "6px 12px",
-                fontSize: 12,
-                fontWeight: 500,
-                cursor: isSwitchingChain ? "not-allowed" : "pointer",
-                opacity: isSwitchingChain ? 0.6 : 1,
-              }}
-            >
-              {isSwitchingChain
-                ? "Switching…"
-                : `Switch to ${activeChain?.chain.name ?? "Sepolia"}`}
-            </button>
-            {switchChainError && (
-              <span style={{ fontSize: 11, color: "var(--cg-danger)" }}>
-                {switchChainError.message}
-              </span>
-            )}
-          </div>
+          <WrongNetworkBanner
+            walletChainName={walletChain?.name}
+            walletChainId={walletChainId}
+            targetChainName={activeChain?.chain.name ?? "Sepolia"}
+            isSwitching={isSwitchingChain}
+            switchError={switchChainError?.message ?? null}
+            onSwitch={() => switchChain({ chainId })}
+          />
         )}
 
         {settleOnChain && settleStatus === "awaiting-auth" && !humanAuthSig && walletOnSupportedChain && (
