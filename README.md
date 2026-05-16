@@ -5,56 +5,25 @@
 A decentralised, verifiable ELO ledger for backgammon — humans and agents share one identity layer.
 
 - **Open identity.** ENS subnames written only by the protocol. Reserved text records (`elo`, `match_count`, `kind`, `inft_id`, `style_uri`, `archive_uri`) cannot be self-claimed; any third-party tool reads them without coordinating with us.
-- **Verifiable.** Every match settles to `MatchRegistry` on Sepolia. The on-chain record carries the 32-byte 0G Storage hash of the full archive (every move, every dice roll) — anyone can audit any rating change end-to-end.
-- **Living agents.** Each AI agent is an ERC-7857 iNFT (with ERC-721 fallback). It pins two `dataHashes`: a starter NN initialised from gnubg's published weights, and a per-agent checkpoint that grows match by match. Transfer the token, transfer the brain.
-- **Trustless dice.** Each turn's dice are `keccak256(drand_round_digest, turn_index) mod 36`. The server passes drand's BLS12-381 signature through to the client so an auditor can independently verify the round against drand's group public key.
-- **Optional stakes.** A match can be free (ELO-only) or staked (per-side ETH deposit, winner takes the pot). Agents stake via a server-managed session-key wallet the owner pre-funds; settlement is atomic (`MatchRegistry.recordMatchAndSplit` records the result and pays the winner in one transaction).
-- **No central server.** Move evaluation runs in the browser (ONNX Runtime Web). The coach LLM runs on 0G Compute (Qwen 2.5 7B) with a local fallback. KeeperHub orchestrates settlement.
+- **Verifiable settlement.** Every match settles to `MatchRegistry` on Sepolia. The on-chain record carries a 32-byte 0G Storage hash of the full archive (every move, every dice roll) so anyone can audit any rating change end-to-end.
+- **Per-agent weights.** Each AI agent is an ERC-721 token with an ERC-7857-compatible `dataHashes` getter. `dataHashes[0]` is a shared base-weights hash (gnubg-init); per-agent trained weights are written to mutable 0G KV at `chaingammon/weights/agent/{agent_id}`. (See the [Agent intelligence](#agent-intelligence) section for the tradeoff. Full ERC-7857 transfer-with-reencryption-proof is roadmap.)
+- **Optional stakes.** A match can be free (ELO-only) or staked (per-side ETH deposit, winner takes the pot). Agents stake via a server-managed session-key wallet the owner pre-funds; settlement is atomic — `MatchRegistry.recordMatchAndSplit` records the result and pays the winner in one transaction.
+- **Browser-side gameplay.** Move evaluation runs in the browser via ONNX Runtime Web (small NN forward pass, ~10K parameters). Dice are local `crypto.getRandomValues` for v1 (human-vs-agent; the human is rolling for themselves). The coach LLM runs on 0G Compute (Qwen 2.5 7B) via Next.js API routes. A pure-Python coach + local-model fallback runs on the optional FastAPI service.
 
 ---
 
 ## How it works
 
 1. Connect a wallet → frontend resolves (or auto-mints) `<name>.chaingammon.eth` on Sepolia.
-2. Pick an opponent — another player's subname or an AI agent (e.g. `gnubg-classic.chaingammon.eth`).
-3. Per-turn loop:
-   - KeeperHub pulls drand round R → dice are deterministic from the round digest.
-   - The active side's agent runs a value-network forward pass (browser or 0G Compute) and selects the highest-equity legal move.
-   - The move is appended to the in-progress `GameRecord`; KeeperHub validates legality via the WASM rules engine.
-4. Game ends → both signatures verified by `MatchRegistry.settleWithSessionKeys` → ELO + ENS text records updated → audit JSON mirrored to 0G Storage.
-5. Any other tool reads your ENS subname and reconstructs your full backgammon DNA — ELO, games played, playing style.
-
-### Per-turn sequence
-
-```mermaid
-sequenceDiagram
-    autonumber
-    participant Browser as Frontend (Browser)
-    participant Agent as Agent NN<br/>(browser / 0G Compute)
-    participant KH as KeeperHub workflow
-    participant Drand as drand beacon
-    participant Storage as 0G Storage
-    participant Sepolia as Sepolia
-
-    Note over Browser,Sepolia: Game start: wallet authorises ephemeral session key, escrow deposits confirmed
-
-    loop Each turn
-        KH->>Drand: pull round R
-        Drand-->>KH: round digest D_R
-        KH->>KH: dice = keccak256(D_R, turn_index) mod 36
-        KH->>Browser: dice (R, d1, d2)
-        Browser->>Agent: forward pass over legal successors
-        Agent-->>Browser: chosen move (highest-equity)
-        Browser->>KH: signed move {state, dice, R, move}
-        KH->>KH: validate via WASM rules engine
-        KH->>Storage: append to GameRecord (Log)
-    end
-
-    Note over Browser,Sepolia: Game end
-    Browser->>Sepolia: settleWithSessionKeys(humanAuth, resultSig, agentId, gameRecordHash)
-    Sepolia-->>Browser: settled (ELO updated, ENS text records written)
-    KH->>Storage: mirror audit JSON
-```
+2. Pick an opponent — another player's subname or an agent (e.g. `gnubg-classic.chaingammon.eth`).
+3. Per-turn loop, browser-side:
+   - Roll dice (`crypto.getRandomValues`).
+   - The agent's value network scores legal successors via ONNX Runtime Web; argmax = chosen move.
+   - The TypeScript rules engine (`frontend/lib/rules_engine.ts`) validates the move.
+   - The move is appended to the in-progress `GameRecord`.
+4. Game ends → wallet + session-key signatures verified by `MatchRegistry.settleWithSessionKeys` → ELO and ENS text records updated → frontend uploads the `GameRecord` JSON to 0G Storage and records the Merkle root with settlement.
+5. The keeper-shaped audit workflow (`server/app/keeper_workflow.py`) re-walks every move through the Python rules engine and pins a workflow JSON to 0G Storage as the audit anchor.
+6. Any third-party tool reads your ENS subname and reconstructs your full backgammon DNA — ELO, games played, archive URI, playing style.
 
 ---
 
@@ -72,65 +41,64 @@ sequenceDiagram
         ▼                           ▼                            ▼
  ┌────────────────┐       ┌──────────────────┐
  │  Browser-side  │       │  0G Compute      │
- │   value-net    │       │  TEE-attested    │
- │   forward pass │       │  coach LLM +     │
- │ (ONNX Runtime) │       │  offline NN      │
+ │   value-net    │       │  coach LLM       │
+ │   forward pass │       │  (Qwen 2.5 7B)   │
+ │ (ONNX Runtime) │       │  via /api/coach  │
  └────────────────┘       └──────────────────┘
                                     │
-                                    │ KeeperHub workflow
+                                    │ optional FastAPI service
                                     ▼
         ┌───────────────────────────────────────────────────┐
-        │  Per-turn:  drand round → dice → move → 0G Log    │
-        │  Per-game:  rules-engine validation → settle      │
-        │             → ENS text records → audit JSON       │
+        │  Training, agent wallets, keeper audit workflow,  │
+        │  rules-engine re-walk, /agents, /games/*, /chat   │
         └───────────────┬───────────────────────────────────┘
                         ▼
  ┌──────────────────────────────────────────────────────────────────┐
  │  Sepolia                          0G Storage                     │
- │  MatchEscrow                      Log: per-match game records    │
- │  MatchRegistry                    KV : per-player style profile  │
- │  AgentRegistry (ERC-7857)         Blob: encrypted agent weights  │
- │  PlayerSubnameRegistrar (ENS)           gnubg strategy RAG docs  │
+ │  MatchEscrow                      Log:  per-match GameRecord     │
+ │  MatchRegistry                    KV:   per-agent weights        │
+ │  AgentRegistry                    KV:   per-agent style overlay  │
+ │  PlayerSubnameRegistrar (ENS)     KV:   per-player style profile │
  └──────────────────────────────────────────────────────────────────┘
 ```
 
-**Browser** runs the agent value net (small ONNX model) and reaches the coach via Next.js API routes (`/api/coach/hint`, `/api/coach/chat`) that talk to 0G Compute through `@0glabs/0g-serving-broker` — no proxy process in the request path.
-
-**WASM** — the backgammon rules engine and the ONNX runtime are compiled to WebAssembly so move validation and AI evaluation run client-side at near-native speed. KeeperHub uses the same WASM rules engine server-side to re-verify every move before settlement.
-
-**Sepolia** is the settlement chain (KeeperHub-native, real ENS subnames). Mainnet would be a chain swap; the design is identical.
-
-**drand** is the dice randomness beacon. Each turn's dice are `keccak256(drand_round_digest, turn_index) mod 36` — anyone replaying the match recovers the same dice without trusting the server.
+- **Browser** runs the agent value net (ONNX) and a TypeScript rules engine. The coach reaches 0G Compute via Next.js API routes (`/api/coach/hint`, `/api/coach/chat`) that talk to `@0glabs/0g-serving-broker` — no proxy process in the request path.
+- **FastAPI service** is optional and runs locally. It hosts the trainer, agent-wallet keystore, the keeper-audit workflow, and `/chat` (with a Python coach client that falls back to a local model). The hosted Pages build does not include it; pages that depend on it (e.g. `/training`, agent wallets in `/match`) need it running on `localhost:8000`.
+- **Rules engine** is duplicated as pure-TypeScript (`frontend/lib/rules_engine.ts`) and pure-Python (`agent/rules_engine.py`) implementations of the same logic. The Python version re-walks every move in the keeper audit workflow; the TypeScript version validates moves in the browser.
+- **Sepolia** is the settlement chain; **0G Galileo Testnet** has the same contracts deployed too. Mainnet would be a chain swap; the design is identical.
+- **Dice randomness** uses browser `crypto.getRandomValues` in live play. A verifiable-randomness path exists for the trainer (`agent/drand_dice.derive_dice` — `keccak256(drand_round_digest, turn_index) mod 36`) and as a `/games/{matchId}/dice` endpoint, but the live gameplay loop doesn't call it. Commit-reveal / VRF-backed dice for human-vs-human are roadmap (see `frontend/app/dice.ts`).
 
 ---
 
 ## Agent intelligence
 
-Each agent is a small per-agent value network. Two blobs on 0G Storage, both Merkle-committed to the iNFT:
+Each agent is a small per-agent value network, initialised from gnubg's published feedforward weights (exported to `backgammon_net.onnx`). Same starting point across the protocol; what changes is what the owner trains on top.
 
-- **`dataHashes[0]` — starter weights.** Every agent initialises from gnubg's published feedforward weights (exported to `backgammon_net.onnx`). Same starting point across the protocol; what changes is what the owner trains on top.
-- **`dataHashes[1]` — per-agent checkpoint.** The owner runs a self-play / refereed-match training loop and uploads a new checkpoint after each session. Two iNFTs that started identical drift into measurably different play styles as their histories diverge.
+**Where weights live.** Two pieces:
 
-Inference at game time runs in the browser by default (small forward pass, ~10K parameters). 0G Compute (TEE-attested) covers the offline case so other players can still challenge the agent when the owner's machine is down.
+- **Shared base weights** — encrypted blob on 0G Storage, content-addressed; the Merkle root is pinned on-chain as `AgentRegistry.baseWeightsHash` (single global value, set once at deployment).
+- **Per-agent trained weights** — written by the trainer to 0G KV at `chaingammon/weights/agent/{agent_id}`. KV writes overwrite in place with no per-run gas cost and no orphaned blobs. The tradeoff is that the KV is mutable and server-controlled (a single `OG_STORAGE_PRIVATE_KEY` has write access), and weights are not currently re-committed back to the on-chain `dataHashes[1]`. Buyers of an agent token therefore cannot today cryptographically verify the weights they receive — that's the gap full ERC-7857 with re-encryption-proof would close.
+
+Inference at game time runs in the browser via ONNX Runtime Web. The optional FastAPI service exposes a 0G-Compute eval path (`og-compute-bridge/src/eval.mjs`) for offline-agent inference, but no backgammon-net provider is registered on the 0G serving network yet — that toggle is wired and waiting.
 
 ### Training
 
-Two streams of training data, combined into a single replay buffer:
+Two streams of training data feed a single replay buffer:
 
 1. **Self-play.** Full matches against a frozen older checkpoint produce `(state, action, next_state, reward)` triples. The canonical TD-Gammon setup; how gnubg's own weights were originally trained.
-2. **Refereed matches.** Every match settled on Sepolia archives a `GameRecord` to 0G Storage. Those records are training data with cryptographically attested outcomes — the agent learns from games whose results were verified on-chain, not just claimed.
+2. **Refereed matches.** Every match settled on-chain archives a `GameRecord` to 0G Storage with a cryptographically attested outcome.
 
 Updates are TD(λ) backprop with eligibility traces. After each move: `δ = r + γ V(s′) − V(s)`; weights step by `α · δ · e` where `e = γλ · e_prev + ∇V(s)` accumulates past gradients so a terminal reward propagates back to every position in the trajectory.
 
-The career-mode head adds five contextual inputs — opponent style, teammate style, stake size (log1p-scaled), tournament position, team-match flag — projected into a 16-d vector so a single network handles solo and team modes without retraining. Style projects onto six axes (`opening_slot`, `phase_prime_building`, `runs_back_checker`, `phase_holding_game`, `bearoff_efficient`, `hits_blot`) drawn from the existing `agent_overlay.CATEGORIES` keys, so opponent profiles fetched at runtime drop straight in.
+The career-mode head adds five contextual inputs — opponent style, teammate style, stake size (log1p-scaled), tournament position, team-match flag — projected into a 16-d vector so a single network handles solo and team modes without retraining. Style projects onto six axes (`opening_slot`, `phase_prime_building`, `runs_back_checker`, `phase_holding_game`, `bearoff_efficient`, `hits_blot`) drawn from the existing `agent_overlay.CATEGORIES` keys.
 
-Gradient steps run locally for development or on **0G Compute** with TEE attestation for production — the attestation lets a buyer of the iNFT verify "every weight update came from refereed match data." New weights are AES-256-GCM-encrypted, uploaded to 0G Storage, and the Merkle root replaces `iNFT.dataHashes[1]` via a settlement transaction.
+Gradient steps run locally for development. Production-grade TEE-attested training on 0G Compute (so a buyer could verify every weight update came from refereed match data) is roadmap and is the gap that re-introducing on-chain hash commits would help close.
 
-Implementation lives in `agent/sample_trainer.py` (single-agent TD(λ) loop with TensorBoard), `agent/round_robin_trainer.py` (multi-agent), `agent/career_features.py` (slot layout + style-axes spec), and `agent/agent_profile.py` (runtime resolver that content-sniffs the blob behind `dataHashes[1]` — JSON overlay vs torch checkpoint — and returns the right wrapper).
+Implementation: `agent/sample_trainer.py` (single-agent TD(λ) loop with TensorBoard event-file output), `agent/round_robin_trainer.py` (multi-agent), `agent/career_features.py` (slot layout + style-axes spec), `agent/agent_profile.py` (runtime resolver that content-sniffs the blob behind `dataHashes[1]` — JSON overlay vs torch checkpoint).
 
 ### Full-board encoding
 
-The trained `BackgammonNet` operates on the standard Tesauro 198-dim contact-net encoding via `agent/gnubg_encoder.py`. Self-play drives through real gnubg subprocesses (`agent/full_board_state.py`); checkpoints carry `feature_encoder: "gnubg_full"` so `POST /games/{id}/agent-move` with `use_per_agent_nn=true` scores real positions instead of the simplified pip-race fallback.
+`BackgammonNet` operates on the standard Tesauro 198-dim contact-net encoding via `agent/gnubg_encoder.py`. Self-play drives through real gnubg subprocesses (`agent/full_board_state.py`); checkpoints carry `feature_encoder: "gnubg_full"` so `POST /games/{id}/agent-move` with `use_per_agent_nn=true` scores real positions instead of the simplified pip-race fallback.
 
 Producing a checkpoint (~30–60 min wall time):
 
@@ -144,15 +112,7 @@ uv run python sample_trainer.py \
     --logdir /tmp/agent7-tb
 ```
 
-Trainer prints the resulting Merkle `rootHash`. Register it:
-
-```bash
-# from contracts/
-npx hardhat run scripts/set-agent-data-hash.ts --network 0g-testnet \
-    -- --agent-id 7 --slot 1 --hash 0x<rootHash>
-```
-
-After the on-chain write, `POST /games/{gameId}/agent-move` with `{"use_per_agent_nn": true}` loads the checkpoint and picks each move via NN argmax. Latency is ~500–1000 ms/move for 5–10 candidates (one gnubg subprocess per candidate). The gnubg+overlay fallback path remains the default.
+The trainer's `--upload-to-0g` path uploads to KV at `chaingammon/weights/agent/{id}`. After upload, `POST /games/{gameId}/agent-move` with `{"use_per_agent_nn": true}` loads the checkpoint and picks each move via NN argmax — ~500–1000 ms/move for 5–10 candidates (one gnubg subprocess per candidate). The gnubg+overlay fallback path remains the default.
 
 ### Sample trainer CLI
 
@@ -161,35 +121,34 @@ After the on-chain write, `POST /games/{gameId}/agent-move` with `{"use_per_agen
 | `--matches N` | Self-play matches (default 100). |
 | `--save-checkpoint <path>` | Write `state_dict` + metadata as a torch blob. |
 | `--load-checkpoint <path>` | Resume from a prior checkpoint. |
-| `--drand-digest <hex>` | Derive dice via `drand_dice.derive_dice` — production-deterministic. |
-| `--upload-to-0g` | AES-256-GCM-encrypt the checkpoint, write the key to `<ckpt>.key`, upload the sealed blob to 0G Storage. Prints the `rootHash`. |
+| `--drand-digest <hex>` | Derive every turn's dice via `drand_dice.derive_dice(digest, turn_index)` instead of local PRNG. Fetch a round digest via `scripts/fetch_drand_round.py`. |
+| `--upload-to-0g` | AES-256-GCM-encrypt the checkpoint, write the key to `<ckpt>.key`, upload sealed blob to 0G KV. |
 | `--no-encrypt` | Upload raw `torch.save` bytes (no AES seal, no `.key` file). Demo-only — production should leave this off. |
-| `--init-from-0g <hash>` + `--init-key <path>` | Resume from a 0G Storage checkpoint. `match_count` carries forward. |
-| `--career-mode` | Sample a fresh `CareerContext` per match (uniform style, log-uniform stake, 50/50 teammate). Requires `--extras-dim >= 16`. |
+| `--init-from-0g <key>` + `--init-key <path>` | Resume from a 0G Storage checkpoint. |
+| `--career-mode` | Sample a fresh `CareerContext` per match. Requires `--extras-dim >= 16`. |
 | `--full-board` | Use the gnubg 198-dim contact-net encoding (vs the simplified pip-race default). |
-| `--logdir <path>` | TensorBoard event-file directory. Round-robin trainer writes `train/*` (TD error, gradient norm), `match/*` (plies, win), `win_rate/agent_<id>` (rolling), `weights/*_agent_<id>` (per-epoch L2 norms). |
-| `--launch-tensorboard` | Spawn `tensorboard --logdir <logdir>` after training. (The `/training` page launches its own sidecar — no separate invocation needed.) |
+| `--logdir <path>` | TensorBoard event-file directory. Open with `tensorboard --logdir <path>` in another terminal. |
 
 ---
 
 ## Match archive on 0G Storage
 
-Every completed match is preserved as a canonical, content-addressed archive on 0G Storage. The on-chain `MatchRegistry` only stores metadata (timestamp, participants, winner, length); the *full* match — every move, every dice roll, the final position — lives off-chain on 0G Storage Log, and the on-chain record carries a cryptographic pointer to it.
+Every completed match is preserved as a canonical, content-addressed archive on 0G Storage. The on-chain `MatchRegistry` stores metadata (timestamp, participants, winner, length); the full match — every move, every dice roll, the final position — lives off-chain on 0G Storage Log, and the on-chain record carries a cryptographic pointer to it.
 
 Each match produces a `GameRecord` envelope — JSON, sorted keys, UTF-8, deterministic so the bytes always hash the same way:
 
 | Field                                 | What it carries                                                                                  |
 | ------------------------------------- | ------------------------------------------------------------------------------------------------ |
 | `match_length`, `final_score`         | match-point target and final score                                                               |
-| `winner`, `loser`                     | each side's identity (a wallet address for humans, an ERC-7857 token id for agent iNFTs)         |
+| `winner`, `loser`                     | each side's identity (a wallet address for humans, an ERC-721 token id for agents)               |
 | `final_position_id`, `final_match_id` | gnubg's native base64 strings — any tool can reconstruct the end state                           |
-| `moves`                               | the full play sequence: `(turn, drand_round, dice, move, position_id_after)` per move            |
+| `moves`                               | the full play sequence: `(turn, dice, move, position_id_after)` per move                         |
 | `cube_actions`                        | doubling-cube events (offer / take / drop / beaver / raccoon)                                    |
 | `started_at`, `ended_at`              | ISO-8601 UTC timestamps                                                                          |
 
 Sized at ~2–10 KB compressed per match. A player with 1,000 lifetime matches has ~5–10 MB of game data.
 
-At game end the frontend builds the `GameRecord`, uploads the JSON to 0G Storage (the indexer returns a 32-byte Merkle `rootHash`), and calls `MatchRegistry.settleWithSessionKeys(...)` which permanently links match metadata to the archive. Anyone can later resolve a match by id, fetch the bytes, and replay the game move-by-move — no login, no API key.
+At game end the frontend builds the `GameRecord`, uploads the JSON to 0G Storage (the indexer returns a 32-byte Merkle `rootHash`), and calls `MatchRegistry.settleWithSessionKeys(...)` which permanently links the match metadata to the archive. Anyone can later resolve a match by id, fetch the bytes, and replay the game move-by-move — no login, no API key.
 
 ---
 
@@ -197,9 +156,9 @@ At game end the frontend builds the `GameRecord`, uploads the JSON to 0G Storage
 
 Chaingammon uses ENS subnames as a verifiable, composable reputation primitive that any third-party tool reads without coordinating with us.
 
-- **Verified, not claimed.** Five text record keys (`elo`, `match_count`, `last_match_id`, `kind`, `inft_id`) are reserved on-chain in `PlayerSubnameRegistrar`. Only the contract owner (KeeperHub-driven settlement) can write them; the on-chain `setText` rejects subname-owner writes via a `bytes32 → bool` reserved-key map.
-- **One identity layer for humans and agents.** Both register under `chaingammon.eth`. The `kind` text record (`"human"` or `"agent"`) discriminates. When an agent iNFT is minted via `AgentRegistry.mintAgent`, the contract atomically mints the corresponding subname and sets `kind="agent"` + `inft_id=<tokenId>` in the same transaction.
-- **Cross-protocol composability.** A betting market reads `text(namehash("alice.chaingammon.eth"), "elo")` to price a match. A tournament organiser walks `subnameCount()` + `subnameAt(i)` to enumerate ranked players. A coaching platform reads `text(node, "style_uri")` to pull style profiles from 0G Storage. None of them touch our API.
+- **Verified, not claimed.** Five text record keys (`elo`, `match_count`, `last_match_id`, `kind`, `inft_id`) are reserved on-chain in `PlayerSubnameRegistrar`. Only the contract owner can write them; on-chain `setText` rejects subname-owner writes via a `bytes32 → bool` reserved-key map.
+- **One identity layer for humans and agents.** Both register under `chaingammon.eth`. The `kind` text record (`"human"` or `"agent"`) discriminates. When an agent token is minted via `AgentRegistry.mintAgent`, the contract atomically mints the corresponding subname and sets `kind="agent"` + `inft_id=<tokenId>` in the same transaction.
+- **Cross-protocol composability.** A betting market reads `text(namehash("alice.chaingammon.eth"), "elo")` to price a match. A tournament organiser walks `subnameCount()` + `subnameAt(i)` to enumerate ranked players. None of them touch our API.
 
 Full schema: [docs/ENS_SCHEMA.md](docs/ENS_SCHEMA.md).
 
@@ -207,20 +166,20 @@ Full schema: [docs/ENS_SCHEMA.md](docs/ENS_SCHEMA.md).
 
 ## Compute backends
 
-Three distinct compute operations. Each runs locally (default) or on **0G Compute**:
+Two compute operations can run locally or on **0G Compute**. State persists in `localStorage["chaingammon.computeBackends"]`; the compute pill in the frontend header flips it.
 
 | Operation | Local | 0G Compute | Status |
 | --- | --- | --- | --- |
-| **Coaching** (Qwen 2.5 7B chat hints) | `agent/coach_service.py` | `og-compute-bridge/src/chat.mjs` → `agent/coach_compute_client.chat()` | Live end-to-end on testnet. Flipping the pill routes `/hint` and `/chat` through 0G. |
-| **Inference** (`BackgammonNet.forward → equity`) | `torch` call in the trainer | `og-compute-bridge/src/eval.mjs` → `agent/og_compute_eval_client.evaluate()` | Wire plumbed. **No backgammon-net provider on the 0G serving network yet** — calls return `available: false`. Once a provider stands up, the toggle becomes live with no code change. |
-| **Training** (round-robin self-play, TD-λ) | `agent/round_robin_trainer.py` spawned by FastAPI | Same trainer with `--use-0g-inference` — per-move forward passes route through the eval bridge | The control loop, optimiser steps, and weight saves always run locally. ~99 % of training compute lives in per-move forward passes, so the toggle is enough to surface a real gas estimate. |
+| **Coaching** (Qwen 2.5 7B chat hints) | Python coach in the FastAPI service (`agent/coach_service.py`, flan-t5-base fallback) | `frontend/app/api/coach/*` → `@0glabs/0g-serving-broker` | 0G path is live on testnet. The local path requires the FastAPI service. |
+| **Inference** (`BackgammonNet.forward → equity`) | `torch` call in the trainer; ONNX Runtime Web in the browser | `og-compute-bridge/src/eval.mjs` → `agent/og_compute_eval_client.evaluate()` | Plumbing is wired end-to-end. **No backgammon-net provider exists on the 0G serving network yet** — calls return `available: false` until one is registered. |
 
-The compute pill in the frontend header (visible on every page) shows the current per-operation backend; clicking flips it. State persists in `localStorage["chaingammon.computeBackends"]`.
+Training is local: `agent/round_robin_trainer.py` runs the control loop, optimiser steps, and weight saves locally. A `--use-0g-inference` flag exists to route per-move forward passes through the eval bridge once a backgammon-net provider is registered.
 
 ### Env vars
 
 ```
 OG_STORAGE_RPC              0G testnet/mainnet RPC
+OG_STORAGE_INDEXER          0G Storage indexer URL
 OG_STORAGE_PRIVATE_KEY      funded wallet (pays for inference + storage)
 
 OG_COMPUTE_PROVIDER          (coach)     pin a chat provider
@@ -229,40 +188,40 @@ BACKGAMMON_NET_MODEL         (inference) listService filter (default backgammon-
 OG_COMPUTE_PER_INFERENCE_OG  fallback per-inference price (default 0.00001)
 OG_COMPUTE_MIN_BALANCE       sub-account min OG balance (default 0.01)
 OG_COMPUTE_DEPOSIT           initial ledger deposit (default 0.05)
-CHAINGAMMON_MEAN_PLIES       trainer-side gas-estimate denominator (default 60)
 ```
 
 ### Cost expectations
 
 - **Coach** ≈ 0.0001 OG per chat completion.
 - **Inference** ≈ 0.00001 OG per forward pass (placeholder until a real backgammon-net provider publishes live rates).
-- **Training** = `epochs × C(N, 2) × ~60 plies × per-inference-cost`. `/training` shows a live estimate.
-
-You can pin a custom backgammon-net endpoint via `OG_COMPUTE_EVAL_PROVIDER=<addr>` for testing — the bridge routes through it as if it were a real 0G provider (same auth + funding flow).
 
 ---
 
 ## Coach
 
-The coach is a turn-by-turn conversation, not one-shot narration. Per turn the agent considers the human's history, the opponent's style, and the dialogue so far; the human can challenge, ask follow-ups, or accept; the agent's next message is conditioned on the exchange. A free-text correction ("I prefer running games, stop suggesting primes") becomes a per-session preference signal that biases later turns within the same match. The signal is session-local UX adaptation; it expires when the session ends and does **not** feed agent training.
+The coach is a turn-by-turn conversation, not one-shot narration. Per turn the agent considers the human's history, the opponent's style, and the dialogue so far; corrections ("I prefer running games, stop suggesting primes") become per-session preferences that bias later turns within the same match. The signal is session-local UX adaptation; it expires when the session ends and does **not** feed agent training.
 
-| Endpoint | Body | Purpose |
-| --- | --- | --- |
-| `POST /chat` | `ChatRequest{kind, match_id, turn_index, position_id, dice, candidates, dialogue, preferences, ...}` | Turn-by-turn. Three kinds: `open_turn` (initial take after dice roll), `human_reply` (response to the human's text), `move_committed` (acknowledgement). Returns `ChatResponse{message, backend, preferences_delta, latency_ms}`. |
-| `POST /hint` | (existing) | Single-sentence narration for users who don't want a back-and-forth. |
+Two endpoints:
 
-Full design: [docs/coach-dialogue.md](docs/coach-dialogue.md).
+| Endpoint | Purpose |
+| --- | --- |
+| `POST /api/coach/chat` | Turn-by-turn dialogue. Three message kinds: `open_turn` (initial take after dice roll), `human_reply` (response to the human's text), `move_committed` (acknowledgement). |
+| `POST /api/coach/hint` | One-shot single-sentence narration for users who don't want a back-and-forth. |
+
+The Next.js routes target 0G Compute. The FastAPI service exposes `/chat` and `/hint` mirrors with a local flan-t5-base fallback for development.
+
+Design: [docs/coach-dialogue.md](docs/coach-dialogue.md).
 
 ### Team mode
 
-A human and an agent (or any 2v2 mix) play as teammates against an opponent. Per turn the captain receives advisor signals from each teammate (`{teammate_id, proposed_move, confidence, optional_message}`); the captain decides; both contributions are logged into the match record. The captain ignores advisors at pick time — its own move is final, signals are archived not consumed. Vote fusion / confidence-weighted rank fusion is a follow-up: every signal is on the on-chain record, so a future endpoint that re-ranks captain picks against archived advisors lights up retroactively.
+A human and an agent (or any 2v2 mix) play as teammates against an opponent. Per turn the captain receives advisor signals from each teammate (`{teammate_id, proposed_move, confidence, optional_message}`); the captain decides; both contributions are logged into the match record. **MVP captain rule:** the captain ignores advisors at pick time — its own move is final, signals are archived not consumed. Vote fusion / confidence-weighted rank fusion is a follow-up; every signal is on the on-chain record, so a future endpoint that re-ranks captain picks against archived advisors lights up retroactively.
 
 API surface:
 
 - `POST /games` accepts optional `team_a` and `team_b` rosters (each `{members: PlayerRef[], captain_rotation: "alternating" | "fixed_first" | "per_turn_vote"}`).
 - Each `/agent-move` computes the captain via `team_mode.captain_index`, scores every non-captain teammate via `teammate_advisor.score_advisor_move`, and returns `AdvisorSignal[]` + `captain_id` alongside the new `GameState`.
 - Signals archive in `MoveEntry.advisor_signals` and propagate into the on-chain `GameRecord` commitment.
-- `/team-demo` exercises the flow end-to-end with a 2v1 game.
+- `/team-demo` exercises the flow end-to-end.
 
 Design: [docs/team-mode.md](docs/team-mode.md).
 
@@ -272,64 +231,48 @@ Design: [docs/team-mode.md](docs/team-mode.md).
 
 A match can be free (ELO-only) or staked (per-side ETH deposit, winner takes the pot). The two paths share the same `MatchRegistry` write — only the escrow wiring differs.
 
-**Contracts.** `MatchRegistry.recordMatch` and `recordMatchAndSplit` are gated by `onlyOwnerOrSettler` rather than `onlyOwner`, so a hosted orchestrator (e.g. KeeperHub's Para MPC wallet) can submit settlements without holding the deployer key. Owner-only `setSettler(address)` grants and revokes that role; zero-address default keeps original behaviour. `MatchEscrow.settler` is `immutable` so its constructor pins it to the active `MatchRegistry` — a fresh `MatchRegistry` deploy requires a fresh `MatchEscrow` deploy too.
+**Contracts.** `MatchRegistry.recordMatch` and `recordMatchAndSplit` are gated by `onlyOwnerOrSettler` rather than `onlyOwner`, so a hosted orchestrator can submit settlements without holding the deployer key. Owner-only `setSettler(address)` grants and revokes that role; zero-address default keeps original behaviour. `MatchEscrow.settler` is `immutable` so its constructor pins it to the active `MatchRegistry` — a fresh `MatchRegistry` deploy requires a fresh `MatchEscrow` deploy too.
 
-**Agent wallets.** Each agent (an ERC-7857 iNFT) gets a dedicated EOA whose private key is generated server-side, encrypted as a v3 JSON keystore at `server/data/agent_keys/<agentId>.json` (passphrase from `AGENT_KEYSTORE_PASSPHRASE`, 0600 file perms), and used to sign `MatchEscrow.deposit` on the agent's behalf. The owner pre-funds by sending ETH to its address; after the match the owner withdraws via `POST /agents/{id}/withdraw`. Trust model is intentionally minimal: the server holds the key for the agent's lifetime; on-chain owner authorisation (EIP-712) is a follow-up.
+**Agent wallets.** Each agent gets a dedicated EOA whose private key is generated server-side, encrypted as a v3 JSON keystore at `server/data/agent_keys/<agentId>.json` (passphrase from `AGENT_KEYSTORE_PASSPHRASE`, 0600 file perms). The owner pre-funds by sending ETH to the wallet's address; `POST /agents/{id}/withdraw` drains. The server holds the key for the agent's lifetime; on-chain owner authorisation (EIP-712) is a follow-up.
 
-**End-to-end flow.**
+**Flow.** Human deposit (`MatchEscrow.deposit` via wagmi) → `POST /agents/{id}/deposit` (server signs from agent wallet) → game → `POST /finalize-direct-staked` calls `recordMatchAndSplit` (atomic record + payout).
 
-1. Match-page user picks a stake amount. Empty / `0` keeps the existing free-match path.
-2. Frontend generates a random `bytes32` `escrowMatchId`, the human's wallet calls `MatchEscrow.deposit(matchId, stakeWei)` via wagmi, then the frontend `POST`s `/agents/{agentId}/deposit` so the server signs the matching deposit from the agent's session-key wallet. Both deposits land before "Start Game" enables.
-3. Game plays out exactly like a free match.
-4. At game-end the frontend `POST`s `/finalize-direct-staked` with `escrow_match_id` and `stake_wei`. The server's `ChainClient.record_match_and_split` builds a single `recordMatchAndSplit` transaction that writes the match record AND pays the pot to the winner's address.
-5. Owner reclaims the agent's pot via the **AgentWalletPanel** ("Withdraw all" button on the pre-game card, calls `POST /agents/{id}/withdraw`).
-
-**Endpoints** (`server/app/main.py`):
+Endpoints (`server/app/main.py`):
 
 | Endpoint | Body | Purpose |
 | --- | --- | --- |
-| `GET  /agents/{id}/wallet` | — | Read address + balance. 404 if not yet provisioned. |
-| `POST /agents/{id}/wallet` | — | Idempotent create. Returns `{address}`. |
-| `POST /agents/{id}/deposit` | `{match_id, stake_wei}` | Server signs `MatchEscrow.deposit` from the agent's wallet. |
+| `GET  /agents/{id}/wallet` | — | Address + balance. |
+| `POST /agents/{id}/wallet` | — | Idempotent create. |
+| `POST /agents/{id}/deposit` | `{match_id, stake_wei}` | Server signs `MatchEscrow.deposit`. |
 | `POST /agents/{id}/withdraw` | `{to, amount_wei?}` | Drain to `to` (omit `amount_wei` → drain everything minus 21k gas). |
 | `POST /finalize-direct-staked` | `DirectFinalizeRequest + {escrow_match_id, stake_wei}` | Atomic settle + payout. |
 
 **Operator note:** set `AGENT_KEYSTORE_PASSPHRASE=<something>` in `server/.env` before starting the server, otherwise `AgentWalletManager.from_env()` raises and the wallet endpoints 503.
 
-Frontend: `frontend/app/match/page.tsx` + `AgentWalletPanel.tsx` — agent address (click-to-copy), live balance, "Fund X ETH" (computes shortfall, sends from connected wallet), "Withdraw all". A `depositStatus` state machine (`idle → human-pending → agent-pending → ready`) drives the Start button label across both deposits.
+Frontend: `frontend/app/match/page.tsx` + `AgentWalletPanel.tsx` — agent address (click-to-copy), live balance, "Fund X ETH", "Withdraw all". A `depositStatus` state machine drives the Start button across both deposits.
 
 ---
 
-## KeeperHub workflow
+## Keeper audit workflow
 
-`server/app/keeper_workflow.py` runs 8 sequential steps for any matchId that's been finalised on-chain:
+`server/app/keeper_workflow.py` is a local Python orchestrator that exercises a KeeperHub-shaped audit flow over a finalised matchId. The actual third-party KeeperHub integration is roadmap; the workflow is shaped so the eventual external runner can drop in.
+
+Eight sequential steps:
 
 | # | Step ID | What it does |
 | - | --- | --- |
 | 1 | `escrow_deposit` | Reads MatchInfo from MatchRegistry; fails if the match isn't on-chain. |
-| 2 | `vrf_rolls` | Probes the drand mainnet HTTP endpoint to confirm the VRF source is reachable. |
+| 2 | `vrf_rolls` | Probes the drand mainnet HTTP endpoint to confirm the VRF source the trainer uses is reachable. |
 | 3 | `og_storage_fetch` | Pulls the GameRecord blob from 0G Storage by the rootHash in MatchInfo. |
-| 4 | `rules_check` | Walks every recorded move through the pure-Python rules engine (`agent/rules_engine.py`). A single illegal move halts the workflow so the match cannot settle. |
+| 4 | `rules_check` | Walks every recorded move through the pure-Python rules engine (`agent/rules_engine.py`). A single illegal move halts the workflow. |
 | 5 | `settlement_signed` | Confirms MatchInfo presence (session-key flow pre-authorises; the relay tx itself is the proof). |
 | 6 | `relay_tx` | Surfaces `gameRecordHash` as the canonical audit anchor. |
 | 7 | `ens_update` | Cross-checks `elo` + `last_match_id` text records on each labelled subname; skips cleanly for unnamed / agent-vs-agent matches. |
 | 8 | `audit_append` | Serialises the entire workflow run to JSON, uploads to 0G Storage, surfaces the rootHash as the audit-trail anchor. |
 
-Trigger via `POST /keeper-workflow/{matchId}/run`. The workflow runs on a background thread; `GET /keeper-workflow/{matchId}` polls return live mid-run progress, persisted to `/tmp/chaingammon-keeper-workflows/<matchId>.json` so navigating away and back during a long-running step doesn't lose state. A step failure marks itself "failed" with the exception message in `error`, the workflow status flips to "failed", and remaining steps stay "pending" — an audit reader can immediately see which step broke and why.
+Trigger via `POST /keeper-workflow/{matchId}/run`. The workflow runs on a background thread; `GET /keeper-workflow/{matchId}` polls return live mid-run progress, persisted to `/tmp/chaingammon-keeper-workflows/<matchId>.json` so navigating away during a long-running step doesn't lose state. A step failure marks itself "failed" with the exception message in `error`, the workflow status flips to "failed", and remaining steps stay "pending".
 
-Full feedback document: [docs/keeperhub-feedback.md](docs/keeperhub-feedback.md). Workflow spec: [docs/keeperhub-workflow.md](docs/keeperhub-workflow.md).
-
----
-
-## Live training visualisation
-
-Round-robin training runs spawned from the `/training` page are observable in real time via an embedded TensorBoard panel.
-
-- **Trainer side.** `agent/round_robin_trainer.py` opens a `SummaryWriter` when `--logdir` is set and emits scalars at three cadences: per-ply (`train/td_error`, `train/v_now`, `train/v_next`, `train/grad_norm`, `train/eligibility_norm`), per-match (`match/plies`, `win/agent_a_vs_b`, `win_rate/agent_<id>` rolling), per-epoch (`weights/core_l2_agent_<id>`, `weights/extras_l2_agent_<id>`).
-- **Service side.** `server/app/training_service.py` `mkdtemp`s a fresh logdir per run, passes `--logdir` to the trainer, and spawns `tensorboard --logdir <path> --host localhost --port 6006 --bind_all` as a sidecar. If the binary isn't on PATH or the port is in use, launch fails silently and `/training/status` returns `tensorboard_url: null`.
-- **Frontend side.** `/training` reads `tensorboard_url` from `/training/status` and mounts the dashboard in an iframe. A per-agent dropdown filters scalars via TensorBoard 2.x's `#scalars&tagFilter=agent_<id>` URL fragment. The `weights/*` charts are the canonical "is the network actually learning" signal: flat lines mean no movement, gentle drift means TD-λ is updating the value head as expected.
-
-To inspect a saved run after the fact, point TensorBoard at the persisted logdir from `/training/status` (the directory survives the trainer subprocess; cleanup happens on `/training/abort`).
+Workflow spec: [docs/keeperhub-workflow.md](docs/keeperhub-workflow.md). Integration feedback: [docs/keeperhub-feedback.md](docs/keeperhub-feedback.md).
 
 ---
 
@@ -359,14 +302,15 @@ Fund the deployer wallet with Sepolia ETH from any public faucet.
 # 1. deploy + verify settlement contracts on Sepolia (one shot)
 ./scripts/bootstrap-network.sh
 
-# 2. start the FastAPI backend (terminal A, from repo root)
+# 2. (optional) start the FastAPI backend for training, agent wallets,
+#    the keeper audit workflow, and the local coach fallback
 cd server && uv run uvicorn app.main:app --host 0.0.0.0 --port 8000
 
-# 3. start the frontend (terminal B, from repo root)
+# 3. start the frontend
 pnpm frontend:dev                # Next.js on :3000
 ```
 
-Or use the VS Code Tasks workflow (`.vscode/tasks.json`) — `Tasks: Run Task` → `Localhost: launch all` fires hardhat node → deploy contracts → FastAPI server → Next.js frontend in sequence, each in its own dedicated terminal tab.
+Or use VS Code Tasks (`.vscode/tasks.json`) — `Tasks: Run Task` → `Localhost: launch all` chains hardhat node → deploy contracts → FastAPI server → Next.js frontend in their own terminal tabs.
 
 ### Local dev with Hardhat
 
@@ -376,9 +320,9 @@ cd contracts && pnpm exec hardhat run script/deploy.js --network localhost
 # addresses are written to contracts/deployments/localhost.json and read by the frontend automatically
 ```
 
-Switch chains in MetaMask; the frontend re-targets the new chain's contracts automatically (see `frontend/app/chains.ts`).
+Switch chains in your wallet; the frontend re-targets the new chain's contracts automatically (see `frontend/app/chains.ts`).
 
-### Test commands
+### Tests
 
 ```bash
 pnpm test                  # all tests: agent (pytest) + contracts (hardhat) + frontend (build)
@@ -391,15 +335,16 @@ pnpm frontend:test
 
 ## Frontend routes
 
-| Route | Page | Data source |
+| Route | Page | Backend dependency |
 | --- | --- | --- |
-| `/` | Agent discovery + matchmaking | On-chain reads via wagmi |
-| `/team-demo` | Off-chain game vs agent (no stake) | ONNX Runtime Web (browser-side `BackgammonNet`) |
-| `/team-demo?settle=1` | On-chain game vs agent (ELO + optional stake) | ONNX Runtime Web + `MatchRegistry` |
-| `/match?agentId=N` | KeeperHub pre-game card; forwards to `/team-demo?opponents=N&settle=1` | `AgentRegistry` + `MatchEscrow` |
+| `/` | Agent discovery + matchmaking | On-chain reads via wagmi; AgentCard polls `/agents/{id}/profile` from the FastAPI service (degrades gracefully when absent) |
+| `/team-demo` | Off-chain game vs agent (no stake) | Browser-only — ONNX Runtime Web |
+| `/team-demo?settle=1&opponents=N` | On-chain game vs agent (ELO + optional stake) | Browser + `MatchRegistry`; settle path uses session keys |
+| `/match?agentId=N` | Pre-game card; forwards to `/team-demo?opponents=N&settle=1` | `AgentRegistry` + `MatchEscrow`; agent-wallet panel needs the FastAPI service |
 | `/profile/[ensName]` | Player profile (ENS text records) | `PlayerSubnameRegistrar.text()` |
 | `/log/[matchId]` | Match replay + audit trail | 0G Storage |
-| `/training` | Round-robin trainer + live TensorBoard panel | FastAPI `/training/*` |
+| `/training` | Round-robin trainer control panel | FastAPI service (`/training/*`); TensorBoard event files written to a temp logdir, view with `tensorboard --logdir <path>` |
+| `/keeper/[matchId]` | Audit-workflow status page | FastAPI service (`/keeper-workflow/*`) |
 
 ---
 
@@ -412,7 +357,7 @@ pnpm frontend:test
 - [AgentRegistry](https://sepolia.etherscan.io/address/0xE23B83cE16B292e420cd8820ac9d303A45333D17)
 - [PlayerSubnameRegistrar](https://sepolia.etherscan.io/address/0x48285B8C9B04C6a3D61bBA067a4DE4399A5a4aEb)
 
-**0G testnet:**
+**0G Galileo Testnet:**
 
 - [MatchRegistry](https://chainscan-galileo.0g.ai/address/0x60E52e2d9Ea7b4A851Dd63365222c7d102A11eaE)
 - [AgentRegistry](https://chainscan-galileo.0g.ai/address/0xCb0a562fa9079184922754717BB3035C0F7A983E)
@@ -424,8 +369,8 @@ Full deployment records (constructor args, deployer, block heights): `contracts/
 
 ## Roadmap
 
-- **Current:** human-vs-human and human-vs-agent gameplay; on-chain ELO; ENS subnames; agent iNFTs with hash-committed weights; 0G Storage match archive; drand dice; KeeperHub-orchestrated settlement on Sepolia.
-- **Next:** all-agent autonomous tournaments driven by KeeperHub; 0G Compute for TEE-attested fine-tuning; team / chouette mode with the career head; per-agent cube doubling.
-- **Later:** ZK proofs of agent inference (zkML); betting markets and ELO derivative tokens; mainnet on Base/Optimism.
+- **Now:** human-vs-agent gameplay; on-chain ELO; ENS subnames; agent tokens with shared on-chain base-weights hash; per-agent weights in 0G KV; 0G Storage match archive; optional stakes with atomic settle-and-pay; local keeper audit workflow.
+- **Next:** verifiable dice (commit-reveal or drand-derived) wired into live gameplay; full ERC-7857 transfer-with-reencryption-proof so per-agent weights are cryptographically bound to the token; backgammon-net provider on the 0G serving network so inference can run on 0G Compute; TEE-attested training on 0G Compute; integration with the actual KeeperHub orchestrator (the current workflow is a local Python implementation of the shape).
+- **Later:** all-agent autonomous tournaments; team / chouette mode with career-head fusion; per-agent cube doubling; ZK proofs of agent inference (zkML); betting markets; mainnet on Base/Optimism.
 
 See [ROADMAP.md](ROADMAP.md) for the full version. Architecture: [ARCHITECTURE.md](ARCHITECTURE.md).
