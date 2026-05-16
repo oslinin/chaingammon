@@ -57,6 +57,21 @@ export function Board({
 }: BoardProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   const [dragState, setDragState] = useState<DragState>(null);
+  const [pendingDrop, setPendingDrop] = useState<number | "off" | null>(null);
+
+  // When a drop requires selecting the source point first, we must wait for
+  // `selectedPoint` to update before triggering the destination click.
+  React.useEffect(() => {
+    if (pendingDrop !== null) {
+      if (pendingDrop === "off") {
+        if (onOffClick) onOffClick();
+      } else {
+        if (onPointClick) onPointClick(pendingDrop);
+        if (onDrop) onDrop(pendingDrop);
+      }
+      setPendingDrop(null);
+    }
+  }, [selectedPoint, pendingDrop, onOffClick, onPointClick, onDrop]);
 
   const turnLabel = turn === 0 ? "Your turn" : `${opponentName ?? "Agent"}'s turn`;
   const turnColor = turn === 0 ? "var(--cg-player-warm)" : "var(--cg-player-cool)";
@@ -99,12 +114,14 @@ export function Board({
     // Hit test Bear-off Tray (Right tray for P0)
     if (x >= R_BEAR_X && x <= R_BEAR_X + BEAR_W && y >= FRAME && y <= FRAME + INNER_H) {
       if (onOffClick) {
-          if (ds.fromPoint === "bar" && onBarClick) {
-              if (selectedPoint !== 25) onBarClick();
-              setTimeout(() => onOffClick(), 0);
-          } else if (typeof ds.fromPoint === "number" && onPointClick) {
-              if (selectedPoint !== ds.fromPoint) onPointClick(ds.fromPoint);
-              setTimeout(() => onOffClick(), 0);
+          if (ds.fromPoint === "bar" && selectedPoint !== 25) {
+              if (onBarClick) onBarClick();
+              setPendingDrop("off");
+          } else if (typeof ds.fromPoint === "number" && selectedPoint !== ds.fromPoint) {
+              if (onPointClick) onPointClick(ds.fromPoint);
+              setPendingDrop("off");
+          } else {
+              onOffClick();
           }
       }
       return;
@@ -155,12 +172,15 @@ export function Board({
   };
 
   const triggerDrop = (from: number | "bar", to: number) => {
-    if (from === "bar" && onBarClick) {
-      if (selectedPoint !== 25) onBarClick();
-      setTimeout(() => { if (onPointClick) onPointClick(to); if (onDrop) onDrop(to); }, 0);
-    } else if (typeof from === "number" && onPointClick) {
-      if (selectedPoint !== from) onPointClick(from);
-      setTimeout(() => { if (onPointClick) onPointClick(to); if (onDrop) onDrop(to); }, 0);
+    if (from === "bar" && selectedPoint !== 25) {
+      if (onBarClick) onBarClick();
+      setPendingDrop(to);
+    } else if (typeof from === "number" && selectedPoint !== from) {
+      if (onPointClick) onPointClick(from);
+      setPendingDrop(to);
+    } else {
+      if (onPointClick) onPointClick(to);
+      if (onDrop) onDrop(to);
     }
   };
 
