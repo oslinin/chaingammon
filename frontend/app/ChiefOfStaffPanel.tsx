@@ -57,6 +57,7 @@ interface Props {
   turn?: 0 | 1;
   opponentId?: number;
   onMoveSelect?: (move: string) => void;
+  onMoveHover?: (move: string | null) => void;
   disabled?: boolean;
   /** When true, skip the LLM entirely — show ONNX-ranked moves only. */
   noLLM?: boolean;
@@ -107,6 +108,7 @@ export function AgentTeammatePanel({
   turn = 0,
   opponentId,
   onMoveSelect,
+  onMoveHover,
   disabled = false,
   noLLM = false,
 }: Props) {
@@ -331,6 +333,8 @@ export function AgentTeammatePanel({
                       type="button"
                       disabled={disabled}
                       onClick={() => onMoveSelect?.(c.move)}
+                      onMouseEnter={() => onMoveHover?.(c.move)}
+                      onMouseLeave={() => onMoveHover?.(null)}
                       title={c.tag_reason}
                       style={{
                         display: "flex",
