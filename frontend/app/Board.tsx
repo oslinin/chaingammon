@@ -78,7 +78,7 @@ export function Board({
 
   const handlePointerDown = (e: PointerEvent<SVGGElement>, point: number | "bar", isP0: boolean) => {
     if (turn !== 0 || !isP0) return;
-    (e.target as Element).setPointerCapture(e.pointerId);
+    svgRef.current?.setPointerCapture(e.pointerId);
     const { x, y } = clientToSvg(e.clientX, e.clientY);
     setDragState({ fromPoint: point, isP0, svgX: x, svgY: y });
     if (onDragStart && typeof point === "number") onDragStart(point);
