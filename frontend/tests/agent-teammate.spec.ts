@@ -45,7 +45,7 @@ test("Agent Teammate panel renders 'Top moves this turn' label when loading", as
   if (!eitherVisible) {
     // gnubg returned quickly with an empty result — the candidates section
     // simply won't render but the panel should still be present.
-    await expect(page.locator("text=Agent Teammate")).toBeVisible({ timeout: 2000 });
+    await expect(page.locator("text=Agent Teammate").first()).toBeVisible({ timeout: 2000 });
   }
   // No assertion failure expected either way.
   void topMovesLabel; // referenced to avoid unused-var lint
