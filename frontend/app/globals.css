@@ -91,6 +91,11 @@ body {
   font-size: 15px;
   line-height: 1.7;
 }
+.cg-prose h1,
+.cg-prose h2,
+.cg-prose h3 {
+  scroll-margin-top: 72px;
+}
 .cg-prose h1 {
   font-family: var(--cg-font-display);
   font-size: 32px;
@@ -227,5 +232,26 @@ body {
   transition: color 120ms;
 }
 .cg-nav-link:hover {
+  color: var(--cg-fg-1);
+}
+
+/* ── TOC sidebar (help page) ─────────────────────────────────────────────── */
+.cg-toc-link {
+  display: block;
+  font-family: var(--cg-font-sans);
+  text-decoration: none;
+  line-height: 1.45;
+  padding: 2px 0;
+  transition: color 120ms;
+  color: var(--cg-fg-4);
+  font-size: 12px;
+  font-weight: 400;
+}
+.cg-toc-link--h1 {
+  color: var(--cg-fg-2);
+  font-size: 13px;
+  font-weight: 600;
+}
+.cg-toc-link:hover {
   color: var(--cg-fg-1);
 }
