@@ -263,6 +263,8 @@ function TeamDemoPageInner() {
   const [loading, setLoading] = useState(false);
   const [moveInput, setMoveInput] = useState("");
 
+  const [hoveredMove, setHoveredMove] = useState<string | null>(null);
+
   const [stagedMoves, setStagedMoves] = useState<string[]>([]);
   const [displayBoardState, setDisplayBoardState] = useState<{
     board: number[];
@@ -1206,6 +1208,7 @@ function TeamDemoPageInner() {
               bar={currentBar}
               off={currentOff}
               turn={game.turn}
+              ghostMove={hoveredMove}
               opponentName={
                 opponentIds.length === 1
                   ? `Agent #${opponentIds[0]}`
@@ -1415,6 +1418,7 @@ function TeamDemoPageInner() {
               opponentId={opponentIds[0]}
               disabled={!isHumanTurn || game.game_over}
               onMoveSelect={previewMove}
+              onMoveHover={setHoveredMove}
               noLLM={teammateIds.length === 0}
             />
           )}

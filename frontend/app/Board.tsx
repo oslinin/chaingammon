@@ -12,6 +12,7 @@ interface BoardProps {
   onBarClick?: () => void;
   onOffClick?: () => void;
   selectedPoint?: number | null;  // 1-24 = board point, 25 = bar
+  ghostMove?: string | null;      // A move string to preview on hover, e.g. "24/18 13/7"
   onDragStart?: (point: number) => void;
   onDrop?: (point: number) => void;
 }
@@ -52,6 +53,7 @@ export function Board({
   onBarClick,
   onOffClick,
   selectedPoint,
+  ghostMove,
   onDragStart,
   onDrop,
 }: BoardProps) {
@@ -72,6 +74,27 @@ export function Board({
       setPendingDrop(null);
     }
   }, [selectedPoint, pendingDrop, onOffClick, onPointClick, onDrop]);
+
+  // Parse ghostMove into an array of {from, to} segments for visualization
+  const previewSegments = React.useMemo(() => {
+    if (!ghostMove) return [];
+    return ghostMove.split(/\s+/).filter(Boolean).map(seg => {
+      const parts = seg.split("/");
+      if (parts.length !== 2) return null;
+      const from = parts[0] === "bar" ? 25 : parseInt(parts[0], 10);
+      const to = parts[1] === "off" ? 0 : parseInt(parts[1], 10);
+      if (isNaN(from) || isNaN(to)) return null;
+      return { from, to };
+    }).filter(Boolean) as { from: number; to: number }[];
+  }, [ghostMove]);
+
+  // Aggregate ghost states per point
+  const ghostDepartures: Record<number, number> = {};
+  const ghostArrivals: Record<number, number> = {};
+  previewSegments.forEach(seg => {
+    ghostDepartures[seg.from] = (ghostDepartures[seg.from] || 0) + 1;
+    ghostArrivals[seg.to] = (ghostArrivals[seg.to] || 0) + 1;
+  });
 
   const turnLabel = turn === 0 ? "Your turn" : `${opponentName ?? "Agent"}'s turn`;
   const turnColor = turn === 0 ? "var(--cg-player-warm)" : "var(--cg-player-cool)";
@@ -228,14 +251,24 @@ export function Board({
     const pts = `${startX},${baseY} ${startX + POINT_W},${baseY} ${startX + POINT_W / 2},${tipY}`;
 
     const count = board[point - 1];
-    const isP0 = count > 0;
+    const isP0 = count > 0 || (count === 0 && turn === 0); // If empty but turn is 0, we assume dropping P0 checker
     const absCount = Math.abs(count);
 
     const isDragSource = dragState?.fromPoint === point;
-    const displayCount = isDragSource ? absCount - 1 : absCount;
+    // Preview departures
+    const departures = ghostDepartures[point] || 0;
+    const arrivals = ghostArrivals[point] || 0;
 
+    // Visually, if we're dragging from here or departing, we show fewer real checkers
+    const displayCount = Math.max(0, absCount - (isDragSource ? 1 : 0) - departures);
+
+    // For ghost visuals, we want to render the normal ones, then the fading out ones, then fading in ones
+    const totalPhysicalDots = Math.min(absCount - (isDragSource ? 1 : 0), MAX_DOTS);
     const dotsToShow = Math.min(displayCount, MAX_DOTS);
-    const extra = displayCount > MAX_DOTS ? displayCount - MAX_DOTS : 0;
+
+    // The visual stacked height includes arrivals up to MAX_DOTS
+    const combinedDots = Math.min(displayCount + departures + arrivals, MAX_DOTS);
+    const extra = displayCount + departures + arrivals > MAX_DOTS ? displayCount + departures + arrivals - MAX_DOTS : 0;
 
     const isSelected = selectedPoint === point;
 
@@ -296,18 +329,37 @@ export function Board({
 
         {/* Checkers */}
         <g pointerEvents="none">
-          {Array.from({ length: dotsToShow }).map((_, i) => {
+          {Array.from({ length: combinedDots }).map((_, i) => {
             const cy = isTop
               ? FRAME + CHECKER_R + i * CHECKER_GAP
               : TOTAL_H - FRAME - CHECKER_R - i * CHECKER_GAP;
-            return renderChecker(startX + POINT_W / 2, cy, isP0, `checker-${point}-${i}`);
+
+            // Determine if this specific dot is solid, a departure ghost, or an arrival ghost
+            let isDragging = false;
+            let dotIsP0 = isP0;
+
+            if (i >= displayCount) {
+              if (i < displayCount + departures) {
+                // It's a departing checker (show as transparent)
+                isDragging = true;
+                dotIsP0 = count > 0;
+              } else {
+                // It's an arriving checker (show as transparent ghost belonging to current turn)
+                isDragging = true;
+                dotIsP0 = turn === 0;
+              }
+            } else {
+              dotIsP0 = count > 0;
+            }
+
+            return renderChecker(startX + POINT_W / 2, cy, dotIsP0, `checker-${point}-${i}`, isDragging);
           })}
           {extra > 0 && (
             <text
               x={startX + POINT_W / 2}
               y={isTop
-                  ? FRAME + CHECKER_R + dotsToShow * CHECKER_GAP + 4
-                  : TOTAL_H - FRAME - CHECKER_R - dotsToShow * CHECKER_GAP + 4}
+                  ? FRAME + CHECKER_R + combinedDots * CHECKER_GAP + 4
+                  : TOTAL_H - FRAME - CHECKER_R - combinedDots * CHECKER_GAP + 4}
               textAnchor="middle"
               fontSize="12"
               fontFamily="var(--cg-font-mono, monospace)"
@@ -325,7 +377,11 @@ export function Board({
     const isSelected = selectedPoint === 25;
     const [p0Bar, p1Bar] = bar;
 
-    const p0Display = dragState?.fromPoint === "bar" ? p0Bar - 1 : p0Bar;
+    const p0Departures = ghostDepartures[25] || 0;
+    // p1 bar is not playable by the human turn, so we don't ghost it
+    const p0Display = Math.max(0, p0Bar - (dragState?.fromPoint === "bar" ? 1 : 0) - p0Departures);
+    const p0Combined = Math.min(p0Display + p0Departures, 3);
+    const p0Extra = p0Display + p0Departures > 3 ? p0Display + p0Departures - 3 : 0;
 
     return (
       <g key="bar">
@@ -397,19 +453,20 @@ export function Board({
 
         {/* P0 Bar Checkers (Bottom Up) */}
         <g pointerEvents="none">
-          {Array.from({ length: Math.min(p0Display, 3) }).map((_, i) => (
-            renderChecker(BAR_X + BAR_W / 2, TOTAL_H - FRAME - 60 - i * CHECKER_GAP, true, `bar-p0-${i}`)
-          ))}
-          {p0Display > 3 && (
+          {Array.from({ length: p0Combined }).map((_, i) => {
+            const isDragging = i >= p0Display;
+            return renderChecker(BAR_X + BAR_W / 2, TOTAL_H - FRAME - 60 - i * CHECKER_GAP, true, `bar-p0-${i}`, isDragging);
+          })}
+          {p0Extra > 0 && (
             <text
               x={BAR_X + BAR_W / 2}
-              y={TOTAL_H - FRAME - 60 - 3 * CHECKER_GAP + 4}
+              y={TOTAL_H - FRAME - 60 - p0Combined * CHECKER_GAP + 4}
               textAnchor="middle"
               fontSize="12"
               fontFamily="var(--cg-font-mono, monospace)"
               fill="var(--cg-fg-4, #4A4339)"
             >
-              +{p0Display - 3}
+              +{p0Extra}
             </text>
           )}
         </g>
@@ -419,6 +476,11 @@ export function Board({
 
   const renderBearOff = () => {
     const [p0Off, p1Off] = off;
+
+    const arrivals = ghostArrivals[0] || 0;
+    const p0CombinedOff = p0Off + (turn === 0 ? arrivals : 0);
+    const p1CombinedOff = p1Off + (turn === 1 ? arrivals : 0);
+
 
     return (
       <g>
@@ -432,18 +494,22 @@ export function Board({
         />
         {/* P1 Off Mini Checkers */}
         <g pointerEvents="none">
-          {Array.from({ length: p1Off }).map((_, i) => (
-            <rect
-              key={`p1off-${i}`}
-              x={L_BEAR_X + 10}
-              y={TOTAL_H - FRAME - 20 - i * 14}
-              width={BEAR_W - 20}
-              height={10}
-              rx={3}
-              fill="url(#cg-p1)"
-              stroke="rgba(0,0,0,0.5)"
-            />
-          ))}
+          {Array.from({ length: p1CombinedOff }).map((_, i) => {
+            const isGhost = i >= p1Off;
+            return (
+              <rect
+                key={`p1off-${i}`}
+                x={L_BEAR_X + 10}
+                y={TOTAL_H - FRAME - 20 - i * 14}
+                width={BEAR_W - 20}
+                height={10}
+                rx={3}
+                fill="url(#cg-p1)"
+                stroke="rgba(0,0,0,0.5)"
+                opacity={isGhost ? 0.3 : 1}
+              />
+            );
+          })}
           <text
              x={L_BEAR_X + BEAR_W/2}
              y={TOTAL_H - FRAME - 5}
@@ -452,7 +518,7 @@ export function Board({
              fontFamily="var(--cg-font-mono, monospace)"
              fill="var(--cg-player-cool, #E8E1CF)"
           >
-            {p1Off}
+            {p1CombinedOff}
           </text>
         </g>
 
@@ -466,18 +532,22 @@ export function Board({
         />
         {/* P0 Off Mini Checkers */}
         <g pointerEvents="none">
-          {Array.from({ length: p0Off }).map((_, i) => (
-            <rect
-              key={`p0off-${i}`}
-              x={R_BEAR_X + 10}
-              y={TOTAL_H - FRAME - 20 - i * 14}
-              width={BEAR_W - 20}
-              height={10}
-              rx={3}
-              fill="url(#cg-p0)"
-              stroke="rgba(0,0,0,0.5)"
-            />
-          ))}
+          {Array.from({ length: p0CombinedOff }).map((_, i) => {
+            const isGhost = i >= p0Off;
+            return (
+              <rect
+                key={`p0off-${i}`}
+                x={R_BEAR_X + 10}
+                y={TOTAL_H - FRAME - 20 - i * 14}
+                width={BEAR_W - 20}
+                height={10}
+                rx={3}
+                fill="url(#cg-p0)"
+                stroke="rgba(0,0,0,0.5)"
+                opacity={isGhost ? 0.3 : 1}
+              />
+            );
+          })}
           <text
              x={R_BEAR_X + BEAR_W/2}
              y={TOTAL_H - FRAME - 5}
@@ -486,7 +556,7 @@ export function Board({
              fontFamily="var(--cg-font-mono, monospace)"
              fill="var(--cg-player-warm, #E3B779)"
           >
-            {p0Off}
+            {p0CombinedOff}
           </text>
         </g>
       </g>
@@ -570,7 +640,7 @@ export function Board({
                 cy={dragState.svgY}
                 r={CHECKER_R}
                 fill={dragState.isP0 ? "url(#cg-p0)" : "url(#cg-p1)"}
-                stroke="var(--cg-brass, #C99B5C)"
+                stroke="var(--cg-brass, #E8C07E)"
                 strokeWidth="2"
               />
               <ellipse
