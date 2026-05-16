@@ -12,6 +12,15 @@
 // If step 2 fails (RPC, server, user-rejected funding tx), the agent
 // already exists with an unfunded wallet — the user can top up later
 // from any match page's AgentWalletPanel.
+//
+// Model architecture — the form exposes a PyTorch source editor
+// pre-filled with the BackgammonNet MLP from agent/sample_trainer.py.
+// The default is the network the offline trainer uses today; users can
+// replace it with any alternative (deeper net, random-forest wrapper,
+// etc.) that implements the abstract __init__/forward contract
+// documented at the top of the default snippet. The submitted source
+// is preserved in the transaction record so a future training-pipeline
+// hand-off can pick it up without re-prompting the user.
 "use client";
 
 import { useEffect, useState } from "react";
@@ -69,6 +78,87 @@ function safeParseEther(value: string): bigint {
   }
 }
 
+// Default PyTorch source shown in the "Model architecture" editor below.
+// Mirrors agent/sample_trainer.py's BackgammonNet so a user who just
+// hits "Create agent" without touching the editor gets the same MLP the
+// offline trainer uses today. The leading docstring is the abstract
+// contract — any replacement implementation (deeper net, random-forest
+// wrapper around a torch.nn.Module, transformer, etc.) must keep the
+// __init__ and forward signatures so the training/inference pipeline can
+// call it unchanged. Different architectures here are how operators
+// field different *kinds* of star players: a deeper net for richer
+// contact play, a wider extras head for context-sensitive cube
+// decisions, an ensemble for noisier opponents, and so on.
+const DEFAULT_MODEL_CODE = `"""Per-agent value network for Chaingammon.
+
+Abstract contract — any replacement must implement both:
+
+  1. __init__(in_dim: int = 198, hidden: int = 80, extras_dim: int = 16,
+              *, core_seed: int = 0xBACC, extras_seed: int | None = None)
+       in_dim     — board feature width (198 = Tesauro contact net).
+       hidden     — backbone hidden size.
+       extras_dim — per-agent contextual feature width (career mode).
+       core_seed  — seeds the shared gnubg-derived backbone so every
+                    agent starts from the same prior.
+       extras_seed — randomizes the per-agent extras head; two agents
+                     with the same core_seed but different extras_seed
+                     diverge in style after training.
+
+  2. forward(board: Tensor, extras: Tensor | None = None) -> Tensor
+       Returns win equity in [0, 1] for the side to move. Shape:
+       (batch,) for batched calls, () for single positions.
+
+The default below is the MLP from agent/sample_trainer.py. Delete it
+and paste your own — a deeper net, a transformer, a random-forest
+ensemble wrapped in nn.Module, anything that honors the contract.
+Different architectures field different kinds of star players.
+"""
+import math
+import torch
+from torch import nn
+
+
+def gnubg_published_core_init(in_dim, hidden, *, seed=0xBACC):
+    """Stand-in for gnubg's published feedforward weights. Production
+    swaps this for the actual gnubg weights file; the deterministic
+    Xavier-uniform init below gives every agent the same prior so the
+    extras head is what distinguishes them after training."""
+    g = torch.Generator().manual_seed(seed)
+    layer = nn.Linear(in_dim, hidden)
+    with torch.no_grad():
+        bound = math.sqrt(6.0 / (in_dim + hidden))
+        layer.weight.uniform_(-bound, bound, generator=g)
+        layer.bias.zero_()
+    return layer
+
+
+class BackgammonNet(nn.Module):
+    def __init__(self, in_dim=198, hidden=80, extras_dim=16,
+                 *, core_seed=0xBACC, extras_seed=None):
+        super().__init__()
+        self.core = gnubg_published_core_init(in_dim, hidden, seed=core_seed)
+        if extras_dim > 0:
+            self.extras = nn.Linear(extras_dim, hidden)
+            if extras_seed is not None:
+                g = torch.Generator().manual_seed(extras_seed)
+                bound = math.sqrt(6.0 / (extras_dim + hidden))
+                with torch.no_grad():
+                    self.extras.weight.uniform_(-bound, bound, generator=g)
+                    self.extras.bias.zero_()
+        else:
+            self.extras = None
+        self.head = nn.Linear(hidden, 1)
+        with torch.no_grad():
+            nn.init.xavier_uniform_(self.head.weight)
+            self.head.bias.zero_()
+
+    def forward(self, board, extras=None):
+        h = torch.sigmoid(self.core(board))
+        if self.extras is not None and extras is not None:
+            h = h + torch.sigmoid(self.extras(extras))
+        return torch.sigmoid(self.head(h)).squeeze(-1)
+`;
+
 type FundStatus =
   | "idle"
   | "provisioning"
@@ -88,6 +178,7 @@ export default function CreateAgentPage() {
   const [agentLabel, setAgentLabel] = useState("");
   const [agentTier, setAgentTier] = useState<number>(0);
   const [fundingEth, setFundingEth] = useState("");
+  const [modelCode, setModelCode] = useState<string>(DEFAULT_MODEL_CODE);
   const [fundStatus, setFundStatus] = useState<FundStatus>("idle");
   const [fundError, setFundError] = useState<string | null>(null);
 
@@ -129,10 +220,25 @@ export default function CreateAgentPage() {
         }
       }
 
+      // Preserve the model source alongside the mint record. The
+      // training pipeline picks this up by agentId; an unchanged editor
+      // means "use the BackgammonNet default."
+      const modelCustomized = modelCode.trim() !== DEFAULT_MODEL_CODE.trim();
       recordTransaction({
         type: "agent_mint",
-        description: `Agent minted${newAgentId !== null ? ` (id ${newAgentId})` : ""}: "${agentLabel}" (Tier ${agentTier})`,
+        description: `Agent minted${newAgentId !== null ? ` (id ${newAgentId})` : ""}: "${agentLabel}" (Tier ${agentTier})${modelCustomized ? " — custom model" : ""}`,
       });
+      if (newAgentId !== null && typeof window !== "undefined") {
+        try {
+          window.localStorage.setItem(
+            `chaingammon:agent:${newAgentId}:model`,
+            modelCode,
+          );
+        } catch {
+          // Storage full / disabled — non-fatal, the mint already
+          // succeeded. Users can re-paste later from a model library.
+        }
+      }
 
       const fundingWei = safeParseEther(fundingEth);
       if (fundingWei === ZERO_BIG) {
@@ -242,7 +348,7 @@ export default function CreateAgentPage() {
   })();
 
   return (
-    <main className="flex flex-1 flex-col gap-6 p-6 max-w-md">
+    <main className="flex flex-1 flex-col gap-6 p-6 max-w-3xl">
       <div>
         <h1 className="text-xl font-semibold text-zinc-900 dark:text-zinc-50">
           Create new agent
@@ -298,6 +404,46 @@ export default function CreateAgentPage() {
             <option value={2}>Tier 2</option>
             <option value={3}>Tier 3</option>
           </select>
+        </div>
+
+        <div className="flex flex-col gap-1">
+          <div className="flex items-center justify-between">
+            <label
+              htmlFor="agent-model-code"
+              className="text-sm font-medium text-zinc-700 dark:text-zinc-300"
+            >
+              Model architecture (PyTorch)
+            </label>
+            <button
+              type="button"
+              data-testid="agent-model-reset"
+              onClick={() => setModelCode(DEFAULT_MODEL_CODE)}
+              disabled={busy || modelCode === DEFAULT_MODEL_CODE}
+              className="text-xs text-indigo-600 hover:text-indigo-500 disabled:opacity-40 dark:text-indigo-400"
+            >
+              Reset to default
+            </button>
+          </div>
+          <textarea
+            id="agent-model-code"
+            data-testid="agent-model-code"
+            value={modelCode}
+            onChange={(e) => setModelCode(e.target.value)}
+            spellCheck={false}
+            rows={16}
+            className="min-h-[20rem] rounded border border-zinc-300 bg-white px-3 py-2 font-mono text-xs leading-relaxed text-zinc-900 placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50"
+            disabled={busy}
+          />
+          <p className="text-xs text-zinc-500 dark:text-zinc-400">
+            Default is the BackgammonNet MLP from{" "}
+            <code className="font-mono">agent/sample_trainer.py</code>.
+            Delete it and paste any architecture — a deeper net, a
+            transformer, a random-forest wrapper — that implements the
+            <code className="font-mono"> __init__</code> and{" "}
+            <code className="font-mono">forward</code> contract in the
+            docstring. Different architectures field different kinds
+            of star players.
+          </p>
         </div>
 
         <div className="flex flex-col gap-1">
