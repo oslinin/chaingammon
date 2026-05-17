@@ -142,7 +142,7 @@ const PER_INFERENCE_OG = 1e-5;
 const MEAN_PLIES_PER_GAME = 60;
 
 export default function TrainingPage() {
-  const { backends, hydrated } = useComputeBackends();
+  const { backends, hydrated, setBackend } = useComputeBackends();
   const use0gInference = hydrated && backends.inference === "0g";
   const use0gCoaching = hydrated && backends.coach === "0g";
   // Default to `local` until hydration completes so SSR matches the
@@ -493,8 +493,13 @@ export default function TrainingPage() {
     }
   };
 
+  const handleStartServer = () => {
+    setBackend("training", "local");
+    startLocalMutation.mutate();
+  };
+
   const localIsRunning =
-    trainingMode === "local" && (statusQuery.data?.running ?? false);
+    statusQuery.data?.running ?? false;
   const ogIsRunning =
     trainingMode === "0g" &&
     (training.phase === "loading_weights" || training.phase === "running");
@@ -504,8 +509,7 @@ export default function TrainingPage() {
     selectedIds.length >= 2 &&
     !isRunning &&
     !startLocalMutation.isPending;
-  const canAbort =
-    trainingMode === "local" && localIsRunning && !abortLocalMutation.isPending;
+  const canAbort = localIsRunning && !abortLocalMutation.isPending;
 
   return (
     <main className="flex flex-1 flex-col gap-6 p-6">
@@ -516,8 +520,8 @@ export default function TrainingPage() {
         <p className="text-sm text-zinc-600 dark:text-zinc-400">
           Multi-agent self-play with TD-λ updates. Each epoch plays{" "}
           <code className="font-mono">C(N, 2)</code> games across the selected
-          agents. Backends (Local vs 0G) are set in the Compute pill above —
-          flip Inference to 0G to surface a gas estimate.
+          agents. Training runs on the chaingammon server — 0G Compute
+          training is not yet available for non-LLM workloads.
         </p>
       </header>
 
@@ -528,22 +532,19 @@ export default function TrainingPage() {
       />
 
       {trainingMode === "local" ? (
-        <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-700/50 dark:bg-amber-900/10 dark:text-amber-200">
-          <strong>Training=local routes through the FastAPI server.</strong>{" "}
-          Play hits <code className="font-mono">{SERVER}/training/start</code>{" "}
-          and will NetworkError unless that server is running. Run{" "}
-          <code className="font-mono">uvicorn server.app.main:app</code>{" "}
-          locally (see README) to enable. Switch Training=0G in the Compute
-          pill to use 0G Compute instead.
+        <div className="rounded-md border border-zinc-300 bg-zinc-50 px-3 py-2 text-xs text-zinc-700 dark:border-zinc-700/50 dark:bg-zinc-900/30 dark:text-zinc-300">
+          <strong>Training runs on the chaingammon server.</strong>{" "}
+          Jobs are submitted to{" "}
+          <code className="font-mono">{SERVER}/training/start</code> and
+          execute as a Python subprocess on the deployment server.
         </div>
       ) : (
-        <div className="rounded-md border border-emerald-300 bg-emerald-50 px-3 py-2 text-xs text-emerald-900 dark:border-emerald-700/50 dark:bg-emerald-900/10 dark:text-emerald-200">
-          <strong>Training=0G runs on 0G Compute.</strong> Play submits a
-          round-robin job to a{" "}
-          <code className="font-mono">backgammon-train-v1</code> provider on
-          the 0G serving network — your MetaMask wallet pays for the compute
-          directly. Until a provider is registered, Play returns a non-fatal
-          &quot;no provider&quot; message.
+        <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-700/50 dark:bg-amber-900/10 dark:text-amber-200">
+          <strong>0G Compute training is not yet available.</strong> The 0G
+          serving network currently supports LLM inference only — a{" "}
+          <code className="font-mono">backgammon-train-v1</code> provider has
+          not been registered. Switch Training to &ldquo;local&rdquo; in the
+          Compute pill to run on the chaingammon server instead.
         </div>
       )}
 
@@ -586,36 +587,64 @@ export default function TrainingPage() {
         />
       )}
 
-      <div className="flex gap-3">
+      <div className="flex flex-wrap gap-3">
         <button
           type="button"
           disabled={!canPlay}
-          onClick={handlePlay}
-          className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-40"
+          onClick={handleStartServer}
+          style={{
+            background: isRunning && trainingMode === "local"
+              ? "var(--cg-bg-2)"
+              : "linear-gradient(180deg,#E3B779 0%,#C99B5C 55%,#B0843E 100%)",
+            color: isRunning && trainingMode === "local"
+              ? "var(--cg-fg-3)"
+              : "var(--cg-brass-ink)",
+            border: "none",
+            borderRadius: "var(--cg-radius)",
+            padding: "8px 18px",
+            fontSize: 14,
+            fontWeight: 600,
+            fontFamily: "var(--cg-font-sans)",
+            cursor: canPlay ? "pointer" : "not-allowed",
+            opacity: canPlay ? 1 : 0.4,
+          }}
         >
           {startLocalMutation.isPending
             ? "Starting…"
-            : isRunning
-            ? "Running…"
-            : "Play"}
+            : localIsRunning
+            ? "Running on server…"
+            : "Start (server)"}
         </button>
-        {trainingMode === "local" && (
+
+        {canAbort && (
           <button
             type="button"
-            disabled={!canAbort}
             onClick={() => abortLocalMutation.mutate()}
-            className="rounded-md border border-zinc-300 px-4 py-2 text-sm font-semibold text-zinc-900 hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-40 dark:border-zinc-700 dark:text-zinc-50 dark:hover:bg-zinc-800"
+            style={{
+              background: "var(--cg-bg-2)",
+              color: "var(--cg-fg-2)",
+              border: "1px solid var(--cg-line-2)",
+              borderRadius: "var(--cg-radius)",
+              padding: "8px 18px",
+              fontSize: 14,
+              fontWeight: 600,
+              fontFamily: "var(--cg-font-sans)",
+              cursor: "pointer",
+            }}
           >
             {abortLocalMutation.isPending ? "Aborting…" : "Abort"}
           </button>
         )}
+
         {training.phase === "error" && (
           <span
-            className={`self-center text-xs ${
-              training.errorUnavailable
-                ? "text-amber-700 dark:text-amber-400"
-                : "text-red-600"
-            }`}
+            style={{
+              alignSelf: "center",
+              fontSize: 12,
+              color: training.errorUnavailable
+                ? "var(--cg-warn)"
+                : "var(--cg-danger)",
+            }}
           >
             {training.errorMessage}
           </span>
@@ -624,18 +653,16 @@ export default function TrainingPage() {
 
       <StatusPanel
         training={training}
-        localStatus={trainingMode === "local" ? statusQuery.data : undefined}
+        localStatus={statusQuery.data}
       />
 
-      {trainingMode === "local" && (
-        <CheckpointsPanel status={statusQuery.data} />
-      )}
+      <CheckpointsPanel status={statusQuery.data} />
 
       <TrainingProgressModal
         key={openedAtRef.current ?? 0}
         open={modalOpen}
         training={training}
-        localStatus={trainingMode === "local" ? statusQuery.data : undefined}
+        localStatus={statusQuery.data}
         agentCount={selectedIds.length}
         onClose={() => setModalOpen(false)}
       />
@@ -683,7 +710,7 @@ function Chip({
           : "border-zinc-300 text-zinc-700 dark:border-zinc-700 dark:text-zinc-300",
       ].join(" ")}
     >
-      {label}: {value === "0g" ? "0G" : value}
+      {label}: {value === "0g" ? "0G" : value === "local" ? "server" : value}
     </span>
   );
 }
@@ -996,7 +1023,7 @@ function LocalStatusBadge({ status }: { status: LocalStatusResponse }) {
   if (status.running) {
     return (
       <span className="rounded bg-emerald-100 px-2 py-0.5 text-xs font-mono text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
-        running · FastAPI{status.use_0g_inference ? " · 0G inference" : ""}
+        running · server{status.use_0g_inference ? " · 0G inference" : ""}
       </span>
     );
   }
@@ -1025,7 +1052,7 @@ function OgStatusBadge({ training }: { training: TrainingState }) {
   if (training.phase === "running" || training.phase === "loading_weights") {
     return (
       <span className="rounded bg-emerald-100 px-2 py-0.5 text-xs font-mono text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
-        running · 0G compute
+        running · server
       </span>
     );
   }
