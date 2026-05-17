@@ -293,13 +293,17 @@ def legal_successors(state, dice: tuple[int, int]) -> list:
 
 
 def pick_move(net: BackgammonNet, candidates: list[RaceState], extras: torch.Tensor,
-              perspective: int) -> tuple[RaceState, torch.Tensor]:
+              perspective: int, infer_fn=None) -> tuple[RaceState, torch.Tensor]:
     """Greedily pick the candidate that maximizes net's predicted equity
-    for `perspective`. Returns the (chosen state, V-tensor for chosen)."""
+    for `perspective`. Returns the (chosen state, V-tensor for chosen).
+
+    `infer_fn`: optional callable `(feats, ext) -> Tensor[N]` that replaces
+    the local net forward pass — used to route evaluations through 0G Compute.
+    """
     feats = torch.stack([encode_state(c, perspective) for c in candidates])
     with torch.no_grad():
         ext = extras.unsqueeze(0).expand(len(candidates), -1) if net.extras is not None else None
-        equities = net(feats, ext)
+        equities = infer_fn(feats, ext) if infer_fn is not None else net(feats, ext)
     best = int(equities.argmax().item())
     return candidates[best], equities[best:best + 1]
 
@@ -315,6 +319,7 @@ def td_lambda_match(
     lr: float = 1e-3,
     drand_round_digest: bytes | None = None,
     state_factory=None,
+    infer_fn=None,
 ) -> tuple[int, int]:
     """Play a single self-play match. `agent` learns; `opponent` is frozen.
 
@@ -353,13 +358,17 @@ def td_lambda_match(
                           agent_extras.unsqueeze(0)) if agent.extras is not None else \
                     agent(board_now.unsqueeze(0))
 
-            chosen, _ = pick_move(agent, cands, agent_extras, perspective=0)
+            chosen, _ = pick_move(agent, cands, agent_extras, perspective=0,
+                                   infer_fn=infer_fn)
             with torch.no_grad():
                 board_next = encode_state(chosen, perspective=0)
-                v_next_t = agent(board_next.unsqueeze(0),
-                                 agent_extras.unsqueeze(0)) if agent.extras is not None else \
-                           agent(board_next.unsqueeze(0))
-                v_next = v_next_t.item()
+                if infer_fn is not None:
+                    ext_next = agent_extras.unsqueeze(0).expand(1, -1) if agent.extras is not None else None
+                    v_next = infer_fn(board_next.unsqueeze(0), ext_next).item()
+                elif agent.extras is not None:
+                    v_next = agent(board_next.unsqueeze(0), agent_extras.unsqueeze(0)).item()
+                else:
+                    v_next = agent(board_next.unsqueeze(0)).item()
 
             # Terminal reward is observed when the chosen state is terminal
             # for the agent's side; otherwise we bootstrap from V(s').
