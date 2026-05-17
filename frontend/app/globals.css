@@ -1,5 +1,4 @@
 @import "tailwindcss";
-@import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&display=swap');
 
 :root {
   /* ChainGammon design tokens — dark-only, no light-mode overrides */
@@ -65,7 +64,7 @@
   --cg-space-7: 48px; --cg-space-8: 64px; --cg-space-9: 96px;
 
   /* Type families — next/font variables set by layout.tsx; fall back gracefully */
-  --cg-font-display: 'Instrument Serif', 'Cormorant Garamond', 'Times New Roman', serif;
+  --cg-font-display: var(--font-cg-display, 'Instrument Serif', 'Cormorant Garamond', 'Times New Roman', serif);
   --cg-font-sans:    var(--font-cg-sans, 'Space Grotesk', system-ui, -apple-system, sans-serif);
   --cg-font-mono:    var(--font-cg-mono, 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace);
 }

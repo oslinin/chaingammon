@@ -4,7 +4,7 @@
 // Phase 57: consolidated top navbar — brand, compute-backends, and wallet
 // connect (with ELO + match count from ENS) in a single global header.
 import type { Metadata, Viewport } from "next";
-import { Space_Grotesk, JetBrains_Mono } from "next/font/google";
+import { Space_Grotesk, JetBrains_Mono, Instrument_Serif } from "next/font/google";
 import Link from "next/link";
 import "./globals.css";
 import { ComputeBackendsPill } from "./ComputeBackendsPill";
@@ -23,6 +23,14 @@ const cgMono = JetBrains_Mono({
   variable: "--font-cg-mono",
   subsets: ["latin"],
   weight: ["400", "500", "600"],
+  display: "swap",
+});
+
+const cgDisplay = Instrument_Serif({
+  variable: "--font-cg-display",
+  subsets: ["latin"],
+  weight: "400",
+  style: ["normal", "italic"],
   display: "swap",
 });
 
@@ -47,7 +55,7 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${cgSans.variable} ${cgMono.variable} h-full antialiased`}
+      className={`${cgSans.variable} ${cgMono.variable} ${cgDisplay.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col overflow-x-hidden">
         <Providers>
