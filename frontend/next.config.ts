@@ -9,7 +9,7 @@ const nextConfig: NextConfig = {
   // `accounts` is an optional peer dep of @wagmi/core and @wagmi/connectors that
   // is not published to npm. @wagmi/core/tempo references it but the feature is
   // unused. Without this alias Webpack chokes trying to resolve the import.
-  webpack: (config) => {
+  webpack: (config, { isServer }) => {
     config.resolve.alias = {
       ...config.resolve.alias,
       accounts: false,
@@ -18,6 +18,15 @@ const nextConfig: NextConfig = {
       'porto': false,
       'porto/internal': false
     };
+    if (!isServer) {
+      config.resolve.fallback = {
+        ...config.resolve.fallback,
+        fs: false,
+        'fs/promises': false,
+        child_process: false,
+        path: false,
+      };
+    }
     return config;
   },
 
