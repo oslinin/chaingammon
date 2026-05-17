@@ -34,7 +34,7 @@ if str(_AGENT_DIR) not in sys.path:
 # frontend's ProfileBadge so both layers agree on what is acceptable.
 _LABEL_RE = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$")
 
-from .agent_overlay import Overlay, OverlayError, update_overlay
+from .agent_overlay import Overlay, OverlayError, apply_overlay, update_overlay
 from .agent_wallets import AgentWalletError, AgentWalletManager
 from .chain_client import ChainClient, ChainError
 from .ens_client import EnsClient, EnsError
@@ -47,7 +47,8 @@ from .game_record import (
     build_from_state,
     serialize_record,
 )
-from .game_state import GameState, decode_position_id
+from .game_state import GameState, decode_position_id, decode_match_id
+from .gnubg_client import GnubgClient
 from .og_storage_client import OgStorageError, get_blob, get_kv, put_blob, put_kv
 
 app = FastAPI()
@@ -61,10 +62,632 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+gnubg = GnubgClient()
+
+# In-memory game store
+games: Dict[str, GameState] = {}
+
+# When did each game start (used as the GameRecord's started_at).
+_game_started_at: Dict[str, str] = {}
+
+# Phase K.1: optional team rosters per game_id. Populated by
+# create_game when the request body carries team_a/team_b. Read by
+# /agent-move to compute captain + advisor signals, and by
+# finalize_game to write rosters into the on-chain GameRecord.
+_game_teams: Dict[str, "tuple[Team, Team]"] = {}
+
+# Per-game move history. Each entry is one checker-move commit (after a
+# roll). Roll-only events aren't moves; cube actions are tracked separately
+# (not in v1). Populated by /move and /agent-move; consumed by /finalize.
+_move_history: Dict[str, list[MoveEntry]] = {}
+
+# Per-game pinned agent_id (the iNFT the agent plays as). Set at create_game
+# from `NewGameRequest.agent_id`. Used by /agent-move to look up the agent's
+# experience overlay so the runtime pick is biased by its learned style.
+_game_agent_id: Dict[str, int] = {}
+
+# Per-game cached Overlay. Lazy-loaded on first /agent-move (one 0G Storage
+# fetch per game, not per move). Static within a single game so the agent's
+# play stays consistent even if /finalize on another game updates the
+# overlay concurrently.
+_game_overlays: Dict[str, Overlay] = {}
+
+class NewGameRequest(BaseModel):
+    match_length: int = 3
+    agent_id: int
+    # Phase K.1: optional team rosters for live team-mode play. When
+    # set, the per-turn /agent-move endpoint emits AdvisorSignal[]
+    # from each non-captain teammate and rotates captain per the
+    # team's `captain_rotation` policy. Solo flows leave both None
+    # and hit zero new code paths.
+    team_a: Optional[Team] = None
+    team_b: Optional[Team] = None
+
+class MoveRequest(BaseModel):
+    move: str
+
+def _build_game_state(game_id: str, pos_id: str, match_id: str) -> GameState:
+    # Phase 24 External Player protocol: ask gnubg for its
+    # authoritative structured board (rawboard format) instead of
+    # decoding position_id ourselves. gnubg's `decode_board` runs in a
+    # hermetic subprocess with all auto-behaviour disabled (auto-roll,
+    # auto-game, auto-move) so it returns the exact state at this
+    # position — no extra moves, no perspective flips.
+    decoded = gnubg.decode_board(pos_id, match_id)
+    board = list(decoded["points"])    # 24 signed counts: + = human, - = agent
+    bar = list(decoded["bar"])         # [human_bar, agent_bar]
+    p0_total = sum(c for c in board if c > 0) + bar[0]
+    p1_total = -sum(c for c in board if c < 0) + bar[1]
+    off = [15 - p0_total, 15 - p1_total]
+
+    match_info = decode_match_id(match_id)
+
+    # Determine winner if game is over.
+    winner = None
+    if match_info["game_over"]:
+        winner = 1 if match_info["score"][1] > match_info["score"][0] else 0
+
+    return GameState(
+        game_id=game_id,
+        match_id=match_id,
+        position_id=pos_id,
+        board=board,
+        bar=bar,
+        off=off,
+        turn=match_info["turn"],
+        dice=match_info["dice"],
+        cube=match_info["cube"],
+        cube_owner=match_info["cube_owner"],
+        match_length=match_info["match_length"],
+        score=match_info["score"],
+        game_over=match_info["game_over"],
+        winner=winner
+    )
 
 @app.get("/")
 def read_root():
     return {"message": "Hello from Chaingammon Server"}
+
+@app.post("/games", response_model=GameState)
+def create_game(req: NewGameRequest):
+    res = gnubg.new_match(req.match_length)
+    if not res["position_id"] or not res["match_id"]:
+        raise HTTPException(status_code=500, detail="Failed to initialize gnubg game")
+    
+    game_id = str(uuid.uuid4())
+    state = _build_game_state(game_id, res["position_id"], res["match_id"])
+    games[game_id] = state
+    _game_started_at[game_id] = datetime.now(timezone.utc).isoformat()
+    _move_history[game_id] = []
+    _game_agent_id[game_id] = req.agent_id
+    # Phase K.1: stash team rosters when the game is opened in
+    # team mode. Solo flows leave both None and skip this branch.
+    if req.team_a is not None and req.team_b is not None:
+        _game_teams[game_id] = (req.team_a, req.team_b)
+    return state
+
+
+def _ensure_overlay_loaded(game_id: str) -> Overlay:
+    """Load (and cache) the agent's experience overlay for this game.
+
+    Lazy-loaded so create_game stays fast — first /agent-move pays the
+    one-time 0G KV round-trip, subsequent moves hit the cache. Returns a
+    default zero overlay for cold-start agents or on any fetch error.
+    """
+    if game_id in _game_overlays:
+        return _game_overlays[game_id]
+    agent_id = _game_agent_id.get(game_id, 0)
+    if agent_id == 0:
+        _game_overlays[game_id] = Overlay.default()
+        return _game_overlays[game_id]
+    overlay = _fetch_overlay(agent_id)
+    _game_overlays[game_id] = overlay
+    return overlay
+
+@app.get("/games/{game_id}", response_model=GameState)
+def get_game(game_id: str):
+    if game_id not in games:
+        raise HTTPException(status_code=404, detail="Game not found")
+    return games[game_id]
+
+@app.post("/games/{game_id}/roll", response_model=GameState)
+def roll_dice(game_id: str):
+    if game_id not in games:
+        raise HTTPException(status_code=404, detail="Game not found")
+    game = games[game_id]
+    res = gnubg.roll_dice(game.position_id, game.match_id)
+    if not res["position_id"] or not res["match_id"]:
+        raise HTTPException(status_code=500, detail="gnubg roll failed")
+        
+    state = _build_game_state(game_id, res["position_id"], res["match_id"])
+    games[game_id] = state
+    return state
+
+@app.post("/games/{game_id}/move", response_model=GameState)
+def make_move(game_id: str, req: MoveRequest):
+    if game_id not in games:
+        raise HTTPException(status_code=404, detail="Game not found")
+    game = games[game_id]
+    # Capture pre-move turn + dice for the GameRecord. State.dice gets cleared
+    # after a successful submit, so we have to read it before the gnubg call.
+    turn_before = game.turn
+    dice_before = list(game.dice) if game.dice else []
+    res = gnubg.submit_move(game.position_id, game.match_id, req.move)
+
+    # If the output doesn't contain a new position, the move was likely invalid.
+    if not res["position_id"] or not res["match_id"]:
+        raise HTTPException(status_code=400, detail=f"Invalid move or gnubg error:\n{res['output']}")
+
+    state = _build_game_state(game_id, res["position_id"], res["match_id"])
+    games[game_id] = state
+    _move_history.setdefault(game_id, []).append(
+        MoveEntry(
+            turn=turn_before,
+            dice=dice_before,
+            move=req.move,
+            position_id_after=state.position_id,
+        )
+    )
+    return state
+
+class AgentMoveRequest(BaseModel):
+    """Phase I.2 — optional body for /games/{id}/agent-move.
+
+    `use_0g_inference` flips the move-evaluation path through the 0G
+    compute eval bridge. The trained BackgammonNet today only operates
+    on pip-race states (sample_trainer.py:189 RaceState), so the chosen
+    move is STILL gnubg+overlay even when this flag is on — what
+    changes is that we record one billable inference call to capture
+    real provider + cost metadata for the match-page caption. Phase J
+    swaps in a full-board NN; once that ships and `use_per_agent_nn`
+    is True, the NN's argmax actually drives the move.
+    """
+
+    use_0g_inference: bool = False
+    use_per_agent_nn: bool = False  # reserved for Phase J
+
+
+class AgentMoveResponse(GameState):
+    """Phase I.2 + K.4: extends GameState with optional `inference_meta`
+    (0G cost caption) and `advisor_signals` (team-mode per-turn voices).
+
+    Subclassing GameState (not wrapping it) preserves byte-stable
+    back-compat: every existing /agent-move caller can still read
+    `resp.json()["position_id"]`, `["dice"]`, etc. With `exclude_none=True`
+    serialization, solo / non-0G calls don't surface the new fields.
+    """
+
+    inference_meta: Optional[Dict[str, object]] = None
+    advisor_signals: Optional[List[AdvisorSignal]] = None
+    captain_id: Optional[str] = None
+
+
+@app.post("/games/{game_id}/agent-move", response_model=AgentMoveResponse)
+def agent_move(game_id: str, req: AgentMoveRequest = AgentMoveRequest()):
+    """Phase 9: pick the agent's move using gnubg's full candidate list
+    re-ranked by the agent's experience overlay. Two iNFTs minted on the
+    same gnubg base but with divergent overlays will pick different
+    moves on identical positions — that's what makes the iNFT meaningful.
+
+    Auto-played positions (no legal moves, e.g. dance from the bar) fall
+    back to gnubg's `get_agent_move` which lets gnubg play through.
+
+    Phase I.2: when `req.use_0g_inference` is set, also probe the 0G
+    eval bridge so the per-move billable path is exercised. Returns
+    inference metadata in `inference_meta` (provider, per-call cost,
+    available flag, latency) for the frontend caption. Does NOT change
+    the chosen move yet — see AgentMoveRequest docstring.
+    """
+    if game_id not in games:
+        raise HTTPException(status_code=404, detail="Game not found")
+    game = games[game_id]
+    turn_before = game.turn
+    dice_before = list(game.dice) if game.dice else []
+
+    candidates = gnubg.get_candidate_moves(game.position_id, game.match_id)
+
+    # Phase J.5: when use_per_agent_nn is set AND the agent has a
+    # gnubg_full checkpoint registered, route the move-selection
+    # through the per-agent neural net. Each candidate's successor is
+    # decoded → encoded with gnubg_encoder → scored against
+    # net(features, extras); argmax wins. Latency: ~N gnubg
+    # subprocess calls per move (one submit_move + decode per
+    # candidate), so this branch is opt-in. When the agent doesn't
+    # have a gnubg_full checkpoint, the function falls back to the
+    # gnubg+overlay path with a note explaining why.
+    nn_pick: Optional[Dict[str, object]] = None
+    if req.use_per_agent_nn and candidates:
+        nn_pick = _try_per_agent_nn_pick(
+            game_id=game_id,
+            game=game,
+            candidates=candidates,
+        )
+
+    if not candidates:
+        # No legal candidates — auto-play (bar dance, etc.). Overlay can't
+        # help here since there's nothing to choose between.
+        res = gnubg.get_agent_move(game.position_id, game.match_id)
+        if not res["position_id"] or not res["match_id"]:
+            raise HTTPException(status_code=500, detail="gnubg agent move failed")
+        chosen_move = res.get("best_move") or "(auto-played)"
+    elif nn_pick is not None and nn_pick.get("chosen_res") is not None:
+        # Per-agent NN drove the choice; the helper already submitted
+        # the move and stashed the gnubg result so we don't pay another
+        # subprocess hop here.
+        chosen_move = nn_pick["chosen_move"]
+        res = nn_pick["chosen_res"]
+    else:
+        overlay = _ensure_overlay_loaded(game_id)
+        ranked = apply_overlay(candidates, overlay)
+        chosen_move = ranked[0]["move"]
+        res = gnubg.submit_move(game.position_id, game.match_id, chosen_move)
+        if not res["position_id"] or not res["match_id"]:
+            raise HTTPException(
+                status_code=500,
+                detail=f"gnubg rejected biased pick {chosen_move!r}: {res.get('output', '')}",
+            )
+
+    state = _build_game_state(game_id, res["position_id"], res["match_id"])
+    games[game_id] = state
+
+    # Phase K.4: in team mode, every non-captain teammate publishes one
+    # AdvisorSignal per turn. Captain still picks alone (its own pick
+    # via gnubg+overlay is final for the K MVP); the signals are
+    # archived to MoveEntry.advisor_signals so an audit replayer can
+    # reconstruct what advice was on the table. Vote fusion is a
+    # follow-up phase.
+    advisor_signals, captain_id = _maybe_collect_advisor_signals(
+        game_id, turn_before, candidates
+    )
+
+    _move_history.setdefault(game_id, []).append(
+        MoveEntry(
+            turn=turn_before,
+            dice=dice_before,
+            move=chosen_move,
+            position_id_after=state.position_id,
+            advisor_signals=advisor_signals,
+        )
+    )
+
+    inference_meta = _maybe_probe_0g_inference(req.use_0g_inference)
+
+    return AgentMoveResponse(
+        **state.model_dump(),
+        inference_meta=inference_meta,
+        advisor_signals=advisor_signals,
+        captain_id=captain_id,
+    )
+
+
+@app.get("/games/{game_id}/last-advisor-signals")
+def get_last_advisor_signals(game_id: str):
+    """Phase K.5: returns the most recent move's advisor signals + the
+    captain who decided that turn. The frontend's AdvisorSignalsPanel
+    polls this so it can render the latest signals without driving
+    /agent-move directly. Returns empty arrays when no move has been
+    recorded yet — the live match page uses the client-side ONNX engine
+    for moves, not /agent-move, so this stays empty unless the operator
+    drives moves through the main backend (e.g. team-mode integration
+    tests or a future end-to-end UI cutover)."""
+    history = _move_history.get(game_id, [])
+    if not history:
+        return {"signals": [], "captain_id": None, "move_idx": -1, "team_mode": game_id in _game_teams}
+    last = history[-1]
+    if not last.advisor_signals:
+        return {"signals": [], "captain_id": None, "move_idx": len(history) - 1,
+                "team_mode": game_id in _game_teams}
+    # Resolve captain for this move.
+    if game_id not in _game_teams:
+        captain_id = None
+    else:
+        team_a, team_b = _game_teams[game_id]
+        team = team_a if last.turn == 0 else team_b
+        moves_for_team = sum(1 for m in history if m.turn == last.turn)
+        from .team_mode import captain_member
+        cap_ref = captain_member(team, max(0, moves_for_team - 1))
+        captain_id = (
+            f"agent:{cap_ref.agent_id}" if cap_ref.kind == "agent"
+            else (cap_ref.address or "").lower()
+        )
+    return {
+        "signals": [s.model_dump() for s in last.advisor_signals],
+        "captain_id": captain_id,
+        "move_idx": len(history) - 1,
+        "team_mode": True,
+    }
+
+
+def _maybe_collect_advisor_signals(
+    game_id: str,
+    turn_before: int,
+    candidates: List[Dict],
+) -> "tuple[Optional[List[AdvisorSignal]], Optional[str]]":
+    """K.4 helper: when this game is in team mode, enumerate the
+    non-captain teammates on the side that just moved and produce one
+    AdvisorSignal each. Returns (signals, captain_id) or (None, None)
+    for solo games."""
+    if game_id not in _game_teams:
+        return None, None
+    if not candidates:
+        # Auto-played turn (bar dance) — no candidates means nothing for
+        # advisors to score; caller's record carries None for this turn.
+        return None, None
+
+    team_a, team_b = _game_teams[game_id]
+    # Side 0 = "human" / left team; side 1 = "agent" / right team. The
+    # team whose member just moved is the side equal to `turn_before`.
+    team = team_a if turn_before == 0 else team_b
+
+    # Move count for THIS team only — captain rotation must respect
+    # per-team turn count, not the global game count.
+    moves_for_this_team = sum(
+        1 for m in _move_history.get(game_id, []) if m.turn == turn_before
+    )
+
+    from .team_mode import captain_index, captain_member, non_captain_members
+    from .teammate_advisor import AdvisorScoring, score_advisor_move
+
+    cap_idx = captain_index(team, moves_for_this_team)
+    cap_ref = team.members[cap_idx]
+    captain_id = (
+        f"agent:{cap_ref.agent_id}" if cap_ref.kind == "agent"
+        else (cap_ref.address or "").lower()
+    )
+
+    advisors: List[AdvisorSignal] = []
+    for advisor_ref in non_captain_members(team, moves_for_this_team):
+        scoring = _resolve_advisor_scoring(advisor_ref, candidates, team)
+        if scoring is None:
+            continue
+        sig = score_advisor_move(scoring)
+        if sig is not None:
+            advisors.append(sig)
+    return advisors or None, captain_id
+
+
+def _resolve_advisor_scoring(
+    advisor_ref: PlayerRef,
+    candidates: List[Dict],
+    team: Team,
+) -> "Optional[AdvisorScoring]":
+    """Build the AdvisorScoring inputs for `advisor_ref`. For agent
+    advisors we resolve their on-chain dataHashes[1] → load_profile →
+    OverlayProfile (or ModelProfile when Phase J ships). For human
+    advisors we have no profile to score with, so skip them — the K
+    MVP only scores agent teammates."""
+    from .teammate_advisor import AdvisorScoring
+
+    if advisor_ref.kind != "agent" or advisor_ref.agent_id is None:
+        return None  # human advisors out of scope for K MVP
+
+    aid = advisor_ref.agent_id
+    try:
+        chain = ChainClient.from_env()
+        if chain.agent_registry is None:
+            return None
+        hashes = chain.agent_data_hashes(aid)
+    except ChainError:
+        return None
+
+    weights_hash = hashes[1] if len(hashes) >= 2 else ""
+    if not weights_hash or weights_hash == "0x" + "00" * 32:
+        return AdvisorScoring(
+            teammate=advisor_ref,
+            candidates=candidates,
+            profile_kind="null",
+        )
+
+    from agent_profile import (   # noqa: E402 — agent/ on sys.path at module top
+        ModelProfile,
+        NullProfile,
+        OverlayProfile,
+        load_profile,
+    )
+    try:
+        profile = load_profile(weights_hash, fetch=get_blob)
+    except Exception:
+        return AdvisorScoring(
+            teammate=advisor_ref,
+            candidates=candidates,
+            profile_kind="null",
+        )
+
+    if isinstance(profile, OverlayProfile):
+        # Reconstruct an Overlay from the profile's metric values for
+        # apply_overlay's signature. Start with an all-zero default
+        # (carries the canonical CATEGORIES list), then merge the
+        # profile's known values. Unknown categories from a future
+        # profile version are dropped silently.
+        from .agent_overlay import CATEGORIES as _CATS, CURRENT_OVERLAY_VERSION
+        raw_values = dict(profile.metrics().get("values", {}))
+        values = {c: float(raw_values.get(c, 0.0)) for c in _CATS}
+        overlay = Overlay(
+            version=CURRENT_OVERLAY_VERSION,
+            values=values,
+            match_count=int(profile.metrics().get("match_count", 0)),
+        )
+        return AdvisorScoring(
+            teammate=advisor_ref,
+            candidates=candidates,
+            overlay=overlay,
+            profile_kind="overlay",
+        )
+    if isinstance(profile, ModelProfile):
+        encoder = str(profile.metrics().get("feature_encoder", "race"))
+        return AdvisorScoring(
+            teammate=advisor_ref,
+            candidates=candidates,
+            profile_kind="model",
+            model_encoder=encoder,
+        )
+    return AdvisorScoring(
+        teammate=advisor_ref,
+        candidates=candidates,
+        profile_kind="null",
+    )
+
+
+def _try_per_agent_nn_pick(
+    *, game_id: str, game: GameState, candidates: List[Dict],
+) -> Optional[Dict[str, object]]:
+    """Phase J.5: if the agent attached to this game has a
+    `gnubg_full` ModelProfile, score every candidate's successor
+    position through `net(features, extras)` and pick argmax. Returns
+    a dict with the chosen move + gnubg's submit response when the NN
+    drove the pick, or None to signal the caller should fall back to
+    the gnubg+overlay path.
+
+    Failure modes that fall through silently to overlay:
+      - no agent_id stashed for this game
+      - chain client unavailable (no AGENT_REGISTRY_ADDRESS)
+      - profile is null / overlay / race-only
+      - encoder import fails (agent/ not on path)
+      - any candidate score path raises
+
+    Each candidate adds one gnubg.submit_move call; for a typical
+    backgammon position with 5-10 candidates that's ~500-1000ms of
+    subprocess time per /agent-move call.
+    """
+    agent_id = _game_agent_id.get(game_id)
+    if not agent_id:
+        return None
+    try:
+        chain = ChainClient.from_env()
+        if chain.agent_registry is None:
+            return None
+        hashes = chain.agent_data_hashes(agent_id)
+    except ChainError:
+        return None
+    weights_hash = hashes[1] if len(hashes) >= 2 else ""
+    if not weights_hash or weights_hash == "0x" + "00" * 32:
+        return None
+
+    try:
+        from agent_profile import ModelProfile, load_profile  # noqa: E402
+    except ImportError:
+        return None
+
+    try:
+        profile = load_profile(weights_hash, fetch=get_blob)
+    except Exception:
+        return None
+
+    if not isinstance(profile, ModelProfile) or profile.net is None:
+        return None
+    encoder_tag = str(profile.metrics().get("feature_encoder", "race"))
+    if encoder_tag != "gnubg_full":
+        # Race-only weights can't score full-board positions.
+        return None
+
+    # Score each candidate. We need each candidate's successor
+    # position, which means submit_move + decode_board per candidate.
+    # The chosen one's gnubg result is reused to advance the game,
+    # avoiding a second submit pass.
+    try:
+        import torch
+        from gnubg_encoder import encode_full_board  # noqa: E402
+        from gnubg_state import decode_position_id  # noqa: E402
+    except ImportError:
+        return None
+
+    extras = torch.zeros(profile.net.extras.in_features) \
+        if profile.net.extras is not None else None
+
+    best_idx = -1
+    best_eq = -float("inf")
+    best_move = ""
+    best_res = None
+    perspective = 1 - game.turn   # the agent just played for `game.turn`;
+                                  # successors are scored from the side that
+                                  # would move next, but for picking the
+                                  # current player's best move we score from
+                                  # game.turn's perspective. After
+                                  # submit_move, gnubg flips the turn
+                                  # automatically.
+    for idx, cand in enumerate(candidates):
+        move_str = cand.get("move", "")
+        if not move_str:
+            continue
+        try:
+            res = gnubg.submit_move(game.position_id, game.match_id, move_str)
+        except Exception:
+            continue
+        succ_pos = res.get("position_id")
+        if not succ_pos:
+            continue
+        try:
+            board, bar, off = decode_position_id(succ_pos)
+            feat = encode_full_board(board, bar, off,
+                                     perspective=game.turn).unsqueeze(0)
+            with torch.no_grad():
+                if extras is not None:
+                    eq = profile.net(feat, extras.unsqueeze(0)).item()
+                else:
+                    eq = profile.net(feat).item()
+        except Exception:
+            continue
+        if eq > best_eq:
+            best_eq = eq
+            best_idx = idx
+            best_move = move_str
+            best_res = res
+
+    if best_idx < 0 or best_res is None:
+        return None
+    return {
+        "chosen_move": best_move,
+        "chosen_idx": best_idx,
+        "chosen_eq": best_eq,
+        "chosen_res": best_res,
+    }
+
+
+def _maybe_probe_0g_inference(use_0g_inference: bool) -> Optional[Dict[str, object]]:
+    """Phase I.2: when 0G inference is on, call the eval bridge once
+    so the bounty meter ticks per move. Returns metadata the frontend
+    renders as 'Last move: 0G compute · {latency_ms} ms · {gas_og} OG'.
+    `available: false` is honest — the bridge couldn't find a
+    backgammon-net provider; we still surface what we know so the
+    caption disambiguates 'wire-decorated-but-unprovisioned' from
+    'real 0G traffic'."""
+    if not use_0g_inference:
+        return None
+    import time as _time
+    try:
+        from og_compute_eval_client import estimate as _og_estimate
+    except ImportError:
+        return {"available": False, "note": "og-compute-bridge not importable"}
+    t0 = _time.time()
+    try:
+        r = _og_estimate(1)
+    except Exception as exc:
+        return {
+            "available": False,
+            "note": f"OG_EVAL_UNAVAILABLE: {exc}",
+            "latency_ms": int((_time.time() - t0) * 1000),
+        }
+    return {
+        "available": bool(r.available),
+        "provider": r.provider_address or None,
+        "per_inference_og": r.per_inference_og,
+        "gas_og": r.per_inference_og,
+        "latency_ms": int((_time.time() - t0) * 1000),
+        "note": r.note or "",
+    }
+
+@app.post("/games/{game_id}/resign", response_model=GameState)
+def resign(game_id: str):
+    if game_id not in games:
+        raise HTTPException(status_code=404, detail="Game not found")
+    game = games[game_id]
+    res = gnubg.resign(game.position_id, game.match_id)
+    if not res["position_id"] or not res["match_id"]:
+        raise HTTPException(status_code=500, detail="gnubg resign failed")
+
+    state = _build_game_state(game_id, res["position_id"], res["match_id"])
+    games[game_id] = state
+    return state
 
 
 # ---------------------------------------------------------------------------
@@ -331,9 +954,117 @@ def _update_agent_overlay_kv(
         overlay_updates.append({"agent_id": agent_id, "error": str(e)})
 
 
+@app.post("/games/{game_id}/finalize", response_model=FinalizeResponse)
+def finalize_game(game_id: str, req: FinalizeRequest):
+    """Wrap up a finished game: upload the GameRecord to 0G Storage, then
+    call MatchRegistry.recordMatch with the resulting Merkle root hash so
+    the on-chain match is cryptographically tied to the off-chain archive.
+
+    v1 calls recordMatch directly via web3.py; Phase 18 will route this
+    through a KeeperHub workflow instead.
+    """
+    if game_id not in games:
+        raise HTTPException(status_code=404, detail="Game not found")
+    state = games[game_id]
+    if not state.game_over:
+        raise HTTPException(status_code=400, detail="Game has not ended yet")
+
+    # Build the GameRecord. Move history isn't tracked in v1 — just the final
+    # position and the gnubg-native match id so any tool with gnubg installed
+    # can reconstruct the end state bit-perfectly.
+    winner = (
+        PlayerRef(kind="human", address=req.winner_human_address)
+        if req.winner_agent_id == 0
+        else PlayerRef(kind="agent", agent_id=req.winner_agent_id)
+    )
+    loser = (
+        PlayerRef(kind="human", address=req.loser_human_address)
+        if req.loser_agent_id == 0
+        else PlayerRef(kind="agent", agent_id=req.loser_agent_id)
+    )
+    # Phase K.6: thread team rosters through to the GameRecord when
+    # the game was opened in team mode. Solo games leave both None.
+    team_a, team_b = _game_teams.get(game_id, (None, None))
+    record = build_from_state(
+        state,
+        winner=winner,
+        loser=loser,
+        moves=_move_history.get(game_id, []),
+        started_at=_game_started_at.get(game_id),
+        ended_at=datetime.now(timezone.utc).isoformat(),
+        team_a=team_a,
+        team_b=team_b,
+    )
+    payload = serialize_record(record)
+
+    try:
+        upload = put_blob(payload)
+    except OgStorageError as e:
+        raise HTTPException(status_code=502, detail=f"0G Storage upload failed: {e}") from e
+
+    try:
+        chain = ChainClient.from_env()
+    except ChainError as e:
+        raise HTTPException(status_code=500, detail=f"chain client misconfigured: {e}") from e
+
+    try:
+        finalized = chain.record_match(
+            winner_agent_id=req.winner_agent_id,
+            winner_human=req.winner_human_address,
+            loser_agent_id=req.loser_agent_id,
+            loser_human=req.loser_human_address,
+            match_length=int(state.match_length),
+            game_record_hash=upload.root_hash,
+        )
+    except ChainError as e:
+        raise HTTPException(status_code=502, detail=f"recordMatch failed: {e}") from e
+
+    # Per-game overlay updates — write each agent's updated style overlay
+    # to 0G KV so their playing style evolves after every real match.
+    # KV writes are non-fatal: failure is logged and surfaces in the
+    # response but does not raise an HTTP exception (the match is already
+    # on-chain). Human sides (agent_id == 0) are skipped.
+    all_moves = _move_history.get(game_id, [])
+    overlay_updates: list[dict] = []
+    _update_agent_overlay_kv(req.winner_agent_id, True, all_moves, overlay_updates)
+    _update_agent_overlay_kv(req.loser_agent_id, False, all_moves, overlay_updates)
+
+    # Phase 11 — push reputation text records to each labelled side's
+    # subname. Failure here is non-fatal: ENS reachability shouldn't block
+    # finalize, since the match is already on-chain. Errors are surfaced
+    # in the response so the frontend can retry.
+    ens_updates: list[dict] = []
+    sides = [
+        ("winner", req.winner_label, req.winner_agent_id, req.winner_human_address),
+        ("loser", req.loser_label, req.loser_agent_id, req.loser_human_address),
+    ]
+    for side_name, label, agent_id, human_addr in sides:
+        if not label:
+            continue
+        try:
+            ens_updates.append(
+                _push_ens_updates(
+                    chain=chain,
+                    label=label,
+                    agent_id=agent_id,
+                    human_address=human_addr,
+                    match_id=finalized.match_id,
+                )
+            )
+        except (EnsError, ChainError) as e:
+            ens_updates.append({"label": label, "side": side_name, "error": str(e)})
+
+    return FinalizeResponse(
+        match_id=finalized.match_id,
+        tx_hash=finalized.tx_hash,
+        root_hash=upload.root_hash,
+        overlay_updates=overlay_updates,
+        ens_updates=ens_updates,
+    )
+
 
 # ---------------------------------------------------------------------------
-# KeeperHub integration: /finalize-direct, /settle (relayer)
+# KeeperHub integration: /finalize-direct, /settle (relayer), /replay
 #
 # The match page drives gameplay through the client-side ONNX engine without
 # creating a game at this server. These three endpoints close the settlement
@@ -890,6 +1621,75 @@ def settle_endpoint(req: SettleRequest):
     return {"tx_hash": finalized.tx_hash, "match_id": finalized.match_id}
 
 
+class ReplayRequest(BaseModel):
+    """Replay validation request from KeeperHub's fetch-and-replay step.
+
+    KeeperHub POSTs this to GNUBG_REPLAY_URL/replay after fetching the
+    archive_uri from the on-game-end webhook. The server fetches the
+    GameRecord, replays every move through gnubg, and asserts the final
+    position matches the recorded value.
+    """
+
+    archive_uri: str
+    match_id: str = ""
+    storage_indexer: str = ""
+
+
+@app.post("/replay")
+def replay_endpoint(req: ReplayRequest):
+    """Fetch a GameRecord from 0G Storage and validate every move through gnubg.
+
+    Returns {valid: true, winner: address-or-agent-id} on success, or
+    {valid: false, error: message} on move validation failure. Used by the
+    KeeperHub workflow's fetch-and-replay step (step 5 of match-settle.yaml).
+    """
+    try:
+        blob = get_blob(req.archive_uri)
+    except OgStorageError as e:
+        raise HTTPException(status_code=502, detail=f"0G Storage fetch failed: {e}") from e
+
+    try:
+        record_data = json.loads(blob)
+    except json.JSONDecodeError as e:
+        raise HTTPException(status_code=422, detail=f"Invalid GameRecord JSON: {e}") from e
+
+    # Replay each recorded move through gnubg and verify the final position.
+    try:
+        res = gnubg.new_match(int(record_data.get("match_length", 1)))
+        pos = res["position_id"]
+        match = res["match_id"]
+        for i, move in enumerate(record_data.get("moves", [])):
+            m_str = move.get("move", "")
+            if not m_str or m_str == "(auto-played)":
+                continue
+            out = gnubg.submit_move(pos, match, m_str)
+            new_pos = out.get("position_id")
+            if not new_pos:
+                return {
+                    "valid": False,
+                    "error": f"gnubg rejected move #{i} ({m_str!r}): {out.get('output', '')[:120]}",
+                }
+            pos = new_pos
+            match = out.get("match_id", match)
+
+        expected = record_data.get("final_position_id")
+        if expected and pos != expected:
+            return {
+                "valid": False,
+                "error": f"final position mismatch: replayed {pos!r}, recorded {expected!r}",
+            }
+    except Exception as e:
+        return {"valid": False, "error": f"replay error: {e}"}
+
+    winner_ref = record_data.get("winner", {})
+    if winner_ref.get("kind") == "agent":
+        winner = f"agent:{winner_ref.get('agent_id')}"
+    else:
+        winner = winner_ref.get("address", "unknown")
+
+    return {"valid": True, "winner": winner}
+
+
 # KeeperHub YAML helper endpoints — consumed by match-settle.yaml steps 2 and 3.
 #
 # GET  /games/{matchId}/dice          → per-turn-drand step: return a fresh
@@ -1057,6 +1857,7 @@ def keeper_workflow_run(match_id: str, stake_wei: int = 0):
         chain=chain,
         og_get_blob=get_blob,
         og_put_blob=put_blob,
+        gnubg=gnubg,
         ens=ens,
         drand_check=_try_drand_check,
         stake_wei=stake_wei,

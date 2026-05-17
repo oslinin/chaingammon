@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 96" fill="none" font-family="'Instrument Serif', 'Times New Roman', serif">
+  <defs>
+    <linearGradient id="cgb-brass" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#E3B779"/>
+      <stop offset="55%" stop-color="#C99B5C"/>
+      <stop offset="100%" stop-color="#8B6A3A"/>
+    </linearGradient>
+    <linearGradient id="cgb-warm" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#E3B779"/>
+      <stop offset="100%" stop-color="#A87B3D"/>
+    </linearGradient>
+    <linearGradient id="cgb-bone" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#F2EBE0"/>
+      <stop offset="100%" stop-color="#B5A998"/>
+    </linearGradient>
+    <radialGradient id="cgb-disc" cx="50%" cy="38%" r="65%">
+      <stop offset="0%" stop-color="#211A14"/>
+      <stop offset="100%" stop-color="#0B0908"/>
+    </radialGradient>
+  </defs>
+  <g transform="translate(16 16)">
+    <circle cx="32" cy="32" r="30" fill="url(#cgb-brass)"/>
+    <circle cx="32" cy="32" r="26" fill="url(#cgb-disc)"/>
+    <circle cx="32" cy="32" r="25.5" fill="none" stroke="#3F3326" stroke-width="0.5"/>
+    <path d="M 17 11 L 47 11 L 32 32 Z" fill="url(#cgb-warm)"/>
+    <path d="M 17 53 L 47 53 L 32 32 Z" fill="url(#cgb-bone)"/>
+    <circle cx="32" cy="32" r="2.6" fill="#0B0908"/>
+    <circle cx="32" cy="32" r="1.2" fill="#C99B5C"/>
+  </g>
+  <text x="104" y="62" font-size="48" letter-spacing="-1" fill="#B5A998" font-style="italic">Chain</text>
+  <text x="222" y="62" font-size="48" fill="#C99B5C">·</text>
+  <text x="240" y="62" font-size="48" letter-spacing="-1" fill="#F2EBE0">Gammon</text>
+</svg>

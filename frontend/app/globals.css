@@ -19,14 +19,14 @@
 
   /* Text */
   --cg-fg-1: #F2EBE0;
-  --cg-fg-2: #B5A998;
-  --cg-fg-3: #7A6F60;
-  --cg-fg-4: #4A4339;
+  --cg-fg-2: #C2B6A3;
+  --cg-fg-3: #A99E8C;
+  --cg-fg-4: #6F6557;
 
   /* Brass accent */
-  --cg-brass:     #C99B5C;
-  --cg-brass-hi:  #E3B779;
-  --cg-brass-lo:  #8B6A3A;
+  --cg-brass:     #E8C07E;
+  --cg-brass-hi:  #F4D49A;
+  --cg-brass-lo:  #B58A4D;
   --cg-brass-ink: #1A1208;
 
   /* Player sides */
@@ -50,8 +50,8 @@
   --cg-shadow-coin: 0 1px 0 0 rgba(255,236,196,0.18) inset,
                     0 -1px 0 0 rgba(0,0,0,0.5) inset,
                     0 6px 18px -4px rgba(0,0,0,0.65);
-  --cg-glow-brass:  0 0 0 1px rgba(201,155,92,0.25),
-                    0 0 24px -4px rgba(227,183,121,0.35);
+  --cg-glow-brass:  0 0 0 1px rgba(232,192,126,0.25),
+                    0 0 24px -4px rgba(244,212,154,0.35);
 
   /* Radii */
   --cg-radius-sm:  4px;
