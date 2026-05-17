@@ -41,6 +41,15 @@ _EVAL_SCRIPT = _BRIDGE_DIR / "src" / "eval.mjs"
 
 _REQUIRED_ENV = ("OG_STORAGE_RPC", "OG_STORAGE_PRIVATE_KEY")
 
+# When OG_EQUITY_URL is set (e.g. http://136.112.73.124), evaluate() and
+# estimate() call that server's /equity endpoint directly, bypassing the
+# 0G broker entirely. Use this when the provider is not yet registered
+# on-chain (addOrUpdateService requires a 100 OG ledger stake on testnet).
+_OG_EQUITY_URL = os.environ.get("OG_EQUITY_URL", "").rstrip("/")
+
+# Per-inference pricing shown in the gas estimate when running in direct mode.
+_DIRECT_PRICE_OG = float(os.environ.get("OG_COMPUTE_PER_INFERENCE_OG", "0.00001"))
+
 
 class OgEvalError(RuntimeError):
     """Wraps any error from the og-compute-bridge eval subprocess."""
@@ -78,6 +87,36 @@ def _check_env() -> None:
     missing = [k for k in _REQUIRED_ENV if not os.environ.get(k)]
     if missing:
         raise OgEvalError(f"Missing env vars for 0G Compute eval: {missing}")
+
+
+def _direct_evaluate(
+    features: Sequence[float],
+    extras: Sequence[float],
+    *,
+    timeout: float,
+) -> EvalResult:
+    """POST features+extras to OG_EQUITY_URL/equity, bypassing the broker."""
+    import urllib.request
+    body = json.dumps({
+        "features": [float(x) for x in features],
+        "extras": [float(x) for x in extras],
+    }).encode()
+    req = urllib.request.Request(
+        f"{_OG_EQUITY_URL}/equity",
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            out = json.loads(resp.read())
+    except Exception as e:
+        raise OgEvalError(f"Direct equity call to {_OG_EQUITY_URL} failed: {e}") from e
+    return EvalResult(
+        equity=float(out["equity"]),
+        model=str(out.get("model", "backgammon-net-v1")),
+        provider_address=_OG_EQUITY_URL,
+    )
 
 
 def _run_bridge(payload: dict, *, timeout: float) -> dict:
@@ -125,14 +164,16 @@ def evaluate(
 ) -> EvalResult:
     """Run one equity-net forward pass on 0G compute.
 
-    @param features  198-element gnubg board encoding (list / np.ndarray /
-                     torch.Tensor — anything iterable to floats).
+    When OG_EQUITY_URL is set, calls that server directly (no broker, no
+    on-chain settlement). Otherwise routes through the 0G serving network.
+
+    @param features  198-element gnubg board encoding.
     @param extras    16-element career-context vector.
-    @param timeout   Subprocess wall-clock cap (seconds). First call on a
-                     fresh wallet may take ~30s for ledger bootstrap.
     @raises OgEvalUnavailable when no backgammon-net provider is registered.
-    @raises OgEvalError       on any other bridge failure.
+    @raises OgEvalError       on any other failure.
     """
+    if _OG_EQUITY_URL:
+        return _direct_evaluate(features, extras, timeout=timeout)
     payload = {
         "action": "evaluate",
         "features": [float(x) for x in features],
@@ -152,11 +193,21 @@ def evaluate(
 def estimate(count: int, *, timeout: float = 15.0) -> EstimateResult:
     """Compute pricing for `count` inferences on 0G compute.
 
-    Always returns a result; `available=False` when no provider is found
-    so the frontend can render a placeholder cost row + disclose state.
+    When OG_EQUITY_URL is set, returns local pricing with available=True.
+    Otherwise routes through the 0G serving network; available=False when
+    no provider is found.
     """
     if count <= 0:
         raise ValueError("count must be > 0")
+    if _OG_EQUITY_URL:
+        total = _DIRECT_PRICE_OG * count
+        return EstimateResult(
+            per_inference_og=_DIRECT_PRICE_OG,
+            total_og=total,
+            provider_address=_OG_EQUITY_URL,
+            available=True,
+            note=f"Direct provider at {_OG_EQUITY_URL} (on-chain registration pending)",
+        )
     out = _run_bridge({"action": "estimate", "count": int(count)}, timeout=timeout)
     return EstimateResult(
         per_inference_og=float(out.get("per_inference_og", 0.0)),
