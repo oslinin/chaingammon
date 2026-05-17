@@ -359,11 +359,18 @@ Fund the deployer wallet with Sepolia ETH from any public faucet.
 # 1. deploy + verify settlement contracts on Sepolia (one shot)
 ./scripts/bootstrap-network.sh
 
-# 2. start the FastAPI backend (terminal A, from repo root)
+# 2. start the frontend (from repo root)
+pnpm frontend:dev                # Next.js on :3000
+```
+
+The FastAPI backend (`server/`) runs on a persistent VPS at `http://136.112.73.124` and is already live — the frontend's `NEXT_PUBLIC_SERVER_URL` points there by default. To run a local backend instead, override the variable and start the server:
+
+```bash
+# terminal A — backend
 cd server && uv run uvicorn app.main:app --host 0.0.0.0 --port 8000
 
-# 3. start the frontend (terminal B, from repo root)
-pnpm frontend:dev                # Next.js on :3000
+# frontend/.env.local — point frontend at local server
+NEXT_PUBLIC_SERVER_URL=http://localhost:8000
 ```
 
 Or use the VS Code Tasks workflow (`.vscode/tasks.json`) — `Tasks: Run Task` → `Localhost: launch all` fires hardhat node → deploy contracts → FastAPI server → Next.js frontend in sequence, each in its own dedicated terminal tab.

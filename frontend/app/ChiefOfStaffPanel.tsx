@@ -69,7 +69,7 @@ interface Props {
 const TAG_COLORS: Record<string, { bg: string; text: string; border: string }> = {
   Safe:       { bg: "rgba(125,155,74,0.12)",  text: "#7D9B4A", border: "rgba(125,155,74,0.35)" },
   Aggressive: { bg: "rgba(208,138,60,0.12)",  text: "#D08A3C", border: "rgba(208,138,60,0.35)" },
-  Priming:    { bg: "rgba(201,155,92,0.12)",  text: "#E3B779", border: "rgba(201,155,92,0.35)" },
+  Priming:    { bg: "rgba(232,192,126,0.12)",  text: "#F4D49A", border: "rgba(232,192,126,0.35)" },
   Anchor:     { bg: "rgba(107,138,166,0.12)", text: "#6B8AA6", border: "rgba(107,138,166,0.35)" },
   Blitz:      { bg: "rgba(192,74,59,0.12)",   text: "#C04A3B", border: "rgba(192,74,59,0.35)" },
 };
