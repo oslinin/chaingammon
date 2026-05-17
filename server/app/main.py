@@ -1539,3 +1539,69 @@ def _truncate_address(addr: str) -> str:
     if not addr or len(addr) < 10:
         return addr
     return f"{addr[:6]}…{addr[-4:]}"
+
+
+# ─── 0G Inference provider endpoint ────────────────────────────────────────
+#
+# Registers this server as a backgammon-net-v1 provider on the 0G serving
+# network. Clients discover the service via broker.inference.listService()
+# and call POST /equity for each forward pass during training.
+#
+# The net is loaded once at process startup from the agent's shared base
+# weights (core_seed 0xBACC — the "gnubg seed" used throughout the repo).
+# Per-agent extras heads are not used here; the endpoint accepts any extras
+# vector and blends it through the net as-is.
+
+_equity_net = None
+_equity_net_lock = None
+
+
+def _init_equity_net() -> None:
+    """Load BackgammonNet at startup. Silently skips if torch is unavailable."""
+    import threading
+    global _equity_net, _equity_net_lock
+    _equity_net_lock = threading.Lock()
+    try:
+        _agent_dir = Path(__file__).resolve().parents[2] / "agent"
+        if _agent_dir.exists() and str(_agent_dir) not in sys.path:
+            sys.path.insert(0, str(_agent_dir))
+        import torch
+        from sample_trainer import BackgammonNet, DEFAULT_EXTRAS_DIM
+        net = BackgammonNet(core_seed=0xBACC, extras_dim=DEFAULT_EXTRAS_DIM, extras_seed=0)
+        net.eval()
+        _equity_net = net
+    except Exception as _e:
+        print(f"[equity] Could not load BackgammonNet: {_e}; /equity endpoint will return 503")
+
+
+_init_equity_net()
+
+
+class EquityRequest(BaseModel):
+    features: List[float]
+    extras: List[float] = []
+
+
+@app.post("/equity")
+def post_equity(req: EquityRequest):
+    """Single forward pass of the value net.
+
+    Called by 0G compute clients (via the serving broker) during training
+    when use_0g_inference=True. Returns equity in [0, 1] from the
+    perspective of the player whose features are provided.
+
+    Request:  {"features": [198 floats], "extras": [16 floats]}
+    Response: {"equity": float, "model": "backgammon-net-v1"}
+    """
+    if _equity_net is None:
+        raise HTTPException(status_code=503, detail="Equity net not loaded")
+    try:
+        import torch
+        with _equity_net_lock:
+            feat = torch.tensor(req.features, dtype=torch.float32).unsqueeze(0)
+            ext = torch.tensor(req.extras, dtype=torch.float32).unsqueeze(0) if req.extras else None
+            with torch.no_grad():
+                equity = _equity_net(feat, ext).item()
+        return {"equity": equity, "model": "backgammon-net-v1"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

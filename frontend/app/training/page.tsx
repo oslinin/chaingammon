@@ -299,7 +299,7 @@ export default function TrainingPage() {
     queryKey: ["training-status"],
     refetchInterval: polling ? 1000 : false,
     queryFn: async (): Promise<LocalStatusResponse> => {
-      const r = await fetch(`${SERVER}/training/status`);
+      const r = await fetch(`${activeTarget}/training/status`);
       if (!r.ok) throw new Error(`/training/status → ${r.status}`);
       return r.json();
     },
@@ -340,8 +340,8 @@ export default function TrainingPage() {
   }, [polling, statusQuery.data]);
 
   const startLocalMutation = useMutation({
-    mutationFn: async () => {
-      const r = await fetch(`${SERVER}/training/start`, {
+    mutationFn: async (target: string = SERVER) => {
+      const r = await fetch(`${target}/training/start`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -386,9 +386,11 @@ export default function TrainingPage() {
     },
   });
 
+  const [activeTarget, setActiveTarget] = useState(SERVER);
+
   const abortLocalMutation = useMutation({
     mutationFn: async () => {
-      const r = await fetch(`${SERVER}/training/abort`, { method: "POST" });
+      const r = await fetch(`${activeTarget}/training/abort`, { method: "POST" });
       if (!r.ok) throw new Error(`/training/abort → ${r.status}`);
       return r.json();
     },
@@ -487,15 +489,22 @@ export default function TrainingPage() {
 
   const handlePlay = () => {
     if (trainingMode === "local") {
-      startLocalMutation.mutate();
+      startLocalMutation.mutate(SERVER);
     } else {
       void handleOgPlay();
     }
   };
 
   const handleStartServer = () => {
+    setActiveTarget(SERVER);
     setBackend("training", "local");
-    startLocalMutation.mutate();
+    startLocalMutation.mutate(SERVER);
+  };
+
+  const handleStartLocal = () => {
+    setActiveTarget("http://localhost:8000");
+    setBackend("training", "local");
+    startLocalMutation.mutate("http://localhost:8000");
   };
 
   const localIsRunning =
@@ -614,6 +623,26 @@ export default function TrainingPage() {
             : localIsRunning
             ? "Running on server…"
             : "Start (server)"}
+        </button>
+
+        <button
+          type="button"
+          disabled={!canPlay}
+          onClick={handleStartLocal}
+          style={{
+            background: "var(--cg-bg-2)",
+            color: "var(--cg-fg-2)",
+            border: "1px solid var(--cg-line-2)",
+            borderRadius: "var(--cg-radius)",
+            padding: "8px 18px",
+            fontSize: 14,
+            fontWeight: 600,
+            fontFamily: "var(--cg-font-sans)",
+            cursor: canPlay ? "pointer" : "not-allowed",
+            opacity: canPlay ? 1 : 0.4,
+          }}
+        >
+          {localIsRunning ? "Running…" : "Start (local)"}
         </button>
 
         {canAbort && (

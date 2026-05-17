@@ -156,8 +156,12 @@ def start_job(
     if upload_to_0g and checkpoint_dir is None:
         checkpoint_dir = Path(tempfile.mkdtemp(prefix="chaingammon-training-ckpt-"))
 
+    # Use the agent venv Python so the trainer's deps (torch, dotenv, etc.)
+    # are available without requiring uv in the subprocess's PATH.
+    _agent_python = _AGENT_DIR / ".venv" / "bin" / "python"
+    _trainer_exe = str(_agent_python) if _agent_python.exists() else sys.executable
     cmd = [
-        sys.executable,
+        _trainer_exe,
         str(_TRAINER),
         "--agent-ids", ",".join(str(a) for a in agent_ids),
         "--epochs", str(epochs),
