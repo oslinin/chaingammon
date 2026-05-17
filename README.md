@@ -375,6 +375,32 @@ NEXT_PUBLIC_SERVER_URL=http://localhost:8000
 
 Or use the VS Code Tasks workflow (`.vscode/tasks.json`) — `Tasks: Run Task` → `Localhost: launch all` fires hardhat node → deploy contracts → FastAPI server → Next.js frontend in sequence, each in its own dedicated terminal tab.
 
+### Managing the VPS backend
+
+The production FastAPI server runs under systemd on `136.112.73.124` as the `chaingammon-server` unit. SSH in, then:
+
+```bash
+sudo systemctl start   chaingammon-server   # start
+sudo systemctl stop    chaingammon-server   # stop
+sudo systemctl restart chaingammon-server   # restart (e.g. after a code sync)
+sudo systemctl status  chaingammon-server   # current state + last few log lines
+
+journalctl -u chaingammon-server -f         # tail live logs
+journalctl -u chaingammon-server -n 100     # last 100 lines
+```
+
+To deploy a local change:
+
+```bash
+# from repo root on your machine
+rsync -av --exclude='__pycache__' --exclude='.venv' \
+    server/ oleg@136.112.73.124:/home/oleg/chaingammon-server/
+
+ssh oleg@136.112.73.124 "sudo systemctl restart chaingammon-server"
+```
+
+The server takes ~15 s to start (torch loads at import time). `journalctl -f` shows `Application startup complete` when it's ready. Env overrides live in `/home/oleg/chaingammon-server/.env` on the VPS; the service file at `/etc/systemd/system/chaingammon-server.service` sources it at launch.
+
 ### Local dev with Hardhat
 
 ```bash
