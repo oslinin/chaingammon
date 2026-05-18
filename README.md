@@ -323,7 +323,19 @@ Full feedback document: [docs/keeperhub-feedback.md](docs/keeperhub-feedback.md)
 
 ## Live training visualisation
 
-Round-robin training runs spawned from the `/training` page are observable in real time via an embedded TensorBoard panel.
+Round-robin and challenge marketplace training runs spawned from the `/training` page are observable in real time via an embedded TensorBoard panel.
+
+The challenge marketplace can be run locally via:
+
+```bash
+cd agent && uv run python challenge_trainer.py \
+    --agent-ids 1,2,3,4 \
+    --epochs 20 \
+    --starting-bankroll 100000 \
+    --status-file /tmp/challenge_run.jsonl \
+    --checkpoint-dir /tmp/ckpt \
+    --upload-to-0g
+```
 
 - **Trainer side.** `agent/round_robin_trainer.py` opens a `SummaryWriter` when `--logdir` is set and emits scalars at three cadences: per-ply (`train/td_error`, `train/v_now`, `train/v_next`, `train/grad_norm`, `train/eligibility_norm`), per-match (`match/plies`, `win/agent_a_vs_b`, `win_rate/agent_<id>` rolling), per-epoch (`weights/core_l2_agent_<id>`, `weights/extras_l2_agent_<id>`).
 - **Service side.** `server/app/training_service.py` `mkdtemp`s a fresh logdir per run, passes `--logdir` to the trainer, and spawns `tensorboard --logdir <path> --host localhost --port 6006 --bind_all` as a sidecar. If the binary isn't on PATH or the port is in use, launch fails silently and `/training/status` returns `tensorboard_url: null`.
