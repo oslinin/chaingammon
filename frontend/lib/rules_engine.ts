@@ -331,6 +331,12 @@ export function generateLegalMoves(board: Board, side: number, dice: [number, nu
 
   // Rule 1: Must play as many dice as possible.
   const maxLen = Math.max(...sequences.map(s => s.length));
+  // Bar-dance / fully blocked: the only "sequence" is the empty one
+  // (backtrack records [] when getSingleMoves returns []). Returning
+  // [""] from here lets callers like hasLegalMoves and the advisor
+  // mistake "no moves" for "one no-op move" — the human ends up stuck
+  // because the auto-skip path never fires.
+  if (maxLen === 0) return [];
   let validSeqs = sequences.filter(s => s.length === maxLen);
 
   // Rule 2: If we can only play one die of a non-double roll, we must play the larger one if possible.
