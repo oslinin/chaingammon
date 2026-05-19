@@ -316,7 +316,7 @@ export default function AgentClient() {
     >
       <header
         data-testid="agent-info-header"
-        className="flex items-center justify-between border-b border-zinc-200 px-8 py-4 dark:border-zinc-800"
+        className="flex items-center justify-between gap-2 border-b border-zinc-200 px-4 py-4 sm:px-8 dark:border-zinc-800"
       >
         <Link
           href="/"
