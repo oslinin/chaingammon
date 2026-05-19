@@ -2,6 +2,10 @@
 
 import Link from "next/link";
 
+// Next.js's <Link> auto-prepends the configured basePath (e.g. "/chaingammon"
+// on GitHub Pages); a plain <a href="/agent/1"> would resolve to the apex
+// path and 404. Keep all internal navigation on <Link>.
+
 export interface MatchSummary {
   matches: number;
   wins: number;
@@ -73,7 +77,7 @@ export function PersonCard({
         </h3>
         <div style={{ display: "flex", flexShrink: 0, alignItems: "center", gap: 4 }}>
           {infoHref && (
-            <a
+            <Link
               href={infoHref}
               target="_blank"
               rel="noreferrer"
@@ -101,7 +105,7 @@ export function PersonCard({
               }}
             >
               Info ↗
-            </a>
+            </Link>
           )}
           {infoLabel && (
             <span
