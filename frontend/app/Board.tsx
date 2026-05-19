@@ -695,13 +695,15 @@ export function Board({
               <marker
                 key={`arrowhead-${idx}`}
                 id={`arrowhead-${idx}`}
-                markerWidth="8"
-                markerHeight="8"
-                refX="4"
-                refY="4"
+                viewBox="0 0 12 12"
+                markerUnits="userSpaceOnUse"
+                markerWidth="16"
+                markerHeight="16"
+                refX="10"
+                refY="6"
                 orient="auto"
               >
-                <polygon points="0 0, 8 4, 0 8" fill={color} />
+                <polygon points="0 2, 12 6, 0 10" fill={color} />
               </marker>
             ))}
           </defs>
@@ -762,15 +764,33 @@ export function Board({
               const fromCenter = getCheckerCenter(seg.from === 25 ? "bar" : seg.from, Math.min(fromDisplayIndex, MAX_DOTS - 1), turn === 0);
               const toCenter = getCheckerCenter(seg.to === 0 ? "off" : seg.to, seg.to === 0 ? toDisplayIndex : Math.min(toDisplayIndex, MAX_DOTS - 1), turn === 0);
 
+              // Calculate offset to draw line between checker edges rather than centers
+              const dx = toCenter.x - fromCenter.x;
+              const dy = toCenter.y - fromCenter.y;
+              const dist = Math.sqrt(dx * dx + dy * dy);
+
+              let x1 = fromCenter.x;
+              let y1 = fromCenter.y;
+              let x2 = toCenter.x;
+              let y2 = toCenter.y;
+
+              if (dist > 0) {
+                 const offset = CHECKER_R + 6; // Radius + halo + gap
+                 x1 = fromCenter.x + (dx / dist) * offset;
+                 y1 = fromCenter.y + (dy / dist) * offset;
+                 x2 = toCenter.x - (dx / dist) * offset;
+                 y2 = toCenter.y - (dy / dist) * offset;
+              }
+
               const color = GHOST_COLORS[seg.segIndex % GHOST_COLORS.length];
 
               return (
                 <line
                   key={`ghost-line-${seg.segIndex}`}
-                  x1={fromCenter.x}
-                  y1={fromCenter.y}
-                  x2={toCenter.x}
-                  y2={toCenter.y}
+                  x1={x1}
+                  y1={y1}
+                  x2={x2}
+                  y2={y2}
                   stroke={color}
                   strokeWidth="3"
                   strokeDasharray="6, 6"
