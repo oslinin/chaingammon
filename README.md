@@ -414,53 +414,42 @@ export CG_KEY=~/Documents/ssh/ssh-key-2026-05-17.key
 # 1. SSH in
 ssh -i $CG_KEY $CG_VPS
 
-# --- on the VPS from here ---
-
-# 2. Clone and install deps
+# 2. Clone the repo
 git clone https://github.com/oslinin/chaingammon.git
-cd chaingammon/server
-uv sync                        # creates .venv and installs all deps (~1 min, torch is large)
+cd chaingammon
 
-# 3. Create the env file
-cat > .env <<'EOF'
+# 3. Create the env file (only step that can't be scripted — contains secrets)
+cat > server/.env <<'EOF'
 OG_STORAGE_RPC=https://evmrpc-testnet.0g.ai
 OG_STORAGE_INDEXER=https://indexer-storage-testnet-turbo.0g.ai
 OG_STORAGE_PRIVATE_KEY=<your-key>
 OG_EQUITY_URL=http://132.145.158.84
 EOF
 
-# 4. Install and start the systemd unit
-sudo cp /home/ubuntu/chaingammon/server/chaingammon-server.service \
-    /etc/systemd/system/chaingammon-server.service
-sudo systemctl daemon-reload
-sudo systemctl enable chaingammon-server
-sudo systemctl start chaingammon-server
+# 4. Install deps, register and start the service
+bash server/scripts/setup.sh
 ```
 
-#### Day-to-day management
+#### Deploying a change
 
 ```bash
-# SSH in
-ssh -i $CG_KEY $CG_VPS
+ssh -i $CG_KEY $CG_VPS "cd /home/ubuntu/chaingammon && bash server/scripts/deploy.sh"
+```
 
-# then on the VPS:
-sudo systemctl start   chaingammon-server   # start
-sudo systemctl stop    chaingammon-server   # stop
-sudo systemctl restart chaingammon-server   # restart (e.g. after a code sync)
-sudo systemctl status  chaingammon-server   # current state + last few log lines
+#### Logs and manual control
+
+```bash
+ssh -i $CG_KEY $CG_VPS   # then on the VPS:
 
 journalctl -u chaingammon-server -f         # tail live logs
 journalctl -u chaingammon-server -n 100     # last 100 lines
+
+sudo systemctl stop    chaingammon-server
+sudo systemctl start   chaingammon-server
+sudo systemctl status  chaingammon-server
 ```
 
-To deploy a change:
-
-```bash
-ssh -i $CG_KEY $CG_VPS \
-    "cd /home/ubuntu/chaingammon && git pull && sudo systemctl restart chaingammon-server"
-```
-
-The server takes ~15 s to start (torch loads at import time). `journalctl -f` shows `Application startup complete` when it's ready. The env file lives at `/home/ubuntu/chaingammon/server/.env` on the VPS; edit it there for any config changes, then restart.
+The server takes ~15 s to start (torch loads at import time). `journalctl -f` shows `Application startup complete` when it's ready. The env file lives at `server/.env` in the repo directory on the VPS; edit it there for any config changes, then run `deploy.sh`.
 
 ### Local dev with Hardhat
 
