@@ -536,6 +536,52 @@ def test_get_profile_null_when_no_kv(fake_chain, monkeypatch):
            "fresh" in body["summary"].lower()
 
 
+def test_get_profile_falls_back_to_blob_when_kv_empty(monkeypatch):
+    """KV miss + non-zero on-chain overlay hash → fetch via get_blob.
+
+    Regression guard: the 0G TS SDK doesn't ship a KV client yet, so on
+    testnet every get_kv() raises. Without this fallback the endpoint
+    returns kind="null" for every agent even when AgentRegistry holds a
+    real overlay hash. See server/app/og_storage_client.py.
+    """
+    import json as _json
+    CATS = [
+        "opening_slot", "opening_split", "opening_builder", "opening_anchor",
+        "build_5_point", "build_bar_point", "bearoff_efficient", "bearoff_safe",
+        "risk_hit_exposure", "risk_blot_leaving", "hits_blot", "runs_back_checker",
+        "anchors_back", "phase_prime_building", "phase_race_conversion",
+        "phase_back_game", "phase_holding_game", "phase_blitz",
+        "cube_offer_aggressive", "cube_take_aggressive",
+    ]
+    overlay_payload = _json.dumps({
+        "version": 1,
+        "values": {c: 0.0 for c in CATS},
+        "match_count": 5,
+    }).encode()
+    overlay_hash = "0x" + "ab" * 32
+
+    fake = _FakeChainClient(hashes={9: overlay_hash}, match_counts={9: 5})
+    monkeypatch.setattr(
+        main_module.ChainClient, "from_env", classmethod(lambda cls: fake)
+    )
+    _make_kv_mock(monkeypatch, {})  # KV completely empty
+
+    seen: dict = {}
+
+    def _fake_get_blob(h, **kwargs):
+        seen["hash"] = h
+        return overlay_payload
+
+    monkeypatch.setattr(main_module, "get_blob", _fake_get_blob)
+
+    r = client.get("/agents/9/profile")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["kind"] == "overlay"
+    assert body["match_count"] == 5
+    assert seen["hash"].lower() == overlay_hash.lower()
+
+
 def test_get_profile_overlay_when_kv_has_overlay(fake_chain, monkeypatch):
     """KV contains an overlay JSON blob → OverlayProfile with correct match_count."""
     import json as _json
