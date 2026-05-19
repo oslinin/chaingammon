@@ -4,7 +4,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from pathlib import Path
 from pydantic import BaseModel
 from typing import Dict, List, Optional
-import hashlib
 import json
 import os
 import re
@@ -40,7 +39,6 @@ from .chain_client import ChainClient, ChainError
 from .ens_client import EnsClient, EnsError
 from .game_record import (
     AdvisorSignal,
-    GameRecord,
     MoveEntry,
     PlayerRef,
     Team,
@@ -425,8 +423,8 @@ def _maybe_collect_advisor_signals(
         1 for m in _move_history.get(game_id, []) if m.turn == turn_before
     )
 
-    from .team_mode import captain_index, captain_member, non_captain_members
-    from .teammate_advisor import AdvisorScoring, score_advisor_move
+    from .team_mode import captain_index, non_captain_members
+    from .teammate_advisor import score_advisor_move
 
     cap_idx = captain_index(team, moves_for_this_team)
     cap_ref = team.members[cap_idx]
@@ -480,7 +478,6 @@ def _resolve_advisor_scoring(
 
     from agent_profile import (   # noqa: E402 — agent/ on sys.path at module top
         ModelProfile,
-        NullProfile,
         OverlayProfile,
         load_profile,
     )
