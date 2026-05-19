@@ -73,7 +73,7 @@ export function PersonCard({
         </h3>
         <div style={{ display: "flex", flexShrink: 0, alignItems: "center", gap: 4 }}>
           {infoHref && (
-            <a
+            <Link
               href={infoHref}
               target="_blank"
               rel="noreferrer"
@@ -101,7 +101,7 @@ export function PersonCard({
               }}
             >
               Info ↗
-            </a>
+            </Link>
           )}
           {infoLabel && (
             <span
