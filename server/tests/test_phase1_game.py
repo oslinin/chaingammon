@@ -5,11 +5,9 @@ End-to-end integration tests for the Chaingammon backend Phase 1 implementation.
 Verifies that the FastAPI server correctly handles the flow of a full backgammon game
 and properly interacts with the underlying GNUbg engine wrapper.
 """
-import pytest
 from fastapi.testclient import TestClient
 import sys; import os; sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from app.main import app
-import time
 
 # Create a synchronous test client for the FastAPI app
 client = TestClient(app)

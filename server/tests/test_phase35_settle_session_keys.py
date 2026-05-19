@@ -20,7 +20,6 @@ from unittest.mock import MagicMock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import pytest
 from eth_abi import encode as abi_encode
 from eth_account import Account
 from eth_account.messages import encode_defunct
