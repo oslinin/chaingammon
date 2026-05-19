@@ -26,7 +26,6 @@ import {
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 
 import { Board } from "../Board";
-import { BoardThemePicker } from "../BoardThemePicker";
 import { loadTheme, saveTheme, type BoardThemeKey } from "../boardThemes";
 import { AgentTeammatePanel } from "../ChiefOfStaffPanel";
 import { DiceRoll } from "../DiceRoll";
@@ -1270,12 +1269,7 @@ function TeamDemoPageInner() {
 
         {game && (
           <div className="flex flex-col gap-6">
-            <div className="flex justify-end">
-              <BoardThemePicker
-                value={boardTheme}
-                onChange={(k) => { setBoardTheme(k); saveTheme(k); }}
-              />
-            </div>
+
             <Board
               board={currentBoard}
               bar={currentBar}
