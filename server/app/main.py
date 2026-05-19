@@ -1499,6 +1499,7 @@ class AgentDepositRequest(BaseModel):
 class AgentWithdrawRequest(BaseModel):
     to: str
     amount_wei: Optional[int] = None
+    signature: str
 
 
 def _agent_wallets_or_503() -> AgentWalletManager:
@@ -1552,6 +1553,31 @@ def agent_deposit(agent_id: int, req: AgentDepositRequest):
 def agent_withdraw(agent_id: int, req: AgentWithdrawRequest):
     """Drain the agent's wallet to `to`. If `amount_wei` is omitted,
     sends the entire balance minus gas."""
+    from eth_account.messages import encode_defunct
+    from web3 import Web3
+
+    try:
+        chain = ChainClient.from_env()
+    except ChainError as e:
+        raise HTTPException(status_code=503, detail=f"chain unavailable: {e}")
+
+    try:
+        owner = chain.agent_owner(agent_id)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"could not fetch owner for agent {agent_id}: {e}")
+
+    if req.to.lower() != owner.lower():
+        raise HTTPException(status_code=403, detail="Funds can only be withdrawn to the agent's owner")
+
+    msg = encode_defunct(text=f"Withdraw agent {agent_id} funds")
+    try:
+        signer = Web3().eth.account.recover_message(msg, signature=req.signature)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"invalid signature: {e}")
+
+    if signer.lower() != owner.lower():
+        raise HTTPException(status_code=403, detail="Signature must be from the agent's owner")
+
     wallets = _agent_wallets_or_503()
     try:
         tx_hash = wallets.withdraw(
