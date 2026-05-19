@@ -404,7 +404,8 @@ Or use the VS Code Tasks workflow (`.vscode/tasks.json`) — `Tasks: Run Task` �
 The production FastAPI server runs under systemd as the `chaingammon-server` unit. All commands below use two shell variables — set them once per terminal session:
 
 ```bash
-export CG_VPS=ubuntu@132.145.158.84
+export CG_VPS=ubuntu@132.145.158.84          # primary
+export CG_VPS_BACKUP=oleg@136.112.73.124     # backup
 export CG_KEY=~/Documents/ssh/ssh-key-2026-05-17.key
 ```
 
