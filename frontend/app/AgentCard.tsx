@@ -129,7 +129,7 @@ export function AgentCard({ agentId }: AgentCardProps) {
       matchSummary={
         matchQuery.isLoading ? undefined : (matchQuery.summary ?? null)
       }
-      infoHref={`/agent/${agentId}`}
+      infoHref={`/agent?id=${agentId}`}
       infoLabel={`#${agentId}`}
       playHref={`/match?agentId=${agentId}`}
       extraLines={extraLines}

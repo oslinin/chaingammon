@@ -17,19 +17,19 @@
 // Any agentId works at runtime in dev mode / when served dynamically.
 "use client";
 
-import { useEffect, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useEffect, useState, Suspense } from "react";
+import { useSearchParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { useAccount, useBalance, usePublicClient, useReadContracts, useWriteContract, useWaitForTransactionReceipt } from "wagmi";
 import { formatEther, parseAbiItem } from "viem";
 
-import { useActiveChain, useActiveChainId } from "../../chains";
+import { useActiveChain, useActiveChainId } from "../chains";
 import {
   AgentRegistryABI,
   MatchRegistryABI,
   useChainContracts,
-} from "../../contracts";
-import { useAgentMatchSummary } from "../../useAgentMatchSummary";
+} from "../contracts";
+import { useAgentMatchSummary } from "../useAgentMatchSummary";
 
 const SERVER = process.env.NEXT_PUBLIC_SERVER_URL ?? "http://localhost:8000";
 
@@ -57,8 +57,8 @@ interface MintInfo {
   timestamp?: bigint;
 }
 
-export default function AgentClient() {
-  const params = useParams();
+function AgentClientInner() {
+  const searchParams = useSearchParams();
   const router = useRouter();
   const { address: userAddress } = useAccount();
 
@@ -68,7 +68,7 @@ export default function AgentClient() {
     setMounted(true);
   }, []);
 
-  const rawId = mounted ? (params?.agentId as string) : "0";
+  const rawId = mounted ? (searchParams.get("id") ?? "0") : "0";
   const agentId = Math.max(0, Number(rawId) || 0);
 
   const chainId = useActiveChainId();
@@ -814,3 +814,4 @@ function WeightRow({
     </div>
   );
 }
+export default function AgentClient() { return <Suspense fallback={<div>Loading...</div>}><AgentClientInner /></Suspense>; }
