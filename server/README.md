@@ -21,7 +21,7 @@ graph LR
     GNUBG(["gnubg\nsubprocess"])
     OG(["0G Storage\nweights · profiles\narchives"])
     CHAIN(["Sepolia\nMatchRegistry\nAgentRegistry\nMatchEscrow"])
-    TR(["challenge_trainer.py\nTD-λ self-play"])
+    TR(["challenge_trainer.py\n— or —\nround_robin_trainer.py"])
 
     FE -->|HTTP| API
     API --> GC & W & OC & CC & AW & TS & KW
