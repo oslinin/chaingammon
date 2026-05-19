@@ -17,8 +17,15 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Callable, Optional, TextIO
 
+import subprocess
 import torch
 import torch.optim as optim
+
+try:
+    from torch.utils.tensorboard import SummaryWriter as _SummaryWriter
+    _TB_AVAILABLE = True
+except ImportError:
+    _TB_AVAILABLE = False
 
 from dotenv import load_dotenv
 from pathlib import Path as _Path
@@ -57,6 +64,10 @@ def _install_sigterm_handler() -> None:
         sys.exit(0)
     signal.signal(signal.SIGTERM, _handler)
 
+def _l2(module) -> float:
+    return sum(p.norm().item() for p in module.parameters())
+
+
 def run_challenge_loop(
     agent_ids: list[int],
     epochs: int,
@@ -78,12 +89,16 @@ def run_challenge_loop(
     lam: float = 0.7,
     gamma: float = 1.0,
     use_0g_inference: bool = False,
+    logdir: Optional[str] = None,
 ) -> dict[int, AgentState]:
 
     if len(agent_ids) < 2:
         raise ValueError("challenge trainer requires at least 2 agent_ids")
     if epochs < 1:
         raise ValueError("epochs must be >= 1")
+
+    writer = _SummaryWriter(logdir) if (logdir and _TB_AVAILABLE) else None
+    global_match = 0
 
     _emit(
         status_fh, "started",
@@ -221,6 +236,13 @@ def run_challenge_loop(
                     winner=winner, profit_wei=stake, plies=int(steps)
                 )
 
+                if writer:
+                    writer.add_scalar("match/plies", steps, global_match)
+                    writer.add_scalar(f"win/agent_{winner}", 1.0, global_match)
+                    writer.add_scalar(f"bankroll/agent_{proposer}", bankrolls[proposer], global_match)
+                    writer.add_scalar(f"bankroll/agent_{target}", bankrolls[target], global_match)
+                    global_match += 1
+
                 matches_played[proposer] += 1
                 matches_played[target] += 1
 
@@ -247,7 +269,19 @@ def run_challenge_loop(
         avg_stake = total_stake_wei / accepted_count if accepted_count > 0 else 0.0
         _emit(status_fh, "epoch_end", epoch=epoch, accept_rate=accept_rate, avg_stake_wei=avg_stake)
 
+        if writer:
+            writer.add_scalar("market/accept_rate", accept_rate, epoch)
+            writer.add_scalar("market/avg_stake_wei", avg_stake, epoch)
+            writer.add_scalar("market/proposed", proposed_count, epoch)
+            writer.add_scalar("market/accepted", accepted_count, epoch)
+            for aid, state in agents.items():
+                writer.add_scalar(f"weights/core_l2_agent_{aid}", _l2(state.net.core), epoch)
+                if state.net.extras is not None:
+                    writer.add_scalar(f"weights/extras_l2_agent_{aid}", _l2(state.net.extras), epoch)
+
     _emit(status_fh, "training_complete")
+    if writer:
+        writer.close()
 
     if checkpoint_dir is not None:
         for aid, state in agents.items():
@@ -291,6 +325,10 @@ def main() -> int:
     parser.add_argument("--upload-to-0g", action="store_true")
     parser.add_argument("--no-encrypt", action="store_true")
     parser.add_argument("--use-0g-inference", action="store_true")
+    parser.add_argument("--logdir", type=str, default=None,
+                        help="Write TensorBoard event files to this directory.")
+    parser.add_argument("--launch-tensorboard", action="store_true",
+                        help="Spawn 'tensorboard --logdir <logdir>' after training completes.")
     args = parser.parse_args()
 
     torch.manual_seed(args.seed)
@@ -307,6 +345,7 @@ def main() -> int:
                 args.max_stake_fraction,
                 args.accept_threshold,
                 extras_dim=args.extras_dim,
+                logdir=args.logdir,
                 seed=args.seed,
                 status_fh=fh,
                 checkpoint_dir=Path(args.checkpoint_dir) if args.checkpoint_dir else None,
@@ -320,6 +359,10 @@ def main() -> int:
             completed = True
         finally:
             _emit(fh, "done" if completed else "aborted")
+    if args.logdir and args.launch_tensorboard:
+        print(f"Launching TensorBoard at http://localhost:6006  (logdir: {args.logdir})")
+        subprocess.Popen(["tensorboard", "--logdir", args.logdir])
+
     return 0
 
 if __name__ == "__main__":
