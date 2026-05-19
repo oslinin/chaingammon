@@ -26,6 +26,8 @@ import {
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 
 import { Board } from "../Board";
+import { BoardThemePicker } from "../BoardThemePicker";
+import { loadTheme, saveTheme, type BoardThemeKey } from "../boardThemes";
 import { AgentTeammatePanel } from "../ChiefOfStaffPanel";
 import { DiceRoll } from "../DiceRoll";
 import { rollDice } from "../dice";
@@ -380,6 +382,7 @@ function TeamDemoPageInner() {
   const [settleError, setSettleError] = useState<string | null>(null);
   const [settleTxHash, setSettleTxHash] = useState<`0x${string}` | null>(null);
   const [hasStaleSession, setHasStaleSession] = useState(false);
+  const [boardTheme, setBoardTheme] = useState<BoardThemeKey>(() => loadTheme());
 
   const { address, chain: walletChain, chainId: walletChainId } = useAccount();
   const chainId = useActiveChainId();
@@ -1249,12 +1252,19 @@ function TeamDemoPageInner() {
 
         {game && (
           <div className="flex flex-col gap-6">
+            <div className="flex justify-end">
+              <BoardThemePicker
+                value={boardTheme}
+                onChange={(k) => { setBoardTheme(k); saveTheme(k); }}
+              />
+            </div>
             <Board
               board={currentBoard}
               bar={currentBar}
               off={currentOff}
               turn={game.turn}
               ghostMove={hoveredMove}
+              themeKey={boardTheme}
               opponentName={
                 opponentIds.length === 1
                   ? `Agent #${opponentIds[0]}`
