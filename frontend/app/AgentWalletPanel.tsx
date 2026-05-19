@@ -5,6 +5,7 @@ import {
   useAccount,
   usePublicClient,
   useWalletClient,
+  useSignMessage,
 } from "wagmi";
 
 const SERVER = process.env.NEXT_PUBLIC_SERVER_URL ?? "http://localhost:8000";
@@ -104,6 +105,8 @@ export function AgentWalletPanel({ agentId, stakeWei, onWalletChange }: Props) {
     }
   };
 
+  const { signMessageAsync } = useSignMessage();
+
   const onWithdraw = async () => {
     if (!wallet || !address) {
       setError("Connect your wallet to receive the withdrawal.");
@@ -112,13 +115,24 @@ export function AgentWalletPanel({ agentId, stakeWei, onWalletChange }: Props) {
     try {
       setBusy(true);
       setError(null);
+
+      const signature = await signMessageAsync({
+        message: `Withdraw agent ${agentId} funds`,
+      });
+
       const res = await fetch(`${SERVER}/agents/${agentId}/withdraw`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ to: address }),
+        body: JSON.stringify({ to: address, signature }),
       });
       if (!res.ok) {
-        throw new Error(await res.text().catch(() => res.statusText));
+        const errText = await res.text().catch(() => res.statusText);
+        let parsedErr = errText;
+        try {
+          const parsed = JSON.parse(errText);
+          parsedErr = parsed.detail || errText;
+        } catch {}
+        throw new Error(parsedErr);
       }
       await refresh();
     } catch (e) {
