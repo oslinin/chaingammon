@@ -104,6 +104,33 @@ export function Board({
     return baseX + col * POINT_W;
   };
 
+  const getPointBaseCoord = (point: number, forP0: boolean) => {
+    if (point === 0) { // Off
+      return {
+        x: forP0 ? R_BEAR_X + BEAR_W / 2 : L_BEAR_X + BEAR_W / 2,
+        y: TOTAL_H / 2
+      };
+    }
+    if (point === 25) { // Bar
+      return {
+        x: BAR_X + BAR_W / 2,
+        y: forP0 ? TOTAL_H - FRAME / 2 : FRAME / 2
+      };
+    }
+    const isTop = point >= 13;
+    const isLeft = (isTop && point <= 18) || (!isTop && point >= 7);
+    let col = 0;
+    if (isTop) {
+      col = isLeft ? point - 13 : point - 19;
+    } else {
+      col = isLeft ? 12 - point : 6 - point;
+    }
+    const startX = getColXOffset(col, !isLeft);
+    const x = startX + POINT_W / 2;
+    const y = isTop ? FRAME / 2 : TOTAL_H - FRAME / 2;
+    return { x, y };
+  };
+
   const clientToSvg = (clientX: number, clientY: number) => {
     if (!svgRef.current) return { x: 0, y: 0 };
     const pt = svgRef.current.createSVGPoint();
@@ -620,6 +647,10 @@ export function Board({
                 <feMergeNode in="SourceGraphic" />
               </feMerge>
             </filter>
+
+            <marker id="cg-arrow" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--cg-brass, #C99B5C)" />
+            </marker>
           </defs>
 
           {/* Outer Frame */}
@@ -630,6 +661,25 @@ export function Board({
 
           {/* Bear-Off Trays */}
           {renderBearOff()}
+
+          {/* Move Arrows (Ghost Move) */}
+          {previewSegments.map((seg, idx) => {
+            const isP0Move = turn === 0;
+            const start = getPointBaseCoord(seg.from, isP0Move);
+            const end = getPointBaseCoord(seg.to, isP0Move);
+            return (
+              <path
+                key={`arrow-${idx}`}
+                d={`M ${start.x} ${start.y} L ${end.x} ${end.y}`}
+                stroke="var(--cg-brass, #C99B5C)"
+                strokeWidth="2"
+                strokeDasharray="4 4"
+                fill="none"
+                markerEnd="url(#cg-arrow)"
+                pointerEvents="none"
+              />
+            );
+          })}
 
           {/* Points */}
           {Array.from({ length: 24 }).map((_, i) => renderPoint(i + 1))}
