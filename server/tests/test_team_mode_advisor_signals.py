@@ -29,9 +29,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app import main as main_module  # noqa: E402
 from app.agent_overlay import Overlay  # noqa: E402
 from app.game_record import (   # noqa: E402
-    AdvisorSignal,
     PlayerRef,
-    Team,
 )
 from app.teammate_advisor import (    # noqa: E402
     AdvisorScoring,

@@ -3,13 +3,11 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pathlib import Path
 from pydantic import BaseModel
-from typing import Dict, List, Optional
-import hashlib
+from typing import List, Optional
 import json
 import os
 import re
 import sys
-import uuid
 
 # Load server/.env into os.environ before any module reads RPC_URL etc.
 # Without this, `uv run uvicorn app.main:app` ignores the .env file and
@@ -39,11 +37,8 @@ from .agent_wallets import AgentWalletError, AgentWalletManager
 from .chain_client import ChainClient, ChainError
 from .ens_client import EnsClient, EnsError
 from .game_record import (
-    AdvisorSignal,
-    GameRecord,
     MoveEntry,
     PlayerRef,
-    Team,
     build_from_state,
     serialize_record,
 )
@@ -1600,7 +1595,6 @@ def _init_equity_net() -> None:
         _agent_dir = Path(__file__).resolve().parents[2] / "agent"
         if _agent_dir.exists() and str(_agent_dir) not in sys.path:
             sys.path.insert(0, str(_agent_dir))
-        import torch
         from sample_trainer import BackgammonNet, DEFAULT_EXTRAS_DIM
         net = BackgammonNet(core_seed=0xBACC, extras_dim=DEFAULT_EXTRAS_DIM, extras_seed=0)
         net.eval()
