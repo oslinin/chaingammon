@@ -1381,7 +1381,22 @@ def get_agent_profile(agent_id: int):
     try:
         weights_bytes = get_kv(weights_kv_key)
     except OgStorageError:
-        pass  # Cold-start agent — no weights in KV yet.
+        pass  # KV unavailable (testnet has no KV client yet) or cold-start.
+
+    # Fall back to 0G blob storage via the on-chain overlay hash.
+    # The 0G TS SDK v1.2.6 exposes Indexer/Downloader but no KV client, so
+    # get_kv only works against the localhost JSON-file mock. Every prod
+    # agent would otherwise return kind="null" even when AgentRegistry
+    # holds a non-zero overlayHash pointing at a real overlay blob.
+    _ZERO_HASH = "0x" + "00" * 32
+    if not weights_bytes:
+        try:
+            chain = ChainClient.from_env()
+            _, overlay_hash = chain.agent_data_hashes(agent_id)
+            if overlay_hash and overlay_hash.lower() != _ZERO_HASH:
+                weights_bytes = get_blob(overlay_hash)
+        except (ChainError, OgStorageError):
+            pass
 
     profile = load_profile_from_bytes(weights_bytes) if weights_bytes else NullProfile()
     metrics = profile.metrics()
@@ -1395,12 +1410,30 @@ def get_agent_profile(agent_id: int):
     # Fetch the feature overlay from KV (written per game by finalize endpoints).
     overlay_kv_key = f"chaingammon/overlay/agent/{agent_id}"
     overlay_values: dict = {}
+    overlay_blob: bytes = b""
     try:
         overlay_blob = get_kv(overlay_kv_key)
-        overlay = Overlay.from_bytes(overlay_blob)
-        overlay_values = {c: float(overlay.values[c]) for c in overlay.values}
-    except (OgStorageError, OverlayError):
-        pass  # No overlay yet — cold start.
+    except OgStorageError:
+        pass
+
+    # Same blob-storage fallback as above — the chain's overlayHash is the
+    # canonical pointer; the KV is just a cache that's not yet reachable
+    # on testnet.
+    if not overlay_blob:
+        try:
+            chain = ChainClient.from_env()
+            _, overlay_hash = chain.agent_data_hashes(agent_id)
+            if overlay_hash and overlay_hash.lower() != _ZERO_HASH:
+                overlay_blob = get_blob(overlay_hash)
+        except (ChainError, OgStorageError):
+            pass
+
+    if overlay_blob:
+        try:
+            overlay = Overlay.from_bytes(overlay_blob)
+            overlay_values = {c: float(overlay.values[c]) for c in overlay.values}
+        except OverlayError:
+            pass
 
     # Resolve the agent's ERC-721 owner and their ENS name via chain.
     # Best-effort: missing env vars or chain errors return None gracefully.
