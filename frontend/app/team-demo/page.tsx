@@ -38,6 +38,7 @@ import {
   newMatch,
   applyMoveToState,
   getBestMove,
+  hasLegalMoves,
   skipTurn,
   playMatchToEnd,
   resignMatch,
@@ -740,6 +741,23 @@ function TeamDemoPageInner() {
     }, 800);
     return () => clearTimeout(timer);
   }, [game, setup, fastForward]);
+
+  // Auto-skip the human's turn when they have no legal moves (bar-dance
+  // against a closed home board, or a roll that leaves nothing playable).
+  // Without this the UI just shows the dice and waits for a move that
+  // can't exist, and any attempt prints "Illegal move".
+  useEffect(() => {
+    if (setup || !game || game.game_over) return;
+    if (game.turn !== 0 || !game.dice) return;
+    if (stagedMoves.length > 0) return;
+    const gboard: GameBoard = { points: game.board, bar: game.bar, off: game.off };
+    if (hasLegalMoves(gboard, 0, game.dice)) return;
+    const timer = setTimeout(() => {
+      const skipped = skipTurn(game);
+      setGame(skipped.game_over ? skipped : { ...skipped, dice: rollDice() });
+    }, 600);
+    return () => clearTimeout(timer);
+  }, [game, setup, stagedMoves.length]);
 
   useEffect(() => {
     if (!fastForward || !game || game.game_over) return;
