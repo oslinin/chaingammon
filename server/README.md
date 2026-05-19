@@ -16,7 +16,8 @@ Point the frontend at it by setting `NEXT_PUBLIC_SERVER_URL=http://localhost:800
 The production server runs on `132.145.158.84` under systemd as `chaingammon-server`. Set these once per terminal session:
 
 ```bash
-export CG_VPS=ubuntu@132.145.158.84
+export CG_VPS=ubuntu@132.145.158.84          # primary
+export CG_VPS_BACKUP=oleg@136.112.73.124     # backup
 export CG_KEY=~/Documents/ssh/ssh-key-2026-05-17.key
 ```
 
