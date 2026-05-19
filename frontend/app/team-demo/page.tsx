@@ -22,15 +22,18 @@ import {
   parseAbiParameters,
   toHex,
   type PrivateKeyAccount,
+  parseEther,
 } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 
 import { Board } from "../Board";
 import { AgentTeammatePanel } from "../ChiefOfStaffPanel";
+import { CubeModal } from "./CubeModal";
+import { CubeTransactionOverlay } from "./CubeTransactionOverlay";
 import { DiceRoll } from "../DiceRoll";
 import { rollDice } from "../dice";
 import { useActiveChain, useActiveChainId } from "../chains";
-import { AgentRegistryABI, MatchRegistryABI, useChainContracts } from "../contracts";
+import { AgentRegistryABI, MatchRegistryABI, MatchEscrowABI, useChainContracts } from "../contracts";
 import {
   type MatchState,
   newMatch,
@@ -39,6 +42,9 @@ import {
   skipTurn,
   playMatchToEnd,
   resignMatch,
+  offerDouble,
+  acceptDouble,
+  dropDouble
 } from "../../lib/match_engine";
 import { type Board as GameBoard } from "../../lib/rules_engine";
 
@@ -364,6 +370,11 @@ function TeamDemoPageInner() {
 
   const [fastForward, setFastForward] = useState(false);
 
+  // Cube state
+  const [showCubeModal, setShowCubeModal] = useState(false);
+  const [cubeModalType, setCubeModalType] = useState<'offer' | 'decision'>('offer');
+  const [isProcessingCube, setIsProcessingCube] = useState(false);
+
   const [sessionAccount, setSessionAccount] = useState<PrivateKeyAccount | null>(null);
   const [humanAuthSig, setHumanAuthSig] = useState<`0x${string}` | null>(null);
   const [authNonce, setAuthNonce] = useState<bigint | null>(null);
@@ -384,7 +395,7 @@ function TeamDemoPageInner() {
   const { address, chain: walletChain, chainId: walletChainId } = useAccount();
   const chainId = useActiveChainId();
   const activeChain = useActiveChain();
-  const { agentRegistry, matchRegistry } = useChainContracts();
+  const { matchRegistry, agentRegistry, matchEscrow } = useChainContracts();
   const { signMessageAsync } = useSignMessage();
   const { writeContractAsync } = useWriteContract();
   const { switchChain, isPending: isSwitchingChain, error: switchChainError } =
@@ -1270,7 +1281,93 @@ function TeamDemoPageInner() {
               onBarClick={isHumanTurn && currentBar[0] > 0 ? () => setSelectedSource(25) : undefined}
               onOffClick={isHumanTurn && selectedSource !== null ? () => stageMove(selectedSource === 25 ? "bar" : selectedSource, "off") : undefined}
               selectedPoint={selectedSource}
+              cubeValue={game.cubeValue}
+              cubeOwner={game.cubeOwner}
+              onCubeClick={() => {
+                if (isHumanTurn && (game.cubeOwner === -1 || game.cubeOwner === 0) && !game.game_over) {
+                  setCubeModalType('offer');
+                  setShowCubeModal(true);
+                }
+              }}
             />
+
+            <CubeModal
+              isOpen={showCubeModal}
+              type={cubeModalType}
+              isProcessing={isProcessingCube}
+              onConfirm={async () => {
+                setIsProcessingCube(true);
+
+                try {
+                  if (settleOnChain && game.match_id) {
+                    const hash = await writeContractAsync({
+                      address: matchEscrow,
+                      abi: MatchEscrowABI,
+                      functionName: "deposit",
+                      args: [game.match_id, parseEther("1.0")],
+                      value: parseEther("1.0"),
+                    });
+                  }
+                } catch (e) {
+                  console.error("Escrow deposit failed", e);
+                  setIsProcessingCube(false);
+                  return;
+                }
+
+                // 2. State update
+                if (cubeModalType === 'offer') {
+                  const newState = offerDouble(game);
+                  setGame(newState);
+
+                  // Now get the agent's decision asynchronously since it is their turn
+                  if (!newState.game_over && !fastForward) {
+                    const aid = opponentIds[0];
+                    if (aid) {
+                      try {
+                        const res = await fetch(`http://localhost:8000/agents/${aid}/cube-decision`, {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({
+                            agent_id: aid,
+                            position_id: newState.position_id,
+                            match_id: newState.match_id,
+                            cube: newState.cubeValue || 1,
+                            cube_owner: newState.cubeOwner === undefined ? -1 : newState.cubeOwner,
+                            is_agent_turn: true
+                          })
+                        });
+                        const decision = await res.json();
+
+                        if (decision.action === 'take') {
+                          // The agent deposits into escrow
+                          console.log("Agent decided to take");
+                          setGame(acceptDouble(newState));
+                        } else if (decision.action === 'drop') {
+                          console.log("Agent decided to drop");
+                          setGame(dropDouble(newState));
+                        }
+                      } catch (e) {
+                        console.warn("Cube API failed, agent auto-takes", e);
+                        setGame(acceptDouble(newState));
+                      }
+                    }
+                  }
+                } else {
+                  setGame(acceptDouble(game));
+                }
+                setIsProcessingCube(false);
+                setShowCubeModal(false);
+              }}
+              onReject={() => {
+                if (cubeModalType === 'offer') {
+                  setShowCubeModal(false);
+                } else {
+                  setGame(dropDouble(game));
+                  setShowCubeModal(false);
+                }
+              }}
+            />
+            <CubeTransactionOverlay isOpen={isProcessingCube} message={cubeModalType === 'offer' ? "Offering double..." : "Accepting double..."} />
 
             {game.dice && (
               <div className="flex items-center gap-3">

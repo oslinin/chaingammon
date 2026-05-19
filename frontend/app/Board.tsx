@@ -7,6 +7,9 @@ interface BoardProps {
   bar: number[];            // [p0_bar, p1_bar]
   off: number[];            // [p0_off, p1_off]
   turn: number;             // 0 = human, 1 = agent
+  cubeValue?: number;
+  cubeOwner?: number;       // -1 = unowned (centered), 0 = human, 1 = agent
+  onCubeClick?: () => void;
   opponentName?: string;
   onPointClick?: (point: number) => void;
   onBarClick?: () => void;
@@ -43,11 +46,23 @@ type DragState = {
   svgY: number;
 } | null;
 
+function CubeSVG({ val }: { val: number }) {
+  return (
+    <g>
+      <rect x="-18" y="-18" width="36" height="36" rx="4" fill="var(--cg-bg-1)" stroke="var(--cg-border)" strokeWidth="2" />
+      <text x="0" y="6" fontSize="18" fontWeight="bold" fill="var(--cg-text)" textAnchor="middle">{val}</text>
+    </g>
+  );
+}
+
 export function Board({
   board,
   bar,
   off,
   turn,
+  cubeValue = 1,
+  cubeOwner = -1,
+  onCubeClick,
   opponentName,
   onPointClick,
   onBarClick,
@@ -631,6 +646,23 @@ export function Board({
 
           {/* Center Bar */}
           {renderBar()}
+
+          {/* Doubling Cube */}
+          <g
+            transform={`translate(${BAR_X + BAR_W / 2}, ${
+              cubeOwner === -1 ? TOTAL_H / 2 :
+              cubeOwner === 0 ? TOTAL_H - FRAME - 20 :
+              FRAME + 20
+            })`}
+            style={{ cursor: (cubeOwner === -1 || cubeOwner === 0) ? 'pointer' : 'default' }}
+            onClick={() => {
+              if ((cubeOwner === -1 || cubeOwner === 0) && onCubeClick) {
+                onCubeClick();
+              }
+            }}
+          >
+            <CubeSVG val={cubeValue} />
+          </g>
 
           {/* Drag Ghost */}
           {dragState && (

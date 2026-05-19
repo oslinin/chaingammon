@@ -36,6 +36,8 @@ export interface MatchState {
   match_length: number;
   game_over: boolean;
   winner: 0 | 1 | null;
+  cubeValue?: number;
+  cubeOwner?: number;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -52,7 +54,9 @@ function makeState(
   gameOver: boolean,
   winner: 0 | 1 | null,
   resign = false,
-  dice: [number, number] | null = null
+  dice: [number, number] | null = null,
+  cubeValue: number = 1,
+  cubeOwner: number = -1
 ): MatchState {
   return {
     position_id: encodePositionId(board),
@@ -107,32 +111,55 @@ export function applyMoveToState(state: MatchState, moveStr: string): MatchState
   const newBoard = applyMove(board, side, moveStr);
 
   if (newBoard.off[side] === 15) {
-    // Current player bore off all checkers — wins this game (1 pt, no cube).
+    // Current player bore off all checkers — wins this game. Multiply score by cube.
+    const points = state.cubeValue || 1;
     const newScore: [number, number] =
       side === 0
-        ? [state.score[0] + 1, state.score[1]]
-        : [state.score[0], state.score[1] + 1];
+        ? [state.score[0] + points, state.score[1]]
+        : [state.score[0], state.score[1] + points];
 
     const matchOver =
       newScore[0] >= state.match_length || newScore[1] >= state.match_length;
 
     if (matchOver) {
-      return makeState(newBoard, side, newScore, state.match_length, true, side);
+      return makeState(newBoard, side, newScore, state.match_length, true, side, false, null, state.cubeValue, state.cubeOwner);
     }
 
-    // Match continues — reset board, swap turn.
+    // Match continues — reset board, swap turn. Reset cube.
     const nextTurn = (1 - side) as 0 | 1;
-    return makeState(freshBoard(), nextTurn, newScore, state.match_length, false, null);
+    return makeState(freshBoard(), nextTurn, newScore, state.match_length, false, null, false, null, 1, -1);
   }
 
   const nextTurn = (1 - side) as 0 | 1;
-  return makeState(newBoard, nextTurn, state.score, state.match_length, false, null);
+  return makeState(newBoard, nextTurn, state.score, state.match_length, false, null, false, null, state.cubeValue, state.cubeOwner);
 }
 
 /** Pass the turn without moving (bar-dance: checker on bar, board closed). */
 export function skipTurn(state: MatchState): MatchState {
   const nextTurn = (1 - state.turn) as 0 | 1;
-  return makeState(toBoard(state), nextTurn, state.score, state.match_length, false, null);
+  return makeState(toBoard(state), nextTurn, state.score, state.match_length, false, null, false, null, state.cubeValue, state.cubeOwner);
+}
+
+/** Double the stakes */
+export function offerDouble(state: MatchState): MatchState {
+  return makeState(toBoard(state), state.turn, state.score, state.match_length, false, null, false, state.dice, state.cubeValue ? state.cubeValue * 2 : 2, state.turn);
+}
+
+/** Drop a double (forfeit game) */
+export function dropDouble(state: MatchState): MatchState {
+  const winner = (1 - state.turn) as 0 | 1;
+  const points = state.cubeValue || 1;
+  const newScore: [number, number] =
+    winner === 0
+      ? [state.score[0] + points, state.score[1]]
+      : [state.score[0], state.score[1] + points];
+
+  return makeState(toBoard(state), winner, newScore, state.match_length, true, winner, true, null, state.cubeValue, state.cubeOwner);
+}
+
+/** Accept a double */
+export function acceptDouble(state: MatchState): MatchState {
+  return makeState(toBoard(state), state.turn, state.score, state.match_length, false, null, false, state.dice, state.cubeValue, 1 - state.turn);
 }
 
 /** Human forfeits — agent (side 1) wins the match. */

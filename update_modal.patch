@@ -1,0 +1,114 @@
+--- frontend/app/team-demo/page.tsx
++++ frontend/app/team-demo/page.tsx
+@@ -23,6 +23,7 @@
+   parseAbiParameters,
+   toHex,
+   type PrivateKeyAccount,
++  parseEther,
+ } from "viem";
+ import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
+
+@@ -32,7 +33,7 @@
+ import { DiceRoll } from "../DiceRoll";
+ import { rollDice } from "../dice";
+ import { useActiveChain, useActiveChainId } from "../chains";
+-import { AgentRegistryABI, MatchRegistryABI, useChainContracts } from "../contracts";
++import { AgentRegistryABI, MatchRegistryABI, MatchEscrowABI, useChainContracts } from "../contracts";
+ import {
+   type MatchState,
+   newMatch,
+@@ -382,7 +383,7 @@
+   const { address, isConnected } = useAccount();
+   const activeChainId = useActiveChainId();
+   const activeChain = useActiveChain();
+-  const { matchRegistry, agentRegistry } = useChainContracts();
++  const { matchRegistry, agentRegistry, matchEscrow } = useChainContracts();
+   const { switchChainAsync } = useSwitchChain();
+   const { signMessageAsync } = useSignMessage();
+   const { writeContractAsync } = useWriteContract();
+@@ -876,6 +877,36 @@
+       console.error("Setup error:", e);
+       setError(e instanceof Error ? e.message : String(e));
+     } finally {
+       setLoading(false);
+     }
+   }
++
++  async function getAgentCubeDecision(state: MatchState) {
++    const aid = opponentIds[0];
++    if (!aid) return { action: "take", equity: 0.5 };
++
++    try {
++      const res = await fetch(`http://localhost:8000/agents/${aid}/cube-decision`, {
++        method: 'POST',
++        headers: { 'Content-Type': 'application/json' },
++        body: JSON.stringify({
++          agent_id: aid,
++          position_id: state.position_id,
++          match_id: state.match_id,
++          cube: state.cubeValue || 1,
++          cube_owner: state.cubeOwner === undefined ? -1 : state.cubeOwner,
++          is_agent_turn: state.turn === 1
++        })
++      });
++      if (!res.ok) throw new Error("Agent cube decision failed");
++      return await res.json();
++    } catch (e) {
++      console.warn("Cube decision API failed, falling back to take", e);
++      return { action: "take", equity: 0.5 };
++    }
++  }
+
+   function doMoveWithNotation(notation: string) {
+     if (!game) return;
+@@ -1296,15 +1327,34 @@
+               isProcessing={isProcessingCube}
+               onConfirm={async () => {
+                 setIsProcessingCube(true);
+-                // 1. Escrow Top Up Logic placeholder
+-                await new Promise(r => setTimeout(r, 1000));
++
++                try {
++                  if (settleOnChain && escrowMatchId) {
++                    // We need to double the stake. We are doing a 1 token top up as MVP placeholder.
++                    const hash = await writeContractAsync({
++                      address: matchEscrow,
++                      abi: MatchEscrowABI,
++                      functionName: "deposit",
++                      args: [escrowMatchId, parseEther("1.0")],
++                      value: parseEther("1.0"),
++                    });
++                  }
++                } catch (e) {
++                  console.error("Escrow deposit failed", e);
++                  setIsProcessingCube(false);
++                  return;
++                }
+
+                 // 2. State update
+                 if (cubeModalType === 'offer') {
+-                  setGame(offerDouble(game));
++                  const newState = offerDouble(game);
++                  setGame(newState);
++                  // If it's the agent's turn to respond, wait a bit and handle it
++                  // This demo code assumes agent auto-takes for now if no LLM hooked up
+                 } else {
+                   setGame(acceptDouble(game));
+                 }
++
+                 setIsProcessingCube(false);
+                 setShowCubeModal(false);
+               }}
+@@ -1413,6 +1463,15 @@
+             )}
+
+             {(!isHumanTurn || fastForward) && !game.game_over && (
++              <p style={{ color: "var(--cg-fg-3)", fontSize: 14 }}>
++                {game.cubeOwner === 0 ? "Opponent team is thinking..." : null}
++              </p>
++            )}
++
++            {(!isHumanTurn || fastForward) && !game.game_over && game.cubeOwner !== 0 && (
+               <p
+                 style={{ color: "var(--cg-fg-3)", fontSize: 14 }}
+                 className="animate-pulse"

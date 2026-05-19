@@ -22,7 +22,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from app import main as main_module  # noqa: E402
+from app import main_gnubg_legacy as main_module  # noqa: E402
 
 
 client = TestClient(main_module.app)

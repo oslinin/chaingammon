@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from .agent_cube_decision import router as cube_router
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pathlib import Path
@@ -51,6 +52,7 @@ from .game_state import GameState, decode_position_id
 from .og_storage_client import OgStorageError, get_blob, get_kv, put_blob, put_kv
 
 app = FastAPI()
+app.include_router(cube_router)
 # Phase 20: the Next.js frontend at :3000 calls these endpoints cross-origin
 # (live match flow, subname mint, replay fetch). Open CORS so browser fetches
 # succeed in dev. Production should restrict `allow_origins` to the deployed

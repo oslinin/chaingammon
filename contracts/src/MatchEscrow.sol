@@ -77,6 +77,7 @@ contract MatchEscrow {
     /// @notice Deposit a stake for `matchId`. Each side deposits
     ///         independently; the second deposit "opens" the match
     ///         and atomically locks both stakes against refund.
+    ///         If the match is already open, existing players can add to their stake.
     /// @param  matchId  off-chain `keccak256(...)` match identifier.
     /// @param  expected stake amount in wei. Both sides must send the
     ///         same amount; the second depositor reverts on mismatch.
@@ -85,6 +86,21 @@ contract MatchEscrow {
 
         Match storage m = _matches[matchId];
         if (m.settled) revert AlreadySettled();
+
+        // If match is already open, existing players can add to their stake (e.g. for mid-game doubling)
+        if (m.open) {
+            if (msg.sender == m.a.player) {
+                m.a.amount += uint128(msg.value);
+                emit Deposited(matchId, msg.sender, msg.value);
+                return;
+            } else if (msg.sender == m.b.player) {
+                m.b.amount += uint128(msg.value);
+                emit Deposited(matchId, msg.sender, msg.value);
+                return;
+            } else {
+                revert MatchAlreadyOpen();
+            }
+        }
 
         // First or second deposit?
         if (m.a.status == Status.Empty) {
