@@ -1,5 +1,6 @@
 "use client";
 
+import { useI18n } from "./i18n";
 import { BOARD_THEMES, THEME_ORDER, type BoardThemeKey } from "./boardThemes";
 
 interface Props {
@@ -8,6 +9,7 @@ interface Props {
 }
 
 export function BoardThemePicker({ value, onChange }: Props) {
+  const { t } = useI18n();
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
       <span style={{
@@ -19,7 +21,7 @@ export function BoardThemePicker({ value, onChange }: Props) {
         fontWeight: 600,
         whiteSpace: "nowrap",
       }}>
-        Board
+        {t('board_theme')}
       </span>
       <div style={{ display: "flex", gap: 6 }}>
         {THEME_ORDER.map((key) => {

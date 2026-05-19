@@ -7,6 +7,7 @@ import type { Metadata, Viewport } from "next";
 import { Space_Grotesk, JetBrains_Mono, Instrument_Serif } from "next/font/google";
 import Link from "next/link";
 import "./globals.css";
+import { HeaderLinks } from "./HeaderLinks";
 import { ComputeBackendsPill } from "./ComputeBackendsPill";
 import { ConnectButton } from "./ConnectButton";
 import { Providers } from "./providers";
@@ -102,21 +103,7 @@ export default function RootLayout({
                   <span className="hidden md:block">
                     <ComputeBackendsPill />
                   </span>
-                  <Link
-                    href="/help"
-                    target="_blank"
-                    rel="noreferrer"
-                    className="cg-nav-link"
-                    style={{
-                      fontSize: 13,
-                      textDecoration: "none",
-                      fontFamily: "var(--cg-font-sans)",
-                      padding: "4px 8px",
-                      borderRadius: "var(--cg-radius-sm)",
-                    }}
-                  >
-                    Help
-                  </Link>
+                  <HeaderLinks />
                   <ConnectButton />
                 </div>
               </header>
