@@ -4,12 +4,17 @@ import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { useBalance, usePublicClient, useReadContracts } from "wagmi";
-import { formatEther } from "viem";
+import { formatEther, parseAbiItem } from "viem";
 
 import { useActiveChain, useActiveChainId } from "../../chains";
 import { MatchRegistryABI, useChainContracts } from "../../contracts";
 import { useHumanMatchSummary } from "../../useHumanMatchSummary";
 import { useChaingammonName } from "../../useChaingammonName";
+
+const SUBNAME_MINTED_EVENT = parseAbiItem(
+  "event SubnameMinted(string label, bytes32 indexed node, address indexed subnameOwner, uint256 inftId)",
+);
+const MAX_BLOCK_RANGE = BigInt(49_000);
 
 export default function HumanClient() {
   const params = useParams();
@@ -26,6 +31,7 @@ export default function HumanClient() {
   const [resolvedAddress, setResolvedAddress] = useState<`0x${string}` | undefined>(
     isAddress ? (rawId as `0x${string}`) : undefined
   );
+  const [resolving, setResolving] = useState(!isAddress);
 
   const chainId = useActiveChainId();
   const active = useActiveChain();
@@ -35,30 +41,59 @@ export default function HumanClient() {
   useEffect(() => {
     if (!mounted || isAddress || !rawId || !client || !playerSubnameRegistrar) return;
 
-    // Scan logs to find the owner for the given label
+    let cancelled = false;
+    setResolving(true);
+
     const scan = async () => {
-        // Simple scan from 0
-        const logs = await client.getLogs({
+      // Mirror the chunked approach from useChaingammonName to avoid
+      // "earliest" which exceeds public RPC block-range caps (~50k blocks).
+      const isLocal = chainId === 31337;
+      let fromBlock: bigint | "earliest";
+      if (isLocal) {
+        fromBlock = "earliest";
+      } else if (typeof active?.deployedBlock === "number") {
+        fromBlock = BigInt(active.deployedBlock);
+      } else {
+        const tip = await client.getBlockNumber();
+        fromBlock = tip > MAX_BLOCK_RANGE ? tip - MAX_BLOCK_RANGE : BigInt(0);
+      }
+
+      let logs;
+      if (fromBlock === "earliest") {
+        logs = await client.getLogs({
           address: playerSubnameRegistrar,
-          event: {
-            type: "event",
-            name: "SubnameMinted",
-            inputs: [
-              { type: "string", name: "label", indexed: false },
-              { type: "bytes32", name: "node", indexed: true },
-              { type: "address", name: "subnameOwner", indexed: true },
-              { type: "uint256", name: "inftId", indexed: false },
-            ],
-          },
-          fromBlock: "earliest",
+          event: SUBNAME_MINTED_EVENT,
+          fromBlock,
         });
-        const match = logs.find(l => l.args.label === rawId);
-        if (match && match.args.subnameOwner) {
-            setResolvedAddress(match.args.subnameOwner as `0x${string}`);
+      } else {
+        const tip = await client.getBlockNumber();
+        const chunks: { fromBlock: bigint; toBlock: bigint }[] = [];
+        let cur = fromBlock;
+        while (cur <= tip) {
+          const end = cur + MAX_BLOCK_RANGE <= tip ? cur + MAX_BLOCK_RANGE : tip;
+          chunks.push({ fromBlock: cur, toBlock: end });
+          cur = end + 1n;
         }
+        const results = await Promise.all(
+          chunks.map((c) =>
+            client.getLogs({ address: playerSubnameRegistrar, event: SUBNAME_MINTED_EVENT, ...c }),
+          ),
+        );
+        logs = results.flat();
+      }
+
+      const hit = logs.find((l) => l.args?.label === rawId && l.args?.inftId === 0n);
+      if (!cancelled && hit?.args?.subnameOwner) {
+        setResolvedAddress(hit.args.subnameOwner as `0x${string}`);
+      }
     };
-    scan().catch(console.error);
-  }, [mounted, isAddress, rawId, client, playerSubnameRegistrar]);
+
+    scan()
+      .catch(console.error)
+      .finally(() => { if (!cancelled) setResolving(false); });
+
+    return () => { cancelled = true; };
+  }, [mounted, isAddress, rawId, client, playerSubnameRegistrar, chainId, active?.deployedBlock]);
 
   const targetAddress = isAddress ? (rawId as `0x${string}`) : resolvedAddress;
 
@@ -91,9 +126,8 @@ export default function HumanClient() {
     query: { enabled: !!matchRegistry && !!targetAddress }
   });
 
-  // Default to 1500 if not found or 0
   const rawElo = humanEloData?.[0]?.result as bigint | undefined;
-  const elo = rawElo && rawElo > 0n ? rawElo.toString() : "1500";
+  const elo = rawElo != null ? rawElo.toString() : "1500";
 
   const explorerUrl = active?.chain.blockExplorers?.default?.url;
 
@@ -160,7 +194,7 @@ export default function HumanClient() {
           <dl className="grid grid-cols-2 gap-x-6 gap-y-4 text-sm sm:grid-cols-3">
             <InfoField
               label="ELO"
-              value={eloLoading ? "…" : elo}
+              value={resolving || eloLoading ? "…" : elo}
               mono
               tooltip="Chess-style skill rating. Increases after wins, decreases after losses. Determines matchmaking difficulty."
             />
