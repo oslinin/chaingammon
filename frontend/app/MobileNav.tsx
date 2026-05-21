@@ -104,10 +104,9 @@ export function MobileNav() {
       </div>
 
       {/* Settings */}
-      <Link
-        href="/settings"
-        target="_blank"
-        rel="noopener noreferrer"
+      <button
+        type="button"
+        onClick={() => window.dispatchEvent(new CustomEvent("open-settings"))}
         style={{
           flex: 1,
           display: "flex",
@@ -116,8 +115,10 @@ export function MobileNav() {
           justifyContent: "center",
           gap: 3,
           padding: "8px 0",
-          textDecoration: "none",
-          color: tabColor(isSettings),
+          background: "none",
+          border: "none",
+          cursor: "pointer",
+          color: "var(--cg-fg-3)",
           transition: "color 120ms ease",
         }}
       >
@@ -128,7 +129,7 @@ export function MobileNav() {
         <span style={{ fontSize: 10, fontWeight: 500, fontFamily: "var(--cg-font-sans)", letterSpacing: "0.04em" }}>
           {t("settings")}
         </span>
-      </Link>
+      </button>
     </nav>
   );
 }
