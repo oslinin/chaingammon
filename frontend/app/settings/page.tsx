@@ -1,11 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { useI18n, LANGUAGES, Language } from "../i18n";
 import { BoardThemePicker } from "../BoardThemePicker";
 import { loadTheme, saveTheme, type BoardThemeKey } from "../boardThemes";
 
 export default function SettingsPage() {
+  const router = useRouter();
   const { language, setLanguage, t } = useI18n();
   const [boardTheme, setBoardTheme] = useState<BoardThemeKey>("walnut");
   const [trainerMode, setTrainerMode] = useState<string>("round_robin");
@@ -31,9 +33,22 @@ export default function SettingsPage() {
 
   return (
     <main className="mx-auto max-w-2xl px-4 py-8">
-      <h1 className="mb-8 text-2xl font-semibold text-zinc-100" style={{ fontFamily: "var(--cg-font-display)" }}>
-        {t("settings")}
-      </h1>
+      <div className="mb-8 flex items-center justify-between">
+        <h1 className="text-2xl font-semibold text-zinc-100" style={{ fontFamily: "var(--cg-font-display)" }}>
+          {t("settings")}
+        </h1>
+        <button
+          type="button"
+          onClick={() => router.back()}
+          aria-label="Close settings"
+          className="rounded-md p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100 transition-colors"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </button>
+      </div>
 
       <div className="space-y-8">
         {/* Language Selection */}
