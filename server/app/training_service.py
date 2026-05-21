@@ -42,6 +42,7 @@ from .agent_wallets import AgentWalletManager
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _AGENT_DIR = _REPO_ROOT / "agent"
 _TRAINER = _AGENT_DIR / "round_robin_trainer.py"
+_CHALLENGE_TRAINER = _AGENT_DIR / "challenge_trainer.py"
 
 
 # Used by /training/estimate when use_0g_inference is true. Calibrated
@@ -111,6 +112,7 @@ def start_job(
     *,
     epochs: int,
     agent_ids: list[int],
+    trainer_mode: str = "round_robin",
     use_0g_inference: bool = False,
     use_0g_coaching: bool = False,
     extras_dim: int = 16,
@@ -160,9 +162,10 @@ def start_job(
     # are available without requiring uv in the subprocess's PATH.
     _agent_python = _AGENT_DIR / ".venv" / "bin" / "python"
     _trainer_exe = str(_agent_python) if _agent_python.exists() else sys.executable
+    target_trainer = _CHALLENGE_TRAINER if trainer_mode == "challenge" else _TRAINER
     cmd = [
         _trainer_exe,
-        str(_TRAINER),
+        str(target_trainer),
         "--agent-ids", ",".join(str(a) for a in agent_ids),
         "--epochs", str(epochs),
         "--status-file", str(status_file),
