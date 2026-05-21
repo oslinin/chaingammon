@@ -92,17 +92,22 @@ contract AgentVault {
 
     // ─── operator ─────────────────────────────────────────────────────────────
 
-    /// @notice Post the agent's stake into MatchEscrow. Caller must be an approved
-    ///         operator with sufficient allowance. Deducts from both balance and allowance.
+    /// @notice Post the agent's stake into MatchEscrow.
+    ///         The NFT owner may call freely (no allowance needed).
+    ///         Any other caller must have sufficient allowance (operator role).
+    ///         Deducts from balance; also deducts from allowance for non-owners.
     function depositToEscrow(
         uint256 agentId,
         bytes32 matchId,
         uint256 stake,
         address escrow
     ) external {
-        if (allowances[agentId][msg.sender] < stake) revert InsufficientAllowance();
+        bool isOwner = msg.sender == registry.ownerOf(agentId);
+        if (!isOwner) {
+            if (allowances[agentId][msg.sender] < stake) revert InsufficientAllowance();
+            allowances[agentId][msg.sender] -= stake;
+        }
         if (balances[agentId] < stake) revert InsufficientBalance();
-        allowances[agentId][msg.sender] -= stake;
         balances[agentId] -= stake;
         IMatchEscrow(escrow).deposit{value: stake}(matchId, stake);
         emit StakeDeposited(agentId, matchId, stake, msg.sender);

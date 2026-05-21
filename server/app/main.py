@@ -33,7 +33,6 @@ if str(_AGENT_DIR) not in sys.path:
 _LABEL_RE = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$")
 
 from .agent_overlay import Overlay, OverlayError, update_overlay
-from .agent_wallets import AgentWalletError, AgentWalletManager
 from .chain_client import ChainClient, ChainError
 from .ens_client import EnsClient, EnsError
 from .game_record import (
@@ -562,23 +561,11 @@ def finalize_direct_staked(req: StakedFinalizeRequest):
     except OgStorageError as e:
         raise HTTPException(status_code=502, detail=f"0G Storage upload failed: {e}") from e
 
-    # Determine the pot recipient. Agent wins → agent's session-key
-    # wallet (owner withdraws from there). Human wins → their wallet.
-    if req.winner_agent_id > 0:
-        try:
-            wallets = AgentWalletManager.from_env()
-        except AgentWalletError as e:
-            raise HTTPException(status_code=503, detail=f"agent wallets unavailable: {e}")
-        if not wallets.has_wallet(req.winner_agent_id):
-            raise HTTPException(
-                status_code=400,
-                detail=f"agent {req.winner_agent_id} has no wallet — provision via POST /agents/{{id}}/wallet first",
-            )
-        winner_payout_addr = wallets.get_address(req.winner_agent_id)
-    else:
-        if req.winner_human_address == "0x0000000000000000000000000000000000000000":
-            raise HTTPException(status_code=400, detail="winner_human_address required when human wins")
-        winner_payout_addr = req.winner_human_address
+    # Winner payout address: agent wins → owner withdraws from vault directly;
+    # human wins → their wallet address.
+    if req.winner_human_address == "0x0000000000000000000000000000000000000000" and req.winner_agent_id == 0:
+        raise HTTPException(status_code=400, detail="winner_human_address required when human wins")
+    winner_payout_addr = req.winner_human_address if req.winner_agent_id == 0 else req.winner_human_address
 
     pot_wei = stake_wei * 2
 
@@ -831,14 +818,11 @@ def settle_endpoint(req: SettleRequest):
         # produced by the /replay endpoint. Normalise to a checksum address.
         winner_addr = req.winner
         if winner_addr.lower().startswith("agent:"):
-            # Agent won — pay out to the agent's server-managed wallet
-            # (agent_wallets.py). Fall back to the deployer address so funds
-            # aren't lost if the wallet lookup fails.
+            # Agent won — pay out to the NFT owner's wallet; owner can
+            # deposit winnings back into AgentVault if desired.
             try:
-                from .agent_wallets import AgentWallets as _AgentWallets
-                _wallets = _AgentWallets.from_env()
                 agent_id_str = winner_addr.split(":", 1)[1]
-                winner_addr = _wallets.address_for(int(agent_id_str))
+                winner_addr = chain.agent_owner(int(agent_id_str))
             except Exception:
                 winner_addr = chain.account_address
         try:
@@ -1693,37 +1677,6 @@ def get_agent_profile(agent_id: int):
 # that has no withdrawal power, only the ability to forward pre-approved
 # stake amounts into MatchEscrow.
 
-
-class AgentDepositRequest(BaseModel):
-    match_id: str
-    stake_wei: int
-
-
-def _vault_operator_or_503() -> AgentWalletManager:
-    try:
-        return AgentWalletManager.from_env()
-    except AgentWalletError as e:
-        raise HTTPException(status_code=503, detail=str(e))
-
-
-@app.post("/agents/{agent_id}/deposit")
-def agent_deposit(agent_id: int, req: AgentDepositRequest):
-    """Call AgentVault.depositToEscrow() with the server operator key.
-
-    The vault deducts stake_wei from the agent's balance and forwards it
-    to MatchEscrow. Requires the agent owner to have previously approved
-    the operator via AgentVault.approve(agentId, operatorAddress, amount).
-    """
-    operator = _vault_operator_or_503()
-    try:
-        tx_hash = operator.deposit_to_escrow(
-            agent_id=agent_id,
-            match_id_hex=req.match_id,
-            stake_wei=req.stake_wei,
-        )
-    except AgentWalletError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    return {"tx_hash": tx_hash}
 
 
 def _truncate_address(addr: str) -> str:

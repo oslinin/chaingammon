@@ -399,6 +399,12 @@ function TeamDemoPageInner() {
     : [];
   const hasUrlParams = initialOpponents.length > 0;
   const settleOnChain = params.get("settle") === "1";
+  const escrowMatchId = params.get("escrowMatchId") as `0x${string}` | null;
+  const escrowStakeWei = (() => {
+    const s = params.get("stakeWei");
+    try { return s ? BigInt(s) : 0n; } catch { return 0n; }
+  })();
+  const hasEscrow = !!escrowMatchId && escrowStakeWei > 0n;
 
   const [setup, setSetup] = useState(!hasUrlParams);
   const [teammateIds, setTeammateIds] = useState<number[]>(initialTeammates);
@@ -442,7 +448,7 @@ function TeamDemoPageInner() {
   const { address, chain: walletChain, chainId: walletChainId } = useAccount();
   const chainId = useActiveChainId();
   const activeChain = useActiveChain();
-  const { agentRegistry, matchRegistry } = useChainContracts();
+  const { agentRegistry, matchRegistry, agentVault } = useChainContracts();
   const { label: humanLabel } = useChaingammonName(address);
   const { signMessageAsync } = useSignMessage();
   const { writeContractAsync } = useWriteContract();
@@ -561,26 +567,58 @@ function TeamDemoPageInner() {
         // Pre-sign a forfeit result for this nonce. The session key holds
         // its own private key, so this is silent — no second wallet popup.
         // gameRecordHash = 0x0 because no record is archived for a walk-off.
-        const forfeitHashRaw = keccak256(
-          encodeAbiParameters(
-            parseAbiParameters(
-              "string, uint256, address, address, uint256, uint256, bool, bytes32",
+        //
+        // When there is an active escrow the contract requires the
+        // "result-with-split" prefix (settleWithSessionKeysAndSplit) so the
+        // split commitment is bound to the result signature. On forfeit the
+        // agent wins, so the full pot goes to AgentVault.
+        let forfeitSig: `0x${string}`;
+        if (hasEscrow && escrowMatchId && agentVault !== "0x0000000000000000000000000000000000000000") {
+          const pot = escrowStakeWei * 2n;
+          const splitHash = keccak256(encodeAbiParameters(
+            parseAbiParameters("address[], uint256[]"),
+            [[agentVault], [pot]],
+          ));
+          const forfeitHashRaw = keccak256(
+            encodeAbiParameters(
+              parseAbiParameters(
+                "string, uint256, address, address, uint256, uint256, bool, bytes32, bytes32, bytes32",
+              ),
+              [
+                "Chaingammon:result-with-split",
+                BigInt(chainId ?? 0),
+                matchRegistry,
+                address,
+                nonce,
+                BigInt(primaryOpponentId),
+                false,
+                ZERO_HASH,
+                escrowMatchId,
+                splitHash,
+              ],
             ),
-            [
-              "Chaingammon:result",
-              BigInt(chainId ?? 0),
-              matchRegistry,
-              address,
-              nonce,
-              BigInt(primaryOpponentId),
-              false,
-              ZERO_HASH,
-            ],
-          ),
-        );
-        const forfeitSig = await acct.signMessage({
-          message: { raw: forfeitHashRaw },
-        });
+          );
+          forfeitSig = await acct.signMessage({ message: { raw: forfeitHashRaw } });
+        } else {
+          const forfeitHashRaw = keccak256(
+            encodeAbiParameters(
+              parseAbiParameters(
+                "string, uint256, address, address, uint256, uint256, bool, bytes32",
+              ),
+              [
+                "Chaingammon:result",
+                BigInt(chainId ?? 0),
+                matchRegistry,
+                address,
+                nonce,
+                BigInt(primaryOpponentId),
+                false,
+                ZERO_HASH,
+              ],
+            ),
+          );
+          forfeitSig = await acct.signMessage({ message: { raw: forfeitHashRaw } });
+        }
 
         setSessionAccount(acct);
         setHumanAuthSig(authSig);
@@ -614,6 +652,10 @@ function TeamDemoPageInner() {
     humanAuthSig,
     signMessageAsync,
     walletOnSupportedChain,
+    hasEscrow,
+    escrowMatchId,
+    escrowStakeWei,
+    agentVault,
   ]);
 
   // Auto-start the match. For settle-on-chain games, gate on auth complete so
@@ -895,48 +937,114 @@ function TeamDemoPageInner() {
           });
 
       let resultSig: `0x${string}`;
-      if (useForfeitSig) {
-        resultSig = forfeitResultSig as `0x${string}`;
-      } else {
-        const resultHashRaw = keccak256(
-          encodeAbiParameters(
-            parseAbiParameters(
-              "string, uint256, address, address, uint256, uint256, bool, bytes32",
+      let txHash: `0x${string}`;
+
+      const useEscrow =
+        hasEscrow &&
+        escrowMatchId &&
+        agentVault !== "0x0000000000000000000000000000000000000000";
+
+      if (useEscrow) {
+        // Escrow settlement: session key signs with "result-with-split" prefix
+        // binding the escrowMatchId and split commitment. Winner gets full pot.
+        const pot = escrowStakeWei * 2n;
+        const escrowWinner = humanWins ? address : agentVault;
+        const winners: `0x${string}`[] = [escrowWinner];
+        const shares: bigint[] = [pot];
+        const splitHash = keccak256(encodeAbiParameters(
+          parseAbiParameters("address[], uint256[]"),
+          [winners, shares],
+        ));
+
+        if (useForfeitSig) {
+          resultSig = forfeitResultSig as `0x${string}`;
+        } else {
+          const resultHashRaw = keccak256(
+            encodeAbiParameters(
+              parseAbiParameters(
+                "string, uint256, address, address, uint256, uint256, bool, bytes32, bytes32, bytes32",
+              ),
+              [
+                "Chaingammon:result-with-split",
+                BigInt(chainId ?? 0),
+                matchRegistry,
+                address,
+                authNonce,
+                BigInt(primaryOpponentId),
+                humanWins,
+                gameRecordHash,
+                escrowMatchId as `0x${string}`,
+                splitHash,
+              ],
             ),
-            [
-              "Chaingammon:result",
-              BigInt(chainId ?? 0),
-              matchRegistry,
-              address,
-              authNonce,
-              BigInt(primaryOpponentId),
-              humanWins,
-              gameRecordHash,
-            ],
-          ),
-        );
-        resultSig = await sessionAccount.signMessage({
-          message: { raw: resultHashRaw },
+          );
+          resultSig = await sessionAccount.signMessage({ message: { raw: resultHashRaw } });
+        }
+
+        txHash = await writeContractAsync({
+          address: matchRegistry,
+          abi: MatchRegistryABI,
+          functionName: "settleWithSessionKeysAndSplit",
+          args: [
+            address,
+            BigInt(primaryOpponentId),
+            matchLength,
+            humanWins,
+            gameRecordHash,
+            authNonce,
+            sessionAccount.address,
+            humanAuthSig,
+            resultSig,
+            escrowMatchId as `0x${string}`,
+            winners,
+            shares,
+          ],
+          chainId,
+        });
+      } else {
+        if (useForfeitSig) {
+          resultSig = forfeitResultSig as `0x${string}`;
+        } else {
+          const resultHashRaw = keccak256(
+            encodeAbiParameters(
+              parseAbiParameters(
+                "string, uint256, address, address, uint256, uint256, bool, bytes32",
+              ),
+              [
+                "Chaingammon:result",
+                BigInt(chainId ?? 0),
+                matchRegistry,
+                address,
+                authNonce,
+                BigInt(primaryOpponentId),
+                humanWins,
+                gameRecordHash,
+              ],
+            ),
+          );
+          resultSig = await sessionAccount.signMessage({
+            message: { raw: resultHashRaw },
+          });
+        }
+
+        txHash = await writeContractAsync({
+          address: matchRegistry,
+          abi: MatchRegistryABI,
+          functionName: "settleWithSessionKeys",
+          args: [
+            address,
+            BigInt(primaryOpponentId),
+            matchLength,
+            humanWins,
+            gameRecordHash,
+            authNonce,
+            sessionAccount.address,
+            humanAuthSig,
+            resultSig,
+          ],
+          chainId,
         });
       }
-
-      const txHash = await writeContractAsync({
-        address: matchRegistry,
-        abi: MatchRegistryABI,
-        functionName: "settleWithSessionKeys",
-        args: [
-          address,
-          BigInt(primaryOpponentId),
-          matchLength,
-          humanWins,
-          gameRecordHash,
-          authNonce,
-          sessionAccount.address,
-          humanAuthSig,
-          resultSig,
-        ],
-        chainId,
-      });
       setSettleTxHash(txHash);
     } catch (e) {
       setSettleStatus("error");

@@ -18,9 +18,7 @@ import { parseEther } from "viem";
 import { generatePrivateKey } from "viem/accounts";
 
 import { AgentWalletPanel } from "../AgentWalletPanel";
-import { MatchEscrowABI, useChainContracts } from "../contracts";
-
-const SERVER = process.env.NEXT_PUBLIC_SERVER_URL ?? "http://localhost:8000";
+import { AgentVaultABI, MatchEscrowABI, useChainContracts } from "../contracts";
 
 const ZERO_ADDR = "0x0000000000000000000000000000000000000000" as `0x${string}`;
 const ZERO_BIG = BigInt(0);
@@ -62,7 +60,7 @@ function MatchInner() {
 
   const { address, isConnected } = useAccount();
   const publicClient = usePublicClient();
-  const { matchEscrow } = useChainContracts();
+  const { matchEscrow, agentVault } = useChainContracts();
   const { writeContractAsync } = useWriteContract();
 
   const stakeWei = stakeEth.trim() ? safeParseEther(stakeEth) : ZERO_BIG;
@@ -101,21 +99,20 @@ function MatchInner() {
         await publicClient.waitForTransactionReceipt({ hash: humanTxHash });
       }
       setDepositStatus("agent-pending");
-      const res = await fetch(`${SERVER}/agents/${agentId}/deposit`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          match_id: newMatchId,
-          stake_wei: stakeWei.toString(),
-        }),
+      const agentTxHash = await writeContractAsync({
+        abi: AgentVaultABI,
+        address: agentVault,
+        functionName: "depositToEscrow",
+        args: [BigInt(agentId), newMatchId, stakeWei, matchEscrow],
       });
-      if (!res.ok) {
-        const detail = await res.text().catch(() => res.statusText);
-        throw new Error(`agent deposit failed: ${detail}`);
+      if (publicClient) {
+        await publicClient.waitForTransactionReceipt({ hash: agentTxHash });
       }
       setDepositStatus("ready");
       // Both sides funded — navigate immediately.
-      router.push(`/team-demo?opponents=${agentId}&settle=1`);
+      // Pass escrowMatchId and stakeWei so team-demo can call
+      // settleWithSessionKeysAndSplit and actually pay out the pot.
+      router.push(`/team-demo?opponents=${agentId}&settle=1&escrowMatchId=${newMatchId}&stakeWei=${stakeWei.toString()}`);
     } catch (err) {
       setDepositError(err instanceof Error ? err.message : String(err));
       setDepositStatus("error");
@@ -180,7 +177,7 @@ function MatchInner() {
             <>
               <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
                 You and the agent each deposit {stakeEth} ETH; winner takes the
-                pot. Agent funds come from its server-managed wallet below — top
+                pot. Agent funds come from its on-chain vault below — top
                 it up before staking.
               </p>
               <div className="mt-3">
