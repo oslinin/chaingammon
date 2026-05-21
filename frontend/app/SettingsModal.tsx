@@ -98,7 +98,11 @@ export function SettingsModal() {
             </h3>
             <BoardThemePicker
               value={boardTheme}
-              onChange={(k) => { setBoardTheme(k); saveTheme(k); }}
+              onChange={(k) => {
+                setBoardTheme(k);
+                saveTheme(k);
+                window.dispatchEvent(new CustomEvent("board-theme-change", { detail: k }));
+              }}
             />
           </section>
 

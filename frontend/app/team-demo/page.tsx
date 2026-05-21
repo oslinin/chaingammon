@@ -444,6 +444,11 @@ function TeamDemoPageInner() {
   const [settleTxHash, setSettleTxHash] = useState<`0x${string}` | null>(null);
   const [hasStaleSession, setHasStaleSession] = useState(false);
   const [boardTheme, setBoardTheme] = useState<BoardThemeKey>(() => loadTheme());
+  useEffect(() => {
+    const handler = (e: Event) => setBoardTheme((e as CustomEvent<BoardThemeKey>).detail);
+    window.addEventListener("board-theme-change", handler);
+    return () => window.removeEventListener("board-theme-change", handler);
+  }, []);
 
   const { address, chain: walletChain, chainId: walletChainId } = useAccount();
   const chainId = useActiveChainId();
