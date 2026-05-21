@@ -200,7 +200,7 @@ export function AgentTeammatePanel({
       const opponentFeatures =
         opponentId != null ? `Agent #${opponentId} in play` : undefined;
 
-      const res = await fetch("/api/agent-teammate/chat", {
+      const res = await fetch("/api/agent-teammate/chat/", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

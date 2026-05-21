@@ -40,8 +40,8 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass, field
-from typing import Mapping, Optional
+from dataclasses import dataclass
+from typing import Mapping
 
 
 # Canonical category list. Keep stable — changes invalidate every existing

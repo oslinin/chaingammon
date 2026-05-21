@@ -18,11 +18,9 @@ What's covered:
 from __future__ import annotations
 
 import json
-import os
 import sys
 import time
 from pathlib import Path
-from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
@@ -408,7 +406,6 @@ def test_estimate_0g_unavailable_without_env():
 def test_estimate_0g_uses_eval_client_when_available(monkeypatch):
     """When the eval client succeeds, gas_og + per_inference_og are
     populated from the bridge's response and available=true."""
-    from app import training_service
 
     class _StubResult:
         per_inference_og = 0.0001
