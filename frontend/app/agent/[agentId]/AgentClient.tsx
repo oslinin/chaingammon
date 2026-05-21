@@ -75,7 +75,7 @@ export default function AgentClient() {
 
   const chainId = useActiveChainId();
   const active = useActiveChain();
-  const { agentRegistry, matchRegistry, agentVault } = useChainContracts();
+  const { agentRegistry, matchRegistry, agentVault, matchEscrow } = useChainContracts();
   const client = usePublicClient({ chainId });
   const deployedBlock = active?.deployedBlock;
 
@@ -436,6 +436,33 @@ export default function AgentClient() {
               tooltip="ERC-721 contract that mints and tracks all agent NFTs. The token ID above lives in this contract."
             />
             <InfoField
+              label="AgentVault"
+              value={agentVault && agentVault !== "0x0000000000000000000000000000000000000000" ? agentVault : "—"}
+              mono
+              truncate
+              href={explorerUrl && agentVault && agentVault !== "0x0000000000000000000000000000000000000000" ? `${explorerUrl}/address/${agentVault}` : undefined}
+              copyValue={agentVault && agentVault !== "0x0000000000000000000000000000000000000000" ? agentVault : undefined}
+              tooltip="Vault contract holding ETH for all agents' match stakes. Call deposit(agentId) here to fund this agent."
+            />
+            <InfoField
+              label="MatchRegistry"
+              value={matchRegistry ?? "—"}
+              mono
+              truncate
+              href={explorerUrl && matchRegistry ? `${explorerUrl}/address/${matchRegistry}` : undefined}
+              copyValue={matchRegistry ?? undefined}
+              tooltip="Records match outcomes and maintains ELO ratings for all agents and human players."
+            />
+            <InfoField
+              label="MatchEscrow"
+              value={matchEscrow && matchEscrow !== "0x0000000000000000000000000000000000000000" ? matchEscrow : "—"}
+              mono
+              truncate
+              href={explorerUrl && matchEscrow && matchEscrow !== "0x0000000000000000000000000000000000000000" ? `${explorerUrl}/address/${matchEscrow}` : undefined}
+              copyValue={matchEscrow && matchEscrow !== "0x0000000000000000000000000000000000000000" ? matchEscrow : undefined}
+              tooltip="Escrow contract that holds both sides' stakes during an active staked match."
+            />
+            <InfoField
               label="ENS name"
               value={ensName ?? "—"}
               mono
@@ -492,37 +519,6 @@ export default function AgentClient() {
                   : undefined
               }
               tooltip="Wallet address that holds this agent NFT. The owner can initiate matches, stake tokens, and trigger retraining."
-            />
-            <InfoField
-              label="Owner balance"
-              value={
-                balanceData
-                  ? `${parseFloat(formatEther(balanceData.value)).toFixed(4)} ${balanceData.symbol}`
-                  : "—"
-              }
-              mono
-              tooltip="Native token balance of the owner's wallet on the current chain. Shown for context when assessing stake capacity."
-            />
-            <InfoField
-              label="Vault contract"
-              value={
-                agentVault && agentVault !== "0x0000000000000000000000000000000000000000"
-                  ? agentVault
-                  : "—"
-              }
-              mono
-              truncate
-              href={
-                explorerUrl && agentVault && agentVault !== "0x0000000000000000000000000000000000000000"
-                  ? `${explorerUrl}/address/${agentVault}`
-                  : undefined
-              }
-              copyValue={
-                agentVault && agentVault !== "0x0000000000000000000000000000000000000000"
-                  ? agentVault
-                  : undefined
-              }
-              tooltip="AgentVault contract address — call deposit(agentId) here to fund this agent's match stake. One contract holds balances for all agents."
             />
             <InfoField
               label="Agent wallet"
