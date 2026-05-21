@@ -55,10 +55,11 @@ app = FastAPI(title="Chaingammon Coach Agent")
 
 # The browser calls /hint cross-origin from http://localhost:3000.
 # Without CORS the preflight OPTIONS returns 405 and the POST is
-# blocked. Open CORS in dev; production should pin `allow_origins`.
+# blocked. Restricted to the deployed frontend host via ALLOWED_ORIGINS.
+allowed_origins = [o.strip() for o in os.getenv("ALLOWED_ORIGINS", "http://localhost:3000").split(",")]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=allowed_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )

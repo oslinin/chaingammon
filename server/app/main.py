@@ -53,12 +53,12 @@ from .og_storage_client import OgStorageError, get_blob, put_blob
 
 app = FastAPI()
 # Phase 20: the Next.js frontend at :3000 calls these endpoints cross-origin
-# (live match flow, subname mint, replay fetch). Open CORS so browser fetches
-# succeed in dev. Production should restrict `allow_origins` to the deployed
-# frontend host.
+# (live match flow, subname mint, replay fetch).
+# Restricted to the deployed frontend host via ALLOWED_ORIGINS.
+allowed_origins = [o.strip() for o in os.getenv("ALLOWED_ORIGINS", "http://localhost:3000").split(",")]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=allowed_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
