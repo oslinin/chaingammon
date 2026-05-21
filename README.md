@@ -21,7 +21,7 @@ A decentralised, verifiable ELO ledger for backgammon — humans and agents shar
    - KeeperHub pulls drand round R → dice are deterministic from the round digest.
    - The active side's agent runs a value-network forward pass (browser or 0G Compute) and selects the highest-equity legal move.
    - The move is appended to the in-progress `GameRecord`; KeeperHub validates legality via the WASM rules engine.
-4. Game ends → both signatures verified by `MatchRegistry.settleWithSessionKeys` → ELO + ENS text records updated → audit JSON mirrored to 0G Storage.
+4. Game ends → browser uploads `GameRecord` to 0G Storage (`POST /upload-game-record`) → `MatchRegistry.settleWithSessionKeys` called directly from the browser with the real blob hash → `post-settle-audit` KeeperHub workflow fires → ENS text records updated → audit trail anchored.
 5. Any other tool reads your ENS subname and reconstructs your full backgammon DNA — ELO, games played, playing style.
 
 ### Per-turn sequence
@@ -302,20 +302,47 @@ Frontend: `frontend/app/match/page.tsx` + `AgentWalletPanel.tsx` — agent addre
 
 ## KeeperHub workflow
 
-`server/app/keeper_workflow.py` runs 8 sequential steps for any matchId that's been finalised on-chain:
+Two YAML workflows live in [`keeperhub/`](keeperhub/):
 
-| #   | Step ID             | What it does                                                                                                                                                   |
-| --- | ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | `escrow_deposit`    | Reads MatchInfo from MatchRegistry; fails if the match isn't on-chain.                                                                                         |
-| 2   | `vrf_rolls`         | Probes the drand mainnet HTTP endpoint to confirm the VRF source is reachable.                                                                                 |
-| 3   | `og_storage_fetch`  | Pulls the GameRecord blob from 0G Storage by the rootHash in MatchInfo.                                                                                        |
-| 4   | `rules_check`       | Walks every recorded move through the pure-Python rules engine (`agent/rules_engine.py`). A single illegal move halts the workflow so the match cannot settle. |
-| 5   | `settlement_signed` | Confirms MatchInfo presence (session-key flow pre-authorises; the relay tx itself is the proof).                                                               |
-| 6   | `relay_tx`          | Surfaces `gameRecordHash` as the canonical audit anchor.                                                                                                       |
-| 7   | `ens_update`        | Cross-checks `elo` + `last_match_id` text records on each labelled subname; skips cleanly for unnamed / agent-vs-agent matches.                                |
-| 8   | `audit_append`      | Serialises the entire workflow run to JSON, uploads to 0G Storage, surfaces the rootHash as the audit-trail anchor.                                            |
+### `match-settle.yaml` — staked-match settlement (escrow path)
 
-Trigger via `POST /keeper-workflow/{matchId}/run`. The workflow runs on a background thread; `GET /keeper-workflow/{matchId}` polls return live mid-run progress, persisted to `/tmp/chaingammon-keeper-workflows/<matchId>.json` so navigating away and back during a long-running step doesn't lose state. A step failure marks itself "failed" with the exception message in `error`, the workflow status flips to "failed", and remaining steps stay "pending" — an audit reader can immediately see which step broke and why.
+Triggered by the second `Deposited` event from `MatchEscrow` on `og-testnet`. Runs when both players have funded escrow before the match starts.
+
+| #  | Step ID             | What it does                                                                                                                             |
+|----|---------------------|------------------------------------------------------------------------------------------------------------------------------------------|
+| 1  | `on-deposit`        | Confirms both deposits arrived; captures the `matchId`.                                                                                  |
+| 2  | `per-turn-drand`    | Polls `GET /games/{matchId}/dice` every 5 s to deliver drand-derived dice to each turn.                                                  |
+| 3  | `forfeit-poll`      | Checks every 30 s whether a player has exceeded the move clock; sets `forfeited` flag.                                                   |
+| 4  | `on-game-end`       | Waits for the game-end webhook (`POST /webhooks/match/{matchId}/end`).                                                                   |
+| 5  | `fetch-and-replay`  | Fetches the `GameRecord` from 0G Storage and replays every move through the WASM rules engine. A single illegal move halts the workflow. |
+| 6  | `sign-settlement`   | ECDSA-signs the settlement payload (matchId, winner, forfeit flag, escrowMatchId) with `KEEPER_PRIVKEY`.                                 |
+| 7  | `relay-settlement`  | POSTs the signed payload to `POST /settle`; server verifies the keeper signature and calls `MatchRegistry.recordMatchAndSplit`.           |
+
+### `post-settle-audit.yaml` — ENS sync + audit trail (all settlements)
+
+Triggered by every `MatchRecorded` event from `MatchRegistry` on Sepolia — fires for both browser-direct settlements (`settleWithSessionKeys`) and relayer settlements (`recordMatch`). No keeper signing required.
+
+| #  | Step ID          | What it does                                                                                                                                 |
+|----|------------------|----------------------------------------------------------------------------------------------------------------------------------------------|
+| 1  | `confirm-match`  | Logs the `MatchRecorded` event (matchId, winner, loser, new ELOs).                                                                           |
+| 2  | `run-audit`      | POSTs `{matchId}` to `POST /post-settle-audit`. Server reads `getMatch()` from chain, fetches the 0G Storage blob, extracts `winner_label` / `loser_label`, pushes `elo` + `last_match_id` ENS text records, updates agent style-overlay KV. |
+| 3  | `audit-done`     | Logs the per-side ENS and overlay update results.                                                                                            |
+
+**Required secrets for `post-settle-audit.yaml`:** `SEPOLIA_RPC_URL`, `MATCH_REGISTRY_ADDRESS` (`0xaCF222C7c19a3418246B1aa2fbC4Bd97eC4930Dc`), `SERVER_URL`.
+
+### Serverless settlement path (browser-direct)
+
+The `settleWithSessionKeys` contract function is permissionless — the browser can settle without any server involvement:
+
+1. At game-open the human wallet signs a one-time auth (one MetaMask popup). A session key is generated in the browser and stored in `sessionStorage`.
+2. During play the session key signs each move; at game-end it signs the result hash.
+3. The browser calls `POST /upload-game-record` to upload the `GameRecord` (with `winner_label` / `loser_label`) to 0G Storage, getting back the Merkle root hash.
+4. The browser calls `MatchRegistry.settleWithSessionKeys(…, gameRecordHash)` directly — no server key in the trust path.
+5. `post-settle-audit.yaml` fires on the resulting `MatchRecorded` event and handles ENS sync automatically.
+
+### Legacy server-poll workflow (`keeper_workflow.py`)
+
+`server/app/keeper_workflow.py` provides an in-process 8-step audit that can be triggered via `POST /keeper-workflow/{matchId}/run`. Steps cover `og_storage_fetch`, `rules_check`, `ens_update`, and `audit_append`. `GET /keeper-workflow/{matchId}` polls return live progress, persisted to `/tmp/chaingammon-keeper-workflows/<matchId>.json`.
 
 Full feedback document: [docs/keeperhub-feedback.md](docs/keeperhub-feedback.md). Workflow spec: [docs/keeperhub-workflow.md](docs/keeperhub-workflow.md).
 

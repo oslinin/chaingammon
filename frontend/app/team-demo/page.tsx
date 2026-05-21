@@ -32,6 +32,7 @@ import { DiceRoll } from "../DiceRoll";
 import { rollDice } from "../dice";
 import { useActiveChain, useActiveChainId } from "../chains";
 import { AgentRegistryABI, MatchRegistryABI, useChainContracts } from "../contracts";
+import { useChaingammonName } from "../useChaingammonName";
 import {
   type MatchState,
   newMatch,
@@ -42,10 +43,64 @@ import {
   playMatchToEnd,
   resignMatch,
 } from "../../lib/match_engine";
+import { loadAgentModel } from "../../lib/onnx_eval";
+import { loadAgentOnnxBytes } from "../../lib/agent_model_loader";
 import { type Board as GameBoard } from "../../lib/rules_engine";
 
 const ZERO_HASH =
   "0x0000000000000000000000000000000000000000000000000000000000000000" as `0x${string}`;
+
+const SERVER =
+  process.env.NEXT_PUBLIC_SERVER_URL ?? "http://localhost:8000";
+
+/**
+ * Upload a minimal game record to 0G Storage via the server relay and return
+ * the Merkle root hash. The hash is passed as `gameRecordHash` to
+ * `settleWithSessionKeys` so the on-chain commitment points at a real blob
+ * the post-settle keeper can later fetch for ENS sync.
+ *
+ * Falls back to ZERO_HASH on any error — settlement still succeeds, the
+ * keeper just won't find a record to push ENS updates from.
+ */
+async function uploadGameRecord(opts: {
+  humanAddress: string;
+  humanLabel: string | null;
+  agentId: number;
+  humanWins: boolean;
+  game: MatchState | null;
+}): Promise<`0x${string}`> {
+  const { humanAddress, humanLabel, agentId, humanWins, game } = opts;
+  const humanRef = { kind: "human", address: humanAddress };
+  const agentRef = { kind: "agent", agent_id: agentId };
+
+  const record = {
+    envelope_version: 1,
+    match_length: game?.match_length ?? 3,
+    final_score: game?.score ?? [0, 0],
+    winner: humanWins ? humanRef : agentRef,
+    loser: humanWins ? agentRef : humanRef,
+    final_position_id: game?.position_id ?? "",
+    final_match_id: game?.match_id ?? "",
+    moves: [],
+    winner_label: humanWins ? (humanLabel ?? "") : "",
+    loser_label: humanWins ? "" : (humanLabel ?? ""),
+  };
+
+  try {
+    const resp = await fetch(`${SERVER}/upload-game-record`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ record }),
+    });
+    if (!resp.ok) return ZERO_HASH;
+    const data = await resp.json();
+    const hash = data?.root_hash as string | undefined;
+    if (hash?.startsWith("0x") && hash.length === 66) return hash as `0x${string}`;
+  } catch {
+    // Non-fatal: fall through to ZERO_HASH.
+  }
+  return ZERO_HASH;
+}
 
 function settleSessionKey(
   chainId: number | undefined,
@@ -388,6 +443,7 @@ function TeamDemoPageInner() {
   const chainId = useActiveChainId();
   const activeChain = useActiveChain();
   const { agentRegistry, matchRegistry } = useChainContracts();
+  const { label: humanLabel } = useChaingammonName(address);
   const { signMessageAsync } = useSignMessage();
   const { writeContractAsync } = useWriteContract();
   const { switchChain, isPending: isSwitchingChain, error: switchChainError } =
@@ -700,11 +756,21 @@ function TeamDemoPageInner() {
     };
   });
 
-  const startTrainingGame = () => {
+  const startTrainingGame = async () => {
     if (opponentIds.length === 0) return;
     setSetup(false);
     setLoading(true);
     try {
+      // Load the opponent agent's ONNX model from 0G Storage if available.
+      // Falls back silently to the bundled base model on any failure.
+      const opponentAgent = agents.find((a) => a.agent_id === opponentIds[0]);
+      const weightsHash = opponentAgent?.weights_hash ?? "";
+      if (weightsHash && weightsHash !== ZERO_HASH) {
+        const onnxBytes = await loadAgentOnnxBytes(weightsHash);
+        if (onnxBytes) {
+          await loadAgentModel(onnxBytes).catch(() => {/* fall back to base */});
+        }
+      }
       const state = newMatch(3);
       setGame({ ...state, dice: rollDice() });
     } catch (e) {
@@ -815,19 +881,18 @@ function TeamDemoPageInner() {
 
     try {
       const matchLength = 3;
+      // Upload the game record to 0G Storage so the post-settle keeper can
+      // fetch it for ENS sync. Falls back to ZERO_HASH if the server is
+      // unreachable — settlement still proceeds.
       const gameRecordHash = useForfeitSig
         ? ZERO_HASH
-        : (keccak256(
-            toHex(
-              JSON.stringify({
-                match_id: game?.match_id ?? null,
-                position_id: game?.position_id ?? null,
-                score: game?.score ?? null,
-                match_length: game?.match_length ?? matchLength,
-                winner: game?.winner ?? null,
-              }),
-            ),
-          ) as `0x${string}`);
+        : await uploadGameRecord({
+            humanAddress: address,
+            humanLabel,
+            agentId: primaryOpponentId,
+            humanWins,
+            game,
+          });
 
       let resultSig: `0x${string}`;
       if (useForfeitSig) {

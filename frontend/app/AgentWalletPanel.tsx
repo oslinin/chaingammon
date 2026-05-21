@@ -1,111 +1,80 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import {
   useAccount,
   usePublicClient,
+  useReadContract,
   useWalletClient,
-  useSignMessage,
+  useWriteContract,
 } from "wagmi";
 
-const SERVER = process.env.NEXT_PUBLIC_SERVER_URL ?? "http://localhost:8000";
-
-interface WalletState {
-  address: `0x${string}`;
-  balance_wei: string;
-}
+import { AgentVaultABI, useChainContracts } from "./contracts";
+import { useActiveChainId } from "./chains";
 
 interface Props {
   agentId: number;
-  /** Required stake in wei. Drives the "Fund agent" shortfall calculation
-   * and the at-a-glance "needs funding?" indicator. */
+  /** Required stake in wei — drives the "Fund agent" shortfall label. */
   stakeWei: bigint;
-  /** Called after a wallet refresh — useful so the parent component can
-   * gate "Start" on `agentBalanceWei >= stakeWei`. */
-  onWalletChange?: (state: WalletState | null) => void;
-}
-
-function shortAddr(addr: string): string {
-  return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
+  /** Called after a balance change — lets the parent gate Start on balance >= stake. */
+  onBalanceChange?: (balanceWei: bigint) => void;
 }
 
 function formatEth(wei: bigint): string {
-  // Format with up to 4 decimal places — enough for the stake range we
-  // expect (0.001 to a few ETH on testnet) without spamming digits.
   const ether = Number(wei) / 1e18;
   return ether.toLocaleString(undefined, { maximumFractionDigits: 4 });
 }
 
-/** Fetches /agents/{id}/wallet, auto-creates if 404, shows balance, and
- * exposes Fund / Withdraw buttons that talk to the connected wallet
- * (Fund) and the server (Withdraw). Refreshes balance after each action.
- */
-export function AgentWalletPanel({ agentId, stakeWei, onWalletChange }: Props) {
+/** Displays the agent's on-chain vault balance and exposes Fund / Withdraw
+ * buttons that talk directly to AgentVault — no server involved. */
+export function AgentWalletPanel({ agentId, stakeWei, onBalanceChange }: Props) {
   const { address, isConnected } = useAccount();
   const { data: walletClient } = useWalletClient();
   const publicClient = usePublicClient();
+  const chainId = useActiveChainId();
+  const { agentVault } = useChainContracts();
 
-  const [wallet, setWallet] = useState<WalletState | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [copied, setCopied] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const copyAddress = useCallback(() => {
-    if (!wallet) return;
-    void navigator.clipboard.writeText(wallet.address).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    });
-  }, [wallet]);
+  const noVault = !agentVault || agentVault === "0x0000000000000000000000000000000000000000";
 
-  const refresh = useCallback(async () => {
-    try {
-      let res = await fetch(`${SERVER}/agents/${agentId}/wallet`);
-      if (res.status === 404) {
-        // Provision lazily on first visit.
-        res = await fetch(`${SERVER}/agents/${agentId}/wallet`, {
-          method: "POST",
-        });
-        if (!res.ok) throw new Error(`provision failed: ${res.statusText}`);
-        // Re-GET to pick up the balance (POST returns address only).
-        res = await fetch(`${SERVER}/agents/${agentId}/wallet`);
-      }
-      if (!res.ok) throw new Error(await res.text().catch(() => res.statusText));
-      const data: WalletState = await res.json();
-      setWallet(data);
-      setError(null);
-      onWalletChange?.(data);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      setError(msg);
-      setWallet(null);
-      onWalletChange?.(null);
-    }
-  }, [agentId, onWalletChange]);
+  // Read balance directly from the vault contract.
+  const { data: rawBalance, refetch: refetchBalance } = useReadContract({
+    address: agentVault,
+    abi: AgentVaultABI,
+    functionName: "balances",
+    args: [BigInt(agentId)],
+    chainId,
+    query: { enabled: !noVault && agentId > 0 },
+  });
 
-  useEffect(() => {
-    void refresh();
-  }, [refresh]);
+  const { writeContractAsync } = useWriteContract();
 
-  const balanceWei = wallet ? BigInt(wallet.balance_wei) : BigInt(0);
+  const balanceWei = (rawBalance as bigint | undefined) ?? BigInt(0);
   const shortfall = stakeWei > balanceWei ? stakeWei - balanceWei : BigInt(0);
   const needsFunding = shortfall > BigInt(0);
 
+  const refresh = useCallback(async () => {
+    const result = await refetchBalance();
+    const bal = (result.data as bigint | undefined) ?? BigInt(0);
+    onBalanceChange?.(bal);
+  }, [refetchBalance, onBalanceChange]);
+
   const onFund = async () => {
-    if (!wallet || !walletClient || !address) {
-      setError("Connect your wallet to fund the agent.");
-      return;
-    }
+    if (!walletClient || !address) { setError("Connect your wallet to fund the agent."); return; }
+    if (noVault) { setError("AgentVault not deployed on this chain."); return; }
+    const value = shortfall > BigInt(0) ? shortfall : stakeWei > BigInt(0) ? stakeWei : BigInt(10) ** BigInt(15); // 0.001 ETH default top-up
     try {
-      setBusy(true);
-      setError(null);
-      const txHash = await walletClient.sendTransaction({
-        to: wallet.address,
-        value: shortfall > BigInt(0) ? shortfall : stakeWei,
+      setBusy(true); setError(null);
+      const hash = await writeContractAsync({
+        address: agentVault,
+        abi: AgentVaultABI,
+        functionName: "deposit",
+        args: [BigInt(agentId)],
+        value,
       });
-      if (publicClient) {
-        await publicClient.waitForTransactionReceipt({ hash: txHash });
-      }
+      if (publicClient) await publicClient.waitForTransactionReceipt({ hash });
       await refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -113,36 +82,20 @@ export function AgentWalletPanel({ agentId, stakeWei, onWalletChange }: Props) {
       setBusy(false);
     }
   };
-
-  const { signMessageAsync } = useSignMessage();
 
   const onWithdraw = async () => {
-    if (!wallet || !address) {
-      setError("Connect your wallet to receive the withdrawal.");
-      return;
-    }
+    if (!address) { setError("Connect your wallet to withdraw."); return; }
+    if (noVault) { setError("AgentVault not deployed on this chain."); return; }
+    if (balanceWei === BigInt(0)) { setError("Nothing to withdraw."); return; }
     try {
-      setBusy(true);
-      setError(null);
-
-      const signature = await signMessageAsync({
-        message: `Withdraw agent ${agentId} funds`,
+      setBusy(true); setError(null);
+      const hash = await writeContractAsync({
+        address: agentVault,
+        abi: AgentVaultABI,
+        functionName: "withdrawAll",
+        args: [BigInt(agentId), address],
       });
-
-      const res = await fetch(`${SERVER}/agents/${agentId}/withdraw`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ to: address, signature }),
-      });
-      if (!res.ok) {
-        const errText = await res.text().catch(() => res.statusText);
-        let parsedErr = errText;
-        try {
-          const parsed = JSON.parse(errText);
-          parsedErr = parsed.detail || errText;
-        } catch {}
-        throw new Error(parsedErr);
-      }
+      if (publicClient) await publicClient.waitForTransactionReceipt({ hash });
       await refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -151,10 +104,10 @@ export function AgentWalletPanel({ agentId, stakeWei, onWalletChange }: Props) {
     }
   };
 
-  if (!wallet && !error) {
+  if (noVault) {
     return (
       <div className="text-xs text-zinc-500 dark:text-zinc-400">
-        Loading agent wallet…
+        Agent vault not deployed on this chain.
       </div>
     );
   }
@@ -163,54 +116,32 @@ export function AgentWalletPanel({ agentId, stakeWei, onWalletChange }: Props) {
     <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3 text-xs dark:border-zinc-800 dark:bg-zinc-950">
       <div className="mb-2 flex items-center justify-between">
         <span className="font-medium text-zinc-700 dark:text-zinc-300">
-          Agent #{agentId} wallet
+          Agent #{agentId} vault
         </span>
-        {wallet && (
-          <button
-            type="button"
-            onClick={copyAddress}
-            className="flex items-center gap-1 font-mono text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100"
-            title="Copy full address"
-          >
-            {shortAddr(wallet.address)}
-            {copied ? (
-              <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                <path d="M3 8l3.5 3.5L13 4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-              </svg>
-            ) : (
-              <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                <rect x="5" y="1" width="9" height="11" rx="1.5" stroke="currentColor" strokeWidth="1.5"/>
-                <path d="M3 4H2a1 1 0 00-1 1v9a1 1 0 001 1h8a1 1 0 001-1v-1" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-              </svg>
-            )}
-          </button>
-        )}
+        <span className="font-mono text-zinc-500 dark:text-zinc-400">on-chain</span>
       </div>
-      {wallet && (
-        <div className="mb-2 flex items-baseline justify-between">
-          <span className="text-zinc-500 dark:text-zinc-400">Balance</span>
-          <span
-            className={`font-mono ${needsFunding ? "text-amber-600 dark:text-amber-400" : "text-zinc-900 dark:text-zinc-100"}`}
-          >
-            {formatEth(balanceWei)} ETH
-          </span>
-        </div>
-      )}
+
+      <div className="mb-2 flex items-baseline justify-between">
+        <span className="text-zinc-500 dark:text-zinc-400">Balance</span>
+        <span className={`font-mono ${needsFunding ? "text-amber-600 dark:text-amber-400" : "text-zinc-900 dark:text-zinc-100"}`}>
+          {formatEth(balanceWei)} ETH
+        </span>
+      </div>
+
       {needsFunding && stakeWei > BigInt(0) && (
         <p className="mb-2 text-amber-600 dark:text-amber-400">
           Need {formatEth(shortfall)} ETH more to cover the stake.
         </p>
       )}
-      {error && (
-        <p className="mb-2 text-red-600 dark:text-red-400">{error}</p>
-      )}
+      {error && <p className="mb-2 text-red-600 dark:text-red-400">{error}</p>}
+
       <div className="flex gap-2">
         <button
           type="button"
           onClick={onFund}
-          disabled={busy || !isConnected || stakeWei === BigInt(0)}
+          disabled={busy || !isConnected}
           className="flex-1 rounded border border-indigo-200 bg-indigo-50 px-2 py-1 text-indigo-700 hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-indigo-700/40 dark:bg-indigo-900/20 dark:text-indigo-300 dark:hover:bg-indigo-900/40"
-          title={needsFunding ? `Send ${formatEth(shortfall)} ETH` : `Send ${formatEth(stakeWei)} ETH`}
+          title={needsFunding ? `Deposit ${formatEth(shortfall)} ETH` : "Top up vault"}
         >
           {busy ? "…" : needsFunding ? `Fund ${formatEth(shortfall)} ETH` : "Top up"}
         </button>

@@ -4,14 +4,13 @@
 // Two-step flow:
 //   1. mintAgent — writes the iNFT on AgentRegistry. The receipt's
 //      AgentMinted event carries the new agentId.
-//   2. (optional) fund agent wallet — when the user enters a non-zero
-//      funding amount, we POST /agents/{id}/wallet to provision the
-//      server-managed session-key wallet (Phase 60), then send ETH to
-//      that address from the connected wallet.
+//   2. (optional) fund agent vault — when the user enters a non-zero
+//      funding amount, we call AgentVault.deposit(agentId) directly
+//      from the connected wallet.
 //
-// If step 2 fails (RPC, server, user-rejected funding tx), the agent
-// already exists with an unfunded wallet — the user can top up later
-// from any match page's AgentWalletPanel.
+// If step 2 fails (RPC, user-rejected), the agent already exists with
+// an empty vault — the user can top up later from any match page's
+// AgentWalletPanel.
 //
 // Model architecture — the form exposes a PyTorch source editor
 // pre-filled with the BackgammonNet MLP from agent/sample_trainer.py.
@@ -34,11 +33,9 @@ import {
 } from "wagmi";
 import { decodeEventLog, parseEther } from "viem";
 
-import { useChainContracts } from "../contracts";
+import { AgentVaultABI, useChainContracts } from "../contracts";
 import { recordTransaction } from "../transactions";
 import { ModelAdvisorPanel } from "./ModelAdvisorPanel";
-
-const SERVER = process.env.NEXT_PUBLIC_SERVER_URL ?? "http://localhost:8000";
 
 const ZERO_BIG = BigInt(0);
 
@@ -172,9 +169,10 @@ type FundStatus =
 export default function CreateAgentPage() {
   const router = useRouter();
   const { address } = useAccount();
-  const { agentRegistry } = useChainContracts();
+  const { agentRegistry, agentVault } = useChainContracts();
   const { data: walletClient } = useWalletClient();
   const publicClient = usePublicClient();
+  const { writeContractAsync: writeVaultAsync } = useWriteContract();
 
   const [agentLabel, setAgentLabel] = useState("");
   const [agentTier, setAgentTier] = useState<number>(0);
@@ -256,25 +254,6 @@ export default function CreateAgentPage() {
         return;
       }
 
-      // Provision (or fetch) the agent's server-managed wallet.
-      setFundStatus("provisioning");
-      let agentAddress: `0x${string}`;
-      try {
-        const res = await fetch(`${SERVER}/agents/${newAgentId}/wallet`, {
-          method: "POST",
-        });
-        if (!res.ok) throw new Error(`server responded ${res.status}`);
-        const data = (await res.json()) as { address: `0x${string}` };
-        agentAddress = data.address;
-      } catch (e) {
-        if (cancelled) return;
-        setFundStatus("error");
-        setFundError(
-          `Mint succeeded; agent wallet provisioning failed (${e instanceof Error ? e.message : String(e)}). Fund later from any match page.`,
-        );
-        return;
-      }
-
       if (!walletClient) {
         if (cancelled) return;
         setFundStatus("error");
@@ -284,11 +263,14 @@ export default function CreateAgentPage() {
         return;
       }
 
-      // Send the funding tx.
+      // Deposit directly into AgentVault — no server provisioning needed.
       setFundStatus("sending");
       try {
-        const fundTx = await walletClient.sendTransaction({
-          to: agentAddress,
+        const fundTx = await writeVaultAsync({
+          address: agentVault,
+          abi: AgentVaultABI,
+          functionName: "deposit",
+          args: [BigInt(newAgentId)],
           value: fundingWei,
         });
         setFundStatus("confirming");
@@ -297,7 +279,7 @@ export default function CreateAgentPage() {
         }
         recordTransaction({
           type: "agent_funding",
-          description: `Funded agent #${newAgentId} with ${fundingEth} ETH (tx ${fundTx.slice(0, 10)}…)`,
+          description: `Funded agent #${newAgentId} vault with ${fundingEth} ETH (tx ${fundTx.slice(0, 10)}…)`,
         });
         if (cancelled) return;
         setFundStatus("ok");
@@ -342,7 +324,7 @@ export default function CreateAgentPage() {
   const buttonLabel = (() => {
     if (signing) return "Signing mint…";
     if (confirming) return "Confirming mint…";
-    if (fundStatus === "provisioning") return "Provisioning agent wallet…";
+    if (fundStatus === "provisioning") return "Preparing…";
     if (fundStatus === "sending") return "Sign funding tx…";
     if (fundStatus === "confirming") return "Confirming funding…";
     return "Create agent";

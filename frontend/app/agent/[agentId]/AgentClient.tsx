@@ -75,7 +75,7 @@ export default function AgentClient() {
 
   const chainId = useActiveChainId();
   const active = useActiveChain();
-  const { agentRegistry, matchRegistry } = useChainContracts();
+  const { agentRegistry, matchRegistry, agentVault } = useChainContracts();
   const client = usePublicClient({ chainId });
   const deployedBlock = active?.deployedBlock;
 
@@ -464,19 +464,25 @@ export default function AgentClient() {
               tooltip="Native token balance of the owner's wallet on the current chain. Shown for context when assessing stake capacity."
             />
             <InfoField
-              label="Agent wallet"
+              label="Agent vault"
               value={
-                profileLoading ? "…" : profile?.address ?? "—"
+                agentVault && agentVault !== "0x0000000000000000000000000000000000000000"
+                  ? agentVault
+                  : "—"
               }
               mono
               truncate
               href={
-                explorerUrl && profile?.address
-                  ? `${explorerUrl}/address/${profile.address}`
+                explorerUrl && agentVault && agentVault !== "0x0000000000000000000000000000000000000000"
+                  ? `${explorerUrl}/address/${agentVault}`
                   : undefined
               }
-              copyValue={profile?.address ?? undefined}
-              tooltip="Server-managed wallet address for this agent. Used to hold match stakes and receive winnings. Funded by the agent owner."
+              copyValue={
+                agentVault && agentVault !== "0x0000000000000000000000000000000000000000"
+                  ? agentVault
+                  : undefined
+              }
+              tooltip="Smart contract vault that holds this agent's ETH balance. Only the NFT owner can withdraw; the server can post match stakes up to the approved allowance."
             />
             <InfoField
               label="Mint block"

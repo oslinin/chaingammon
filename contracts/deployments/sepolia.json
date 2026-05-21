@@ -8,7 +8,8 @@
     "PlayerSubnameRegistrar": "0x0E198D518241230b730eB211d1cF7E5eB7e73000",
     "MatchEscrow": "0xcBE5c2C30A3329C9fe8c2D8c36e0B1D0f7d01C9F",
     "NameWrapper": "0x0635513f179D50A207757E05759CbD106d7dFcE8",
-    "PublicResolver": "0x8FADE66B79cC9f707aB26799354482EB93a5B7dD"
+    "PublicResolver": "0x8FADE66B79cC9f707aB26799354482EB93a5B7dD",
+    "AgentVault": "0xaFee957B24F23C92D78D325a824F8017b789F35A"
   },
   "matchEscrowConstructorArgs": {
     "settler": "0xaCF222C7c19a3418246B1aa2fbC4Bd97eC4930Dc"
@@ -29,5 +30,8 @@
     "owner": "0xa2219C4f48bC9e6806Bce3B391aB9e23f55FEbb5"
   },
   "deployedAt": "2026-05-03T04:30:00.000Z",
-  "deployedBlock": 10779100
+  "deployedBlock": 10779100,
+  "agentVaultConstructorArgs": {
+    "registry": "0x3Ba4260EB13138F3F167D3686fDb9Aa0887416b5"
+  }
 }
