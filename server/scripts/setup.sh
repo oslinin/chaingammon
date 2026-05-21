@@ -8,6 +8,16 @@ SERVER_DIR="$REPO_ROOT/server"
 SERVICE_SRC="$SERVER_DIR/chaingammon-server.service"
 SERVICE_DST="/etc/systemd/system/chaingammon-server.service"
 
+echo "==> Installing Node.js (if missing)"
+if ! command -v node &>/dev/null; then
+  curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+  sudo apt-get install -y nodejs
+fi
+
+echo "==> Installing og-bridge and og-compute-bridge deps"
+npm install --prefix "$REPO_ROOT/og-bridge" --legacy-peer-deps
+npm install --prefix "$REPO_ROOT/og-compute-bridge" --legacy-peer-deps
+
 echo "==> Installing Python deps"
 cd "$SERVER_DIR"
 uv sync
