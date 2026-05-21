@@ -4,9 +4,10 @@
 // Phase 57: consolidated top navbar — brand, compute-backends, and wallet
 // connect (with ELO + match count from ENS) in a single global header.
 import type { Metadata, Viewport } from "next";
-import { Space_Grotesk, JetBrains_Mono } from "next/font/google";
+import { Space_Grotesk, JetBrains_Mono, Instrument_Serif } from "next/font/google";
 import Link from "next/link";
 import "./globals.css";
+import { HeaderLinks } from "./HeaderLinks";
 import { ComputeBackendsPill } from "./ComputeBackendsPill";
 import { ConnectButton } from "./ConnectButton";
 import { Providers } from "./providers";
@@ -23,6 +24,14 @@ const cgMono = JetBrains_Mono({
   variable: "--font-cg-mono",
   subsets: ["latin"],
   weight: ["400", "500", "600"],
+  display: "swap",
+});
+
+const cgDisplay = Instrument_Serif({
+  variable: "--font-cg-display",
+  subsets: ["latin"],
+  weight: "400",
+  style: ["normal", "italic"],
   display: "swap",
 });
 
@@ -47,7 +56,7 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${cgSans.variable} ${cgMono.variable} h-full antialiased`}
+      className={`${cgSans.variable} ${cgMono.variable} ${cgDisplay.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col overflow-x-hidden">
         <Providers>
@@ -94,21 +103,7 @@ export default function RootLayout({
                   <span className="hidden md:block">
                     <ComputeBackendsPill />
                   </span>
-                  <Link
-                    href="/help"
-                    target="_blank"
-                    rel="noreferrer"
-                    className="cg-nav-link"
-                    style={{
-                      fontSize: 13,
-                      textDecoration: "none",
-                      fontFamily: "var(--cg-font-sans)",
-                      padding: "4px 8px",
-                      borderRadius: "var(--cg-radius-sm)",
-                    }}
-                  >
-                    Help
-                  </Link>
+                  <HeaderLinks />
                   <ConnectButton />
                 </div>
               </header>

@@ -100,7 +100,7 @@ function EntryCard({ entry }: { entry: DiscoveryEntry }) {
         elo={entry.elo || undefined}
         balance={balance}
         matchSummary={entry.matchRecord ?? null}
-        infoHref={isAgent && entry.inftId ? `/agent/${entry.inftId}` : undefined}
+        infoHref={isAgent && entry.inftId ? `/agent/${entry.inftId}` : `/humans/${entry.label || entry.owner}`}
         infoLabel={entry.kind || "unknown"}
         playHref={
           entry.endpoint

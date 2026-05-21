@@ -30,6 +30,7 @@ import {
   useChainContracts,
 } from "../../contracts";
 import { useAgentMatchSummary } from "../../useAgentMatchSummary";
+import { AgentWalletPanel } from "../../AgentWalletPanel";
 
 const SERVER = process.env.NEXT_PUBLIC_SERVER_URL ?? "http://localhost:8000";
 
@@ -316,7 +317,7 @@ export default function AgentClient() {
     >
       <header
         data-testid="agent-info-header"
-        className="flex items-center justify-between border-b border-zinc-200 px-8 py-4 dark:border-zinc-800"
+        className="flex items-center justify-between gap-2 border-b border-zinc-200 px-4 py-4 sm:px-8 dark:border-zinc-800"
       >
         <Link
           href="/"
@@ -370,6 +371,11 @@ export default function AgentClient() {
             </span>
           )}
         </div>
+
+        {/* Agent Wallet Management */}
+        <section className="mb-8">
+          <AgentWalletPanel agentId={agentId} stakeWei={BigInt(0)} />
+        </section>
 
         {/* On-chain data */}
         <section

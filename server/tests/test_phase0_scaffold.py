@@ -39,7 +39,6 @@ def test_gitignore_covers_artifacts():
         
     assert ".env" in content, ".env should be ignored"
 import subprocess
-import os
 import signal
 
 def test_server_starts():

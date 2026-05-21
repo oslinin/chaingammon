@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useRef, useState, PointerEvent } from "react";
+import { BOARD_THEMES, type BoardThemeKey } from "./boardThemes";
 
 interface BoardProps {
   board: number[];          // length 24; board[i] = checkers on point (i+1). Positive = player 0, negative = player 1
@@ -18,6 +19,7 @@ interface BoardProps {
   ghostMove?: string | null;      // A move string to preview on hover, e.g. "24/18 13/7"
   onDragStart?: (point: number) => void;
   onDrop?: (point: number) => void;
+  themeKey?: BoardThemeKey;
 }
 
 const FRAME = 20;
@@ -71,7 +73,9 @@ export function Board({
   ghostMove,
   onDragStart,
   onDrop,
+  themeKey = "walnut",
 }: BoardProps) {
+  const theme = BOARD_THEMES[themeKey] ?? BOARD_THEMES.walnut;
   const svgRef = useRef<SVGSVGElement>(null);
   const [dragState, setDragState] = useState<DragState>(null);
   const [pendingDrop, setPendingDrop] = useState<number | "off" | null>(null);
@@ -93,22 +97,33 @@ export function Board({
   // Parse ghostMove into an array of {from, to} segments for visualization
   const previewSegments = React.useMemo(() => {
     if (!ghostMove) return [];
-    return ghostMove.split(/\s+/).filter(Boolean).map(seg => {
+    return ghostMove.split(/\s+/).filter(Boolean).map((seg, index) => {
       const parts = seg.split("/");
       if (parts.length !== 2) return null;
       const from = parts[0] === "bar" ? 25 : parseInt(parts[0], 10);
       const to = parts[1] === "off" ? 0 : parseInt(parts[1], 10);
       if (isNaN(from) || isNaN(to)) return null;
-      return { from, to };
-    }).filter(Boolean) as { from: number; to: number }[];
+      return { from, to, segIndex: index };
+    }).filter(Boolean) as { from: number; to: number, segIndex: number }[];
   }, [ghostMove]);
 
+  const GHOST_COLORS = [
+    "#34d399", // emerald-400
+    "#60a5fa", // blue-400
+    "#f472b6", // pink-400
+    "#fbbf24", // amber-400
+    "#a78bfa", // violet-400
+  ];
+
   // Aggregate ghost states per point
-  const ghostDepartures: Record<number, number> = {};
-  const ghostArrivals: Record<number, number> = {};
+  const ghostDepartures: Record<number, number[]> = {};
+  const ghostArrivals: Record<number, number[]> = {};
   previewSegments.forEach(seg => {
-    ghostDepartures[seg.from] = (ghostDepartures[seg.from] || 0) + 1;
-    ghostArrivals[seg.to] = (ghostArrivals[seg.to] || 0) + 1;
+    if (!ghostDepartures[seg.from]) ghostDepartures[seg.from] = [];
+    ghostDepartures[seg.from].push(seg.segIndex);
+
+    if (!ghostArrivals[seg.to]) ghostArrivals[seg.to] = [];
+    ghostArrivals[seg.to].push(seg.segIndex);
   });
 
   const turnLabel = turn === 0 ? "Your turn" : `${opponentName ?? "Agent"}'s turn`;
@@ -117,6 +132,38 @@ export function Board({
   const getColXOffset = (col: number, rightHalf: boolean) => {
     const baseX = rightHalf ? R_QUAD_X : L_QUAD_X;
     return baseX + col * POINT_W;
+  };
+
+  const getCheckerCenter = (point: number | "bar" | "off", index: number, isP0: boolean) => {
+    if (point === "bar") {
+      const cy = isP0
+        ? TOTAL_H - FRAME - 60 - index * CHECKER_GAP
+        : FRAME + 60 + index * CHECKER_GAP;
+      return { x: BAR_X + BAR_W / 2, y: cy };
+    }
+
+    if (point === "off") {
+      const x = isP0 ? R_BEAR_X + BEAR_W / 2 : L_BEAR_X + BEAR_W / 2;
+      const cy = TOTAL_H - FRAME - 20 - index * 14 + 5; // +5 for middle of the 10px rect
+      return { x, y: cy };
+    }
+
+    const isTop = point >= 13;
+    const isLeft = (isTop && point <= 18) || (!isTop && point >= 7);
+    let col = 0;
+    if (isTop) {
+      col = isLeft ? point - 13 : point - 19;
+    } else {
+      col = isLeft ? 12 - point : 6 - point;
+    }
+    const startX = getColXOffset(col, !isLeft);
+    const x = startX + POINT_W / 2;
+
+    const cy = isTop
+      ? FRAME + CHECKER_R + index * CHECKER_GAP
+      : TOTAL_H - FRAME - CHECKER_R - index * CHECKER_GAP;
+
+    return { x, y: cy };
   };
 
   const clientToSvg = (clientX: number, clientY: number) => {
@@ -222,15 +269,26 @@ export function Board({
     }
   };
 
-  const renderChecker = (cx: number, cy: number, isP0: boolean, key: string, isDragging: boolean = false) => {
+  const renderChecker = (cx: number, cy: number, isP0: boolean, key: string, isDragging: boolean = false, haloColor?: string) => {
     return (
       <g key={key} style={{ pointerEvents: "none" }}>
+        {haloColor && (
+          <circle
+            cx={cx}
+            cy={cy}
+            r={CHECKER_R + 2}
+            fill="none"
+            stroke={haloColor}
+            strokeWidth="3"
+            opacity={0.8}
+          />
+        )}
         <circle
           cx={cx}
           cy={cy}
           r={CHECKER_R}
           fill={isP0 ? "url(#cg-p0)" : "url(#cg-p1)"}
-          stroke="rgba(0,0,0,0.5)"
+          stroke={haloColor ? haloColor : "rgba(0,0,0,0.5)"}
           strokeWidth="1"
           opacity={isDragging ? 0.3 : 1}
         />
@@ -261,7 +319,7 @@ export function Board({
     const baseY = isTop ? FRAME : TOTAL_H - FRAME;
 
     const isCrimson = isTop ? col % 2 !== 0 : col % 2 === 0;
-    const triColor = isCrimson ? "#8B2210" : "#C47820";
+    const triColor = isCrimson ? theme.pointDark : theme.pointLight;
 
     const pts = `${startX},${baseY} ${startX + POINT_W},${baseY} ${startX + POINT_W / 2},${tipY}`;
 
@@ -271,8 +329,10 @@ export function Board({
 
     const isDragSource = dragState?.fromPoint === point;
     // Preview departures
-    const departures = ghostDepartures[point] || 0;
-    const arrivals = ghostArrivals[point] || 0;
+    const departuresArr = ghostDepartures[point] || [];
+    const arrivalsArr = ghostArrivals[point] || [];
+    const departures = departuresArr.length;
+    const arrivals = arrivalsArr.length;
 
     // Visually, if we're dragging from here or departing, we show fewer real checkers
     const displayCount = Math.max(0, absCount - (isDragSource ? 1 : 0) - departures);
@@ -352,22 +412,31 @@ export function Board({
             // Determine if this specific dot is solid, a departure ghost, or an arrival ghost
             let isDragging = false;
             let dotIsP0 = isP0;
+            let haloColor: string | undefined;
 
             if (i >= displayCount) {
               if (i < displayCount + departures) {
                 // It's a departing checker (show as transparent)
                 isDragging = true;
                 dotIsP0 = count > 0;
+                const depIndex = i - displayCount;
+                if (depIndex < departuresArr.length) {
+                   haloColor = GHOST_COLORS[departuresArr[depIndex] % GHOST_COLORS.length];
+                }
               } else {
                 // It's an arriving checker (show as transparent ghost belonging to current turn)
                 isDragging = true;
                 dotIsP0 = turn === 0;
+                const arrIndex = i - (displayCount + departures);
+                if (arrIndex < arrivalsArr.length) {
+                   haloColor = GHOST_COLORS[arrivalsArr[arrIndex] % GHOST_COLORS.length];
+                }
               }
             } else {
               dotIsP0 = count > 0;
             }
 
-            return renderChecker(startX + POINT_W / 2, cy, dotIsP0, `checker-${point}-${i}`, isDragging);
+            return renderChecker(startX + POINT_W / 2, cy, dotIsP0, `checker-${point}-${i}`, isDragging, haloColor);
           })}
           {extra > 0 && (
             <text
@@ -392,7 +461,8 @@ export function Board({
     const isSelected = selectedPoint === 25;
     const [p0Bar, p1Bar] = bar;
 
-    const p0Departures = ghostDepartures[25] || 0;
+    const p0DeparturesArr = ghostDepartures[25] || [];
+    const p0Departures = p0DeparturesArr.length;
     // p1 bar is not playable by the human turn, so we don't ghost it
     const p0Display = Math.max(0, p0Bar - (dragState?.fromPoint === "bar" ? 1 : 0) - p0Departures);
     const p0Combined = Math.min(p0Display + p0Departures, 3);
@@ -405,8 +475,8 @@ export function Board({
           y={FRAME}
           width={BAR_W}
           height={INNER_H}
-          fill="rgba(0,0,0,0.1)"
-          stroke="rgba(0,0,0,0.3)"
+          fill={theme.bar}
+          stroke={theme.barEdge}
         />
         {isSelected && (
           <rect
@@ -470,7 +540,14 @@ export function Board({
         <g pointerEvents="none">
           {Array.from({ length: p0Combined }).map((_, i) => {
             const isDragging = i >= p0Display;
-            return renderChecker(BAR_X + BAR_W / 2, TOTAL_H - FRAME - 60 - i * CHECKER_GAP, true, `bar-p0-${i}`, isDragging);
+            let haloColor: string | undefined;
+            if (isDragging) {
+              const depIndex = i - p0Display;
+              if (depIndex < p0DeparturesArr.length) {
+                haloColor = GHOST_COLORS[p0DeparturesArr[depIndex] % GHOST_COLORS.length];
+              }
+            }
+            return renderChecker(BAR_X + BAR_W / 2, TOTAL_H - FRAME - 60 - i * CHECKER_GAP, true, `bar-p0-${i}`, isDragging, haloColor);
           })}
           {p0Extra > 0 && (
             <text
@@ -492,7 +569,8 @@ export function Board({
   const renderBearOff = () => {
     const [p0Off, p1Off] = off;
 
-    const arrivals = ghostArrivals[0] || 0;
+    const arrivalsArr = ghostArrivals[0] || [];
+    const arrivals = arrivalsArr.length;
     const p0CombinedOff = p0Off + (turn === 0 ? arrivals : 0);
     const p1CombinedOff = p1Off + (turn === 1 ? arrivals : 0);
 
@@ -520,7 +598,8 @@ export function Board({
                 height={10}
                 rx={3}
                 fill="url(#cg-p1)"
-                stroke="rgba(0,0,0,0.5)"
+                stroke={isGhost && arrivalsArr[i - p1Off] !== undefined ? GHOST_COLORS[arrivalsArr[i - p1Off] % GHOST_COLORS.length] : "rgba(0,0,0,0.5)"}
+                strokeWidth={isGhost ? 2 : 1}
                 opacity={isGhost ? 0.3 : 1}
               />
             );
@@ -558,7 +637,8 @@ export function Board({
                 height={10}
                 rx={3}
                 fill="url(#cg-p0)"
-                stroke="rgba(0,0,0,0.5)"
+                stroke={isGhost && arrivalsArr[i - p0Off] !== undefined ? GHOST_COLORS[arrivalsArr[i - p0Off] % GHOST_COLORS.length] : "rgba(0,0,0,0.5)"}
+                strokeWidth={isGhost ? 2 : 1}
                 opacity={isGhost ? 0.3 : 1}
               />
             );
@@ -602,26 +682,21 @@ export function Board({
           onPointerLeave={handlePointerUp}
         >
           <defs>
-            <pattern id="cg-wood" patternUnits="userSpaceOnUse" width="80" height="80">
-              <rect width="80" height="80" fill="#5C3A1E" />
-              <rect x="0" y="0" width="10" height="120" fill="#6B4423" opacity="0.6" transform="rotate(-12)" />
-              <rect x="20" y="-10" width="15" height="120" fill="#4A2D14" opacity="0.7" transform="rotate(-12)" />
-              <rect x="50" y="-20" width="8" height="120" fill="#6B4423" opacity="0.5" transform="rotate(-12)" />
-              <rect x="70" y="-10" width="12" height="120" fill="#4A2D14" opacity="0.8" transform="rotate(-12)" />
-            </pattern>
+            <linearGradient id="cg-frame" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor={theme.frameStart} />
+              <stop offset="100%" stopColor={theme.frameEnd} />
+            </linearGradient>
             <radialGradient id="cg-felt" cx="50%" cy="50%" r="60%">
-              <stop offset="0%" stopColor="#3D2220" />
-              <stop offset="100%" stopColor="var(--cg-bg-felt, #2D1A18)" />
+              <stop offset="0%" stopColor={theme.feltAccent} />
+              <stop offset="100%" stopColor={theme.felt} />
             </radialGradient>
             <radialGradient id="cg-p0" cx="38%" cy="30%" r="70%">
-              <stop offset="0%" stopColor="#F5D49A" />
-              <stop offset="38%" stopColor="var(--cg-player-warm, #E3B779)" />
-              <stop offset="100%" stopColor="#A07830" />
+              <stop offset="0%" stopColor={theme.checkerWarm.fill} stopOpacity={0.7} />
+              <stop offset="100%" stopColor={theme.checkerWarm.fill} />
             </radialGradient>
             <radialGradient id="cg-p1" cx="38%" cy="30%" r="70%">
-              <stop offset="0%" stopColor="#FDFAF4" />
-              <stop offset="38%" stopColor="var(--cg-player-cool, #E8E1CF)" />
-              <stop offset="100%" stopColor="#B0A898" />
+              <stop offset="0%" stopColor={theme.checkerCool.fill} stopOpacity={0.7} />
+              <stop offset="100%" stopColor={theme.checkerCool.fill} />
             </radialGradient>
             <filter id="cg-glow" x="-50%" y="-50%" width="200%" height="200%">
               <feGaussianBlur in="SourceGraphic" stdDeviation="4" result="blur" />
@@ -633,7 +708,7 @@ export function Board({
           </defs>
 
           {/* Outer Frame */}
-          <rect x="0" y="0" width={TOTAL_W} height={TOTAL_H} fill="url(#cg-wood)" rx="4" />
+          <rect x="0" y="0" width={TOTAL_W} height={TOTAL_H} fill="url(#cg-frame)" rx="4" />
 
           {/* Inner Felt */}
           <rect x={FRAME} y={FRAME} width={TOTAL_W - 2 * FRAME} height={INNER_H} fill="url(#cg-felt)" />
@@ -647,6 +722,65 @@ export function Board({
           {/* Center Bar */}
           {renderBar()}
 
+<<<<<<< HEAD
+          {/* Dotted Connecting Lines for Ghost Moves */}
+          <g style={{ pointerEvents: "none" }}>
+            {previewSegments.map((seg) => {
+              // Find the indices for this segment in departures/arrivals arrays
+              const depArr = ghostDepartures[seg.from] || [];
+              const arrArr = ghostArrivals[seg.to] || [];
+              const depIndex = depArr.indexOf(seg.segIndex);
+              const arrIndex = arrArr.indexOf(seg.segIndex);
+
+              if (depIndex === -1 || arrIndex === -1) return null;
+
+              // We need to calculate the actual stacked index on the board to position the line
+              let fromDisplayIndex = 0;
+              if (seg.from === 25) {
+                // Bar (P0 is the only human bar we support ghosting from)
+                const p0Display = Math.max(0, bar[0] - (dragState?.fromPoint === "bar" ? 1 : 0) - depArr.length);
+                fromDisplayIndex = p0Display + depIndex;
+              } else {
+                const count = board[seg.from - 1] || 0;
+                const isDragSource = dragState?.fromPoint === seg.from;
+                const absCount = Math.abs(count);
+                const displayCount = Math.max(0, absCount - (isDragSource ? 1 : 0) - depArr.length);
+                fromDisplayIndex = displayCount + depIndex;
+              }
+
+              let toDisplayIndex = 0;
+              if (seg.to === 0) {
+                 // Off
+                 toDisplayIndex = (turn === 0 ? off[0] : off[1]) + arrIndex;
+              } else {
+                 const count = board[seg.to - 1] || 0;
+                 const isDragSource = dragState?.fromPoint === seg.to;
+                 const absCount = Math.abs(count);
+                 const displayCount = Math.max(0, absCount - (isDragSource ? 1 : 0) - (ghostDepartures[seg.to]?.length || 0));
+                 const baseIndex = displayCount + (ghostDepartures[seg.to]?.length || 0);
+                 toDisplayIndex = baseIndex + arrIndex;
+              }
+
+              const fromCenter = getCheckerCenter(seg.from === 25 ? "bar" : seg.from, Math.min(fromDisplayIndex, MAX_DOTS - 1), turn === 0);
+              const toCenter = getCheckerCenter(seg.to === 0 ? "off" : seg.to, seg.to === 0 ? toDisplayIndex : Math.min(toDisplayIndex, MAX_DOTS - 1), turn === 0);
+
+              const color = GHOST_COLORS[seg.segIndex % GHOST_COLORS.length];
+
+              return (
+                <line
+                  key={`ghost-line-${seg.segIndex}`}
+                  x1={fromCenter.x}
+                  y1={fromCenter.y}
+                  x2={toCenter.x}
+                  y2={toCenter.y}
+                  stroke={color}
+                  strokeWidth="3"
+                  strokeDasharray="6, 6"
+                  opacity={0.6}
+                />
+              );
+            })}
+=======
           {/* Doubling Cube */}
           <g
             transform={`translate(${BAR_X + BAR_W / 2}, ${
@@ -662,6 +796,7 @@ export function Board({
             }}
           >
             <CubeSVG val={cubeValue} />
+>>>>>>> 830e9b2 (feat: add doubling cube mechanics with mid-game escrow deposits and agent logic)
           </g>
 
           {/* Drag Ghost */}

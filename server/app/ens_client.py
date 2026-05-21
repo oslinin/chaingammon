@@ -15,7 +15,6 @@ artifacts at runtime. Keep it in sync with
 from __future__ import annotations
 
 import os
-from typing import Optional
 
 from eth_utils import keccak
 from web3 import Web3

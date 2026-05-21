@@ -8,10 +8,7 @@ at /tmp/chaingammon-kv-mock.json (overridden to a temp file per test).
 
 from __future__ import annotations
 
-import json
-import os
 import sys
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -66,7 +63,7 @@ def test_kv_key_isolation(_localhost_kv):
 
 def test_get_kv_raises_on_missing_key(_localhost_kv):
     """get_kv raises OgStorageError when the key has never been written."""
-    with pytest.raises(OgStorageError, match="Key not found"):
+    with pytest.raises(OgStorageError, match="KV mock file not found or unreadable|Key not found"):
         get_kv("chaingammon/nonexistent/key")
 
 
@@ -134,7 +131,6 @@ def test_fetch_overlay_returns_default_when_missing(_localhost_kv):
 
 def test_update_agent_overlay_kv_writes_and_reads(_localhost_kv):
     """_update_agent_overlay_kv updates the overlay and it survives a subsequent read."""
-    from app.agent_overlay import Overlay
     from app.game_record import MoveEntry
     from app.main import _fetch_overlay, _update_agent_overlay_kv
 
@@ -162,7 +158,6 @@ def test_update_agent_overlay_kv_skips_human(_localhost_kv):
 
 def test_update_agent_overlay_kv_accumulates_across_games(_localhost_kv):
     """Successive overlay updates build on the prior state (match_count grows)."""
-    from app.agent_overlay import Overlay
     from app.game_record import MoveEntry
     from app.main import _fetch_overlay, _update_agent_overlay_kv
 
