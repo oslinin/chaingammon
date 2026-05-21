@@ -48,6 +48,7 @@ export function AgentWalletPanel({ agentId, stakeWei, onWalletChange }: Props) {
   const [wallet, setWallet] = useState<WalletState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [customAmountStr, setCustomAmountStr] = useState<string>("0.1");
 
   const refresh = useCallback(async () => {
     try {
@@ -90,9 +91,19 @@ export function AgentWalletPanel({ agentId, stakeWei, onWalletChange }: Props) {
     try {
       setBusy(true);
       setError(null);
+
+      let amountToSend = shortfall > BigInt(0) ? shortfall : stakeWei;
+      if (stakeWei === BigInt(0)) {
+         amountToSend = BigInt(Math.floor(parseFloat(customAmountStr) * 1e18));
+      }
+
+      if (amountToSend <= BigInt(0)) {
+         throw new Error("Amount to send must be greater than 0");
+      }
+
       const txHash = await walletClient.sendTransaction({
         to: wallet.address,
-        value: shortfall > BigInt(0) ? shortfall : stakeWei,
+        value: amountToSend,
       });
       if (publicClient) {
         await publicClient.waitForTransactionReceipt({ hash: txHash });
@@ -185,13 +196,28 @@ export function AgentWalletPanel({ agentId, stakeWei, onWalletChange }: Props) {
       {error && (
         <p className="mb-2 text-red-600 dark:text-red-400">{error}</p>
       )}
+      {stakeWei === BigInt(0) && (
+        <div className="mb-2 flex items-center gap-2">
+          <input
+            type="number"
+            step="0.001"
+            min="0"
+            value={customAmountStr}
+            onChange={(e) => setCustomAmountStr(e.target.value)}
+            className="w-20 rounded border border-zinc-300 bg-white px-2 py-1 text-zinc-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+            placeholder="0.1"
+            disabled={busy || !isConnected}
+          />
+          <span className="text-zinc-500 dark:text-zinc-400">ETH</span>
+        </div>
+      )}
       <div className="flex gap-2">
         <button
           type="button"
           onClick={onFund}
-          disabled={busy || !isConnected || stakeWei === BigInt(0)}
+          disabled={busy || !isConnected || (stakeWei === BigInt(0) && parseFloat(customAmountStr) <= 0)}
           className="flex-1 rounded border border-indigo-200 bg-indigo-50 px-2 py-1 text-indigo-700 hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-indigo-700/40 dark:bg-indigo-900/20 dark:text-indigo-300 dark:hover:bg-indigo-900/40"
-          title={needsFunding ? `Send ${formatEth(shortfall)} ETH` : `Send ${formatEth(stakeWei)} ETH`}
+          title={needsFunding ? `Send ${formatEth(shortfall)} ETH` : stakeWei === BigInt(0) ? `Send ${customAmountStr} ETH` : `Send ${formatEth(stakeWei)} ETH`}
         >
           {busy ? "…" : needsFunding ? `Fund ${formatEth(shortfall)} ETH` : "Top up"}
         </button>
