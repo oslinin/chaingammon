@@ -20,8 +20,6 @@ import type { Chain } from "viem";
 import { defineChain } from "viem";
 import { useChainId } from "wagmi";
 
-import localhostDeployment from "../../contracts/deployments/localhost.json";
-import ogTestnetDeployment from "../../contracts/deployments/0g-testnet.json";
 import sepoliaDeployment from "../../contracts/deployments/sepolia.json";
 
 interface ChainDef {
@@ -32,34 +30,10 @@ interface ChainDef {
   testnet?: boolean;
 }
 
-// Display + network metadata, keyed by chainId. Hardhat localhost RPC
-// stays http://127.0.0.1:8545 by convention; testnet RPC is overridable
-// via NEXT_PUBLIC_OG_RPC_URL for self-hosted RPC providers.
 const CHAIN_DEFS: Record<number, ChainDef> = {
-  16602: {
-    name: "0G Galileo Testnet",
-    nativeCurrency: { name: "0G", symbol: "OG", decimals: 18 },
-    rpcUrl:
-      process.env.NEXT_PUBLIC_OG_RPC_URL ?? "https://evmrpc-testnet.0g.ai",
-    explorerUrl: "https://chainscan-galileo.0g.ai",
-    testnet: true,
-  },
-  31337: {
-    name: "Hardhat Localhost",
-    nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
-    rpcUrl: "http://127.0.0.1:8545",
-    testnet: true,
-  },
   11155111: {
     name: "Sepolia",
     nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
-    // Public RPC; replace via NEXT_PUBLIC_SEPOLIA_RPC_URL for an Alchemy
-    // / Infura key if the public endpoint is rate-limiting the demo.
-    // The historic `https://rpc.sepolia.org` endpoint hangs (Cloudflare
-    // 522 / connection timeout) — wagmi's read sits in `isLoading: true`
-    // until viem's retry budget exhausts, so the "No agents found"
-    // fallback in `AgentsList` never runs in time. publicnode responds
-    // immediately and is a stable free public endpoint.
     rpcUrl:
       process.env.NEXT_PUBLIC_SEPOLIA_RPC_URL ??
       "https://ethereum-sepolia.publicnode.com",
@@ -114,8 +88,6 @@ export function useEnsInfra(): EnsInfra | undefined {
 
 const ALL_DEPLOYMENTS: DeploymentRecord[] = [
   sepoliaDeployment as DeploymentRecord,
-  ogTestnetDeployment as DeploymentRecord,
-  localhostDeployment as DeploymentRecord,
 ];
 
 export interface ChainEntry {
@@ -209,31 +181,8 @@ export function useActiveChainId(): number {
   return useChainId();
 }
 
-// Chain IDs the user can pick from in the network dropdown.
-// Order matters — this is the order they render in the menu.
-//   - Sepolia (11155111) — primary chain, listed first.
-//   - 0G Galileo Testnet (16602) — secondary, listed second.
-//   - Hardhat Localhost (31337) — dev only, listed last.
-const SELECTABLE_CHAIN_IDS_PROD = [11155111, 16602] as const;
-const SELECTABLE_CHAIN_IDS_DEV = [11155111, 16602, 31337] as const;
-
-/**
- * The chains the user can pick from in the network dropdown.
- *
- * Always includes the primary chains (0G Galileo Testnet, Sepolia).
- * Includes Hardhat Localhost only when `process.env.NODE_ENV !== "production"`,
- * so the demo build does not surface a chain that won't reach a node.
- *
- * Each entry is the same `ChainEntry` shape served from `CHAIN_REGISTRY`,
- * so a chain absent from the registry (e.g. its deployment JSON is missing)
- * is silently skipped.
- */
 export function useSelectableChains(): ChainEntry[] {
-  const ids =
-    process.env.NODE_ENV === "production"
-      ? SELECTABLE_CHAIN_IDS_PROD
-      : SELECTABLE_CHAIN_IDS_DEV;
-  return ids
-    .map((id) => CHAIN_REGISTRY[id])
-    .filter((entry): entry is ChainEntry => entry !== undefined);
+  return [CHAIN_REGISTRY[11155111]].filter(
+    (entry): entry is ChainEntry => entry !== undefined,
+  );
 }
