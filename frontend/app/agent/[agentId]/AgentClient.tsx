@@ -427,6 +427,15 @@ export default function AgentClient() {
               tooltip="ERC-721 token ID in the AgentRegistry contract. This is the agent's permanent on-chain identifier."
             />
             <InfoField
+              label="AgentRegistry"
+              value={agentRegistry ?? "—"}
+              mono
+              truncate
+              href={explorerUrl && agentRegistry ? `${explorerUrl}/address/${agentRegistry}` : undefined}
+              copyValue={agentRegistry ?? undefined}
+              tooltip="ERC-721 contract that mints and tracks all agent NFTs. The token ID above lives in this contract."
+            />
+            <InfoField
               label="ENS name"
               value={ensName ?? "—"}
               mono
