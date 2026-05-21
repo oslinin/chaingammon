@@ -7,6 +7,25 @@ import { BoardThemePicker } from "../BoardThemePicker";
 import { loadTheme, saveTheme, type BoardThemeKey } from "../boardThemes";
 
 export default function SettingsPage() {
+<<<<<<< Updated upstream
+  const { language, setLanguage, t } = useI18n();
+  const [boardTheme, setBoardTheme] = useState<BoardThemeKey>("walnut");
+  const [trainerMode, setTrainerMode] = useState<string>("round_robin");
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+    setBoardTheme(loadTheme());
+    const savedTrainerMode = localStorage.getItem("trainer_mode");
+    if (savedTrainerMode === "round_robin" || savedTrainerMode === "challenge") {
+      setTrainerMode(savedTrainerMode);
+    }
+  }, []);
+
+  const handleTrainerModeChange = (mode: string) => {
+    setTrainerMode(mode);
+    localStorage.setItem("trainer_mode", mode);
+=======
   const router = useRouter();
   const { language: contextLanguage, setLanguage: setContextLanguage, t } = useI18n();
   const [mounted, setMounted] = useState(false);
@@ -45,6 +64,9 @@ export default function SettingsPage() {
   }
 
   return (
+<<<<<<< Updated upstream
+    <main className="mx-auto max-w-2xl px-4 py-8">
+=======
     <main className="mx-auto max-w-2xl px-4 py-8 relative">
       {/* Top right close button (X) */}
       <button
@@ -68,6 +90,10 @@ export default function SettingsPage() {
             {t("language")}
           </h2>
           <select
+<<<<<<< Updated upstream
+            value={language}
+            onChange={(e) => setLanguage(e.target.value as Language)}
+=======
             value={localLanguage}
             onChange={(e) => setLocalLanguage(e.target.value as Language)}
             className="w-full max-w-xs rounded-md border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm text-zinc-300 focus:border-zinc-700 focus:outline-none focus:ring-1 focus:ring-zinc-700"
@@ -86,6 +112,13 @@ export default function SettingsPage() {
             {t("board_theme")}
           </h2>
           <BoardThemePicker
+<<<<<<< Updated upstream
+            value={boardTheme}
+            onChange={(k) => {
+              setBoardTheme(k);
+              saveTheme(k);
+            }}
+=======
             value={localBoardTheme}
             onChange={(k) => setLocalBoardTheme(k)}
           />
@@ -102,6 +135,10 @@ export default function SettingsPage() {
                 type="radio"
                 name="trainer_mode"
                 value="round_robin"
+<<<<<<< Updated upstream
+                checked={trainerMode === "round_robin"}
+                onChange={() => handleTrainerModeChange("round_robin")}
+=======
                 checked={localTrainerMode === "round_robin"}
                 onChange={() => setLocalTrainerMode("round_robin")}
                 className="h-4 w-4 border-zinc-700 bg-zinc-900 text-zinc-100 focus:ring-zinc-700 focus:ring-offset-zinc-900"
@@ -113,6 +150,10 @@ export default function SettingsPage() {
                 type="radio"
                 name="trainer_mode"
                 value="challenge"
+<<<<<<< Updated upstream
+                checked={trainerMode === "challenge"}
+                onChange={() => handleTrainerModeChange("challenge")}
+=======
                 checked={localTrainerMode === "challenge"}
                 onChange={() => setLocalTrainerMode("challenge")}
                 className="h-4 w-4 border-zinc-700 bg-zinc-900 text-zinc-100 focus:ring-zinc-700 focus:ring-offset-zinc-900"

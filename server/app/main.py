@@ -3,13 +3,11 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pathlib import Path
 from pydantic import BaseModel
-from typing import Dict, List, Optional
-import hashlib
+from typing import List, Optional
 import json
 import os
 import re
 import sys
-import uuid
 
 # Load server/.env into os.environ before any module reads RPC_URL etc.
 # Without this, `uv run uvicorn app.main:app` ignores the .env file and
@@ -39,11 +37,8 @@ from .agent_wallets import AgentWalletError, AgentWalletManager
 from .chain_client import ChainClient, ChainError
 from .ens_client import EnsClient, EnsError
 from .game_record import (
-    AdvisorSignal,
-    GameRecord,
     MoveEntry,
     PlayerRef,
-    Team,
     build_from_state,
     serialize_record,
 )
@@ -1504,6 +1499,7 @@ class AgentDepositRequest(BaseModel):
 class AgentWithdrawRequest(BaseModel):
     to: str
     amount_wei: Optional[int] = None
+    signature: str
 
 
 def _agent_wallets_or_503() -> AgentWalletManager:
@@ -1557,6 +1553,31 @@ def agent_deposit(agent_id: int, req: AgentDepositRequest):
 def agent_withdraw(agent_id: int, req: AgentWithdrawRequest):
     """Drain the agent's wallet to `to`. If `amount_wei` is omitted,
     sends the entire balance minus gas."""
+    from eth_account.messages import encode_defunct
+    from web3 import Web3
+
+    try:
+        chain = ChainClient.from_env()
+    except ChainError as e:
+        raise HTTPException(status_code=503, detail=f"chain unavailable: {e}")
+
+    try:
+        owner = chain.agent_owner(agent_id)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"could not fetch owner for agent {agent_id}: {e}")
+
+    if req.to.lower() != owner.lower():
+        raise HTTPException(status_code=403, detail="Funds can only be withdrawn to the agent's owner")
+
+    msg = encode_defunct(text=f"Withdraw agent {agent_id} funds")
+    try:
+        signer = Web3().eth.account.recover_message(msg, signature=req.signature)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"invalid signature: {e}")
+
+    if signer.lower() != owner.lower():
+        raise HTTPException(status_code=403, detail="Signature must be from the agent's owner")
+
     wallets = _agent_wallets_or_503()
     try:
         tx_hash = wallets.withdraw(
@@ -1600,7 +1621,6 @@ def _init_equity_net() -> None:
         _agent_dir = Path(__file__).resolve().parents[2] / "agent"
         if _agent_dir.exists() and str(_agent_dir) not in sys.path:
             sys.path.insert(0, str(_agent_dir))
-        import torch
         from sample_trainer import BackgammonNet, DEFAULT_EXTRAS_DIM
         net = BackgammonNet(core_seed=0xBACC, extras_dim=DEFAULT_EXTRAS_DIM, extras_seed=0)
         net.eval()

@@ -30,6 +30,7 @@ import {
   useChainContracts,
 } from "../../contracts";
 import { useAgentMatchSummary } from "../../useAgentMatchSummary";
+import { AgentWalletPanel } from "../../AgentWalletPanel";
 
 const SERVER = process.env.NEXT_PUBLIC_SERVER_URL ?? "http://localhost:8000";
 
@@ -370,6 +371,11 @@ export default function AgentClient() {
             </span>
           )}
         </div>
+
+        {/* Agent Wallet Management */}
+        <section className="mb-8">
+          <AgentWalletPanel agentId={agentId} stakeWei={BigInt(0)} />
+        </section>
 
         {/* On-chain data */}
         <section
