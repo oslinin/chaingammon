@@ -529,6 +529,11 @@ class ChainClient:
         contract = self._require_agent_registry()
         return int(contract.functions.activeAgentAt(index).call())
 
+    def agent_owner(self, agent_id: int) -> str:
+        """Return the checksum address of the NFT owner for `agent_id`."""
+        contract = self._require_agent_registry()
+        return Web3.to_checksum_address(contract.functions.ownerOf(agent_id).call())
+
     def agent_elo(self, agent_id: int) -> int:
         return int(self.match_registry.functions.agentElo(agent_id).call())
 
