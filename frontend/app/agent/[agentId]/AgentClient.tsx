@@ -31,6 +31,7 @@ import {
 } from "../../contracts";
 import { useAgentMatchSummary } from "../../useAgentMatchSummary";
 import { AgentWalletPanel } from "../../AgentWalletPanel";
+import { useOgWeights } from "../../useOgWeights";
 
 const SERVER = process.env.NEXT_PUBLIC_SERVER_URL ?? "http://localhost:8000";
 
@@ -165,6 +166,10 @@ export default function AgentClient() {
     | readonly [`0x${string}`, `0x${string}`]
     | undefined;
   const ownerAddress = chainData?.[5]?.result as `0x${string}` | undefined;
+
+  // Direct browser fetch from 0G Storage — no server hop for the NN weights.
+  const overlayHash = dataHashes?.[1];
+  const { result: ogWeights, loading: ogLoading, error: ogError } = useOgWeights(overlayHash);
   const elo = chainData?.[6]?.result as bigint | undefined;
   const contractOwner = chainData?.[7]?.result as `0x${string}` | undefined;
 
@@ -354,12 +359,12 @@ export default function AgentClient() {
           {/* Two counters, two sources — see test_counter_separation.py.
               0G "games trained" (off-chain, set by training); on-chain
               "matches played" (MatchRecorded events, set by recordMatch). */}
-          {profile && profile.match_count > 0 && (
+          {ogWeights && ogWeights.kind !== "null" && ogWeights.match_count > 0 && (
             <span
               className="shrink-0 rounded bg-emerald-100 px-2 py-0.5 font-mono text-sm text-emerald-800 dark:bg-emerald-900 dark:text-emerald-200"
               title="Games trained — match_count embedded in the 0G Storage checkpoint blob"
             >
-              {profile.match_count} trained
+              {ogWeights.match_count} trained
             </span>
           )}
           {matchesPlayed !== undefined && matchesPlayed > 0 && (
@@ -532,7 +537,7 @@ export default function AgentClient() {
           </dl>
         </section>
 
-        {/* NN weights / style profile */}
+        {/* NN weights / style profile — fetched directly from 0G Storage */}
         <section
           data-testid="agent-info-weights"
           className="rounded-lg border border-zinc-200 bg-white p-6 dark:border-zinc-800 dark:bg-zinc-900"
@@ -541,48 +546,43 @@ export default function AgentClient() {
             Neural network weights
           </h3>
           <p className="mb-4 text-xs text-zinc-500">
-            Fetched from 0G Storage via the server. Changes after each
+            Fetched directly from 0G Storage in the browser. Changes after each
             training round as the agent accumulates match experience.
           </p>
 
-          {profileLoading && (
+          {ogLoading && (
             <p className="animate-pulse text-sm text-zinc-500">
               Fetching from 0G Storage…
             </p>
           )}
-          {profileError && (
-            <p className="text-sm text-zinc-500">
-              Profile unavailable — server not reachable.
+          {ogError && (
+            <p className="text-sm text-red-500">
+              Could not reach 0G Storage: {ogError}
             </p>
           )}
-          {!profileLoading && !profileError && profile && (
+          {!ogLoading && !ogError && ogWeights && ogWeights.kind !== "null" && (
             <>
               <div className="mb-3 flex flex-wrap gap-2">
-                <KindBadge kind={profile.kind} />
-                {/* This panel is the 0G side of the agent's progression,
-                    so the trained count comes from the checkpoint blob's
-                    own `match_count` field (the value the trainer
-                    embeds when it saves). The on-chain "matches played"
-                    counter is shown separately in the header pill. */}
-                {profile.match_count > 0 && (
+                <KindBadge kind={ogWeights.kind} />
+                {ogWeights.match_count > 0 && (
                   <span className="rounded-md bg-zinc-100 px-2 py-0.5 font-mono text-xs text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400">
-                    {profile.match_count} games trained
+                    {ogWeights.match_count} games trained
                   </span>
                 )}
               </div>
 
               <p className="mb-4 text-sm italic text-zinc-600 dark:text-zinc-400">
-                {profile.summary}
+                {ogWeights.summary}
               </p>
 
-              {Object.keys(profile.values).length > 0 && (
-                <OverlayWeightsTable values={profile.values} />
+              {Object.keys(ogWeights.values).length > 0 && (
+                <OverlayWeightsTable values={ogWeights.values} />
               )}
 
-              {profile.kind === "model" &&
-                Object.keys(profile.model_meta).length > 0 && (
+              {ogWeights.kind === "model" &&
+                Object.keys(ogWeights.meta).length > 0 && (
                   <div className="mt-4 space-y-1 font-mono text-xs text-zinc-500">
-                    {Object.entries(profile.model_meta).map(([k, v]) => (
+                    {Object.entries(ogWeights.meta).map(([k, v]) => (
                       <div key={k} className="flex gap-2">
                         <span className="text-zinc-400">{k}:</span>
                         <span>{String(v)}</span>
@@ -592,9 +592,11 @@ export default function AgentClient() {
                 )}
             </>
           )}
-          {!profileLoading && !profileError && !profile && (
+          {!ogLoading && !ogError && (!ogWeights || ogWeights.kind === "null") && (
             <p className="text-sm text-zinc-500">
-              No profile data yet — agent has not been trained.
+              {ogWeights?.kind === "null" && ogWeights.reason === "no hash on chain yet"
+                ? "No weights on chain yet — agent has not been trained."
+                : "No weights found in 0G Storage."}
             </p>
           )}
         </section>
