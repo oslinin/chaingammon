@@ -5,7 +5,7 @@ import HumanClient from "./HumanClient";
 // Next 16 forbids `"use client"` and `generateStaticParams` in the same file.
 
 export function generateStaticParams() {
-  return [{ id: "0" }];
+  return [{ id: "placeholder" }];
 }
 
 export default function HumanInfoPage() {
