@@ -281,7 +281,7 @@ A match can be free (ELO-only) or staked (per-side ETH deposit, winner takes the
 1. Match-page user picks a stake amount. Empty / `0` keeps the existing free-match path.
 2. Frontend generates a random `bytes32` `escrowMatchId`, the human's wallet calls `MatchEscrow.deposit(matchId, stakeWei)` via wagmi, then the frontend `POST`s `/agents/{agentId}/deposit` so the server signs the matching deposit from the agent's session-key wallet. Both deposits land before "Start Game" enables.
 3. Game plays out exactly like a free match.
-4. At game-end the frontend `POST`s `/finalize-direct-staked` with `escrow_match_id` and `stake_wei`. The server's `ChainClient.record_match_and_split` builds a single `recordMatchAndSplit` transaction that writes the match record AND pays the pot to the winner's address.
+4. At game-end the frontend `POST`s `/finalize-direct-staked` with `escrow_match_id` and `stake_wei`. Default path: the server calls `MatchRegistry.recordMatchAndSplit` and returns the tx hash. Keeper path: pass `keeper_settle: true` — the server uploads the `GameRecord` to 0G Storage and stores settlement params, but does **not** touch the chain; the KeeperHub keeper reads params via `POST /replay` and submits `recordMatchAndSplit` directly.
 5. Owner reclaims the agent's pot via the **AgentWalletPanel** ("Withdraw all" button on the pre-game card, calls `POST /agents/{id}/withdraw`).
 
 **Endpoints** (`server/app/main.py`):
@@ -292,7 +292,8 @@ A match can be free (ELO-only) or staked (per-side ETH deposit, winner takes the
 | `POST /agents/{id}/wallet`     | —                                                      | Idempotent create. Returns `{address}`.                             |
 | `POST /agents/{id}/deposit`    | `{match_id, stake_wei}`                                | Server signs `MatchEscrow.deposit` from the agent's wallet.         |
 | `POST /agents/{id}/withdraw`   | `{to, amount_wei?}`                                    | Drain to `to` (omit `amount_wei` → drain everything minus 21k gas). |
-| `POST /finalize-direct-staked` | `DirectFinalizeRequest + {escrow_match_id, stake_wei}` | Atomic settle + payout.                                             |
+| `POST /finalize-direct-staked` | `DirectFinalizeRequest + {escrow_match_id, stake_wei, keeper_settle?}` | Atomic settle + payout (default), or 0G upload-only when `keeper_settle=true`. |
+| `POST /replay`                 | `{match_id}` (0x-prefixed bytes32)                     | KeeperHub validate step: returns settlement params for a pending keeper-settle match. `valid: false` if not yet ready. |
 
 **Operator note:** set `AGENT_KEYSTORE_PASSPHRASE=<something>` in `server/.env` before starting the server, otherwise `AgentWalletManager.from_env()` raises and the wallet endpoints 503.
 
@@ -306,17 +307,17 @@ Two YAML workflows live in [`keeperhub/`](keeperhub/):
 
 ### `match-settle.yaml` — staked-match settlement (escrow path)
 
-Triggered by the second `Deposited` event from `MatchEscrow` on `og-testnet`. Runs when both players have funded escrow before the match starts.
+Triggered by `MatchEscrow.Deposited` on Sepolia. The registered KeeperHub workflow (`7f9dqwtohidj6lc89tuht`) calls `MatchRegistry.recordMatchAndSplit` **directly** — the server is not in the settlement transaction path.
 
-| #  | Step ID             | What it does                                                                                                                             |
-|----|---------------------|------------------------------------------------------------------------------------------------------------------------------------------|
-| 1  | `on-deposit`        | Confirms both deposits arrived; captures the `matchId`.                                                                                  |
-| 2  | `per-turn-drand`    | Polls `GET /games/{matchId}/dice` every 5 s to deliver drand-derived dice to each turn.                                                  |
-| 3  | `forfeit-poll`      | Checks every 30 s whether a player has exceeded the move clock; sets `forfeited` flag.                                                   |
-| 4  | `on-game-end`       | Waits for the game-end webhook (`POST /webhooks/match/{matchId}/end`).                                                                   |
-| 5  | `fetch-and-replay`  | Fetches the `GameRecord` from 0G Storage and replays every move through the WASM rules engine. A single illegal move halts the workflow. |
-| 6  | `sign-settlement`   | ECDSA-signs the settlement payload (matchId, winner, forfeit flag, escrowMatchId) with `KEEPER_PRIVKEY`.                                 |
-| 7  | `relay-settlement`  | POSTs the signed payload to `POST /settle`; server verifies the keeper signature and calls `MatchRegistry.recordMatchAndSplit`.           |
+**Required one-time setup:** call `MatchRegistry.setSettler(0x8422451d456D1374b73b14dCe24C5B10Ef43bD99)` from the deployer wallet to grant the KeeperHub Para MPC wallet the settler role. The workflow is kept `enabled: false` until this is done.
+
+| #  | Node ID        | What it does                                                                                                                          |
+|----|----------------|---------------------------------------------------------------------------------------------------------------------------------------|
+| 1  | `on-deposit`   | Event trigger: fires on `MatchEscrow.Deposited` (`0xcBE5…01C9F`). Captures `matchId` (bytes32).                                      |
+| 2  | `validate`     | `POST /replay` with the escrow `matchId`. Returns winner/loser IDs, addresses, match length, `gameRecordHash`, and `winnerAddr`. Returns `valid: false` if the match is not yet finalized with `keeper_settle=true`. |
+| 3  | `gate`         | Condition: halts the workflow if `valid !== true`.                                                                                    |
+| 4  | `read-pot`     | `web3/read-contract` → `MatchEscrow.pot(matchId)`. Reads the live pot in wei — no server involvement.                                |
+| 5  | `record`       | `web3/write-contract` → `MatchRegistry.recordMatchAndSplit(…, escrowMatchId, [winnerAddr], [pot])`. Keeper wallet submits the tx.     |
 
 ### `post-settle-audit.yaml` — ENS sync + audit trail (all settlements)
 
