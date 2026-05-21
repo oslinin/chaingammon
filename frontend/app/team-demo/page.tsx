@@ -26,6 +26,7 @@ import {
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 
 import { Board } from "../Board";
+import { loadTheme, saveTheme, type BoardThemeKey } from "../boardThemes";
 import { AgentTeammatePanel } from "../ChiefOfStaffPanel";
 import { DiceRoll } from "../DiceRoll";
 import { rollDice } from "../dice";
@@ -36,6 +37,7 @@ import {
   newMatch,
   applyMoveToState,
   getBestMove,
+  hasLegalMoves,
   skipTurn,
   playMatchToEnd,
   resignMatch,
@@ -380,6 +382,7 @@ function TeamDemoPageInner() {
   const [settleError, setSettleError] = useState<string | null>(null);
   const [settleTxHash, setSettleTxHash] = useState<`0x${string}` | null>(null);
   const [hasStaleSession, setHasStaleSession] = useState(false);
+  const [boardTheme, setBoardTheme] = useState<BoardThemeKey>(() => loadTheme());
 
   const { address, chain: walletChain, chainId: walletChainId } = useAccount();
   const chainId = useActiveChainId();
@@ -737,6 +740,23 @@ function TeamDemoPageInner() {
     }, 800);
     return () => clearTimeout(timer);
   }, [game, setup, fastForward]);
+
+  // Auto-skip the human's turn when they have no legal moves (bar-dance
+  // against a closed home board, or a roll that leaves nothing playable).
+  // Without this the UI just shows the dice and waits for a move that
+  // can't exist, and any attempt prints "Illegal move".
+  useEffect(() => {
+    if (setup || !game || game.game_over) return;
+    if (game.turn !== 0 || !game.dice) return;
+    if (stagedMoves.length > 0) return;
+    const gboard: GameBoard = { points: game.board, bar: game.bar, off: game.off };
+    if (hasLegalMoves(gboard, 0, game.dice)) return;
+    const timer = setTimeout(() => {
+      const skipped = skipTurn(game);
+      setGame(skipped.game_over ? skipped : { ...skipped, dice: rollDice() });
+    }, 600);
+    return () => clearTimeout(timer);
+  }, [game, setup, stagedMoves.length]);
 
   useEffect(() => {
     if (!fastForward || !game || game.game_over) return;
@@ -1249,12 +1269,14 @@ function TeamDemoPageInner() {
 
         {game && (
           <div className="flex flex-col gap-6">
+
             <Board
               board={currentBoard}
               bar={currentBar}
               off={currentOff}
               turn={game.turn}
               ghostMove={hoveredMove}
+              themeKey={boardTheme}
               opponentName={
                 opponentIds.length === 1
                   ? `Agent #${opponentIds[0]}`

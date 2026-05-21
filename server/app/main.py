@@ -3,13 +3,11 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pathlib import Path
 from pydantic import BaseModel
-from typing import Dict, List, Optional
-import hashlib
+from typing import List, Optional
 import json
 import os
 import re
 import sys
-import uuid
 
 # Load server/.env into os.environ before any module reads RPC_URL etc.
 # Without this, `uv run uvicorn app.main:app` ignores the .env file and
@@ -39,11 +37,8 @@ from .agent_wallets import AgentWalletError, AgentWalletManager
 from .chain_client import ChainClient, ChainError
 from .ens_client import EnsClient, EnsError
 from .game_record import (
-    AdvisorSignal,
-    GameRecord,
     MoveEntry,
     PlayerRef,
-    Team,
     build_from_state,
     serialize_record,
 )
@@ -1213,6 +1208,7 @@ class StartTrainingRequest(BaseModel):
     use_0g_coaching: bool = False
     extras_dim: int = 16
     seed: int = 42
+    trainer_mode: str = "round_robin"
     # When True, save a checkpoint per agent at end of run and upload to
     # 0G Storage. Auto-derived as True when any 0G backend is selected
     # (inference or coaching), because the user has signalled 0G intent.
@@ -1238,6 +1234,7 @@ def post_training_start(req: StartTrainingRequest):
         job = start_job(
             epochs=req.epochs,
             agent_ids=req.agent_ids,
+            trainer_mode=req.trainer_mode,
             use_0g_inference=req.use_0g_inference,
             use_0g_coaching=req.use_0g_coaching,
             extras_dim=req.extras_dim,
@@ -1381,7 +1378,22 @@ def get_agent_profile(agent_id: int):
     try:
         weights_bytes = get_kv(weights_kv_key)
     except OgStorageError:
-        pass  # Cold-start agent — no weights in KV yet.
+        pass  # KV unavailable (testnet has no KV client yet) or cold-start.
+
+    # Fall back to 0G blob storage via the on-chain overlay hash.
+    # The 0G TS SDK v1.2.6 exposes Indexer/Downloader but no KV client, so
+    # get_kv only works against the localhost JSON-file mock. Every prod
+    # agent would otherwise return kind="null" even when AgentRegistry
+    # holds a non-zero overlayHash pointing at a real overlay blob.
+    _ZERO_HASH = "0x" + "00" * 32
+    if not weights_bytes:
+        try:
+            chain = ChainClient.from_env()
+            _, overlay_hash = chain.agent_data_hashes(agent_id)
+            if overlay_hash and overlay_hash.lower() != _ZERO_HASH:
+                weights_bytes = get_blob(overlay_hash)
+        except (ChainError, OgStorageError):
+            pass
 
     profile = load_profile_from_bytes(weights_bytes) if weights_bytes else NullProfile()
     metrics = profile.metrics()
@@ -1395,12 +1407,30 @@ def get_agent_profile(agent_id: int):
     # Fetch the feature overlay from KV (written per game by finalize endpoints).
     overlay_kv_key = f"chaingammon/overlay/agent/{agent_id}"
     overlay_values: dict = {}
+    overlay_blob: bytes = b""
     try:
         overlay_blob = get_kv(overlay_kv_key)
-        overlay = Overlay.from_bytes(overlay_blob)
-        overlay_values = {c: float(overlay.values[c]) for c in overlay.values}
-    except (OgStorageError, OverlayError):
-        pass  # No overlay yet — cold start.
+    except OgStorageError:
+        pass
+
+    # Same blob-storage fallback as above — the chain's overlayHash is the
+    # canonical pointer; the KV is just a cache that's not yet reachable
+    # on testnet.
+    if not overlay_blob:
+        try:
+            chain = ChainClient.from_env()
+            _, overlay_hash = chain.agent_data_hashes(agent_id)
+            if overlay_hash and overlay_hash.lower() != _ZERO_HASH:
+                overlay_blob = get_blob(overlay_hash)
+        except (ChainError, OgStorageError):
+            pass
+
+    if overlay_blob:
+        try:
+            overlay = Overlay.from_bytes(overlay_blob)
+            overlay_values = {c: float(overlay.values[c]) for c in overlay.values}
+        except OverlayError:
+            pass
 
     # Resolve the agent's ERC-721 owner and their ENS name via chain.
     # Best-effort: missing env vars or chain errors return None gracefully.
@@ -1469,6 +1499,7 @@ class AgentDepositRequest(BaseModel):
 class AgentWithdrawRequest(BaseModel):
     to: str
     amount_wei: Optional[int] = None
+    signature: str
 
 
 def _agent_wallets_or_503() -> AgentWalletManager:
@@ -1522,6 +1553,31 @@ def agent_deposit(agent_id: int, req: AgentDepositRequest):
 def agent_withdraw(agent_id: int, req: AgentWithdrawRequest):
     """Drain the agent's wallet to `to`. If `amount_wei` is omitted,
     sends the entire balance minus gas."""
+    from eth_account.messages import encode_defunct
+    from web3 import Web3
+
+    try:
+        chain = ChainClient.from_env()
+    except ChainError as e:
+        raise HTTPException(status_code=503, detail=f"chain unavailable: {e}")
+
+    try:
+        owner = chain.agent_owner(agent_id)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"could not fetch owner for agent {agent_id}: {e}")
+
+    if req.to.lower() != owner.lower():
+        raise HTTPException(status_code=403, detail="Funds can only be withdrawn to the agent's owner")
+
+    msg = encode_defunct(text=f"Withdraw agent {agent_id} funds")
+    try:
+        signer = Web3().eth.account.recover_message(msg, signature=req.signature)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"invalid signature: {e}")
+
+    if signer.lower() != owner.lower():
+        raise HTTPException(status_code=403, detail="Signature must be from the agent's owner")
+
     wallets = _agent_wallets_or_503()
     try:
         tx_hash = wallets.withdraw(
@@ -1565,7 +1621,6 @@ def _init_equity_net() -> None:
         _agent_dir = Path(__file__).resolve().parents[2] / "agent"
         if _agent_dir.exists() and str(_agent_dir) not in sys.path:
             sys.path.insert(0, str(_agent_dir))
-        import torch
         from sample_trainer import BackgammonNet, DEFAULT_EXTRAS_DIM
         net = BackgammonNet(core_seed=0xBACC, extras_dim=DEFAULT_EXTRAS_DIM, extras_seed=0)
         net.eval()

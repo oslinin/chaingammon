@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useRef, useState, PointerEvent } from "react";
+import { BOARD_THEMES, type BoardThemeKey } from "./boardThemes";
 
 interface BoardProps {
   board: number[];          // length 24; board[i] = checkers on point (i+1). Positive = player 0, negative = player 1
@@ -15,6 +16,7 @@ interface BoardProps {
   ghostMove?: string | null;      // A move string to preview on hover, e.g. "24/18 13/7"
   onDragStart?: (point: number) => void;
   onDrop?: (point: number) => void;
+  themeKey?: BoardThemeKey;
 }
 
 const FRAME = 20;
@@ -56,7 +58,9 @@ export function Board({
   ghostMove,
   onDragStart,
   onDrop,
+  themeKey = "walnut",
 }: BoardProps) {
+  const theme = BOARD_THEMES[themeKey] ?? BOARD_THEMES.walnut;
   const svgRef = useRef<SVGSVGElement>(null);
   const [dragState, setDragState] = useState<DragState>(null);
   const [pendingDrop, setPendingDrop] = useState<number | "off" | null>(null);
@@ -300,7 +304,7 @@ export function Board({
     const baseY = isTop ? FRAME : TOTAL_H - FRAME;
 
     const isCrimson = isTop ? col % 2 !== 0 : col % 2 === 0;
-    const triColor = isCrimson ? "#8B2210" : "#C47820";
+    const triColor = isCrimson ? theme.pointDark : theme.pointLight;
 
     const pts = `${startX},${baseY} ${startX + POINT_W},${baseY} ${startX + POINT_W / 2},${tipY}`;
 
@@ -456,8 +460,8 @@ export function Board({
           y={FRAME}
           width={BAR_W}
           height={INNER_H}
-          fill="rgba(0,0,0,0.1)"
-          stroke="rgba(0,0,0,0.3)"
+          fill={theme.bar}
+          stroke={theme.barEdge}
         />
         {isSelected && (
           <rect
@@ -663,26 +667,21 @@ export function Board({
           onPointerLeave={handlePointerUp}
         >
           <defs>
-            <pattern id="cg-wood" patternUnits="userSpaceOnUse" width="80" height="80">
-              <rect width="80" height="80" fill="#5C3A1E" />
-              <rect x="0" y="0" width="10" height="120" fill="#6B4423" opacity="0.6" transform="rotate(-12)" />
-              <rect x="20" y="-10" width="15" height="120" fill="#4A2D14" opacity="0.7" transform="rotate(-12)" />
-              <rect x="50" y="-20" width="8" height="120" fill="#6B4423" opacity="0.5" transform="rotate(-12)" />
-              <rect x="70" y="-10" width="12" height="120" fill="#4A2D14" opacity="0.8" transform="rotate(-12)" />
-            </pattern>
+            <linearGradient id="cg-frame" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor={theme.frameStart} />
+              <stop offset="100%" stopColor={theme.frameEnd} />
+            </linearGradient>
             <radialGradient id="cg-felt" cx="50%" cy="50%" r="60%">
-              <stop offset="0%" stopColor="#3D2220" />
-              <stop offset="100%" stopColor="var(--cg-bg-felt, #2D1A18)" />
+              <stop offset="0%" stopColor={theme.feltAccent} />
+              <stop offset="100%" stopColor={theme.felt} />
             </radialGradient>
             <radialGradient id="cg-p0" cx="38%" cy="30%" r="70%">
-              <stop offset="0%" stopColor="#F5D49A" />
-              <stop offset="38%" stopColor="var(--cg-player-warm, #E3B779)" />
-              <stop offset="100%" stopColor="#A07830" />
+              <stop offset="0%" stopColor={theme.checkerWarm.fill} stopOpacity={0.7} />
+              <stop offset="100%" stopColor={theme.checkerWarm.fill} />
             </radialGradient>
             <radialGradient id="cg-p1" cx="38%" cy="30%" r="70%">
-              <stop offset="0%" stopColor="#FDFAF4" />
-              <stop offset="38%" stopColor="var(--cg-player-cool, #E8E1CF)" />
-              <stop offset="100%" stopColor="#B0A898" />
+              <stop offset="0%" stopColor={theme.checkerCool.fill} stopOpacity={0.7} />
+              <stop offset="100%" stopColor={theme.checkerCool.fill} />
             </radialGradient>
             <filter id="cg-glow" x="-50%" y="-50%" width="200%" height="200%">
               <feGaussianBlur in="SourceGraphic" stdDeviation="4" result="blur" />
@@ -694,7 +693,7 @@ export function Board({
           </defs>
 
           {/* Outer Frame */}
-          <rect x="0" y="0" width={TOTAL_W} height={TOTAL_H} fill="url(#cg-wood)" rx="4" />
+          <rect x="0" y="0" width={TOTAL_W} height={TOTAL_H} fill="url(#cg-frame)" rx="4" />
 
           {/* Inner Felt */}
           <rect x={FRAME} y={FRAME} width={TOTAL_W - 2 * FRAME} height={INNER_H} fill="url(#cg-felt)" />

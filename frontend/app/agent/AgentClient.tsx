@@ -30,6 +30,7 @@ import {
   useChainContracts,
 } from "../contracts";
 import { useAgentMatchSummary } from "../useAgentMatchSummary";
+import { AgentWalletPanel } from "../AgentWalletPanel";
 
 const SERVER = process.env.NEXT_PUBLIC_SERVER_URL ?? "http://localhost:8000";
 
@@ -316,7 +317,7 @@ function AgentClientInner() {
     >
       <header
         data-testid="agent-info-header"
-        className="flex items-center justify-between border-b border-zinc-200 px-8 py-4 dark:border-zinc-800"
+        className="flex items-center justify-between gap-2 border-b border-zinc-200 px-4 py-4 sm:px-8 dark:border-zinc-800"
       >
         <Link
           href="/"
@@ -370,6 +371,11 @@ function AgentClientInner() {
             </span>
           )}
         </div>
+
+        {/* Agent Wallet Management */}
+        <section className="mb-8">
+          <AgentWalletPanel agentId={agentId} stakeWei={BigInt(0)} />
+        </section>
 
         {/* On-chain data */}
         <section
@@ -464,6 +470,7 @@ function AgentClientInner() {
                   ? `${explorerUrl}/address/${profile.address}`
                   : undefined
               }
+              copyValue={profile?.address ?? undefined}
               tooltip="Server-managed wallet address for this agent. Used to hold match stakes and receive winnings. Funded by the agent owner."
             />
             <InfoField
@@ -606,6 +613,34 @@ function FieldTooltip({ text }: { text: string }) {
   );
 }
 
+function CopyButton({ value }: { value: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        void navigator.clipboard.writeText(value).then(() => {
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1500);
+        });
+      }}
+      title="Copy full address"
+      className="ml-1 inline-flex shrink-0 items-center text-zinc-400 hover:text-zinc-700 dark:text-zinc-600 dark:hover:text-zinc-300"
+    >
+      {copied ? (
+        <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <path d="M3 8l3.5 3.5L13 4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+        </svg>
+      ) : (
+        <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <rect x="5" y="1" width="9" height="11" rx="1.5" stroke="currentColor" strokeWidth="1.5"/>
+          <path d="M3 4H2a1 1 0 00-1 1v9a1 1 0 001 1h8a1 1 0 001-1v-1" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+        </svg>
+      )}
+    </button>
+  );
+}
+
 function InfoField({
   label,
   value,
@@ -614,6 +649,7 @@ function InfoField({
   truncate,
   fullValue,
   tooltip,
+  copyValue,
 }: {
   label: string;
   value: string;
@@ -622,6 +658,7 @@ function InfoField({
   truncate?: boolean;
   fullValue?: boolean;
   tooltip?: string;
+  copyValue?: string;
 }) {
   const displayValue =
     truncate && value.length > 18
@@ -655,13 +692,16 @@ function InfoField({
         )}
       </dt>
       <dd
-        className={
+        className={`flex items-center ${
           mono
             ? "font-mono text-zinc-900 dark:text-zinc-100"
             : "text-zinc-900 dark:text-zinc-100"
-        }
+        }`}
       >
         {content}
+        {copyValue && copyValue !== "—" && copyValue !== "…" && (
+          <CopyButton value={copyValue} />
+        )}
       </dd>
     </div>
   );

@@ -12,6 +12,7 @@ import { useEffect, useState } from "react";
 import { ComputeBackendsProvider } from "./ComputeBackendsContext";
 import { config } from "./wagmi";
 import { warmupOnnx } from "../lib/onnx_eval";
+import { I18nProvider } from "./i18n";
 
 export function Providers({ children }: { children: React.ReactNode }) {
   // One QueryClient per render tree, kept stable across renders. Avoids
@@ -26,7 +27,9 @@ export function Providers({ children }: { children: React.ReactNode }) {
   return (
     <WagmiProvider config={config}>
       <QueryClientProvider client={queryClient}>
-        <ComputeBackendsProvider>{children}</ComputeBackendsProvider>
+        <ComputeBackendsProvider>
+          <I18nProvider>{children}</I18nProvider>
+        </ComputeBackendsProvider>
       </QueryClientProvider>
     </WagmiProvider>
   );

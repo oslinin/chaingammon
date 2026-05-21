@@ -1,0 +1,14 @@
+[Unit]
+Description=ChainGammon FastAPI server
+After=network.target
+
+[Service]
+User=ubuntu
+WorkingDirectory=/home/ubuntu/chaingammon/server
+EnvironmentFile=/home/ubuntu/chaingammon/server/.env
+ExecStart=/home/ubuntu/chaingammon/server/.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

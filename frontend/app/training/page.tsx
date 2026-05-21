@@ -341,12 +341,14 @@ export default function TrainingPage() {
 
   const startLocalMutation = useMutation({
     mutationFn: async (target: string = SERVER) => {
+      const trainerMode = window.localStorage.getItem("trainer_mode") || "round_robin";
       const r = await fetch(`${target}/training/start`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           epochs,
           agent_ids: selectedIds,
+          trainer_mode: trainerMode,
           use_0g_inference: use0gInference,
           use_0g_coaching: use0gCoaching,
           upload_to_0g: true,
