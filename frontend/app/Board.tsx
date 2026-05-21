@@ -667,6 +667,20 @@ export function Board({
           onPointerLeave={handlePointerUp}
         >
           <defs>
+            {/* Arrowhead markers — one per ghost color so each segment gets a matching tip */}
+            {GHOST_COLORS.map((color, i) => (
+              <marker
+                key={`ghost-arrow-${i}`}
+                id={`ghost-arrow-${i}`}
+                markerWidth="8"
+                markerHeight="8"
+                refX="7"
+                refY="3"
+                orient="auto"
+              >
+                <path d="M0,0 L0,6 L8,3 z" fill={color} opacity={0.85} />
+              </marker>
+            ))}
             <linearGradient id="cg-frame" x1="0" y1="0" x2="0" y2="1">
               <stop offset="0%" stopColor={theme.frameStart} />
               <stop offset="100%" stopColor={theme.frameEnd} />
@@ -761,6 +775,7 @@ export function Board({
                   strokeWidth="3"
                   strokeDasharray="6, 6"
                   opacity={0.6}
+                  markerEnd={`url(#ghost-arrow-${seg.segIndex % GHOST_COLORS.length})`}
                 />
               );
             })}
