@@ -48,6 +48,19 @@ export function PersonCard({
         background: "var(--cg-bg-2)",
         padding: 20,
         boxShadow: "var(--cg-shadow-1)",
+        transition: "border-color 180ms ease, box-shadow 180ms ease, transform 180ms ease",
+      }}
+      onMouseEnter={(e) => {
+        const el = e.currentTarget as HTMLDivElement;
+        el.style.borderColor = "var(--cg-line-3)";
+        el.style.boxShadow = "var(--cg-shadow-2)";
+        el.style.transform = "translateY(-1px)";
+      }}
+      onMouseLeave={(e) => {
+        const el = e.currentTarget as HTMLDivElement;
+        el.style.borderColor = "var(--cg-line-2)";
+        el.style.boxShadow = "var(--cg-shadow-1)";
+        el.style.transform = "";
       }}
     >
       {/* Header row: name + info badges */}
@@ -182,25 +195,24 @@ export function PersonCard({
         <Link
           href={playHref}
           data-testid="person-card-play-button"
+          className="cg-btn-primary"
           style={{
             marginTop: 4,
             display: "block",
             borderRadius: "var(--cg-radius)",
-            background: "var(--cg-brass)",
+            background: "linear-gradient(180deg, #E3B779 0%, #C99B5C 55%, #B0843E 100%)",
             color: "var(--cg-brass-ink)",
-            padding: "8px 16px",
+            padding: "9px 16px",
             textAlign: "center",
             fontSize: 14,
             fontWeight: 600,
             fontFamily: "var(--cg-font-sans)",
             textDecoration: "none",
-            boxShadow: "var(--cg-shadow-1)",
-            transition: "background 120ms",
+            boxShadow: "0 1px 0 0 rgba(255,236,196,0.35) inset, 0 -1px 0 0 rgba(0,0,0,0.25) inset, 0 4px 12px -3px rgba(140,90,30,0.4)",
+            border: "1px solid rgba(0,0,0,0.25)",
           }}
-          onMouseEnter={(e) => { (e.currentTarget as HTMLAnchorElement).style.background = "var(--cg-brass-hi)"; }}
-          onMouseLeave={(e) => { (e.currentTarget as HTMLAnchorElement).style.background = "var(--cg-brass)"; }}
         >
-          Play
+          Play match
         </Link>
       )}
     </div>
