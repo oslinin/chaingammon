@@ -19,6 +19,7 @@
     "@wagmi/core": "3.4.6",
     "@walletconnect/ethereum-provider": "^2.21.1",
     "ethers": "^6.16.0",
+    "fflate": "^0.8.3",
     "mermaid": "^11.15.0",
     "next": "16.2.4",
     "onnxruntime-web": "1.16.3",
