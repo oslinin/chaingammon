@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -21,7 +20,6 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app import main as main_module  # noqa: E402
 from app.game_record import (             # noqa: E402
-    AdvisorSignal,
     PlayerRef,
     Team,
     build_from_state,

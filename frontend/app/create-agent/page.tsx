@@ -36,6 +36,7 @@ import { decodeEventLog, parseEther } from "viem";
 
 import { useChainContracts } from "../contracts";
 import { recordTransaction } from "../transactions";
+import { ModelAdvisorPanel } from "./ModelAdvisorPanel";
 
 const SERVER = process.env.NEXT_PUBLIC_SERVER_URL ?? "http://localhost:8000";
 
@@ -348,8 +349,9 @@ export default function CreateAgentPage() {
   })();
 
   return (
-    <main className="flex flex-1 flex-col gap-6 p-6 max-w-3xl">
-      <div>
+    <div className="flex flex-1 flex-col lg:flex-row gap-6 p-6 max-w-6xl">
+      <main className="flex-1 flex flex-col gap-6">
+        <div>
         <h1 className="text-xl font-semibold text-zinc-900 dark:text-zinc-50">
           Create new agent
         </h1>
@@ -490,16 +492,24 @@ export default function CreateAgentPage() {
           </p>
         )}
 
-        <button
-          data-testid="create-agent-submit"
-          type="button"
-          onClick={submit}
-          disabled={busy || !agentLabel.trim() || !address}
-          className="rounded bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
-        >
-          {buttonLabel}
-        </button>
-      </div>
-    </main>
+          <button
+            data-testid="create-agent-submit"
+            type="button"
+            onClick={submit}
+            disabled={busy || !agentLabel.trim() || !address}
+            className="rounded bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
+          >
+            {buttonLabel}
+          </button>
+        </div>
+      </main>
+
+      <aside className="w-full lg:w-96 flex-shrink-0 flex flex-col gap-4">
+        <ModelAdvisorPanel
+          disabled={busy}
+          onCodeSelect={(code) => setModelCode(code)}
+        />
+      </aside>
+    </div>
   );
 }

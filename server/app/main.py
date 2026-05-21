@@ -3,13 +3,11 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pathlib import Path
 from pydantic import BaseModel
-from typing import Dict, List, Optional
-import hashlib
+from typing import List, Optional
 import json
 import os
 import re
 import sys
-import uuid
 
 # Load server/.env into os.environ before any module reads RPC_URL etc.
 # Without this, `uv run uvicorn app.main:app` ignores the .env file and
@@ -39,11 +37,8 @@ from .agent_wallets import AgentWalletError, AgentWalletManager
 from .chain_client import ChainClient, ChainError
 from .ens_client import EnsClient, EnsError
 from .game_record import (
-    AdvisorSignal,
-    GameRecord,
     MoveEntry,
     PlayerRef,
-    Team,
     build_from_state,
     serialize_record,
 )
@@ -1213,6 +1208,7 @@ class StartTrainingRequest(BaseModel):
     use_0g_coaching: bool = False
     extras_dim: int = 16
     seed: int = 42
+    trainer_mode: str = "round_robin"
     # When True, save a checkpoint per agent at end of run and upload to
     # 0G Storage. Auto-derived as True when any 0G backend is selected
     # (inference or coaching), because the user has signalled 0G intent.
@@ -1238,6 +1234,7 @@ def post_training_start(req: StartTrainingRequest):
         job = start_job(
             epochs=req.epochs,
             agent_ids=req.agent_ids,
+            trainer_mode=req.trainer_mode,
             use_0g_inference=req.use_0g_inference,
             use_0g_coaching=req.use_0g_coaching,
             extras_dim=req.extras_dim,
@@ -1624,7 +1621,6 @@ def _init_equity_net() -> None:
         _agent_dir = Path(__file__).resolve().parents[2] / "agent"
         if _agent_dir.exists() and str(_agent_dir) not in sys.path:
             sys.path.insert(0, str(_agent_dir))
-        import torch
         from sample_trainer import BackgammonNet, DEFAULT_EXTRAS_DIM
         net = BackgammonNet(core_seed=0xBACC, extras_dim=DEFAULT_EXTRAS_DIM, extras_seed=0)
         net.eval()

@@ -6,9 +6,11 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { useI18n } from "./i18n";
 
 export function MobileNav() {
   const [lastAgentId, setLastAgentId] = useState<number | null>(null);
+  const { t } = useI18n();
 
   useEffect(() => {
     const stored = window.localStorage.getItem("lastAgentId");
@@ -29,10 +31,10 @@ export function MobileNav() {
       className="fixed bottom-0 left-0 right-0 z-50 flex border-t border-zinc-200 bg-white md:hidden dark:border-zinc-800 dark:bg-zinc-950"
     >
       <Link href="/" data-testid="mobile-nav-home" className={linkClass}>
-        Home
+        {t("home")}
       </Link>
       <Link href={playHref} data-testid="mobile-nav-play" className={linkClass}>
-        Play
+        {t("play")}
       </Link>
     </nav>
   );
