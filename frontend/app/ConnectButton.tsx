@@ -44,9 +44,10 @@ const pillBase: React.CSSProperties = {
 
 const primaryBtn: React.CSSProperties = {
   ...pillBase,
-  background: "var(--cg-brass)",
+  background: "linear-gradient(180deg, #E3B779 0%, #C99B5C 55%, #B0843E 100%)",
   color: "var(--cg-brass-ink)",
-  border: "none",
+  border: "1px solid rgba(0,0,0,0.3)",
+  boxShadow: "0 1px 0 0 rgba(255,236,196,0.35) inset, 0 -1px 0 0 rgba(0,0,0,0.25) inset, 0 4px 12px -3px rgba(140,90,30,0.4)",
 };
 
 const secondaryBtn: React.CSSProperties = {
@@ -110,6 +111,7 @@ export function ConnectButton() {
             href={metaMaskDeepLink()}
             data-testid="open-in-metamask"
             style={primaryBtn}
+            className="cg-btn-primary"
           >
             Open in MetaMask
           </a>
@@ -150,9 +152,9 @@ export function ConnectButton() {
               onClick={() => { setUserAttempted(true); connect({ connector: injectedConnector }); }}
               disabled={connectPending}
               style={primaryBtn}
-              className="disabled:opacity-60"
+              className="cg-btn-primary disabled:opacity-60"
             >
-              {connectPending ? "Connecting…" : "Browser wallet"}
+              {connectPending ? "Connecting…" : "Connect wallet"}
             </button>
           )}
           {wcConnector && (

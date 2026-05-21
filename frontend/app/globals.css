@@ -254,3 +254,60 @@ body {
 .cg-toc-link:hover {
   color: var(--cg-fg-1);
 }
+
+/* ── Page-load stagger ─────────────────────────────────────────────────────── */
+@keyframes cg-fade-up {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.cg-fade-up   { animation: cg-fade-up 0.4s cubic-bezier(0.16,1,0.3,1) both; }
+.cg-fade-up-1 { animation: cg-fade-up 0.4s 0.07s cubic-bezier(0.16,1,0.3,1) both; }
+.cg-fade-up-2 { animation: cg-fade-up 0.4s 0.14s cubic-bezier(0.16,1,0.3,1) both; }
+.cg-fade-up-3 { animation: cg-fade-up 0.4s 0.22s cubic-bezier(0.16,1,0.3,1) both; }
+
+/* ── Action chips (CSS hover, server-component safe) ─────────────────────── */
+.cg-chip {
+  display: inline-block;
+  border-radius: var(--cg-radius-sm);
+  padding: 3px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  text-decoration: none;
+  font-family: var(--cg-font-sans);
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+  white-space: nowrap;
+}
+.cg-chip-gold {
+  border: 1px solid rgba(201,155,92,0.35);
+  background: rgba(201,155,92,0.10);
+  color: var(--cg-brass-hi);
+}
+.cg-chip-gold:hover {
+  background: rgba(201,155,92,0.20);
+  border-color: rgba(201,155,92,0.55);
+}
+.cg-chip-muted {
+  border: 1px solid var(--cg-line-2);
+  background: var(--cg-bg-2);
+  color: var(--cg-fg-2);
+}
+.cg-chip-muted:hover {
+  background: var(--cg-bg-3);
+  border-color: var(--cg-line-3);
+  color: var(--cg-fg-1);
+}
+.cg-chip-warm {
+  border: 1px solid var(--cg-brass);
+  background: rgba(201,155,92,0.10);
+  color: var(--cg-brass);
+}
+.cg-chip-warm:hover {
+  background: rgba(201,155,92,0.20);
+}
+
+/* ── Brass primary button (hover / press states) ─────────────────────────── */
+.cg-btn-primary {
+  transition: filter 120ms ease, transform 100ms ease;
+}
+.cg-btn-primary:hover:not(:disabled) { filter: brightness(1.08); }
+.cg-btn-primary:active:not(:disabled) { filter: brightness(0.93); transform: translateY(1px); }

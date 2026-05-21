@@ -67,27 +67,32 @@ export default function RootLayout({
                   + wallet connect (ELO, matches played) on the right. */}
               <header
                 style={{
-                  background: "var(--cg-bg-1)",
+                  background: "rgba(21,17,14,0.88)",
+                  backdropFilter: "blur(12px)",
+                  WebkitBackdropFilter: "blur(12px)",
                   borderBottom: "1px solid var(--cg-line-1)",
+                  position: "sticky",
+                  top: 0,
+                  zIndex: 40,
                 }}
-                className="flex items-center justify-between gap-4 px-4 py-2"
+                className="flex items-center justify-between gap-4 px-4 md:px-6 py-3"
               >
                 <Link
                   href="/"
-                  className="flex items-center gap-2"
+                  className="flex items-center gap-2 shrink-0"
                   aria-label="Chaingammon home"
                 >
                   <img
                     src={`${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/chaingammon-icon.svg`}
                     alt=""
-                    width={24}
-                    height={24}
+                    width={26}
+                    height={26}
                     className="shrink-0"
                   />
                   <span
                     style={{
                       fontFamily: "var(--cg-font-display)",
-                      fontSize: "16px",
+                      fontSize: "17px",
                       lineHeight: 1,
                       letterSpacing: "-0.02em",
                       display: "inline-flex",
@@ -103,7 +108,9 @@ export default function RootLayout({
                   <span className="hidden md:block">
                     <ComputeBackendsPill />
                   </span>
-                  <HeaderLinks />
+                  <span className="hidden md:contents">
+                    <HeaderLinks />
+                  </span>
                   <ConnectButton />
                 </div>
               </header>
