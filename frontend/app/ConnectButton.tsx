@@ -59,6 +59,12 @@ function hasInjectedProvider(): boolean {
   return typeof window !== "undefined" && Boolean((window as { ethereum?: unknown }).ethereum);
 }
 
+/** Deep link that opens the current page inside MetaMask Mobile's in-app browser. */
+function metaMaskDeepLink(): string {
+  const { hostname, pathname, search } = window.location;
+  return `https://metamask.app.link/dapp/${hostname}${pathname}${search}`;
+}
+
 export function ConnectButton() {
   const { address, isConnected } = useAccount();
   const { connectors, connect, isPending: connectPending, error: connectError } = useConnect();
@@ -87,19 +93,32 @@ export function ConnectButton() {
   if (!mounted) return null;
 
   if (!isConnected) {
-    // Mobile browser without window.ethereum — WalletConnect is the reliable
-    // path (deep link / QR code into MetaMask or any other mobile wallet).
-    if (isMobile && !injectedConnector && wcConnector) {
+    // Mobile browser without window.ethereum — show both the MetaMask deep
+    // link (opens dapp in MetaMask's browser where ethereum is injected) and
+    // WalletConnect (QR / deep link into any mobile wallet).
+    if (isMobile && !injectedConnector) {
       return (
-        <button
-          type="button"
-          onClick={() => { setUserAttempted(true); connect({ connector: wcConnector }); }}
-          disabled={connectPending}
-          style={primaryBtn}
-          className="cg-btn-primary disabled:opacity-60"
-        >
-          {connectPending ? "Connecting…" : "Connect wallet"}
-        </button>
+        <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "flex-end", gap: 8 }}>
+          <a
+            href={metaMaskDeepLink()}
+            data-testid="open-in-metamask"
+            style={primaryBtn}
+            className="cg-btn-primary"
+          >
+            Open in MetaMask
+          </a>
+          {wcConnector && (
+            <button
+              type="button"
+              onClick={() => { setUserAttempted(true); connect({ connector: wcConnector }); }}
+              disabled={connectPending}
+              style={secondaryBtn}
+              className="disabled:opacity-60"
+            >
+              WalletConnect
+            </button>
+          )}
+        </div>
       );
     }
 
