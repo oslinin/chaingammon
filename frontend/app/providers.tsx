@@ -6,13 +6,32 @@
 // context, which doesn't exist on the server.
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { WagmiProvider } from "wagmi";
+import { WagmiProvider, useAccount, useSwitchChain } from "wagmi";
 import { useEffect, useState } from "react";
 
 import { ComputeBackendsProvider } from "./ComputeBackendsContext";
-import { config } from "./wagmi";
+import { ALL_CHAINS, config } from "./wagmi";
 import { warmupOnnx } from "../lib/onnx_eval";
 import { I18nProvider } from "./i18n";
+
+// Silently switch to the app's default chain (Sepolia) when the wallet
+// connects on an unsupported chain. MetaMask persists the chain across
+// sessions, so this fires once and the prompt never reappears.
+function AutoSwitchChain() {
+  const { address, chainId: walletChainId } = useAccount();
+  const { switchChain } = useSwitchChain();
+  const supportedIds = new Set(ALL_CHAINS.map((c) => c.id));
+  const defaultChainId = ALL_CHAINS[0].id;
+
+  useEffect(() => {
+    if (address && walletChainId !== undefined && !supportedIds.has(walletChainId)) {
+      switchChain({ chainId: defaultChainId });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [address, walletChainId]);
+
+  return null;
+}
 
 export function Providers({ children }: { children: React.ReactNode }) {
   // One QueryClient per render tree, kept stable across renders. Avoids
@@ -27,6 +46,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
   return (
     <WagmiProvider config={config}>
       <QueryClientProvider client={queryClient}>
+        <AutoSwitchChain />
         <ComputeBackendsProvider>
           <I18nProvider>{children}</I18nProvider>
         </ComputeBackendsProvider>

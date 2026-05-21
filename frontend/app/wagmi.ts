@@ -67,8 +67,8 @@ declare module "wagmi" {
   }
 }
 
-// Re-export the registry for ConnectButton's chain-switch fallback.
-export { CHAIN_REGISTRY };
+// Re-export the registry and full chain list for providers/hooks.
+export { ALL_CHAINS, CHAIN_REGISTRY };
 
 // Convenience aliases for the two chains we name in code (other code paths
 // reference them by symbol). Both can be undefined if their deployment
