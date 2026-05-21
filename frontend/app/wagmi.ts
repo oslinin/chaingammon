@@ -70,8 +70,3 @@ declare module "wagmi" {
 // Re-export the registry and full chain list for providers/hooks.
 export { ALL_CHAINS, CHAIN_REGISTRY };
 
-// Convenience aliases for the two chains we name in code (other code paths
-// reference them by symbol). Both can be undefined if their deployment
-// JSON is missing — guard at call sites.
-export const ogTestnet = CHAIN_REGISTRY[16602]?.chain;
-export const hardhatLocal = CHAIN_REGISTRY[31337]?.chain;
