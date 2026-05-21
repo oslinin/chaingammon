@@ -2,20 +2,12 @@
 
 // Connect / disconnect button with injected-wallet and WalletConnect support.
 //
-// Five states:
-//   1. Not mounted (SSR)                  → null (avoids hydration mismatch)
-//   2. Mobile, no injected wallet         → "Open in MetaMask" deep link
-//      (+ WalletConnect button if projectId is configured)
-//   3. Desktop, no wallet / no WC config  → "Install MetaMask" link
-//   4. Not connected, wallet(s) available → "Browser wallet" button
-//      + WalletConnect button (if projectId is configured)
-//   5. Connected                          → network dropdown, profile badge, disconnect
-//
-// Mobile MetaMask note: on a regular mobile browser window.ethereum is not
-// injected — wagmi's injected connector is absent. The deep link
-// `metamask.app.link/dapp/…` opens the dapp inside MetaMask Mobile's own
-// in-app browser, which *does* inject window.ethereum, restoring the normal
-// "Browser wallet" flow. WalletConnect is shown alongside as an alternative.
+// States:
+//   1. Not mounted (SSR)                      → null (avoids hydration mismatch)
+//   2. Mobile, no injected wallet + WC        → "Connect wallet" (WalletConnect)
+//   3. No wallet / no WC config               → "Install MetaMask" link
+//   4. Not connected, wallet(s) available     → connect buttons
+//   5. Connected                              → network dropdown, profile badge, disconnect
 //
 // SSR note: wagmi is configured with ssr:true so the server renders connectors
 // as []. The `mounted` guard defers the real render until after hydration so
@@ -67,12 +59,6 @@ function hasInjectedProvider(): boolean {
   return typeof window !== "undefined" && Boolean((window as { ethereum?: unknown }).ethereum);
 }
 
-/** Deep link that opens the current page inside MetaMask Mobile's in-app browser. */
-function metaMaskDeepLink(): string {
-  const { hostname, pathname, search } = window.location;
-  return `https://metamask.app.link/dapp/${hostname}${pathname}${search}`;
-}
-
 export function ConnectButton() {
   const { address, isConnected } = useAccount();
   const { connectors, connect, isPending: connectPending, error: connectError } = useConnect();
@@ -101,32 +87,19 @@ export function ConnectButton() {
   if (!mounted) return null;
 
   if (!isConnected) {
-    // Mobile browser without window.ethereum — show MetaMask deep link so the
-    // user can open the dapp inside MetaMask Mobile's browser where
-    // window.ethereum is injected.
-    if (isMobile && !injectedConnector) {
+    // Mobile browser without window.ethereum — WalletConnect is the reliable
+    // path (deep link / QR code into MetaMask or any other mobile wallet).
+    if (isMobile && !injectedConnector && wcConnector) {
       return (
-        <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "flex-end", gap: 8 }}>
-          <a
-            href={metaMaskDeepLink()}
-            data-testid="open-in-metamask"
-            style={primaryBtn}
-            className="cg-btn-primary"
-          >
-            Open in MetaMask
-          </a>
-          {wcConnector && (
-            <button
-              type="button"
-              onClick={() => { setUserAttempted(true); connect({ connector: wcConnector }); }}
-              disabled={connectPending}
-              style={secondaryBtn}
-              className="disabled:opacity-60"
-            >
-              WalletConnect
-            </button>
-          )}
-        </div>
+        <button
+          type="button"
+          onClick={() => { setUserAttempted(true); connect({ connector: wcConnector }); }}
+          disabled={connectPending}
+          style={primaryBtn}
+          className="cg-btn-primary disabled:opacity-60"
+        >
+          {connectPending ? "Connecting…" : "Connect wallet"}
+        </button>
       );
     }
 
