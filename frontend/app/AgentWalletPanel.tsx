@@ -48,6 +48,15 @@ export function AgentWalletPanel({ agentId, stakeWei, onWalletChange }: Props) {
   const [wallet, setWallet] = useState<WalletState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const copyAddress = useCallback(() => {
+    if (!wallet) return;
+    void navigator.clipboard.writeText(wallet.address).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  }, [wallet]);
 
   const refresh = useCallback(async () => {
     try {
@@ -159,11 +168,21 @@ export function AgentWalletPanel({ agentId, stakeWei, onWalletChange }: Props) {
         {wallet && (
           <button
             type="button"
-            onClick={() => navigator.clipboard.writeText(wallet.address)}
-            className="font-mono text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100"
+            onClick={copyAddress}
+            className="flex items-center gap-1 font-mono text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100"
             title="Copy full address"
           >
             {shortAddr(wallet.address)}
+            {copied ? (
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <path d="M3 8l3.5 3.5L13 4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+            ) : (
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <rect x="5" y="1" width="9" height="11" rx="1.5" stroke="currentColor" strokeWidth="1.5"/>
+                <path d="M3 4H2a1 1 0 00-1 1v9a1 1 0 001 1h8a1 1 0 001-1v-1" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+              </svg>
+            )}
           </button>
         )}
       </div>
