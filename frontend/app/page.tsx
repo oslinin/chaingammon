@@ -70,7 +70,7 @@ export default function Home() {
                 textTransform: "uppercase",
                 color: "var(--cg-fg-3)",
               }}>
-                Live agents · 0G testnet
+                Live agents · Sepolia testnet
               </div>
               <div className="flex items-center gap-2 flex-wrap">
                 <Link href="/create-agent" className="cg-chip cg-chip-gold">Mint</Link>
