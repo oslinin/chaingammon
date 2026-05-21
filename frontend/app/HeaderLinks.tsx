@@ -25,6 +25,8 @@ export function HeaderLinks() {
       </Link>
       <Link
         href="/settings"
+        target="_blank"
+        rel="noopener noreferrer"
         className="cg-nav-link"
         style={{
           fontSize: 13,

@@ -106,6 +106,8 @@ export function MobileNav() {
       {/* Settings */}
       <Link
         href="/settings"
+        target="_blank"
+        rel="noopener noreferrer"
         style={{
           flex: 1,
           display: "flex",
