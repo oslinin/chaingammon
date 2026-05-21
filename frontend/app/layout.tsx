@@ -12,6 +12,7 @@ import { ComputeBackendsPill } from "./ComputeBackendsPill";
 import { ConnectButton } from "./ConnectButton";
 import { Providers } from "./providers";
 import { MobileNav } from "./MobileNav";
+import { SettingsModal } from "./SettingsModal";
 
 const cgSans = Space_Grotesk({
   variable: "--font-cg-sans",
@@ -67,6 +68,7 @@ export default function RootLayout({
       </head>
       <body className="min-h-full flex flex-col overflow-x-hidden">
         <Providers>
+          <SettingsModal />
           <div className="flex flex-1">
             {/* pb-16 reserves space for the fixed mobile bottom nav */}
             <div className="flex flex-1 flex-col min-w-0 pb-16 md:pb-0">

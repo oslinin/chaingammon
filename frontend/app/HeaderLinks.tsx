@@ -23,21 +23,22 @@ export function HeaderLinks() {
       >
         {t("help")}
       </Link>
-      <Link
-        href="/settings"
-        target="_blank"
-        rel="noopener noreferrer"
+      <button
+        type="button"
+        onClick={() => window.dispatchEvent(new CustomEvent("open-settings"))}
         className="cg-nav-link"
         style={{
           fontSize: 13,
-          textDecoration: "none",
+          background: "none",
+          border: "none",
+          cursor: "pointer",
           fontFamily: "var(--cg-font-sans)",
           padding: "4px 8px",
           borderRadius: "var(--cg-radius-sm)",
         }}
       >
         {t("settings")}
-      </Link>
+      </button>
     </>
   );
 }
