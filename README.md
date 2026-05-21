@@ -8,7 +8,7 @@ A decentralised, verifiable ELO ledger for backgammon — humans and agents shar
 - **Verifiable.** Every match settles to `MatchRegistry` on Sepolia. The on-chain record carries the 32-byte 0G Storage hash of the full archive (every move, every dice roll) — anyone can audit any rating change end-to-end.
 - **Living agents.** Each AI agent is an ERC-7857 iNFT (with ERC-721 fallback). It pins two `dataHashes`: a starter NN initialised from gnubg's published weights, and a per-agent checkpoint that grows match by match. Transfer the token, transfer the brain.
 - **Trustless dice.** Each turn's dice are `keccak256(drand_round_digest, turn_index) mod 36`. The server passes drand's BLS12-381 signature through to the client so an auditor can independently verify the round against drand's group public key.
-- **Optional stakes.** A match can be free (ELO-only) or staked (per-side ETH deposit, winner takes the pot). Agents stake via a server-managed session-key wallet the owner pre-funds; settlement is atomic (`MatchRegistry.recordMatchAndSplit` records the result and pays the winner in one transaction).
+- **Optional stakes.** A match can be free (ELO-only) or staked (per-side ETH deposit, winner takes the pot). Agent funds live in `AgentVault` — only the NFT owner can withdraw; the server operator key can stake but not steal. Settlement is browser-direct via `settleWithSessionKeys`, with KeeperHub as fallback.
 - **No central server.** Move evaluation runs in the browser (ONNX Runtime Web). The coach LLM runs on 0G Compute (Qwen 2.5 7B) with a local fallback. KeeperHub orchestrates settlement.
 
 ---
@@ -274,28 +274,28 @@ A match can be free (ELO-only) or staked (per-side ETH deposit, winner takes the
 
 **Contracts.** `MatchRegistry.recordMatch` and `recordMatchAndSplit` are gated by `onlyOwnerOrSettler` rather than `onlyOwner`, so a hosted orchestrator (e.g. KeeperHub's Para MPC wallet) can submit settlements without holding the deployer key. Owner-only `setSettler(address)` grants and revokes that role; zero-address default keeps original behaviour. `MatchEscrow.settler` is `immutable` so its constructor pins it to the active `MatchRegistry` — a fresh `MatchRegistry` deploy requires a fresh `MatchEscrow` deploy too.
 
-**Agent wallets.** Each agent (an ERC-7857 iNFT) gets a dedicated EOA whose private key is generated server-side, encrypted as a v3 JSON keystore at `server/data/agent_keys/<agentId>.json` (passphrase from `AGENT_KEYSTORE_PASSPHRASE`, 0600 file perms), and used to sign `MatchEscrow.deposit` on the agent's behalf. The owner pre-funds by sending ETH to its address; after the match the owner withdraws via `POST /agents/{id}/withdraw`. Trust model is intentionally minimal: the server holds the key for the agent's lifetime; on-chain owner authorisation (EIP-712) is a follow-up.
+**Agent staking — vault model.** Stakes live in `AgentVault.sol`, a single on-chain contract that holds ETH balances per agent token ID:
+
+- **Owner** deposits ETH via `AgentVault.deposit(agentId)` (the Fund button on `/agent/{id}`) and can withdraw at any time via `AgentVault.withdraw(agentId, to, amount)`. Only the NFT owner can withdraw — enforced by the contract, not by trust.
+- **Server operator** (`SERVER_OPERATOR_PRIVATE_KEY` in `server/.env`) calls `AgentVault.depositToEscrow(agentId, matchId, stake, escrow)` to move a stake into `MatchEscrow`. It can only stake up to the owner's pre-approved `allowances[agentId][operatorAddress]` — it cannot withdraw to arbitrary addresses.
+- Agents do **not** have individual signing wallets. Identity is the NFT token ID and the ENS name (`<label>.chaingammon.eth`).
 
 **End-to-end flow.**
 
 1. Match-page user picks a stake amount. Empty / `0` keeps the existing free-match path.
-2. Frontend generates a random `bytes32` `escrowMatchId`, the human's wallet calls `MatchEscrow.deposit(matchId, stakeWei)` via wagmi, then the frontend `POST`s `/agents/{agentId}/deposit` so the server signs the matching deposit from the agent's session-key wallet. Both deposits land before "Start Game" enables.
+2. The owner calls `AgentVault.depositToEscrow` directly from their browser wallet (no server key in the deposit path). The human's wallet calls `MatchEscrow.deposit` for the human side. Both deposits land before "Start Game" enables.
 3. Game plays out exactly like a free match.
-4. At game-end the frontend `POST`s `/finalize-direct-staked` with `escrow_match_id` and `stake_wei`. Default path: the server calls `MatchRegistry.recordMatchAndSplit` and returns the tx hash. Keeper path: pass `keeper_settle: true` — the server uploads the `GameRecord` to 0G Storage and stores settlement params, but does **not** touch the chain; the KeeperHub keeper reads params via `POST /replay` and submits `recordMatchAndSplit` directly.
-5. Owner reclaims the agent's pot via the **AgentWalletPanel** ("Withdraw all" button on the pre-game card, calls `POST /agents/{id}/withdraw`).
+4. At game-end the browser calls `MatchRegistry.settleWithSessionKeys` directly — no server key in the settlement path. The KeeperHub keeper can also settle via `recordMatchAndSplit` as a fallback.
+5. Winner's ETH is paid out atomically by the escrow contract.
 
 **Endpoints** (`server/app/main.py`):
 
 | Endpoint                       | Body                                                   | Purpose                                                             |
 | ------------------------------ | ------------------------------------------------------ | ------------------------------------------------------------------- |
-| `GET  /agents/{id}/wallet`     | —                                                      | Read address + balance. 404 if not yet provisioned.                 |
-| `POST /agents/{id}/wallet`     | —                                                      | Idempotent create. Returns `{address}`.                             |
-| `POST /agents/{id}/deposit`    | `{match_id, stake_wei}`                                | Server signs `MatchEscrow.deposit` from the agent's wallet.         |
-| `POST /agents/{id}/withdraw`   | `{to, amount_wei?}`                                    | Drain to `to` (omit `amount_wei` → drain everything minus 21k gas). |
-| `POST /finalize-direct-staked` | `DirectFinalizeRequest + {escrow_match_id, stake_wei, keeper_settle?}` | Atomic settle + payout (default), or 0G upload-only when `keeper_settle=true`. |
-| `POST /replay`                 | `{match_id}` (0x-prefixed bytes32)                     | KeeperHub validate step: returns settlement params for a pending keeper-settle match. `valid: false` if not yet ready. |
+| `POST /finalize-direct-staked` | `{escrow_match_id, stake_wei, keeper_settle?}` | Atomic settle + payout (default), or upload-only when `keeper_settle=true`. |
+| `POST /replay`                 | `{match_id}` (0x-prefixed bytes32)                     | KeeperHub validate step: returns settlement params. `valid: false` if not ready. |
 
-**Operator note:** set `AGENT_KEYSTORE_PASSPHRASE=<something>` in `server/.env` before starting the server, otherwise `AgentWalletManager.from_env()` raises and the wallet endpoints 503.
+**Operator note:** set `SERVER_OPERATOR_PRIVATE_KEY` in `server/.env` — one key for all agents. The key must be pre-approved by each agent owner via `AgentVault.setAllowance(agentId, operatorAddress, allowanceWei)` before staked matches can start.
 
 Frontend: `frontend/app/match/page.tsx` + `AgentWalletPanel.tsx` — agent address (click-to-copy), live balance, "Fund X ETH" (computes shortfall, sends from connected wallet), "Withdraw all". A `depositStatus` state machine (`idle → human-pending → agent-pending → ready`) drives the Start button label across both deposits.
 
