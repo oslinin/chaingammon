@@ -92,6 +92,37 @@ export function warmupOnnx(): void {
   });
 }
 
+/**
+ * Re-initialize the ONNX worker with a per-agent model.
+ *
+ * Terminates the existing worker (if any) and starts a new one using the
+ * provided ONNX bytes. After this call, `evaluateMoves` uses the agent's
+ * model instead of the bundled base model.
+ *
+ * The caller transfers ownership of `modelBytes` — do not use the buffer
+ * after calling this function.
+ */
+export async function loadAgentModel(modelBytes: ArrayBuffer): Promise<void> {
+  if (_worker) {
+    _worker.terminate();
+    _worker = null;
+  }
+  _initDone = false;
+  _initFailed = false;
+  _initPromise = null;
+  _initResolve = null;
+  _initReject = null;
+  _pending.clear();
+
+  _initPromise = new Promise<void>((resolve, reject) => {
+    _initResolve = resolve;
+    _initReject = reject;
+    // Transfer modelBytes so the worker owns the memory.
+    getWorker().postMessage({ type: "init", modelBytes }, [modelBytes]);
+  });
+  return _initPromise;
+}
+
 export async function evaluateMoves(
   board: Board,
   side: number,

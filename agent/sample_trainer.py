@@ -505,6 +505,58 @@ def save_checkpoint(net: BackgammonNet, path: Path, *, match_count: int,
     }, path)
 
 
+def export_onnx(net: BackgammonNet, path: Path) -> None:
+    """Export a trained BackgammonNet to ONNX for browser inference.
+
+    The extras head is omitted by tracing with extras=None, producing the
+    same board→equity interface as the bundled base model. The browser
+    ONNX worker can load this file directly without any code changes.
+
+    Input:  board  float32[batch, 198]
+    Output: equity float32[batch]
+    """
+    import torch.onnx
+
+    class _BoardOnly(torch.nn.Module):
+        def __init__(self, inner: BackgammonNet) -> None:
+            super().__init__()
+            self.inner = inner
+
+        def forward(self, board: torch.Tensor) -> torch.Tensor:
+            return self.inner(board, extras=None)
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    wrapped = _BoardOnly(net)
+    wrapped.eval()
+    dummy = torch.zeros(1, GNUBG_FEAT_DIM)
+    torch.onnx.export(
+        wrapped,
+        (dummy,),
+        str(path),
+        input_names=["board"],
+        output_names=["equity"],
+        dynamic_axes={"board": {0: "batch"}, "equity": {0: "batch"}},
+        opset_version=11,
+    )
+
+
+# Magic prefix prepended to encrypted ONNX blobs uploaded to 0G Storage.
+# Allows the browser to distinguish encrypted ONNX from raw ONNX (protobuf)
+# and from PyTorch ZIP checkpoints. Layout:
+#   CGONNX\x01 (7 bytes) | nonce (12 bytes) | ciphertext+tag
+ONNX_ENCRYPTED_MAGIC = b"CGONNX\x01"
+
+
+def seal_onnx(raw_onnx: bytes, key: bytes) -> bytes:
+    """Encrypt raw ONNX bytes and prepend the CGONNX magic marker.
+
+    The resulting blob is what should be uploaded to 0G Storage and stored
+    in dataHashes[1]. The browser agent_model_loader detects the magic,
+    strips it, and calls SubtleCrypto.decrypt with the AES-GCM nonce+ciphertext."""
+    from checkpoint_encryption import encrypt_blob
+    return ONNX_ENCRYPTED_MAGIC + encrypt_blob(raw_onnx, key)
+
+
 def load_checkpoint(path: Path) -> tuple[BackgammonNet, int]:
     """Load a checkpoint written by `save_checkpoint`. Returns
     `(net, match_count)`. The net is rebuilt with the shape recorded
@@ -585,6 +637,28 @@ def main() -> None:
                              "feature_encoder='gnubg_full' and is the only "
                              "kind /games/{id}/agent-move with "
                              "use_per_agent_nn=true can score.")
+    parser.add_argument("--export-onnx", type=str, default=None,
+                        metavar="PATH",
+                        help="After training (and optionally saving the .pt "
+                             "checkpoint), export the model to ONNX at PATH. "
+                             "The exported file has a single 'board' input "
+                             "[batch, 198] and a single 'equity' output "
+                             "[batch], matching the bundled base model's "
+                             "interface so the browser ONNX worker can load "
+                             "it directly. Combine with --upload-onnx-to-0g "
+                             "to push the result to 0G Storage.")
+    parser.add_argument("--upload-onnx-to-0g", action="store_true",
+                        help="After --export-onnx, AES-256-GCM-encrypt the "
+                             "ONNX file with a fresh key (written as "
+                             "<onnx>.key) and upload the sealed blob to 0G "
+                             "Storage. The printed rootHash is what to write "
+                             "to iNFT.dataHashes[1] for browser inference. "
+                             "Requires --export-onnx and the OG_STORAGE_* "
+                             "env triple.")
+    parser.add_argument("--no-encrypt-onnx", action="store_true",
+                        help="Modifier for --upload-onnx-to-0g: upload raw "
+                             "ONNX without encryption. Anyone with the "
+                             "rootHash can fetch and run the model.")
     parser.add_argument("--status-file", type=str, default=None,
                         metavar="PATH",
                         help="Append JSONL training events to this path so "
@@ -821,6 +895,36 @@ def main() -> None:
     elif args.upload_to_0g:
         print("--upload-to-0g requires --save-checkpoint; skipping upload.",
               file=sys.stderr)
+
+    if args.export_onnx:
+        onnx_path = Path(args.export_onnx)
+        export_onnx(agent, onnx_path)
+        print(f"Exported ONNX model: {onnx_path}")
+
+        if args.upload_onnx_to_0g:
+            from og_storage_upload import OgUploadError, upload_checkpoint
+            raw_onnx = onnx_path.read_bytes()
+            if args.no_encrypt_onnx:
+                blob = raw_onnx
+                print("WARNING: --no-encrypt-onnx set; uploading PLAINTEXT ONNX to 0G Storage.")
+            else:
+                from checkpoint_encryption import generate_key
+                onnx_key = generate_key()
+                blob = seal_onnx(raw_onnx, onnx_key)
+                key_path = onnx_path.with_suffix(onnx_path.suffix + ".key")
+                key_path.write_bytes(onnx_key)
+                print(f"Wrote AES-256-GCM key: {key_path} (keep this for browser decryption)")
+            try:
+                result = upload_checkpoint(blob)
+                kind = "plaintext" if args.no_encrypt_onnx else "encrypted"
+                print(f"Uploaded {kind} ONNX to 0G Storage:")
+                print(f"  rootHash = {result.root_hash}")
+                print(f"  txHash   = {result.tx_hash}")
+                print(f"Write rootHash to iNFT.dataHashes[1] for browser inference.")
+            except OgUploadError as e:
+                print(f"ONNX upload failed: {e}", file=sys.stderr)
+        elif args.upload_onnx_to_0g:
+            print("--upload-onnx-to-0g requires --export-onnx; skipping.", file=sys.stderr)
 
     _emit("done", total=args.matches, final_win_rate=float(final_wr))
     if status_fh is not None:

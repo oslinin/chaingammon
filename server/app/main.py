@@ -384,6 +384,7 @@ class StakedFinalizeRequest(DirectFinalizeRequest):
 
     escrow_match_id: str  # bytes32 the human + agent both deposited under
     stake_wei: str  # per-side stake; pot = stake_wei * 2. Stringified to fit JSON's int range.
+    keeper_settle: bool = False  # if True, skip on-chain call; store params for KeeperHub to settle
 
 
 @app.post("/finalize-direct", response_model=FinalizeResponse)
@@ -585,6 +586,25 @@ def finalize_direct_staked(req: StakedFinalizeRequest):
         chain = ChainClient.from_env()
     except ChainError as e:
         raise HTTPException(status_code=500, detail=f"chain client misconfigured: {e}") from e
+
+    if req.keeper_settle:
+        # Store params for KeeperHub to pick up via POST /replay and settle on-chain directly.
+        _pending_settlements[req.escrow_match_id] = {
+            "winnerAgentId": req.winner_agent_id,
+            "winnerHuman": req.winner_human_address,
+            "loserAgentId": req.loser_agent_id,
+            "loserHuman": req.loser_human_address,
+            "matchLength": int(req.match_length),
+            "gameRecordHash": upload.root_hash,
+            "winnerAddr": winner_payout_addr,
+        }
+        return {
+            "tx_hash": None,
+            "match_id": None,
+            "keeper_settle": True,
+            "escrow_match_id": req.escrow_match_id,
+            "archive_uri": upload.root_hash,
+        }
 
     try:
         finalized = chain.record_match_and_split(
@@ -885,6 +905,161 @@ def settle_endpoint(req: SettleRequest):
     return {"tx_hash": finalized.tx_hash, "match_id": finalized.match_id}
 
 
+# ---------------------------------------------------------------------------
+# POST /upload-game-record — called by the browser before settleWithSessionKeys.
+#
+# The browser builds a minimal GameRecord JSON (final position, winner/loser
+# refs, optional labels) and POSTs it here. The server uploads it to 0G
+# Storage using the existing og-bridge pipeline and returns the Merkle root
+# hash. The browser then passes that hash as `gameRecordHash` to
+# settleWithSessionKeys so the on-chain commitment points at a real blob
+# the post-settle keeper can later fetch for ENS sync.
+#
+# Non-blocking for the browser: a failure here degrades gracefully — the
+# browser falls back to a local keccak256 hash and settlement still works.
+# ---------------------------------------------------------------------------
+
+
+class UploadGameRecordRequest(BaseModel):
+    """Raw game record JSON from the browser.
+
+    Serialised with sorted keys before upload so the same logical record
+    always produces the same Merkle root. The server does not validate the
+    schema beyond ensuring it is valid JSON — the keeper's fetch-and-audit
+    step handles any schema drift gracefully.
+    """
+
+    record: dict
+
+
+@app.post("/upload-game-record")
+def upload_game_record(req: UploadGameRecordRequest):
+    """Upload a browser-built game record to 0G Storage and return its root hash.
+
+    Called by the frontend immediately before settleWithSessionKeys so the
+    gameRecordHash anchored on-chain points at a real 0G blob. The returned
+    root_hash is passed verbatim as the gameRecordHash argument.
+
+    Returns {root_hash, tx_hash} on success or raises HTTP 502 if 0G Storage
+    is unreachable (the browser should fall back to a local keccak256 hash).
+    """
+    try:
+        payload = json.dumps(req.record, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    except (TypeError, ValueError) as e:
+        raise HTTPException(status_code=422, detail=f"record serialization failed: {e}") from e
+
+    try:
+        result = put_blob(payload)
+    except OgStorageError as e:
+        raise HTTPException(status_code=502, detail=f"0G Storage upload failed: {e}") from e
+
+    return {"root_hash": result.root_hash, "tx_hash": result.tx_hash}
+
+
+# ---------------------------------------------------------------------------
+# POST /post-settle-audit — called by the post-settle-audit.yaml KeeperHub
+# workflow after any MatchRecorded event on MatchRegistry (Sepolia).
+#
+# This covers the browser-settlement path where the frontend calls
+# settleWithSessionKeys directly and never touches /finalize-direct:
+#   1. Read match info from MatchRegistry.getMatch(matchId).
+#   2. Fetch the game record blob from 0G Storage via gameRecordHash.
+#   3. Extract winner_label / loser_label from the blob (if present).
+#   4. Push elo + last_match_id ENS text records for each labelled side.
+#   5. Update agent style-overlay KV in 0G Storage (non-fatal).
+#   6. Return a JSON audit summary.
+# ---------------------------------------------------------------------------
+
+
+class PostSettleAuditRequest(BaseModel):
+    """Payload sent by the post-settle-audit.yaml keeper step run-audit.
+
+    Only `matchId` is required — the server reads all other parameters from
+    the chain and the 0G Storage game record, so the keeper workflow needs
+    no out-of-band context beyond the on-chain match identifier.
+    """
+
+    matchId: int
+
+
+@app.post("/post-settle-audit")
+def post_settle_audit(req: PostSettleAuditRequest):
+    """Keeper-triggered post-settlement audit: ENS sync + overlay update.
+
+    Idempotent — pushing the same ELO value to ENS twice is a no-op from
+    the protocol's perspective. Safe to call for both browser-settled matches
+    (settleWithSessionKeys) and relayer-settled matches (recordMatch via
+    /settle), though /finalize-direct already handles ENS for its path.
+    """
+    import logging as _logging
+    _log = _logging.getLogger(__name__)
+
+    try:
+        chain = ChainClient.from_env()
+    except ChainError as e:
+        raise HTTPException(status_code=503, detail=f"chain client not configured: {e}") from e
+
+    # Step 1 — read match info from chain.
+    try:
+        info = chain.get_match(req.matchId)
+    except ChainError as e:
+        raise HTTPException(status_code=502, detail=f"getMatch({req.matchId}) failed: {e}") from e
+
+    winner_agent_id = int(info["winnerAgentId"])
+    winner_human = str(info["winnerHuman"])
+    loser_agent_id = int(info["loserAgentId"])
+    loser_human = str(info["loserHuman"])
+    game_record_hash = str(info["gameRecordHash"])
+
+    # Step 2 — fetch game record from 0G Storage to recover labels + moves.
+    winner_label = ""
+    loser_label = ""
+    moves: list = []
+    zero_hash = "0x" + "00" * 32
+    if game_record_hash and game_record_hash != zero_hash:
+        try:
+            blob = get_blob(game_record_hash)
+            record_data = json.loads(blob)
+            winner_label = record_data.get("winner_label") or ""
+            loser_label = record_data.get("loser_label") or ""
+            moves = record_data.get("moves") or []
+        except (OgStorageError, json.JSONDecodeError, KeyError) as e:
+            _log.warning("post-settle-audit: could not fetch game record %s: %s", game_record_hash, e)
+
+    # Step 3 — push ENS text records for each labelled side (non-fatal per side).
+    ens_updates: list[dict] = []
+    for side_name, label, agent_id, human_address in [
+        ("winner", winner_label, winner_agent_id, winner_human),
+        ("loser", loser_label, loser_agent_id, loser_human),
+    ]:
+        if not label:
+            continue
+        try:
+            result = _push_ens_updates(
+                chain=chain,
+                label=label,
+                agent_id=agent_id,
+                human_address=human_address,
+                match_id=req.matchId,
+            )
+            ens_updates.append({"side": side_name, **result})
+        except Exception as e:
+            _log.warning("post-settle-audit: ENS push failed for %s (%s): %s", label, side_name, e)
+            ens_updates.append({"side": side_name, "label": label, "error": str(e)})
+
+    # Step 4 — update agent style-overlay KV for each agent side (non-fatal).
+    overlay_updates: list[dict] = []
+    _update_agent_overlay_kv(winner_agent_id, won=True, moves=moves, overlay_updates=overlay_updates)
+    _update_agent_overlay_kv(loser_agent_id, won=False, moves=moves, overlay_updates=overlay_updates)
+
+    return {
+        "match_id": req.matchId,
+        "game_record_hash": game_record_hash,
+        "ens_updates": ens_updates,
+        "overlay_updates": overlay_updates,
+    }
+
+
 # KeeperHub YAML helper endpoints — consumed by match-settle.yaml steps 2 and 3.
 #
 # GET  /games/{matchId}/dice          → per-turn-drand step: return a fresh
@@ -903,6 +1078,38 @@ import httpx as _httpx
 # explicit POST), consumed by the KeeperHub on-game-end webhook step.
 _game_end_events: dict[str, dict] = {}
 _game_end_waiters: dict[str, _threading.Event] = {}
+
+# Keeper-settle params: keyed by escrow_match_id (0x-prefixed bytes32).
+# Populated by /finalize-staked-direct when keeper_settle=True.
+# Consumed by POST /replay so KeeperHub can call recordMatchAndSplit directly.
+_pending_settlements: dict[str, dict] = {}
+
+
+class ReplayRequest(BaseModel):
+    match_id: str  # 0x-prefixed bytes32 escrow match ID
+
+
+@app.post("/replay")
+def replay_endpoint(req: ReplayRequest):
+    """KeeperHub validate step: return settlement params for a pending keeper-settle match.
+
+    The KeeperHub workflow calls this after both deposits land. If the match
+    has been finalized with keeper_settle=True, returns all fields needed for
+    recordMatchAndSplit. Returns valid=false if the match is not yet ready.
+    """
+    params = _pending_settlements.get(req.match_id)
+    if not params:
+        return {"valid": False, "reason": "match not yet finalized or not using keeper-settle path"}
+    return {
+        "valid": True,
+        "winnerAgentId": params["winnerAgentId"],
+        "winnerHuman": params["winnerHuman"],
+        "loserAgentId": params["loserAgentId"],
+        "loserHuman": params["loserHuman"],
+        "matchLength": params["matchLength"],
+        "gameRecordHash": params["gameRecordHash"],
+        "winnerAddr": params["winnerAddr"],
+    }
 
 
 @app.get("/games/{match_id}/dice")
@@ -1465,15 +1672,6 @@ def get_agent_profile(agent_id: int):
             if k not in ("kind", "style_values", "match_count")
         }
 
-    # Resolve the agent's server-managed wallet address.
-    agent_wallet_address: Optional[str] = None
-    try:
-        wallets = AgentWalletManager.from_env()
-        wallet = wallets.get_or_create(agent_id)
-        agent_wallet_address = wallet.address
-    except Exception:
-        pass
-
     return {
         "agent_id": agent_id,
         "kind": kind,
@@ -1481,14 +1679,19 @@ def get_agent_profile(agent_id: int):
         "match_count": int(metrics.get("match_count", 0)),
         "summary": profile.summarize(),
         "owner_ens": owner_ens,
-        "address": agent_wallet_address,
         "values": values,
         "overlay_values": overlay_values,
         "model_meta": model_meta,
     }
 
 
-# ── Agent wallet endpoints (server-managed EOAs for staked matches) ──────────
+# ── Agent vault operator endpoint (stake deposit into AgentVault.sol) ─────────
+#
+# Funding, balance reads, and withdrawals are now handled directly by the
+# browser via wagmi calls to AgentVault.sol. The server only needs to sign
+# AgentVault.depositToEscrow() using its dedicated operator key — a key
+# that has no withdrawal power, only the ability to forward pre-approved
+# stake amounts into MatchEscrow.
 
 
 class AgentDepositRequest(BaseModel):
@@ -1496,94 +1699,27 @@ class AgentDepositRequest(BaseModel):
     stake_wei: int
 
 
-class AgentWithdrawRequest(BaseModel):
-    to: str
-    amount_wei: Optional[int] = None
-    signature: str
-
-
-def _agent_wallets_or_503() -> AgentWalletManager:
+def _vault_operator_or_503() -> AgentWalletManager:
     try:
         return AgentWalletManager.from_env()
     except AgentWalletError as e:
         raise HTTPException(status_code=503, detail=str(e))
 
 
-@app.get("/agents/{agent_id}/wallet")
-def get_agent_wallet(agent_id: int):
-    """Return the agent's server-managed wallet address and current balance.
-    404 if no wallet has been provisioned yet (call POST first)."""
-    wallets = _agent_wallets_or_503()
-    if not wallets.has_wallet(agent_id):
-        raise HTTPException(status_code=404, detail=f"no wallet for agent {agent_id}")
-    address = wallets.get_address(agent_id)
-    try:
-        balance_wei = wallets.get_balance_wei(agent_id)
-    except Exception as e:  # noqa: BLE001 — surface RPC errors as 503
-        raise HTTPException(status_code=503, detail=f"balance lookup failed: {e}")
-    return {"agent_id": agent_id, "address": address, "balance_wei": balance_wei}
-
-
-@app.post("/agents/{agent_id}/wallet")
-def create_agent_wallet(agent_id: int):
-    """Idempotent: create a fresh wallet for the agent if none exists,
-    otherwise return the existing one."""
-    wallets = _agent_wallets_or_503()
-    wallet = wallets.get_or_create(agent_id)
-    return {"agent_id": wallet.agent_id, "address": wallet.address}
-
-
 @app.post("/agents/{agent_id}/deposit")
 def agent_deposit(agent_id: int, req: AgentDepositRequest):
-    """Sign and send `MatchEscrow.deposit(match_id, stake_wei)` from the
-    agent's wallet. Caller is responsible for funding the wallet first."""
-    wallets = _agent_wallets_or_503()
+    """Call AgentVault.depositToEscrow() with the server operator key.
+
+    The vault deducts stake_wei from the agent's balance and forwards it
+    to MatchEscrow. Requires the agent owner to have previously approved
+    the operator via AgentVault.approve(agentId, operatorAddress, amount).
+    """
+    operator = _vault_operator_or_503()
     try:
-        tx_hash = wallets.deposit_to_escrow(
+        tx_hash = operator.deposit_to_escrow(
             agent_id=agent_id,
             match_id_hex=req.match_id,
             stake_wei=req.stake_wei,
-        )
-    except AgentWalletError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    return {"tx_hash": tx_hash}
-
-
-@app.post("/agents/{agent_id}/withdraw")
-def agent_withdraw(agent_id: int, req: AgentWithdrawRequest):
-    """Drain the agent's wallet to `to`. If `amount_wei` is omitted,
-    sends the entire balance minus gas."""
-    from eth_account.messages import encode_defunct
-    from web3 import Web3
-
-    try:
-        chain = ChainClient.from_env()
-    except ChainError as e:
-        raise HTTPException(status_code=503, detail=f"chain unavailable: {e}")
-
-    try:
-        owner = chain.agent_owner(agent_id)
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"could not fetch owner for agent {agent_id}: {e}")
-
-    if req.to.lower() != owner.lower():
-        raise HTTPException(status_code=403, detail="Funds can only be withdrawn to the agent's owner")
-
-    msg = encode_defunct(text=f"Withdraw agent {agent_id} funds")
-    try:
-        signer = Web3().eth.account.recover_message(msg, signature=req.signature)
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"invalid signature: {e}")
-
-    if signer.lower() != owner.lower():
-        raise HTTPException(status_code=403, detail="Signature must be from the agent's owner")
-
-    wallets = _agent_wallets_or_503()
-    try:
-        tx_hash = wallets.withdraw(
-            agent_id=agent_id,
-            to=req.to,
-            amount_wei=req.amount_wei,
         )
     except AgentWalletError as e:
         raise HTTPException(status_code=400, detail=str(e))

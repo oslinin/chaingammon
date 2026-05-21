@@ -59,18 +59,24 @@ async function loadModelBytes(): Promise<ArrayBuffer> {
 let _ort: OrtNs | null = null;
 let _session: ORT.InferenceSession | null = null;
 
-async function initORT(): Promise<void> {
+async function initORT(modelBytes?: ArrayBuffer): Promise<void> {
   const ort = (await import("onnxruntime-web")) as OrtNs;
   ort.env.wasm.wasmPaths = "/js/";
   ort.env.wasm.numThreads = 1;
-  const buf = await loadModelBytes();
+  const buf = modelBytes ?? await loadModelBytes();
   _session = await ort.InferenceSession.create(buf, { executionProviders: ["wasm"] });
   _ort = ort;
 }
 
 // ── Message types ──────────────────────────────────────────────────────────
 
-interface InitMsg { type: "init" }
+interface InitMsg {
+  type: "init";
+  /** Optional per-agent ONNX bytes. When provided the model is loaded from
+   *  these bytes instead of fetching /backgammon_net.onnx. Transfer the
+   *  ArrayBuffer as a Transferable so the main thread cedes ownership. */
+  modelBytes?: ArrayBuffer;
+}
 interface EvaluateMsg {
   type: "evaluate";
   id: string;
@@ -92,7 +98,7 @@ workerScope.onmessage = async (event: MessageEvent<InitMsg | EvaluateMsg>) => {
 
   if (msg.type === "init") {
     try {
-      await initORT();
+      await initORT((msg as InitMsg).modelBytes);
       workerScope.postMessage({ type: "init_ok" });
     } catch (e) {
       workerScope.postMessage({ type: "init_err", message: String(e) });

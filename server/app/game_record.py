@@ -146,6 +146,14 @@ class GameRecord(BaseModel):
     # `export match` command. Left as None for v1.
     mat_format: Optional[str] = None
 
+    # ENS subname labels for winner/loser (the `<label>` in
+    # `<label>.chaingammon.eth`). Set by the client when uploading the
+    # game record so the post-settle keeper can sync ENS text records
+    # without a separate reverse lookup. Absent for legacy records and
+    # un-named players.
+    winner_label: Optional[str] = None
+    loser_label: Optional[str] = None
+
 
 def serialize_record(record: GameRecord) -> bytes:
     """JSON-encode a GameRecord to canonical bytes for 0G Storage upload.

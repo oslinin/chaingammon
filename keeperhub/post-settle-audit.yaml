@@ -1,0 +1,88 @@
+name: chaingammon-post-settle-audit
+description: >
+  Post-settlement audit for all MatchRegistry settlements on Sepolia — both
+  browser-side (settleWithSessionKeys) and relayer-side (recordMatch).
+  Triggers on the MatchRecorded on-chain event, fetches the game record from
+  0G Storage, pushes elo + last_match_id to ENS text records for both sides,
+  and updates agent style-overlay KV. No keeper signing required — all data
+  comes from public chain state and the 0G Storage blob anchored by
+  gameRecordHash.
+
+# Trigger: fires on every MatchRecorded event from MatchRegistry on Sepolia.
+# Both settleWithSessionKeys (browser path) and recordMatch (relayer path)
+# emit this event through _doRecord, so one workflow covers both settlement
+# paths. The /post-settle-audit server endpoint is idempotent, so a double-
+# fire (e.g. re-org retry) is safe.
+trigger:
+  type: evm-log
+  network: sepolia
+  rpc: "{{ secret.SEPOLIA_RPC_URL }}"
+  address: "{{ secret.MATCH_REGISTRY_ADDRESS }}"
+  event: >-
+    MatchRecorded(
+      uint256 indexed matchId,
+      uint256 winnerAgentId,
+      address winnerHuman,
+      uint256 loserAgentId,
+      address loserHuman,
+      uint256 newWinnerElo,
+      uint256 newLoserElo
+    )
+
+steps:
+  # ─────────────────────────────────────────────────────────────────────────
+  # Step 1 – confirm-match
+  # Log the on-chain event so the workflow run has a human-readable summary.
+  # ─────────────────────────────────────────────────────────────────────────
+  - id: confirm-match
+    name: Log MatchRecorded event
+    action: log
+    params:
+      message: >-
+        MatchRecorded: matchId={{ trigger.matchId }}
+        winner={{ trigger.winnerHuman != '0x0000000000000000000000000000000000000000'
+                  ? trigger.winnerHuman
+                  : 'agent:' + trigger.winnerAgentId }}
+        loser={{ trigger.loserHuman != '0x0000000000000000000000000000000000000000'
+                 ? trigger.loserHuman
+                 : 'agent:' + trigger.loserAgentId }}
+        winnerElo={{ trigger.newWinnerElo }}
+        loserElo={{ trigger.newLoserElo }}
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Step 2 – run-audit
+  # POST matchId to the server. The server reads MatchRegistry.getMatch(),
+  # fetches the game record from 0G Storage (gameRecordHash), extracts
+  # winner_label / loser_label, pushes ENS text records, and updates the
+  # agent style-overlay KV. All per-side steps inside the server are
+  # non-fatal — the endpoint always returns 200 with a per-side summary.
+  # ─────────────────────────────────────────────────────────────────────────
+  - id: run-audit
+    name: Sync ENS records and style overlays
+    action: http
+    params:
+      method: POST
+      url: "{{ secret.SERVER_URL }}/post-settle-audit"
+      headers:
+        Content-Type: application/json
+      body:
+        matchId: "{{ trigger.matchId }}"
+    assert: "{{ response.status == 200 }}"
+    outputs:
+      game_record_hash: "{{ response.body.game_record_hash }}"
+      ens_updates: "{{ response.body.ens_updates }}"
+      overlay_updates: "{{ response.body.overlay_updates }}"
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Step 3 – audit-done
+  # Log the audit summary so the KeeperHub run history shows what was pushed.
+  # ─────────────────────────────────────────────────────────────────────────
+  - id: audit-done
+    name: Log audit result
+    action: log
+    params:
+      message: >-
+        Audit complete for match {{ trigger.matchId }}.
+        gameRecordHash={{ steps.run-audit.game_record_hash }}.
+        ENS updates={{ steps.run-audit.ens_updates | length }}.
+        Overlay updates={{ steps.run-audit.overlay_updates | length }}.

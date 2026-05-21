@@ -17,7 +17,7 @@ import { useEffect, useRef, useState } from "react";
 import { useReadContract, useWriteContract, useWaitForTransactionReceipt } from "wagmi";
 
 import { useChaingammonName } from "./useChaingammonName";
-import { useChaingammonProfile } from "./useChaingammonProfile";
+import { useChaingammonProfile, useSyncEnsProfile } from "./useChaingammonProfile";
 import { useActiveChainId } from "./chains";
 import { MatchRegistryABI, useChainContracts } from "./contracts";
 import { recordTransaction } from "./transactions";
@@ -214,6 +214,8 @@ export function ClaimForm({ address: _address }: { address: `0x${string}` }) {
 export function ProfileBadge({ address }: { address: `0x${string}` }) {
   const { label, name, isLoading: nameLoading } = useChaingammonName(address);
   const { elo: ensElo, matchCount } = useChaingammonProfile(label);
+  const { sync, syncing } = useSyncEnsProfile();
+  const [syncError, setSyncError] = useState<string | null>(null);
   const [renaming, setRenaming] = useState(false);
 
   const chainId = useActiveChainId();
@@ -286,6 +288,31 @@ export function ProfileBadge({ address }: { address: `0x${string}` }) {
           >
             ELO {elo}
           </span>
+        ) : null}
+        {chainElo && label && chainElo !== ensElo ? (
+          <button
+            title={syncError ?? "Push current ELO to your ENS profile"}
+            disabled={syncing}
+            onClick={async () => {
+              setSyncError(null);
+              try { await sync(label, chainElo); }
+              catch (e) { setSyncError(e instanceof Error ? e.message : String(e)); }
+            }}
+            style={{
+              fontSize: 10,
+              color: syncError ? "var(--cg-red, #e55)" : "var(--cg-fg-4)",
+              background: "none",
+              border: "none",
+              cursor: syncing ? "wait" : "pointer",
+              opacity: syncing ? 0.5 : 1,
+              transition: "color 120ms",
+              padding: 0,
+            }}
+            onMouseEnter={(e) => { if (!syncing) (e.currentTarget as HTMLButtonElement).style.color = "var(--cg-brass)"; }}
+            onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.color = syncError ? "var(--cg-red, #e55)" : "var(--cg-fg-4)"; }}
+          >
+            {syncing ? "…" : "↑ ENS"}
+          </button>
         ) : null}
         {matchCount ? (
           <span

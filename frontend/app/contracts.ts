@@ -6,6 +6,7 @@
 import type { Abi } from "viem";
 
 import AgentRegistryArtifact from "../../contracts/artifacts/src/AgentRegistry.sol/AgentRegistry.json";
+import AgentVaultArtifact from "../../contracts/artifacts/src/AgentVault.sol/AgentVault.json";
 import MatchEscrowArtifact from "../../contracts/artifacts/src/MatchEscrow.sol/MatchEscrow.json";
 import MatchRegistryArtifact from "../../contracts/artifacts/src/MatchRegistry.sol/MatchRegistry.json";
 import PlayerSubnameRegistrarArtifact from "../../contracts/artifacts/src/PlayerSubnameRegistrar.sol/PlayerSubnameRegistrar.json";
@@ -27,6 +28,7 @@ export function useChainContracts() {
     agentRegistry: (active?.contracts.agentRegistry ?? ZERO) as `0x${string}`,
     playerSubnameRegistrar: (active?.contracts.playerSubnameRegistrar ?? ZERO) as `0x${string}`,
     matchEscrow: (active?.contracts.matchEscrow ?? ZERO) as `0x${string}`,
+    agentVault: (active?.contracts.agentVault ?? ZERO) as `0x${string}`,
   };
 }
 
@@ -35,6 +37,33 @@ export function useChainContracts() {
 // otherwise come back as a wide structural type whose `type: string`
 // fields don't narrow to the discriminated-union viem expects.
 export const AgentRegistryABI = AgentRegistryArtifact.abi as Abi;
+export const AgentVaultABI = AgentVaultArtifact.abi as Abi;
 export const MatchEscrowABI = MatchEscrowArtifact.abi as Abi;
 export const MatchRegistryABI = MatchRegistryArtifact.abi as Abi;
 export const PlayerSubnameRegistrarABI = PlayerSubnameRegistrarArtifact.abi as Abi;
+
+// Minimal ENS PublicResolver ABI — only the functions the frontend calls directly.
+// Full ABI: https://github.com/ensdomains/ens-contracts/blob/master/contracts/resolvers/PublicResolver.sol
+export const PublicResolverABI = [
+  {
+    name: "setText",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "node", type: "bytes32" },
+      { name: "key", type: "string" },
+      { name: "value", type: "string" },
+    ],
+    outputs: [],
+  },
+  {
+    name: "text",
+    type: "function",
+    stateMutability: "view",
+    inputs: [
+      { name: "node", type: "bytes32" },
+      { name: "key", type: "string" },
+    ],
+    outputs: [{ name: "", type: "string" }],
+  },
+] as const satisfies Abi;

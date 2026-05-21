@@ -76,6 +76,7 @@ interface DeploymentRecord {
     AgentRegistry: string;
     PlayerSubnameRegistrar?: string | null;
     MatchEscrow?: string;
+    AgentVault?: string;
     NameWrapper?: string;
     PublicResolver?: string;
   };
@@ -124,6 +125,7 @@ export interface ChainEntry {
     agentRegistry: `0x${string}`;
     playerSubnameRegistrar?: `0x${string}`;
     matchEscrow?: `0x${string}`;
+    agentVault?: `0x${string}`;
   };
   /** Block at which the contracts were deployed. Optional for older records. */
   deployedBlock?: number;
@@ -152,6 +154,7 @@ function buildEntry(dep: DeploymentRecord, def: ChainDef): ChainEntry {
         | `0x${string}`
         | undefined,
       matchEscrow: dep.contracts.MatchEscrow as `0x${string}` | undefined,
+      agentVault: dep.contracts.AgentVault as `0x${string}` | undefined,
     },
     deployedBlock: dep.deployedBlock,
   };
