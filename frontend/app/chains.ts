@@ -181,8 +181,8 @@ export function useActiveChainId(): number {
   return useChainId();
 }
 
+// Sepolia is the only chain exposed in the network dropdown.
 export function useSelectableChains(): ChainEntry[] {
-  return [CHAIN_REGISTRY[11155111]].filter(
-    (entry): entry is ChainEntry => entry !== undefined,
-  );
+  const entry = CHAIN_REGISTRY[11155111];
+  return entry ? [entry] : [];
 }
