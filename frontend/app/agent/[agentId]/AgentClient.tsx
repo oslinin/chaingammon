@@ -237,6 +237,16 @@ export default function AgentClient() {
     };
   }, [agentId, client, agentRegistry, chainId, deployedBlock, mounted]);
 
+  // Agent signing-key wallet address from the server.
+  const [agentWalletAddress, setAgentWalletAddress] = useState<string | null>(null);
+  useEffect(() => {
+    if (!agentId || !mounted) return;
+    fetch(`${SERVER}/agents/${agentId}/wallet`)
+      .then((r) => r.ok ? r.json() : null)
+      .then((d) => { if (d?.address) setAgentWalletAddress(d.address); })
+      .catch(() => {});
+  }, [agentId, mounted]);
+
   // Profile from the FastAPI server — includes overlay category values.
   const [profile, setProfile] = useState<ProfileResponse | null>(null);
   const [profileLoading, setProfileLoading] = useState(false);
@@ -287,6 +297,7 @@ export default function AgentClient() {
       : `Agent #${agentId}`;
 
   const explorerUrl = active?.chain.blockExplorers?.default?.url;
+  const ensName = cleanedLabel && cleanedLabel.length <= 60 ? `${cleanedLabel}.chaingammon.eth` : null;
 
   const mintDateStr = mintInfo?.timestamp
     ? new Date(Number(mintInfo.timestamp) * 1000).toLocaleString()
@@ -404,6 +415,26 @@ export default function AgentClient() {
           </div>
           <dl className="grid grid-cols-2 gap-x-6 gap-y-4 text-sm sm:grid-cols-3">
             <InfoField
+              label="Token ID"
+              value={agentId.toString()}
+              mono
+              href={
+                explorerUrl && agentRegistry
+                  ? `${explorerUrl}/token/${agentRegistry}?a=${agentId}`
+                  : undefined
+              }
+              copyValue={agentId.toString()}
+              tooltip="ERC-721 token ID in the AgentRegistry contract. This is the agent's permanent on-chain identifier."
+            />
+            <InfoField
+              label="ENS name"
+              value={ensName ?? "—"}
+              mono
+              href={ensName ? `https://app.ens.domains/${ensName}` : undefined}
+              copyValue={ensName ?? undefined}
+              tooltip="Full ENS name for this agent on chaingammon.eth. Links to ENS app."
+            />
+            <InfoField
               label="ELO"
               value={
                 chainLoading
@@ -464,7 +495,7 @@ export default function AgentClient() {
               tooltip="Native token balance of the owner's wallet on the current chain. Shown for context when assessing stake capacity."
             />
             <InfoField
-              label="Agent vault"
+              label="Vault contract"
               value={
                 agentVault && agentVault !== "0x0000000000000000000000000000000000000000"
                   ? agentVault
@@ -482,7 +513,20 @@ export default function AgentClient() {
                   ? agentVault
                   : undefined
               }
-              tooltip="Smart contract vault that holds this agent's ETH balance. Only the NFT owner can withdraw; the server can post match stakes up to the approved allowance."
+              tooltip="AgentVault contract address — call deposit(agentId) here to fund this agent's match stake. One contract holds balances for all agents."
+            />
+            <InfoField
+              label="Agent wallet"
+              value={agentWalletAddress ?? "—"}
+              mono
+              truncate
+              href={
+                explorerUrl && agentWalletAddress
+                  ? `${explorerUrl}/address/${agentWalletAddress}`
+                  : undefined
+              }
+              copyValue={agentWalletAddress ?? undefined}
+              tooltip="Signing key wallet used by the server on behalf of this agent. Separate from the vault — send ETH to the vault contract via deposit(), not here."
             />
             <InfoField
               label="Mint block"
