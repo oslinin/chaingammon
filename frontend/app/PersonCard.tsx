@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useI18n } from "./i18n";
 
 // Next.js's <Link> auto-prepends the configured basePath (e.g. "/chaingammon"
 // on GitHub Pages); a plain <a href="/agent/1"> would resolve to the apex
@@ -35,6 +36,7 @@ export function PersonCard({
   playHref,
   extraLines,
 }: PersonCardProps) {
+  const { t } = useI18n();
   const eloDisplay = elo !== undefined ? String(elo) : undefined;
 
   return (
@@ -117,7 +119,7 @@ export function PersonCard({
                 el.style.borderColor = "var(--cg-line-2)";
               }}
             >
-              Info ↗
+              {t("info")}
             </Link>
           )}
           {infoLabel && (
@@ -176,11 +178,11 @@ export function PersonCard({
       <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
         {matchSummary === undefined ? (
           <p style={{ fontFamily: "var(--cg-font-mono)", fontSize: 12, color: "var(--cg-fg-4)" }}>
-            Reading chain…
+            {t("reading_chain")}
           </p>
         ) : matchSummary === null ? null : (
           <p style={{ fontFamily: "var(--cg-font-mono)", fontSize: 12, color: "var(--cg-fg-2)" }}>
-            {matchSummary.matches} played · {matchSummary.wins} won · {matchSummary.losses} lost
+            {matchSummary.matches} {t("played")} · {matchSummary.wins} {t("won")} · {matchSummary.losses} {t("lost")}
           </p>
         )}
         {extraLines?.map((line) => (
@@ -212,7 +214,7 @@ export function PersonCard({
             border: "1px solid rgba(0,0,0,0.25)",
           }}
         >
-          Play match
+          {t("play_match")}
         </Link>
       )}
     </div>

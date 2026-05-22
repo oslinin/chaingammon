@@ -22,6 +22,7 @@ import {
 } from "./contracts";
 import { useAgentMatchSummary } from "./useAgentMatchSummary";
 import { PersonCard } from "./PersonCard";
+import { useI18n } from "./i18n";
 
 const SERVER = process.env.NEXT_PUBLIC_SERVER_URL ?? "http://localhost:8000";
 
@@ -36,6 +37,7 @@ interface ProfileResponse {
 export function AgentCard({ agentId }: AgentCardProps) {
   const chainId = useActiveChainId();
   const { agentRegistry, matchRegistry } = useChainContracts();
+  const { t } = useI18n();
 
   const { data, isLoading } = useReadContracts({
     contracts: [
@@ -113,7 +115,7 @@ export function AgentCard({ agentId }: AgentCardProps) {
   const matchQuery = useAgentMatchSummary(agentId);
 
   const extraLines = trainedCount !== undefined
-    ? [`${trainedCount} games trained`]
+    ? [`${trainedCount} ${t("games_trained")}`]
     : [];
 
   const ensName = cleanedLabel && cleanedLabel.length <= 60
