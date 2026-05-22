@@ -23,20 +23,16 @@ interface BoardProps {
 }
 
 const FRAME = 20;
-const POINT_W = 44;
-const BAR_W = 52;
-const BEAR_W = 48;
+const POINT_W_BASE = 44;
+const BAR_W_BASE = 52;
+const BEAR_W_BASE = 48;
 const CHECKER_R = 18;
 const CHECKER_GAP = 36;
 const MAX_DOTS = 5;
 
-// Inner play area x layout
-const L_BEAR_X = FRAME; // Left bear-off
-const L_QUAD_X = L_BEAR_X + BEAR_W;
-const BAR_X = L_QUAD_X + 6 * POINT_W;
-const R_QUAD_X = BAR_X + BAR_W;
-const R_BEAR_X = R_QUAD_X + 6 * POINT_W;
-const TOTAL_W = R_BEAR_X + BEAR_W + FRAME; // 20+48+264+52+264+48+20 = 716
+// Viewport stays fixed; per-theme image boards calibrate where the play
+// area sits within these dimensions via `theme.layout` (see boardThemes.ts).
+const TOTAL_W = FRAME + BEAR_W_BASE + 6 * POINT_W_BASE + BAR_W_BASE + 6 * POINT_W_BASE + BEAR_W_BASE + FRAME; // 716
 const TOTAL_H = 440;
 
 const INNER_H = TOTAL_H - 2 * FRAME;
@@ -71,6 +67,19 @@ export function Board({
   // frame, felt, point triangles, bar, and bear-off trays so the two
   // visual systems don't bleed through each other.
   const usingImage = !!theme.backgroundImageUrl;
+
+  // Per-theme play-area grid. Image themes can declare where the painted
+  // play area actually sits inside the 716×440 viewport; classic SVG themes
+  // fall back to the standard layout.
+  const BEAR_W = theme.layout ? theme.layout.bearWidth * TOTAL_W : BEAR_W_BASE;
+  const BAR_W = theme.layout ? theme.layout.barWidth * TOTAL_W : BAR_W_BASE;
+  const L_QUAD_X = theme.layout ? theme.layout.leftEdge * TOTAL_W : FRAME + BEAR_W_BASE;
+  const R_BEAR_X = theme.layout ? theme.layout.rightEdge * TOTAL_W : FRAME + BEAR_W_BASE + 6 * POINT_W_BASE + BAR_W_BASE + 6 * POINT_W_BASE;
+  const BAR_X = theme.layout ? (theme.layout.barCenterX - theme.layout.barWidth / 2) * TOTAL_W : L_QUAD_X + 6 * POINT_W_BASE;
+  const POINT_W = (BAR_X - L_QUAD_X) / 6;
+  const R_QUAD_X = BAR_X + BAR_W;
+  const L_BEAR_X = Math.max(0, L_QUAD_X - BEAR_W);
+
   const svgRef = useRef<SVGSVGElement>(null);
   const [dragState, setDragState] = useState<DragState>(null);
   const [pendingDrop, setPendingDrop] = useState<number | "off" | null>(null);
@@ -265,6 +274,37 @@ export function Board({
   };
 
   const renderChecker = (cx: number, cy: number, isP0: boolean, key: string, isDragging: boolean = false, haloColor?: string) => {
+    const imgUrl = isP0 ? theme.checkerImages?.warm : theme.checkerImages?.cool;
+    if (imgUrl) {
+      // 3D checker asset — slightly larger than the SVG disc to leave room for
+      // the rendered shadow that comes baked into the PNG. The image's own
+      // aspect ratio is preserved via `meet`, so non-square assets letterbox
+      // inside the bounding box without distortion.
+      const size = CHECKER_R * 2.6;
+      return (
+        <g key={key} style={{ pointerEvents: "none" }} opacity={isDragging ? 0.4 : 1}>
+          {haloColor && (
+            <circle
+              cx={cx}
+              cy={cy}
+              r={CHECKER_R + 2}
+              fill="none"
+              stroke={haloColor}
+              strokeWidth="3"
+              opacity={0.8}
+            />
+          )}
+          <image
+            href={imgUrl}
+            x={cx - size / 2}
+            y={cy - size / 2}
+            width={size}
+            height={size}
+            preserveAspectRatio="xMidYMid meet"
+          />
+        </g>
+      );
+    }
     return (
       <g key={key} style={{ pointerEvents: "none" }}>
         {haloColor && (
@@ -878,26 +918,44 @@ export function Board({
           </g>
 
           {/* Drag Ghost */}
-          {dragState && (
-            <g filter="url(#cg-glow)" style={{ pointerEvents: "none" }}>
-              <circle
-                cx={dragState.svgX}
-                cy={dragState.svgY}
-                r={CHECKER_R}
-                fill={dragState.isP0 ? "url(#cg-p0)" : "url(#cg-p1)"}
-                stroke="var(--cg-brass, #E8C07E)"
-                strokeWidth="2"
-              />
-              <ellipse
-                cx={dragState.svgX}
-                cy={dragState.svgY - CHECKER_R * 0.3}
-                rx={CHECKER_R * 0.6}
-                ry={CHECKER_R * 0.3}
-                fill="rgba(255,255,255,0.2)"
-                transform={`rotate(-20 ${dragState.svgX} ${dragState.svgY - CHECKER_R * 0.3})`}
-              />
-            </g>
-          )}
+          {dragState && (() => {
+            const ghostUrl = dragState.isP0 ? theme.checkerImages?.warm : theme.checkerImages?.cool;
+            if (ghostUrl) {
+              const size = CHECKER_R * 2.8;
+              return (
+                <g filter="url(#cg-glow)" style={{ pointerEvents: "none" }}>
+                  <image
+                    href={ghostUrl}
+                    x={dragState.svgX - size / 2}
+                    y={dragState.svgY - size / 2}
+                    width={size}
+                    height={size}
+                    preserveAspectRatio="xMidYMid meet"
+                  />
+                </g>
+              );
+            }
+            return (
+              <g filter="url(#cg-glow)" style={{ pointerEvents: "none" }}>
+                <circle
+                  cx={dragState.svgX}
+                  cy={dragState.svgY}
+                  r={CHECKER_R}
+                  fill={dragState.isP0 ? "url(#cg-p0)" : "url(#cg-p1)"}
+                  stroke="var(--cg-brass, #E8C07E)"
+                  strokeWidth="2"
+                />
+                <ellipse
+                  cx={dragState.svgX}
+                  cy={dragState.svgY - CHECKER_R * 0.3}
+                  rx={CHECKER_R * 0.6}
+                  ry={CHECKER_R * 0.3}
+                  fill="rgba(255,255,255,0.2)"
+                  transform={`rotate(-20 ${dragState.svgX} ${dragState.svgY - CHECKER_R * 0.3})`}
+                />
+              </g>
+            );
+          })()}
         </svg>
       </div>
 

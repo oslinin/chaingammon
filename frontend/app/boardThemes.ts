@@ -4,6 +4,23 @@ export interface BoardTheme {
   label: string;
   /** Optional background image URL. When set, the frame and felt become semi-transparent overlays. */
   backgroundImageUrl?: string;
+  /** Optional pre-rendered 3D checker assets. When set, replaces the SVG circle rendering. */
+  checkerImages?: {
+    warm: string; // P0 (human, bottom)
+    cool: string; // P1 (agent, top)
+  };
+  /**
+   * Optional play-area calibration for image-based boards (fractions of the
+   * 716×440 viewport, all in [0, 1]). When omitted, Board.tsx falls back to
+   * the SVG default grid. Used so checkers land on the painted triangles.
+   */
+  layout?: {
+    leftEdge: number;   // x where first point column begins
+    rightEdge: number;  // x where last point column ends
+    barCenterX: number; // x of bar center
+    barWidth: number;   // bar width
+    bearWidth: number;  // bear-off tray width
+  };
   frameStart: string;
   frameEnd: string;
   frameInner: string;
@@ -109,6 +126,12 @@ export const BOARD_THEMES: Record<string, BoardTheme> = {
   gemini1: {
     label: "Gemini Board 1",
     backgroundImageUrl: "/boards/gemini_board_1_no_checkers.png",
+    checkerImages: {
+      warm: "/boards/gemini_board_1_white.png",
+      cool: "/boards/gemini_board_1_black.png",
+    },
+    // Walnut case with wide bar (logo medallion)
+    layout: { leftEdge: 0.084, rightEdge: 0.916, barCenterX: 0.500, barWidth: 0.112, bearWidth: 0.056 },
     frameStart:  "#0B0F22",
     frameEnd:    "#05070F",
     frameInner:  "#020408",
@@ -127,6 +150,12 @@ export const BOARD_THEMES: Record<string, BoardTheme> = {
   gemini2: {
     label: "Gemini Board 2",
     backgroundImageUrl: "/boards/gemini_board_2_no_checkers.png",
+    checkerImages: {
+      warm: "/boards/gemini_board_2_white.png",
+      cool: "/boards/gemini_board_2_black.png",
+    },
+    // Live-edge wood overhead, no real bear-off rails
+    layout: { leftEdge: 0.070, rightEdge: 0.930, barCenterX: 0.500, barWidth: 0.098, bearWidth: 0.020 },
     frameStart:  "#051217",
     frameEnd:    "#020A0E",
     frameInner:  "#010608",
@@ -145,6 +174,12 @@ export const BOARD_THEMES: Record<string, BoardTheme> = {
   gemini3: {
     label: "Gemini Board 3",
     backgroundImageUrl: "/boards/gemini_board_3_no_checkers.png",
+    checkerImages: {
+      warm: "/boards/gemini_board_3_white.png",
+      cool: "/boards/gemini_board_3_black.png",
+    },
+    // Cyber metal frame with bear-off compartments and thin sci-fi bar
+    layout: { leftEdge: 0.112, rightEdge: 0.888, barCenterX: 0.500, barWidth: 0.070, bearWidth: 0.056 },
     frameStart:  "#1A1205",
     frameEnd:    "#0F0A00",
     frameInner:  "#080600",
@@ -163,6 +198,12 @@ export const BOARD_THEMES: Record<string, BoardTheme> = {
   gemini4: {
     label: "Gemini Board 4",
     backgroundImageUrl: "/boards/gemini_board_4_no_checkers.png",
+    checkerImages: {
+      warm: "/boards/gemini_board_4_white.png",
+      cool: "/boards/gemini_board_4_black.png",
+    },
+    // Steampunk brass frame with wide gear-medallion bar, no bear-off
+    layout: { leftEdge: 0.077, rightEdge: 0.923, barCenterX: 0.500, barWidth: 0.112, bearWidth: 0.020 },
     frameStart:  "#120D1E",
     frameEnd:    "#080512",
     frameInner:  "#04030A",
