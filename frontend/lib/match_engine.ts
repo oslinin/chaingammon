@@ -36,6 +36,8 @@ export interface MatchState {
   match_length: number;
   game_over: boolean;
   winner: 0 | 1 | null;
+  cubeValue?: number;
+  cubeOwner?: number; // -1 = centered, 0 = human, 1 = agent
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -52,7 +54,9 @@ function makeState(
   gameOver: boolean,
   winner: 0 | 1 | null,
   resign = false,
-  dice: [number, number] | null = null
+  dice: [number, number] | null = null,
+  cubeValue: number = 1,
+  cubeOwner: number = -1
 ): MatchState {
   return {
     position_id: encodePositionId(board),
@@ -66,6 +70,8 @@ function makeState(
     match_length: matchLength,
     game_over: gameOver,
     winner,
+    cubeValue,
+    cubeOwner,
   };
 }
 
@@ -182,6 +188,57 @@ export async function evaluateCandidates(
 ): Promise<CandidateMove[]> {
   const candidates = await evaluateMoves(board, side, dice);
   return candidates.slice(0, topN);
+}
+
+/** Current side offers a double. Cube value is pre-doubled; opponent must accept or drop. */
+export function offerDouble(state: MatchState): MatchState {
+  const newCubeValue = (state.cubeValue ?? 1) * 2;
+  return makeState(
+    toBoard(state),
+    state.turn,
+    state.score,
+    state.match_length,
+    false,
+    null,
+    false,
+    state.dice,
+    newCubeValue,
+    state.turn,
+  );
+}
+
+/** Opponent accepts the offered double. They take ownership; offerer plays on. */
+export function acceptDouble(state: MatchState): MatchState {
+  const acceptor = (1 - state.turn) as 0 | 1;
+  return makeState(
+    toBoard(state),
+    state.turn,
+    state.score,
+    state.match_length,
+    false,
+    null,
+    false,
+    state.dice,
+    state.cubeValue ?? 2,
+    acceptor,
+  );
+}
+
+/** Opponent drops the offered double. Offerer (state.turn) wins the game at current cube value. */
+export function dropDouble(state: MatchState): MatchState {
+  const winner = state.turn;
+  const points = state.cubeValue ?? 2;
+  const newScore: [number, number] =
+    winner === 0
+      ? [state.score[0] + points, state.score[1]]
+      : [state.score[0], state.score[1] + points];
+  const matchOver =
+    newScore[0] >= state.match_length || newScore[1] >= state.match_length;
+  if (matchOver) {
+    return makeState(toBoard(state), winner, newScore, state.match_length, true, winner, true);
+  }
+  const nextTurn = (1 - winner) as 0 | 1;
+  return makeState(freshBoard(), nextTurn, newScore, state.match_length, false, null, false, null, 1, -1);
 }
 
 /**

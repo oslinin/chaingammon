@@ -42,7 +42,12 @@ import {
   skipTurn,
   playMatchToEnd,
   resignMatch,
+  offerDouble,
+  acceptDouble,
+  dropDouble,
 } from "../../lib/match_engine";
+import { CubeModal } from "./CubeModal";
+import { CubeTransactionOverlay } from "./CubeTransactionOverlay";
 import { loadAgentModel } from "../../lib/onnx_eval";
 import { loadAgentOnnxBytes } from "../../lib/agent_model_loader";
 import { type Board as GameBoard } from "../../lib/rules_engine";
@@ -450,6 +455,11 @@ function TeamDemoPageInner() {
     return () => window.removeEventListener("board-theme-change", handler);
   }, []);
 
+  // Doubling cube UI state
+  const [cubeModal, setCubeModal] = useState<"offer" | "decision" | null>(null);
+  const [pendingOffer, setPendingOffer] = useState<MatchState | null>(null);
+  const [cubeProcessing, setCubeProcessing] = useState(false);
+
   const { address, chain: walletChain, chainId: walletChainId } = useAccount();
   const chainId = useActiveChainId();
   const activeChain = useActiveChain();
@@ -831,11 +841,22 @@ function TeamDemoPageInner() {
     if (fastForward || setup || !game || game.game_over) return;
     if (game.turn !== 1) return;
     if (!game.dice) return;
+    if (cubeModal !== null) return; // wait for cube decision
 
     const timer = setTimeout(async () => {
       if (agentMoving.current) return;
       agentMoving.current = true;
       try {
+        // Agent may offer a double before playing (10% chance when allowed)
+        const agentCanDouble = game.cubeOwner === -1 || game.cubeOwner === 1;
+        if (agentCanDouble && Math.random() < 0.10) {
+          agentMoving.current = false;
+          const offered = offerDouble(game);
+          setPendingOffer(offered);
+          setCubeModal("decision");
+          return;
+        }
+
         const board: GameBoard = { points: game.board, bar: game.bar, off: game.off };
         const best = await getBestMove(board, 1, game.dice!);
         if (!best) {
@@ -852,7 +873,7 @@ function TeamDemoPageInner() {
       }
     }, 800);
     return () => clearTimeout(timer);
-  }, [game, setup, fastForward]);
+  }, [game, setup, fastForward, cubeModal]);
 
   // Auto-skip the human's turn when they have no legal moves (bar-dance
   // against a closed home board, or a roll that leaves nothing playable).
@@ -1130,6 +1151,50 @@ function TeamDemoPageInner() {
     }
   };
 
+  // Human clicks the cube to offer a double
+  const handleCubeClick = () => {
+    if (!game || game.turn !== 0 || game.game_over || cubeModal !== null) return;
+    setCubeModal("offer");
+  };
+
+  // Human confirms they want to offer a double — agent decides accept/drop
+  const handleHumanConfirmDouble = async () => {
+    if (!game) return;
+    setCubeProcessing(true);
+    try {
+      const offered = offerDouble(game);
+      // Agent accepts with 70% probability in training mode
+      await new Promise((r) => setTimeout(r, 600));
+      if (Math.random() < 0.70) {
+        setGame(acceptDouble(offered));
+      } else {
+        const dropped = dropDouble(offered);
+        setGame(dropped.game_over ? dropped : { ...dropped, dice: rollDice() });
+      }
+    } finally {
+      setCubeModal(null);
+      setCubeProcessing(false);
+    }
+  };
+
+  // Human takes the agent's offered double
+  const handleHumanTakeDouble = () => {
+    if (!pendingOffer) return;
+    const accepted = acceptDouble(pendingOffer);
+    setGame(accepted);
+    setPendingOffer(null);
+    setCubeModal(null);
+  };
+
+  // Human drops the agent's offered double (agent wins the game)
+  const handleHumanDropDouble = () => {
+    if (!pendingOffer) return;
+    const dropped = dropDouble(pendingOffer);
+    setGame(dropped.game_over ? dropped : { ...dropped, dice: rollDice() });
+    setPendingOffer(null);
+    setCubeModal(null);
+  };
+
   const diceCount = game?.dice ? (game.dice[0] === game.dice[1] ? 4 : 2) : 0;
 
   const stageMove = (from: number | "bar", to: number | "off") => {
@@ -1157,6 +1222,13 @@ function TeamDemoPageInner() {
   const currentBar = (displayBoardState?.bar ?? game?.bar ?? [0, 0]) as [number, number];
   const currentOff = (displayBoardState?.off ?? game?.off ?? [0, 0]) as [number, number];
   const isHumanTurn = game?.turn === 0;
+
+  const canHumanDouble =
+    isHumanTurn &&
+    !game?.game_over &&
+    cubeModal === null &&
+    stagedMoves.length === 0 &&
+    (game?.cubeOwner === -1 || game?.cubeOwner === 0);
 
   const previewMove = (notation: string) => {
     if (!game) return;
@@ -1455,6 +1527,9 @@ function TeamDemoPageInner() {
               turn={game.turn}
               ghostMove={hoveredMove}
               themeKey={boardTheme}
+              cubeValue={game.cubeValue ?? 1}
+              cubeOwner={game.cubeOwner ?? -1}
+              onCubeClick={canHumanDouble ? handleCubeClick : undefined}
               opponentName={
                 opponentIds.length === 1
                   ? `Agent #${opponentIds[0]}`
@@ -1531,6 +1606,25 @@ function TeamDemoPageInner() {
 
             {!game.game_over && (
               <div className="flex justify-end gap-2">
+                {canHumanDouble && (
+                  <button
+                    type="button"
+                    onClick={handleCubeClick}
+                    style={{
+                      border: "1px solid var(--cg-brass)",
+                      borderRadius: "var(--cg-radius-sm)",
+                      padding: "4px 12px",
+                      fontSize: 12,
+                      color: "var(--cg-brass)",
+                      background: "rgba(201,155,92,0.10)",
+                      cursor: "pointer",
+                      transition: "background 120ms",
+                      fontWeight: 600,
+                    }}
+                  >
+                    Double ×{(game.cubeValue ?? 1) * 2}
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => setFastForward(true)}
@@ -1606,6 +1700,23 @@ function TeamDemoPageInner() {
           </div>
         )}
       </div>
+
+      {/* Cube modals */}
+      <CubeModal
+        isOpen={cubeModal === "offer"}
+        type="offer"
+        onConfirm={() => { void handleHumanConfirmDouble(); }}
+        onReject={() => setCubeModal(null)}
+        isProcessing={cubeProcessing}
+      />
+      <CubeModal
+        isOpen={cubeModal === "decision"}
+        type="decision"
+        onConfirm={handleHumanTakeDouble}
+        onReject={handleHumanDropDouble}
+        isProcessing={cubeProcessing}
+      />
+      <CubeTransactionOverlay isOpen={cubeProcessing} message="Processing cube action…" />
 
       {/* Advisor panel — floatable and resizable */}
       <div
