@@ -17,6 +17,9 @@ interface BoardProps {
   onDragStart?: (point: number) => void;
   onDrop?: (point: number) => void;
   themeKey?: BoardThemeKey;
+  cubeValue?: number;       // current doubling cube value (1, 2, 4, 8…)
+  cubeOwner?: number;       // -1 = centered, 0 = human, 1 = agent
+  onCubeClick?: () => void; // called when the human clicks the cube to offer a double
 }
 
 const FRAME = 20;
@@ -59,6 +62,9 @@ export function Board({
   onDragStart,
   onDrop,
   themeKey = "walnut",
+  cubeValue = 1,
+  cubeOwner = -1,
+  onCubeClick,
 }: BoardProps) {
   const theme = BOARD_THEMES[themeKey] ?? BOARD_THEMES.walnut;
   const svgRef = useRef<SVGSVGElement>(null);
@@ -720,6 +726,64 @@ export function Board({
 
           {/* Center Bar */}
           {renderBar()}
+
+          {/* Doubling Cube */}
+          {(() => {
+            const cubeRectH = 34;
+            const cubeRectW = BAR_W - 16;
+            const cubeX = BAR_X + 8;
+            // y: agent side = top of bar, centered = middle, human side = bottom
+            const cubeRectY =
+              cubeOwner === 1
+                ? FRAME + 5
+                : cubeOwner === 0
+                  ? TOTAL_H - FRAME - cubeRectH - 5
+                  : TOTAL_H / 2 - cubeRectH / 2 - 14;
+            const cubeTextY = cubeRectY + cubeRectH * 0.66;
+            const isClickable = !!onCubeClick;
+            return (
+              <g
+                onClick={isClickable ? onCubeClick : undefined}
+                style={{ cursor: isClickable ? "pointer" : "default" }}
+              >
+                <rect
+                  x={cubeX}
+                  y={cubeRectY}
+                  width={cubeRectW}
+                  height={cubeRectH}
+                  rx={5}
+                  fill="var(--cg-brass, #E3B779)"
+                  stroke="rgba(0,0,0,0.4)"
+                  strokeWidth={1.5}
+                  opacity={isClickable ? 0.95 : 0.7}
+                />
+                {isClickable && (
+                  <rect
+                    x={cubeX - 1}
+                    y={cubeRectY - 1}
+                    width={cubeRectW + 2}
+                    height={cubeRectH + 2}
+                    rx={6}
+                    fill="none"
+                    stroke="var(--cg-brass-hi, #F5D28A)"
+                    strokeWidth={1.5}
+                    opacity={0.6}
+                  />
+                )}
+                <text
+                  x={cubeX + cubeRectW / 2}
+                  y={cubeTextY}
+                  textAnchor="middle"
+                  fontSize={cubeValue >= 10 ? 16 : 20}
+                  fontWeight="bold"
+                  fontFamily="var(--cg-font-mono, monospace)"
+                  fill="#1A1208"
+                >
+                  {cubeValue}
+                </text>
+              </g>
+            );
+          })()}
 
           {/* Dotted Connecting Lines for Ghost Moves */}
           <g style={{ pointerEvents: "none" }}>
