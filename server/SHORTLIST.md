@@ -48,11 +48,19 @@ What the server still does, what moved to the browser, and what the keeper owns.
 
 ---
 
+## Settlement split by game type
+
+| Game type | Who settles | Who pays gas |
+|---|---|---|
+| Free (ELO-only) | Server → `recordMatch` via `/finalize-direct` | Server wallet |
+| Staked | Keeper → `settleWithSessionKeysAndSplit` | Keeper (funded by pot fee) |
+
+Free games have no pot to incentivise a keeper, so the server remains the settler. Staked games route through the keeper for tab-close resilience.
+
 ## Dead / to remove
 
 | Endpoint | Why |
 |---|---|
-| `POST /finalize-direct` | Keeper calls `settleWithSessionKeys` instead; this path is redundant |
-| `POST /finalize-direct-staked` | Same — keeper settlement replaces manual finalize |
+| `POST /finalize-direct-staked` | Keeper handles staked settlement; this manual path is redundant |
 | `POST /settle` | Was server relay for `settleWithSessionKeys`; keeper calls chain directly |
 | `POST /upload-game-record` | Removed from scope; browser uploads via 0G SDK or server stays as relay (low priority) |
