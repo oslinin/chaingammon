@@ -52,26 +52,39 @@ export function BoardThemePicker({ value, onChange }: Props) {
               aria-label={t.label}
               aria-pressed={active}
             >
-              {/* Left half: felt color */}
-              <span style={{
-                position: "absolute", top: 0, left: 0,
-                width: "50%", height: "100%",
-                background: t.felt,
-              }} />
-              {/* Right half: frame color */}
-              <span style={{
-                position: "absolute", top: 0, right: 0,
-                width: "50%", height: "100%",
-                background: `linear-gradient(180deg, ${t.frameStart}, ${t.frameEnd})`,
-              }} />
-              {/* Point color stripe */}
-              <span style={{
-                position: "absolute",
-                top: "25%", left: "20%",
-                width: "30%", height: "50%",
-                background: t.pointDark,
-                opacity: 0.85,
-              }} />
+              {t.backgroundImageUrl ? (
+                /* Image thumbnail for image-based themes */
+                <span style={{
+                  position: "absolute", top: 0, left: 0,
+                  width: "100%", height: "100%",
+                  backgroundImage: `url(${t.backgroundImageUrl})`,
+                  backgroundSize: "cover",
+                  backgroundPosition: "center",
+                }} />
+              ) : (
+                <>
+                  {/* Left half: felt color */}
+                  <span style={{
+                    position: "absolute", top: 0, left: 0,
+                    width: "50%", height: "100%",
+                    background: t.felt,
+                  }} />
+                  {/* Right half: frame color */}
+                  <span style={{
+                    position: "absolute", top: 0, right: 0,
+                    width: "50%", height: "100%",
+                    background: `linear-gradient(180deg, ${t.frameStart}, ${t.frameEnd})`,
+                  }} />
+                  {/* Point color stripe */}
+                  <span style={{
+                    position: "absolute",
+                    top: "25%", left: "20%",
+                    width: "30%", height: "50%",
+                    background: t.pointDark,
+                    opacity: 0.85,
+                  }} />
+                </>
+              )}
             </button>
           );
         })}

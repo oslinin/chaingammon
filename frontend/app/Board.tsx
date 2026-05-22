@@ -706,11 +706,32 @@ export function Board({
             </filter>
           </defs>
 
+          {/* Background image for image-based themes — rendered before frame and felt */}
+          {theme.backgroundImageUrl && (
+            <image
+              href={theme.backgroundImageUrl}
+              x="0"
+              y="0"
+              width={TOTAL_W}
+              height={TOTAL_H}
+              preserveAspectRatio="xMidYMid slice"
+            />
+          )}
+
           {/* Outer Frame */}
-          <rect x="0" y="0" width={TOTAL_W} height={TOTAL_H} fill="url(#cg-frame)" rx="4" />
+          <rect
+            x="0" y="0" width={TOTAL_W} height={TOTAL_H}
+            fill="url(#cg-frame)"
+            rx="4"
+            fillOpacity={theme.backgroundImageUrl ? 0.55 : 1}
+          />
 
           {/* Inner Felt */}
-          <rect x={FRAME} y={FRAME} width={TOTAL_W - 2 * FRAME} height={INNER_H} fill="url(#cg-felt)" />
+          <rect
+            x={FRAME} y={FRAME} width={TOTAL_W - 2 * FRAME} height={INNER_H}
+            fill="url(#cg-felt)"
+            fillOpacity={theme.backgroundImageUrl ? 0.60 : 1}
+          />
 
           {/* Bear-Off Trays */}
           {renderBearOff()}

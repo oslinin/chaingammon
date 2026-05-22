@@ -2,6 +2,8 @@
 
 export interface BoardTheme {
   label: string;
+  /** Optional background image URL. When set, the frame and felt become semi-transparent overlays. */
+  backgroundImageUrl?: string;
   frameStart: string;
   frameEnd: string;
   frameInner: string;
@@ -104,9 +106,81 @@ export const BOARD_THEMES: Record<string, BoardTheme> = {
     checkerWarm: { fill: "#2A2A2E", stroke: "#000000" },
     checkerCool: { fill: "#F5EBDC", stroke: "#7E6A4C" },
   },
+  gemini1: {
+    label: "Gemini Board 1",
+    backgroundImageUrl: "/boards/gemini_board_1.png",
+    frameStart:  "#0B0F22",
+    frameEnd:    "#05070F",
+    frameInner:  "#020408",
+    felt:        "#0D1535",
+    feltAccent:  "#0A1028",
+    pointLight:  "#E8E4DC",
+    pointDark:   "#1B3A6B",
+    pointStroke: "rgba(100,160,255,0.25)",
+    bar:         "#080C1E",
+    barEdge:     "#030510",
+    rail:        "#080C1E",
+    railText:    "#8EB4E8",
+    checkerWarm: { fill: "#F5F0E8", stroke: "#B0A890" },
+    checkerCool: { fill: "#0A1832", stroke: "#1E4080" },
+  },
+  gemini2: {
+    label: "Gemini Board 2",
+    backgroundImageUrl: "/boards/gemini_board_2.png",
+    frameStart:  "#051217",
+    frameEnd:    "#020A0E",
+    frameInner:  "#010608",
+    felt:        "#061820",
+    feltAccent:  "#051220",
+    pointLight:  "#F0F8FF",
+    pointDark:   "#0E4D5C",
+    pointStroke: "rgba(0,200,220,0.25)",
+    bar:         "#030D12",
+    barEdge:     "#010709",
+    rail:        "#030D12",
+    railText:    "#60D8E8",
+    checkerWarm: { fill: "#E8F4F8", stroke: "#90C8D8" },
+    checkerCool: { fill: "#0A3040", stroke: "#106080" },
+  },
+  gemini3: {
+    label: "Gemini Board 3",
+    backgroundImageUrl: "/boards/gemini_board_3.png",
+    frameStart:  "#1A1205",
+    frameEnd:    "#0F0A00",
+    frameInner:  "#080600",
+    felt:        "#1C1508",
+    feltAccent:  "#150F05",
+    pointLight:  "#E8C060",
+    pointDark:   "#2A1A00",
+    pointStroke: "rgba(200,150,0,0.25)",
+    bar:         "#0E0A03",
+    barEdge:     "#080601",
+    rail:        "#0E0A03",
+    railText:    "#D4A030",
+    checkerWarm: { fill: "#E8C060", stroke: "#906800" },
+    checkerCool: { fill: "#0A0800", stroke: "#382400" },
+  },
+  gemini4: {
+    label: "Gemini Board 4",
+    backgroundImageUrl: "/boards/gemini_board_4.png",
+    frameStart:  "#120D1E",
+    frameEnd:    "#080512",
+    frameInner:  "#04030A",
+    felt:        "#160F24",
+    feltAccent:  "#110C1E",
+    pointLight:  "#C8B8E8",
+    pointDark:   "#2A1060",
+    pointStroke: "rgba(160,100,255,0.25)",
+    bar:         "#0C0818",
+    barEdge:     "#060310",
+    rail:        "#0C0818",
+    railText:    "#A080D8",
+    checkerWarm: { fill: "#D4C0F0", stroke: "#806080" },
+    checkerCool: { fill: "#1A0838", stroke: "#4020A0" },
+  },
 };
 
-export const THEME_ORDER = ["walnut", "emerald", "slate", "onyx", "linen"] as const;
+export const THEME_ORDER = ["walnut", "emerald", "slate", "onyx", "linen", "gemini1", "gemini2", "gemini3", "gemini4"] as const;
 export type BoardThemeKey = typeof THEME_ORDER[number];
 
 const STORAGE_KEY = "chaingammon.boardTheme";
