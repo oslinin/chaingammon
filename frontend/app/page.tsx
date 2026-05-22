@@ -2,6 +2,7 @@ import Link from "next/link";
 
 import { AgentsList } from "./AgentsList";
 import { DiscoveryList } from "./DiscoveryList";
+import { HomeActionChips } from "./HomeActionChips";
 
 export default function Home() {
   return (
@@ -72,12 +73,7 @@ export default function Home() {
               }}>
                 Live agents · Sepolia testnet
               </div>
-              <div className="flex items-center gap-2 flex-wrap">
-                <Link href="/create-agent" className="cg-chip cg-chip-gold">Mint</Link>
-                <Link href="/training" className="cg-chip cg-chip-muted">Train</Link>
-                <Link href="/team-demo" className="cg-chip cg-chip-muted">Off-chain game</Link>
-                <Link href="/team-demo?settle=1" className="cg-chip cg-chip-warm">On-chain game</Link>
-              </div>
+              <HomeActionChips />
             </div>
           </div>
           <AgentsList />

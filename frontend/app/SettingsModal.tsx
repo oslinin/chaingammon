@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useI18n, LANGUAGES, Language } from "./i18n";
 import { BoardThemePicker } from "./BoardThemePicker";
 import { loadTheme, saveTheme, type BoardThemeKey } from "./boardThemes";
+import { useAppMode, type AppMode } from "./AppModeContext";
 
 export function SettingsModal() {
   const [open, setOpen] = useState(false);
@@ -11,6 +12,7 @@ export function SettingsModal() {
   const [trainerMode, setTrainerMode] = useState<string>("round_robin");
   const [mounted, setMounted] = useState(false);
   const { language, setLanguage, t } = useI18n();
+  const { mode, setMode } = useAppMode();
 
   useEffect(() => {
     setMounted(true);
@@ -104,6 +106,35 @@ export function SettingsModal() {
                 window.dispatchEvent(new CustomEvent("board-theme-change", { detail: k }));
               }}
             />
+          </section>
+
+          {/* App mode */}
+          <section>
+            <h3 style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.12em", textTransform: "uppercase", color: "var(--cg-fg-3)", marginBottom: 12 }}>
+              {t("app_mode")}
+            </h3>
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              {([
+                { value: "elo" as AppMode, label: t("elo_mode"), desc: t("elo_mode_desc") },
+                { value: "money" as AppMode, label: t("money_mode"), desc: t("money_mode_desc") },
+                { value: "advanced" as AppMode, label: t("advanced_mode"), desc: t("advanced_mode_desc") },
+              ]).map(({ value, label, desc }) => (
+                <label key={value} style={{ display: "flex", alignItems: "flex-start", gap: 10, fontSize: 13, color: "var(--cg-fg-2)", cursor: "pointer" }}>
+                  <input
+                    type="radio"
+                    name="app_mode"
+                    value={value}
+                    checked={mode === value}
+                    onChange={() => setMode(value)}
+                    style={{ marginTop: 3, flexShrink: 0 }}
+                  />
+                  <span>
+                    <span style={{ fontWeight: 600, color: "var(--cg-fg-1)" }}>{label}</span>
+                    <span style={{ display: "block", fontSize: 12, color: "var(--cg-fg-3)", marginTop: 2 }}>{desc}</span>
+                  </span>
+                </label>
+              ))}
+            </div>
           </section>
 
           {/* Trainer mode */}
