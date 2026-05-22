@@ -10,6 +10,7 @@ import { WagmiProvider, useAccount, useSwitchChain } from "wagmi";
 import { useEffect, useState } from "react";
 
 import { ComputeBackendsProvider } from "./ComputeBackendsContext";
+import { AppModeProvider } from "./AppModeContext";
 import { ALL_CHAINS, config } from "./wagmi";
 import { warmupOnnx } from "../lib/onnx_eval";
 import { I18nProvider } from "./i18n";
@@ -47,9 +48,11 @@ export function Providers({ children }: { children: React.ReactNode }) {
     <WagmiProvider config={config}>
       <QueryClientProvider client={queryClient}>
         <AutoSwitchChain />
-        <ComputeBackendsProvider>
-          <I18nProvider>{children}</I18nProvider>
-        </ComputeBackendsProvider>
+        <AppModeProvider>
+          <ComputeBackendsProvider>
+            <I18nProvider>{children}</I18nProvider>
+          </ComputeBackendsProvider>
+        </AppModeProvider>
       </QueryClientProvider>
     </WagmiProvider>
   );

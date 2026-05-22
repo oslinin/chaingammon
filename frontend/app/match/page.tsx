@@ -19,6 +19,7 @@ import { generatePrivateKey } from "viem/accounts";
 
 import { AgentWalletPanel } from "../AgentWalletPanel";
 import { AgentVaultABI, MatchEscrowABI, useChainContracts } from "../contracts";
+import { useAppMode } from "../AppModeContext";
 
 const ZERO_ADDR = "0x0000000000000000000000000000000000000000" as `0x${string}`;
 const ZERO_BIG = BigInt(0);
@@ -62,6 +63,8 @@ function MatchInner() {
   const publicClient = usePublicClient();
   const { matchEscrow, agentVault } = useChainContracts();
   const { writeContractAsync } = useWriteContract();
+  const { mode } = useAppMode();
+  const showStake = mode === "money" || mode === "advanced";
 
   const stakeWei = stakeEth.trim() ? safeParseEther(stakeEth) : ZERO_BIG;
   const isStaked = stakeWei > ZERO_BIG;
@@ -154,58 +157,60 @@ function MatchInner() {
           </ul>
         </div>
 
-        {/* Stake card */}
-        <div className="w-full rounded-xl border border-zinc-200 bg-white p-6 dark:border-zinc-800 dark:bg-zinc-900">
-          <label
-            htmlFor="stake-eth"
-            className="mb-2 block text-sm font-medium text-zinc-700 dark:text-zinc-300"
-          >
-            Stake per side (ETH) — leave 0 for a free match
-          </label>
-          <input
-            id="stake-eth"
-            type="number"
-            min="0"
-            step="0.001"
-            placeholder="0"
-            disabled={isDepositing || depositStatus === "ready"}
-            value={stakeEth}
-            onChange={(e) => setStakeEth(e.target.value)}
-            className="w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm font-mono dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
-          />
-          {isStaked && (
-            <>
-              <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
-                You and the agent each deposit {stakeEth} ETH; winner takes the
-                pot. Agent funds come from its on-chain vault below — top
-                it up before staking.
+        {/* Stake card — visible in money and advanced modes only */}
+        {showStake && (
+          <div className="w-full rounded-xl border border-zinc-200 bg-white p-6 dark:border-zinc-800 dark:bg-zinc-900">
+            <label
+              htmlFor="stake-eth"
+              className="mb-2 block text-sm font-medium text-zinc-700 dark:text-zinc-300"
+            >
+              Stake per side (ETH) — leave 0 for a free match
+            </label>
+            <input
+              id="stake-eth"
+              type="number"
+              min="0"
+              step="0.001"
+              placeholder="0"
+              disabled={isDepositing || depositStatus === "ready"}
+              value={stakeEth}
+              onChange={(e) => setStakeEth(e.target.value)}
+              className="w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm font-mono dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+            />
+            {isStaked && (
+              <>
+                <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
+                  You and the agent each deposit {stakeEth} ETH; winner takes the
+                  pot. Agent funds come from its on-chain vault below — top
+                  it up before staking.
+                </p>
+                <div className="mt-3">
+                  <AgentWalletPanel agentId={agentId} stakeWei={stakeWei} />
+                </div>
+              </>
+            )}
+            {depositStatus === "human-pending" && (
+              <p className="mt-3 text-xs text-amber-600 dark:text-amber-400">
+                Confirm the deposit in your wallet…
               </p>
-              <div className="mt-3">
-                <AgentWalletPanel agentId={agentId} stakeWei={stakeWei} />
-              </div>
-            </>
-          )}
-          {depositStatus === "human-pending" && (
-            <p className="mt-3 text-xs text-amber-600 dark:text-amber-400">
-              Confirm the deposit in your wallet…
-            </p>
-          )}
-          {depositStatus === "agent-pending" && (
-            <p className="mt-3 text-xs text-amber-600 dark:text-amber-400">
-              Agent depositing…
-            </p>
-          )}
-          {depositStatus === "ready" && (
-            <p className="mt-3 text-xs text-emerald-600 dark:text-emerald-400">
-              Both sides funded. Click Start to play.
-            </p>
-          )}
-          {depositStatus === "error" && depositError && (
-            <p className="mt-3 text-xs text-red-600 dark:text-red-400">
-              {depositError}
-            </p>
-          )}
-        </div>
+            )}
+            {depositStatus === "agent-pending" && (
+              <p className="mt-3 text-xs text-amber-600 dark:text-amber-400">
+                Agent depositing…
+              </p>
+            )}
+            {depositStatus === "ready" && (
+              <p className="mt-3 text-xs text-emerald-600 dark:text-emerald-400">
+                Both sides funded. Click Start to play.
+              </p>
+            )}
+            {depositStatus === "error" && depositError && (
+              <p className="mt-3 text-xs text-red-600 dark:text-red-400">
+                {depositError}
+              </p>
+            )}
+          </div>
+        )}
 
         <button
           type="button"

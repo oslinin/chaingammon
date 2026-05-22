@@ -8,7 +8,7 @@ import { Space_Grotesk, JetBrains_Mono, Instrument_Serif } from "next/font/googl
 import Link from "next/link";
 import "./globals.css";
 import { HeaderLinks } from "./HeaderLinks";
-import { ComputeBackendsPill } from "./ComputeBackendsPill";
+import { ConditionalComputePill } from "./ConditionalComputePill";
 import { ConnectButton } from "./ConnectButton";
 import { Providers } from "./providers";
 import { MobileNav } from "./MobileNav";
@@ -115,7 +115,7 @@ export default function RootLayout({
                 </Link>
                 <div className="flex flex-wrap items-center justify-end gap-3">
                   <span className="hidden md:block">
-                    <ComputeBackendsPill />
+                    <ConditionalComputePill />
                   </span>
                   <span className="hidden md:contents">
                     <HeaderLinks />
