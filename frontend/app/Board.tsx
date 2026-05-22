@@ -858,18 +858,47 @@ export function Board({
                 <feMergeNode in="SourceGraphic" />
               </feMerge>
             </filter>
+            {/* Clip region for cropped sprite-sheet backgrounds */}
+            {usingImage && theme.backgroundImageCrop && (
+              <clipPath id="cg-bg-crop">
+                <rect x={0} y={0} width={TOTAL_W} height={TOTAL_H} />
+              </clipPath>
+            )}
           </defs>
 
           {/* Image-based themes: render only the image; classic themes: render the SVG frame + felt */}
           {usingImage ? (
-            <image
-              href={theme.backgroundImageUrl}
-              x="0"
-              y="0"
-              width={TOTAL_W}
-              height={TOTAL_H}
-              preserveAspectRatio="none"
-            />
+            (() => {
+              const crop = theme.backgroundImageCrop;
+              if (crop) {
+                // Scale so the cropped section of the sprite exactly fills the
+                // 716×440 viewport, then offset the image element so the crop
+                // origin sits at (0,0).
+                const scaleX = TOTAL_W / crop.srcW;
+                const scaleY = TOTAL_H / crop.srcH;
+                return (
+                  <image
+                    href={theme.backgroundImageUrl}
+                    x={-crop.srcX * scaleX}
+                    y={-crop.srcY * scaleY}
+                    width={crop.totalSrcW * scaleX}
+                    height={crop.totalSrcH * scaleY}
+                    clipPath="url(#cg-bg-crop)"
+                    preserveAspectRatio="none"
+                  />
+                );
+              }
+              return (
+                <image
+                  href={theme.backgroundImageUrl}
+                  x="0"
+                  y="0"
+                  width={TOTAL_W}
+                  height={TOTAL_H}
+                  preserveAspectRatio="none"
+                />
+              );
+            })()
           ) : (
             <>
               {/* Outer Frame */}

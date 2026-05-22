@@ -53,14 +53,32 @@ export function BoardThemePicker({ value, onChange }: Props) {
               aria-pressed={active}
             >
               {t.backgroundImageUrl ? (
-                /* Image thumbnail for image-based themes */
-                <span style={{
-                  position: "absolute", top: 0, left: 0,
-                  width: "100%", height: "100%",
-                  backgroundImage: `url(${t.backgroundImageUrl})`,
-                  backgroundSize: "cover",
-                  backgroundPosition: "center",
-                }} />
+                /* Image thumbnail for image-based themes.
+                   When backgroundImageCrop is set, use CSS background-size
+                   + background-position to show only the relevant crop. */
+                <span style={(() => {
+                  const crop = t.backgroundImageCrop;
+                  if (crop) {
+                    // Scale so that the crop section fills the 28×28 thumbnail.
+                    const sx = 28 / crop.srcW;
+                    const sy = 28 / crop.srcH;
+                    return {
+                      position: "absolute" as const, top: 0, left: 0,
+                      width: "100%", height: "100%",
+                      backgroundImage: `url(${t.backgroundImageUrl})`,
+                      backgroundSize: `${crop.totalSrcW * sx}px ${crop.totalSrcH * sy}px`,
+                      backgroundPosition: `${-crop.srcX * sx}px ${-crop.srcY * sy}px`,
+                      backgroundRepeat: "no-repeat",
+                    };
+                  }
+                  return {
+                    position: "absolute" as const, top: 0, left: 0,
+                    width: "100%", height: "100%",
+                    backgroundImage: `url(${t.backgroundImageUrl})`,
+                    backgroundSize: "cover",
+                    backgroundPosition: "center",
+                  };
+                })()} />
               ) : (
                 <>
                   {/* Left half: felt color */}
