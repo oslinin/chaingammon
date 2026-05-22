@@ -10,6 +10,22 @@ export interface BoardTheme {
     cool: string; // P1 (agent, top)
   };
   /**
+   * When set, the background image is cropped to the given rectangle instead
+   * of being stretched to fill the full viewport. All pixel values refer to
+   * the source (un-cropped) image coordinate system. Board.tsx scales and
+   * positions the image element so that exactly this rectangle maps onto the
+   * 716×440 SVG viewport. Use this to carve individual board skins out of a
+   * composite sprite sheet without pre-splitting the file.
+   */
+  backgroundImageCrop?: {
+    srcX: number;       // left edge of the crop region (source pixels)
+    srcY: number;       // top edge of the crop region (source pixels)
+    srcW: number;       // width of the crop region (source pixels)
+    srcH: number;       // height of the crop region (source pixels)
+    totalSrcW: number;  // total source image width (source pixels)
+    totalSrcH: number;  // total source image height (source pixels)
+  };
+  /**
    * Per-spot checker landing coordinates for image-based boards. All values
    * are fractions of the 716×440 viewport (0–1). When set, Board.tsx looks
    * each checker's (x, y) up directly so they land on the painted triangles
@@ -235,10 +251,162 @@ export const BOARD_THEMES: Record<string, BoardTheme> = {
     checkerWarm: { fill: "#10B981", stroke: "#059669" },
     checkerCool: { fill: "#F43F5E", stroke: "#E11D48" },
   },
+
+  // ── Image-skin themes ────────────────────────────────────────────────────────
+  // These six themes share a single composite sprite served via /api/board-sprite
+  // (which proxies the GitHub CDN or serves a local copy from public/boards/source.png).
+  // Each theme declares a `backgroundImageCrop` that isolates one of the six
+  // panels in the 2-column × 3-row layout.  Board.tsx uses SVG image positioning
+  // to show only the relevant crop; no pre-split files are required at build time.
+  //
+  // To serve the sprite locally (recommended for production):
+  //   node scripts/download_board_sprite.mjs
+  //   # → writes frontend/public/boards/source.png
+  //
+  // To generate individually split PNG files:
+  //   node scripts/split_board_image.mjs
+  //
+  // The composite is a 1024×1024 PNG arranged as:
+  //   col 0 (x 0–511)    col 1 (x 512–1023)
+  //   row 0 (y 0–340)    Desert         Classic
+  //   row 1 (y 341–681)  Asian          Minimal
+  //   row 2 (y 682–1023) Adventure      Sci-fi
+
+  board_desert: {
+    label: "Desert Sands",
+    backgroundImageUrl: "/api/board-sprite",
+    backgroundImageCrop: { srcX: 0, srcY: 0, srcW: 512, srcH: 341, totalSrcW: 1024, totalSrcH: 1024 },
+    frameStart:  "#C8960C",
+    frameEnd:    "#7A4E12",
+    frameInner:  "#4A2E08",
+    felt:        "#D4A855",
+    feltAccent:  "#E6C56A",
+    pointLight:  "#FFD780",
+    pointDark:   "#8B3A0F",
+    pointStroke: "rgba(0,0,0,0.2)",
+    bar:         "#7A4E12",
+    barEdge:     "#4A2E08",
+    rail:        "#7A4E12",
+    railText:    "#FFD780",
+    checkerWarm: { fill: "#2DD4BF", stroke: "#0D9488" },
+    checkerCool: { fill: "#B45309", stroke: "#78350F" },
+  },
+
+  board_classic: {
+    label: "Classic Mahogany",
+    backgroundImageUrl: "/api/board-sprite",
+    backgroundImageCrop: { srcX: 512, srcY: 0, srcW: 512, srcH: 341, totalSrcW: 1024, totalSrcH: 1024 },
+    frameStart:  "#3D1F0F",
+    frameEnd:    "#1C0D06",
+    frameInner:  "#0C0603",
+    felt:        "#2D1508",
+    feltAccent:  "#3D1F0F",
+    pointLight:  "#F5EBD8",
+    pointDark:   "#8B1A1A",
+    pointStroke: "rgba(0,0,0,0.3)",
+    bar:         "#1C0D06",
+    barEdge:     "#0C0603",
+    rail:        "#1C0D06",
+    railText:    "#F5EBD8",
+    checkerWarm: { fill: "#F5F0E8", stroke: "#C8B89A" },
+    checkerCool: { fill: "#1A1208", stroke: "#000000" },
+  },
+
+  board_asian: {
+    label: "Imperial Dragon",
+    backgroundImageUrl: "/api/board-sprite",
+    backgroundImageCrop: { srcX: 0, srcY: 341, srcW: 512, srcH: 341, totalSrcW: 1024, totalSrcH: 1024 },
+    frameStart:  "#1A1A1A",
+    frameEnd:    "#0A0A0A",
+    frameInner:  "#000000",
+    felt:        "#0D1F0D",
+    feltAccent:  "#142814",
+    pointLight:  "#CA8A04",
+    pointDark:   "#1A2E1A",
+    pointStroke: "rgba(202,138,4,0.3)",
+    bar:         "#1A1A1A",
+    barEdge:     "#000000",
+    rail:        "#1A1A1A",
+    railText:    "#CA8A04",
+    checkerWarm: { fill: "#10B981", stroke: "#059669" },
+    checkerCool: { fill: "#F5F0E8", stroke: "#C8B89A" },
+  },
+
+  board_minimal: {
+    label: "Shadow Steel",
+    backgroundImageUrl: "/api/board-sprite",
+    backgroundImageCrop: { srcX: 512, srcY: 341, srcW: 512, srcH: 341, totalSrcW: 1024, totalSrcH: 1024 },
+    frameStart:  "#1E2028",
+    frameEnd:    "#0E1018",
+    frameInner:  "#080A10",
+    felt:        "#242830",
+    feltAccent:  "#1C2028",
+    pointLight:  "#8BAAC8",
+    pointDark:   "#3A4560",
+    pointStroke: "rgba(0,0,0,0.35)",
+    bar:         "#0E1018",
+    barEdge:     "#080A10",
+    rail:        "#0E1018",
+    railText:    "#8BAAC8",
+    checkerWarm: { fill: "#C8D8E8", stroke: "#8BAAC8" },
+    checkerCool: { fill: "#1A1E28", stroke: "#000000" },
+  },
+
+  board_adventure: {
+    label: "Old World Adventure",
+    backgroundImageUrl: "/api/board-sprite",
+    backgroundImageCrop: { srcX: 0, srcY: 682, srcW: 512, srcH: 342, totalSrcW: 1024, totalSrcH: 1024 },
+    frameStart:  "#4A2C0A",
+    frameEnd:    "#2A1806",
+    frameInner:  "#180E03",
+    felt:        "#3A2208",
+    feltAccent:  "#4A2C0A",
+    pointLight:  "#D4A040",
+    pointDark:   "#2A1806",
+    pointStroke: "rgba(0,0,0,0.35)",
+    bar:         "#2A1806",
+    barEdge:     "#180E03",
+    rail:        "#2A1806",
+    railText:    "#D4A040",
+    checkerWarm: { fill: "#E8C050", stroke: "#A07820" },
+    checkerCool: { fill: "#1C1008", stroke: "#000000" },
+  },
+
+  board_scifi: {
+    label: "Cyber Matrix",
+    backgroundImageUrl: "/api/board-sprite",
+    backgroundImageCrop: { srcX: 512, srcY: 682, srcW: 512, srcH: 342, totalSrcW: 1024, totalSrcH: 1024 },
+    frameStart:  "#060606",
+    frameEnd:    "#000000",
+    frameInner:  "#000000",
+    felt:        "#020202",
+    feltAccent:  "#050505",
+    pointLight:  "#00CC88",
+    pointDark:   "#CC0044",
+    pointStroke: "rgba(0,204,136,0.4)",
+    bar:         "#0A0A0A",
+    barEdge:     "#000000",
+    rail:        "#0A0A0A",
+    railText:    "#00CC88",
+    checkerWarm: { fill: "#00CC88", stroke: "#009966" },
+    checkerCool: { fill: "#FF3366", stroke: "#CC0044" },
+  },
 };
 
-export const THEME_ORDER = ["walnut", "emerald", "slate", "onyx", "linen", "nard", "tabula", "east_asian", "english", "manhattan", "neural_net"] as const;
+export const THEME_ORDER = [
+  "walnut", "emerald", "slate", "onyx", "linen",
+  "nard", "tabula", "east_asian", "english", "manhattan", "neural_net",
+  "board_desert", "board_classic", "board_asian", "board_minimal", "board_adventure", "board_scifi",
+] as const;
 export type BoardThemeKey = typeof THEME_ORDER[number];
+
+/**
+ * URL of the composite board sprite sheet used by the six image-skin themes.
+ * Points to the Next.js proxy route which serves public/boards/source.png
+ * when present, or falls back to the GitHub CDN upload.
+ * Run `node scripts/download_board_sprite.mjs` to cache the sprite locally.
+ */
+export const BOARD_SPRITE_URL = "/api/board-sprite";
 
 const STORAGE_KEY = "chaingammon.boardTheme";
 
