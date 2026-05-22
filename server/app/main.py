@@ -158,59 +158,9 @@ def get_game_record(root_hash: str):
 # ---------------------------------------------------------------------------
 
 
-class MintSubnameRequest(BaseModel):
-    """Phase 15: claim a subname for a connected wallet.
-
-    `label` is the leftmost component (the `alice` in
-    `alice.chaingammon.eth`). `owner_address` is the wallet that will
-    own the subname (the wagmi-connected address from the frontend).
-    The server, as the registrar's `Ownable` owner, signs the
-    `mintSubname` transaction on the user's behalf — the user doesn't
-    need any 0G gas for this in v1.
-    """
-
-    label: str
-    owner_address: str
-
-
-class MintSubnameResponse(BaseModel):
-    label: str
-    node: str  # ENS namehash of `<label>.chaingammon.eth`
-    tx_hash: str
-
-
-@app.post("/subname/mint", response_model=MintSubnameResponse)
-def mint_subname(req: MintSubnameRequest):
-    # Phase 21: validate label against ENS rules before hitting the chain.
-    label = req.label.strip().lower()
-    if not label:
-        raise HTTPException(status_code=400, detail="label cannot be empty")
-    if len(label) > 63:
-        raise HTTPException(status_code=400, detail="label must be 63 characters or fewer")
-    if not _LABEL_RE.match(label):
-        raise HTTPException(
-            status_code=400,
-            detail="label must contain only lowercase letters, numbers, and hyphens, "
-            "and cannot start or end with a hyphen",
-        )
-    try:
-        ens = EnsClient.from_env()
-    except EnsError as e:
-        raise HTTPException(status_code=500, detail=f"ens client misconfigured: {e}") from e
-    # Pre-check: ownerOf returns the zero address for unclaimed subnames.
-    try:
-        node = ens.subname_node(label)
-        owner = ens.owner_of(node)
-    except EnsError as e:
-        raise HTTPException(status_code=502, detail=f"availability check failed: {e}") from e
-    _ZERO_ADDRESS = "0x0000000000000000000000000000000000000000"
-    if owner and owner.lower() != _ZERO_ADDRESS:
-        raise HTTPException(status_code=409, detail="label already taken")
-    try:
-        tx_hash = ens.mint_subname(label, req.owner_address)
-    except EnsError as e:
-        raise HTTPException(status_code=502, detail=f"mintSubname failed: {e}") from e
-    return MintSubnameResponse(label=label, node=node, tx_hash=tx_hash)
+# POST /subname/mint removed: humans call PlayerSubnameRegistrar.selfMintSubname
+# directly from their wallet (ProfileBadge.tsx). Agent subnames are minted
+# atomically inside AgentRegistry.mintAgent — no server key needed for either.
 
 
 class FinalizeRequest(BaseModel):
