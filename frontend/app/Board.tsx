@@ -67,6 +67,10 @@ export function Board({
   onCubeClick,
 }: BoardProps) {
   const theme = BOARD_THEMES[themeKey] ?? BOARD_THEMES.walnut;
+  // Image-based themes own the board look entirely — skip the SVG-painted
+  // frame, felt, point triangles, bar, and bear-off trays so the two
+  // visual systems don't bleed through each other.
+  const usingImage = !!theme.backgroundImageUrl;
   const svgRef = useRef<SVGSVGElement>(null);
   const [dragState, setDragState] = useState<DragState>(null);
   const [pendingDrop, setPendingDrop] = useState<number | "off" | null>(null);
@@ -345,12 +349,14 @@ export function Board({
         data-point={point}
         data-count={count}
       >
-        {/* Triangle */}
-        <polygon
-          points={pts}
-          fill={triColor}
-          opacity={0.9}
-        />
+        {/* Triangle (omitted for image-based themes) */}
+        {!usingImage && (
+          <polygon
+            points={pts}
+            fill={triColor}
+            opacity={0.9}
+          />
+        )}
         {/* Selection Highlight */}
         {isSelected && (
           <rect
@@ -461,14 +467,16 @@ export function Board({
 
     return (
       <g key="bar">
-        <rect
-          x={BAR_X}
-          y={FRAME}
-          width={BAR_W}
-          height={INNER_H}
-          fill={theme.bar}
-          stroke={theme.barEdge}
-        />
+        {!usingImage && (
+          <rect
+            x={BAR_X}
+            y={FRAME}
+            width={BAR_W}
+            height={INNER_H}
+            fill={theme.bar}
+            stroke={theme.barEdge}
+          />
+        )}
         {isSelected && (
           <rect
             x={BAR_X}
@@ -568,14 +576,16 @@ export function Board({
 
     return (
       <g>
-        {/* Left Tray Background */}
-        <rect
-          x={L_BEAR_X}
-          y={FRAME}
-          width={BEAR_W}
-          height={INNER_H}
-          fill="rgba(0,0,0,0.15)"
-        />
+        {/* Left Tray Background (omitted for image-based themes) */}
+        {!usingImage && (
+          <rect
+            x={L_BEAR_X}
+            y={FRAME}
+            width={BEAR_W}
+            height={INNER_H}
+            fill="rgba(0,0,0,0.15)"
+          />
+        )}
         {/* P1 Off Mini Checkers */}
         <g pointerEvents="none">
           {Array.from({ length: p1CombinedOff }).map((_, i) => {
@@ -607,14 +617,16 @@ export function Board({
           </text>
         </g>
 
-        {/* Right Tray Background */}
-        <rect
-          x={R_BEAR_X}
-          y={FRAME}
-          width={BEAR_W}
-          height={INNER_H}
-          fill="rgba(0,0,0,0.15)"
-        />
+        {/* Right Tray Background (omitted for image-based themes) */}
+        {!usingImage && (
+          <rect
+            x={R_BEAR_X}
+            y={FRAME}
+            width={BEAR_W}
+            height={INNER_H}
+            fill="rgba(0,0,0,0.15)"
+          />
+        )}
         {/* P0 Off Mini Checkers */}
         <g pointerEvents="none">
           {Array.from({ length: p0CombinedOff }).map((_, i) => {
@@ -712,32 +724,31 @@ export function Board({
             </filter>
           </defs>
 
-          {/* Background image for image-based themes — rendered before frame and felt */}
-          {theme.backgroundImageUrl && (
+          {/* Image-based themes: render only the image; classic themes: render the SVG frame + felt */}
+          {usingImage ? (
             <image
               href={theme.backgroundImageUrl}
               x="0"
               y="0"
               width={TOTAL_W}
               height={TOTAL_H}
-              preserveAspectRatio="xMidYMid slice"
+              preserveAspectRatio="none"
             />
+          ) : (
+            <>
+              {/* Outer Frame */}
+              <rect
+                x="0" y="0" width={TOTAL_W} height={TOTAL_H}
+                fill="url(#cg-frame)"
+                rx="4"
+              />
+              {/* Inner Felt */}
+              <rect
+                x={FRAME} y={FRAME} width={TOTAL_W - 2 * FRAME} height={INNER_H}
+                fill="url(#cg-felt)"
+              />
+            </>
           )}
-
-          {/* Outer Frame */}
-          <rect
-            x="0" y="0" width={TOTAL_W} height={TOTAL_H}
-            fill="url(#cg-frame)"
-            rx="4"
-            fillOpacity={theme.backgroundImageUrl ? 0.55 : 1}
-          />
-
-          {/* Inner Felt */}
-          <rect
-            x={FRAME} y={FRAME} width={TOTAL_W - 2 * FRAME} height={INNER_H}
-            fill="url(#cg-felt)"
-            fillOpacity={theme.backgroundImageUrl ? 0.60 : 1}
-          />
 
           {/* Bear-Off Trays */}
           {renderBearOff()}

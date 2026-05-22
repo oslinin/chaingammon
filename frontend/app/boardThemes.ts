@@ -108,7 +108,7 @@ export const BOARD_THEMES: Record<string, BoardTheme> = {
   },
   gemini1: {
     label: "Gemini Board 1",
-    backgroundImageUrl: "/boards/gemini_board_1.png",
+    backgroundImageUrl: "/boards/gemini_board_1_no_checkers.png",
     frameStart:  "#0B0F22",
     frameEnd:    "#05070F",
     frameInner:  "#020408",
@@ -126,7 +126,7 @@ export const BOARD_THEMES: Record<string, BoardTheme> = {
   },
   gemini2: {
     label: "Gemini Board 2",
-    backgroundImageUrl: "/boards/gemini_board_2.png",
+    backgroundImageUrl: "/boards/gemini_board_2_no_checkers.png",
     frameStart:  "#051217",
     frameEnd:    "#020A0E",
     frameInner:  "#010608",
@@ -144,7 +144,7 @@ export const BOARD_THEMES: Record<string, BoardTheme> = {
   },
   gemini3: {
     label: "Gemini Board 3",
-    backgroundImageUrl: "/boards/gemini_board_3.png",
+    backgroundImageUrl: "/boards/gemini_board_3_no_checkers.png",
     frameStart:  "#1A1205",
     frameEnd:    "#0F0A00",
     frameInner:  "#080600",
@@ -162,7 +162,7 @@ export const BOARD_THEMES: Record<string, BoardTheme> = {
   },
   gemini4: {
     label: "Gemini Board 4",
-    backgroundImageUrl: "/boards/gemini_board_4.png",
+    backgroundImageUrl: "/boards/gemini_board_4_no_checkers.png",
     frameStart:  "#120D1E",
     frameEnd:    "#080512",
     frameInner:  "#04030A",
