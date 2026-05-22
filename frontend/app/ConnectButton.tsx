@@ -19,6 +19,7 @@ import { useState, useEffect } from "react";
 
 import { NetworkDropdown } from "./NetworkDropdown";
 import { ProfileBadge } from "./ProfileBadge";
+import { useI18n } from "./i18n";
 
 const pillBase: React.CSSProperties = {
   display: "inline-flex",
@@ -73,6 +74,7 @@ export function ConnectButton() {
   const [isMobile, setIsMobile] = useState(false);
   const [hasProvider, setHasProvider] = useState(false);
   const [userAttempted, setUserAttempted] = useState(false);
+  const { t } = useI18n();
 
   useEffect(() => {
     setMounted(true);
@@ -105,7 +107,7 @@ export function ConnectButton() {
             style={primaryBtn}
             className="cg-btn-primary"
           >
-            Open in MetaMask
+            {t("open_in_metamask")}
           </a>
           {wcConnector && (
             <button
@@ -131,7 +133,7 @@ export function ConnectButton() {
           rel="noopener noreferrer"
           style={secondaryBtn}
         >
-          Install MetaMask
+          {t("install_metamask")}
         </a>
       );
     }
@@ -146,7 +148,7 @@ export function ConnectButton() {
               style={primaryBtn}
               className="cg-btn-primary disabled:opacity-60"
             >
-              {connectPending ? "Connecting…" : "Connect wallet"}
+              {connectPending ? t("connecting") : t("connect_wallet")}
             </button>
           )}
           {wcConnector && (
@@ -187,7 +189,7 @@ export function ConnectButton() {
         onClick={() => disconnect()}
         style={{ ...secondaryBtn, height: 32, fontSize: 12 }}
       >
-        Disconnect
+        {t("disconnect")}
       </button>
     </div>
   );
