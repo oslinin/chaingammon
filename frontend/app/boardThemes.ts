@@ -10,16 +10,26 @@ export interface BoardTheme {
     cool: string; // P1 (agent, top)
   };
   /**
-   * Optional play-area calibration for image-based boards (fractions of the
-   * 716×440 viewport, all in [0, 1]). When omitted, Board.tsx falls back to
-   * the SVG default grid. Used so checkers land on the painted triangles.
+   * Per-spot checker landing coordinates for image-based boards. All values
+   * are fractions of the 716×440 viewport (0–1). When set, Board.tsx looks
+   * each checker's (x, y) up directly so they land on the painted triangles
+   * — no uniform-grid assumption.
+   *
+   * columnsX: 12 column center X values, left → right. Mapping:
+   *   col 0  = points 12 (bottom) & 13 (top), leftmost
+   *   col 5  = points  7 & 18, just left of bar
+   *   col 6  = points  6 & 19, just right of bar
+   *   col 11 = points  1 & 24, rightmost
    */
-  layout?: {
-    leftEdge: number;   // x where first point column begins
-    rightEdge: number;  // x where last point column ends
-    barCenterX: number; // x of bar center
-    barWidth: number;   // bar width
-    bearWidth: number;  // bear-off tray width
+  checkerSpots?: {
+    columnsX: number[];  // length 12
+    topY: number;        // first checker center y for top points (13–24)
+    bottomY: number;     // first checker center y for bottom points (1–12)
+    barX: number;        // bar checker stack x
+    barTopY: number;     // first agent (P1) bar checker, stacks downward
+    barBottomY: number;  // first human (P0) bar checker, stacks upward
+    leftOffX: number;    // left tray x (agent/P1 bear-off)
+    rightOffX: number;   // right tray x (human/P0 bear-off)
   };
   frameStart: string;
   frameEnd: string;
@@ -130,8 +140,17 @@ export const BOARD_THEMES: Record<string, BoardTheme> = {
       warm: "/boards/gemini_board_1_white.png",
       cool: "/boards/gemini_board_1_black.png",
     },
-    // Walnut case with wide bar (logo medallion)
-    layout: { leftEdge: 0.084, rightEdge: 0.916, barCenterX: 0.500, barWidth: 0.112, bearWidth: 0.056 },
+    // Walnut case — wide bar with logo medallion; columns squeezed inward.
+    checkerSpots: {
+      columnsX: [0.110, 0.172, 0.234, 0.296, 0.358, 0.420, 0.580, 0.642, 0.704, 0.766, 0.828, 0.890],
+      topY: 0.095,
+      bottomY: 0.905,
+      barX: 0.500,
+      barTopY: 0.190,
+      barBottomY: 0.810,
+      leftOffX: 0.040,
+      rightOffX: 0.960,
+    },
     frameStart:  "#0B0F22",
     frameEnd:    "#05070F",
     frameInner:  "#020408",
@@ -154,8 +173,17 @@ export const BOARD_THEMES: Record<string, BoardTheme> = {
       warm: "/boards/gemini_board_2_white.png",
       cool: "/boards/gemini_board_2_black.png",
     },
-    // Live-edge wood overhead, no real bear-off rails
-    layout: { leftEdge: 0.070, rightEdge: 0.930, barCenterX: 0.500, barWidth: 0.098, bearWidth: 0.020 },
+    // Overhead live-edge wood — wider play area, no bear-off rails.
+    checkerSpots: {
+      columnsX: [0.100, 0.166, 0.232, 0.298, 0.364, 0.430, 0.570, 0.636, 0.702, 0.768, 0.834, 0.900],
+      topY: 0.110,
+      bottomY: 0.890,
+      barX: 0.500,
+      barTopY: 0.210,
+      barBottomY: 0.790,
+      leftOffX: 0.030,
+      rightOffX: 0.970,
+    },
     frameStart:  "#051217",
     frameEnd:    "#020A0E",
     frameInner:  "#010608",
@@ -178,8 +206,17 @@ export const BOARD_THEMES: Record<string, BoardTheme> = {
       warm: "/boards/gemini_board_3_white.png",
       cool: "/boards/gemini_board_3_black.png",
     },
-    // Cyber metal frame with bear-off compartments and thin sci-fi bar
-    layout: { leftEdge: 0.112, rightEdge: 0.888, barCenterX: 0.500, barWidth: 0.070, bearWidth: 0.056 },
+    // Cyber metal — bear-off compartments left/right, thin sci-fi bar.
+    checkerSpots: {
+      columnsX: [0.130, 0.190, 0.250, 0.310, 0.370, 0.430, 0.570, 0.630, 0.690, 0.750, 0.810, 0.870],
+      topY: 0.115,
+      bottomY: 0.885,
+      barX: 0.500,
+      barTopY: 0.220,
+      barBottomY: 0.780,
+      leftOffX: 0.060,
+      rightOffX: 0.940,
+    },
     frameStart:  "#1A1205",
     frameEnd:    "#0F0A00",
     frameInner:  "#080600",
@@ -202,8 +239,17 @@ export const BOARD_THEMES: Record<string, BoardTheme> = {
       warm: "/boards/gemini_board_4_white.png",
       cool: "/boards/gemini_board_4_black.png",
     },
-    // Steampunk brass frame with wide gear-medallion bar, no bear-off
-    layout: { leftEdge: 0.077, rightEdge: 0.923, barCenterX: 0.500, barWidth: 0.112, bearWidth: 0.020 },
+    // Steampunk brass — wide gear-medallion bar, no bear-off rails.
+    checkerSpots: {
+      columnsX: [0.105, 0.168, 0.231, 0.294, 0.357, 0.420, 0.580, 0.643, 0.706, 0.769, 0.832, 0.895],
+      topY: 0.110,
+      bottomY: 0.890,
+      barX: 0.500,
+      barTopY: 0.220,
+      barBottomY: 0.780,
+      leftOffX: 0.035,
+      rightOffX: 0.965,
+    },
     frameStart:  "#120D1E",
     frameEnd:    "#080512",
     frameInner:  "#04030A",

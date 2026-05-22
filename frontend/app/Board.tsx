@@ -68,17 +68,35 @@ export function Board({
   // visual systems don't bleed through each other.
   const usingImage = !!theme.backgroundImageUrl;
 
-  // Per-theme play-area grid. Image themes can declare where the painted
-  // play area actually sits inside the 716×440 viewport; classic SVG themes
-  // fall back to the standard layout.
-  const BEAR_W = theme.layout ? theme.layout.bearWidth * TOTAL_W : BEAR_W_BASE;
-  const BAR_W = theme.layout ? theme.layout.barWidth * TOTAL_W : BAR_W_BASE;
-  const L_QUAD_X = theme.layout ? theme.layout.leftEdge * TOTAL_W : FRAME + BEAR_W_BASE;
-  const R_BEAR_X = theme.layout ? theme.layout.rightEdge * TOTAL_W : FRAME + BEAR_W_BASE + 6 * POINT_W_BASE + BAR_W_BASE + 6 * POINT_W_BASE;
-  const BAR_X = theme.layout ? (theme.layout.barCenterX - theme.layout.barWidth / 2) * TOTAL_W : L_QUAD_X + 6 * POINT_W_BASE;
-  const POINT_W = (BAR_X - L_QUAD_X) / 6;
+  // Per-theme play-area grid. Image themes that declare `checkerSpots`
+  // use per-spot lookup for checker placement; classic SVG themes fall back
+  // to the standard uniform grid.
+  const spots = theme.checkerSpots;
+  const BEAR_W = BEAR_W_BASE;
+  const BAR_W = BAR_W_BASE;
+  const L_QUAD_X = FRAME + BEAR_W_BASE;
+  const BAR_X = L_QUAD_X + 6 * POINT_W_BASE;
   const R_QUAD_X = BAR_X + BAR_W;
-  const L_BEAR_X = Math.max(0, L_QUAD_X - BEAR_W);
+  const R_BEAR_X = R_QUAD_X + 6 * POINT_W_BASE;
+  const POINT_W = POINT_W_BASE;
+  const L_BEAR_X = FRAME;
+
+  // Map a 1-based point number (1..24) to its column index 0..11 (left → right).
+  // Top points (13..24) span left→right; bottom points (1..12) span right→left.
+  const colIndex = (point: number) =>
+    point >= 13 ? point - 13 : 12 - point;
+
+  // Per-spot lookup for image themes: returns the center (cx, cy) of the
+  // `index`-th stacked checker on `point`. Falls through to the uniform grid
+  // computation when `spots` is undefined.
+  const spotCheckerCenter = (point: number, index: number): { x: number; y: number } | null => {
+    if (!spots) return null;
+    const isTop = point >= 13;
+    const x = spots.columnsX[colIndex(point)] * TOTAL_W;
+    const baseY = isTop ? spots.topY * TOTAL_H : spots.bottomY * TOTAL_H;
+    const y = isTop ? baseY + index * CHECKER_GAP : baseY - index * CHECKER_GAP;
+    return { x, y };
+  };
 
   const svgRef = useRef<SVGSVGElement>(null);
   const [dragState, setDragState] = useState<DragState>(null);
@@ -140,6 +158,11 @@ export function Board({
 
   const getCheckerCenter = (point: number | "bar" | "off", index: number, isP0: boolean) => {
     if (point === "bar") {
+      if (spots) {
+        const baseY = isP0 ? spots.barBottomY * TOTAL_H : spots.barTopY * TOTAL_H;
+        const cy = isP0 ? baseY - index * CHECKER_GAP : baseY + index * CHECKER_GAP;
+        return { x: spots.barX * TOTAL_W, y: cy };
+      }
       const cy = isP0
         ? TOTAL_H - FRAME - 60 - index * CHECKER_GAP
         : FRAME + 60 + index * CHECKER_GAP;
@@ -147,10 +170,18 @@ export function Board({
     }
 
     if (point === "off") {
+      if (spots) {
+        const x = (isP0 ? spots.rightOffX : spots.leftOffX) * TOTAL_W;
+        const cy = TOTAL_H - FRAME - 20 - index * 14 + 5;
+        return { x, y: cy };
+      }
       const x = isP0 ? R_BEAR_X + BEAR_W / 2 : L_BEAR_X + BEAR_W / 2;
       const cy = TOTAL_H - FRAME - 20 - index * 14 + 5; // +5 for middle of the 10px rect
       return { x, y: cy };
     }
+
+    const spot = spotCheckerCenter(point, index);
+    if (spot) return spot;
 
     const isTop = point >= 13;
     const isLeft = (isTop && point <= 18) || (!isTop && point >= 7);
@@ -199,6 +230,48 @@ export function Board({
     const ds = dragState;
     setDragState(null);
     const { x, y } = clientToSvg(e.clientX, e.clientY);
+
+    // Spot-aware hit-test for image themes: snap to the nearest column.
+    if (spots) {
+      const rightOffPx = spots.rightOffX * TOTAL_W;
+      const barPx = spots.barX * TOTAL_W;
+      const offHit = CHECKER_R * 1.8;
+      if (Math.abs(x - rightOffPx) < offHit && y >= FRAME && y <= FRAME + INNER_H) {
+        if (onOffClick) {
+          if (ds.fromPoint === "bar" && selectedPoint !== 25) {
+            if (onBarClick) onBarClick();
+            setPendingDrop("off");
+          } else if (typeof ds.fromPoint === "number" && selectedPoint !== ds.fromPoint) {
+            if (onPointClick) onPointClick(ds.fromPoint);
+            setPendingDrop("off");
+          } else {
+            onOffClick();
+          }
+        }
+        return;
+      }
+      if (Math.abs(x - barPx) < CHECKER_R * 1.4 && y >= FRAME && y <= FRAME + INNER_H) {
+        return;
+      }
+      // Snap to nearest column
+      let bestCol = 0;
+      let bestDist = Infinity;
+      for (let i = 0; i < 12; i++) {
+        const colPx = spots.columnsX[i] * TOTAL_W;
+        const dist = Math.abs(x - colPx);
+        if (dist < bestDist) {
+          bestDist = dist;
+          bestCol = i;
+        }
+      }
+      // Reject drops that are far from any column
+      if (bestDist > CHECKER_R * 2.2) return;
+      const isBottom = y >= TOTAL_H / 2;
+      // bottom: col 0 = point 12, col 11 = point 1; top: col 0 = point 13, col 11 = point 24
+      const point = isBottom ? 12 - bestCol : 13 + bestCol;
+      triggerDrop(ds.fromPoint, point);
+      return;
+    }
 
     // Hit test Bear-off Tray (Right tray for P0)
     if (x >= R_BEAR_X && x <= R_BEAR_X + BEAR_W && y >= FRAME && y <= FRAME + INNER_H) {
@@ -358,6 +431,21 @@ export function Board({
 
     const pts = `${startX},${baseY} ${startX + POINT_W},${baseY} ${startX + POINT_W / 2},${tipY}`;
 
+    // Spot-aware checker placement: when the theme provides per-spot
+    // coordinates, look up the column center and stack base directly so the
+    // checkers land on the painted triangles even with non-uniform spacing.
+    const checkerCx = spots
+      ? spots.columnsX[colIndex(point)] * TOTAL_W
+      : startX + POINT_W / 2;
+    const stackBaseY = spots
+      ? (isTop ? spots.topY * TOTAL_H : spots.bottomY * TOTAL_H)
+      : (isTop ? FRAME + CHECKER_R : TOTAL_H - FRAME - CHECKER_R);
+    const stackStep = isTop ? CHECKER_GAP : -CHECKER_GAP;
+    // Click/selection rect: when using spots, center a CHECKER_R*2-ish-wide
+    // hitbox on the column so clicks line up with the painted triangle.
+    const hitW = spots ? CHECKER_R * 2.4 : POINT_W;
+    const hitX = spots ? checkerCx - hitW / 2 : startX;
+
     const count = board[point - 1];
     const isP0 = count > 0 || (count === 0 && turn === 0); // If empty but turn is 0, we assume dropping P0 checker
     const absCount = Math.abs(count);
@@ -400,9 +488,9 @@ export function Board({
         {/* Selection Highlight */}
         {isSelected && (
           <rect
-            x={startX}
+            x={hitX}
             y={isTop ? FRAME : FRAME + INNER_H - 180}
-            width={POINT_W}
+            width={hitW}
             height={180}
             fill="var(--cg-brass)"
             fillOpacity={0.15}
@@ -414,7 +502,7 @@ export function Board({
 
         {/* Point Label */}
         <text
-          x={startX + POINT_W / 2}
+          x={checkerCx}
           y={isTop ? FRAME - 5 : TOTAL_H - FRAME + 12}
           textAnchor="middle"
           fontSize="10"
@@ -426,9 +514,9 @@ export function Board({
 
         {/* Clickable Overlay */}
         <rect
-          x={startX}
+          x={hitX}
           y={isTop ? FRAME : FRAME + INNER_H - 180}
-          width={POINT_W}
+          width={hitW}
           height={180}
           fill="transparent"
           cursor={onPointClick ? "pointer" : "default"}
@@ -442,9 +530,7 @@ export function Board({
         {/* Checkers */}
         <g pointerEvents="none">
           {Array.from({ length: combinedDots }).map((_, i) => {
-            const cy = isTop
-              ? FRAME + CHECKER_R + i * CHECKER_GAP
-              : TOTAL_H - FRAME - CHECKER_R - i * CHECKER_GAP;
+            const cy = stackBaseY + i * stackStep;
 
             // Determine if this specific dot is solid, a departure ghost, or an arrival ghost
             let isDragging = false;
@@ -473,14 +559,12 @@ export function Board({
               dotIsP0 = count > 0;
             }
 
-            return renderChecker(startX + POINT_W / 2, cy, dotIsP0, `checker-${point}-${i}`, isDragging, haloColor);
+            return renderChecker(checkerCx, cy, dotIsP0, `checker-${point}-${i}`, isDragging, haloColor);
           })}
           {extra > 0 && (
             <text
-              x={startX + POINT_W / 2}
-              y={isTop
-                  ? FRAME + CHECKER_R + combinedDots * CHECKER_GAP + 4
-                  : TOTAL_H - FRAME - CHECKER_R - combinedDots * CHECKER_GAP + 4}
+              x={checkerCx}
+              y={stackBaseY + combinedDots * stackStep + (isTop ? 4 : 4)}
               textAnchor="middle"
               fontSize="12"
               fontFamily="var(--cg-font-mono, monospace)"
@@ -505,6 +589,12 @@ export function Board({
     const p0Combined = Math.min(p0Display + p0Departures, 3);
     const p0Extra = p0Display + p0Departures > 3 ? p0Display + p0Departures - 3 : 0;
 
+    // Spot-aware bar positioning when the theme provides per-spot coordinates.
+    const barCx = spots ? spots.barX * TOTAL_W : BAR_X + BAR_W / 2;
+    const barP1FirstY = spots ? spots.barTopY * TOTAL_H : FRAME + 60;
+    const barP0FirstY = spots ? spots.barBottomY * TOTAL_H : TOTAL_H - FRAME - 60;
+    const barHitX = spots ? barCx - BAR_W / 2 : BAR_X;
+
     return (
       <g key="bar">
         {!usingImage && (
@@ -519,7 +609,7 @@ export function Board({
         )}
         {isSelected && (
           <rect
-            x={BAR_X}
+            x={barHitX}
             y={FRAME}
             width={BAR_W}
             height={INNER_H}
@@ -530,20 +620,22 @@ export function Board({
             pointerEvents="none"
           />
         )}
-        <text
-          x={BAR_X + BAR_W / 2}
-          y={TOTAL_H / 2 + 4}
-          textAnchor="middle"
-          fontSize="10"
-          fontFamily="var(--cg-font-mono, monospace)"
-          fill="var(--cg-fg-4, #4A4339)"
-        >
-          BAR
-        </text>
+        {!usingImage && (
+          <text
+            x={barCx}
+            y={TOTAL_H / 2 + 4}
+            textAnchor="middle"
+            fontSize="10"
+            fontFamily="var(--cg-font-mono, monospace)"
+            fill="var(--cg-fg-4, #4A4339)"
+          >
+            BAR
+          </text>
+        )}
 
         {/* Clickable Overlay */}
         <rect
-          x={BAR_X}
+          x={barHitX}
           y={FRAME}
           width={BAR_W}
           height={INNER_H}
@@ -559,12 +651,12 @@ export function Board({
         {/* P1 Bar Checkers (Top Down) */}
         <g pointerEvents="none">
           {Array.from({ length: Math.min(p1Bar, 3) }).map((_, i) => (
-            renderChecker(BAR_X + BAR_W / 2, FRAME + 60 + i * CHECKER_GAP, false, `bar-p1-${i}`)
+            renderChecker(barCx, barP1FirstY + i * CHECKER_GAP, false, `bar-p1-${i}`)
           ))}
           {p1Bar > 3 && (
             <text
-              x={BAR_X + BAR_W / 2}
-              y={FRAME + 60 + 3 * CHECKER_GAP + 4}
+              x={barCx}
+              y={barP1FirstY + 3 * CHECKER_GAP + 4}
               textAnchor="middle"
               fontSize="12"
               fontFamily="var(--cg-font-mono, monospace)"
@@ -586,12 +678,12 @@ export function Board({
                 haloColor = GHOST_COLORS[p0DeparturesArr[depIndex] % GHOST_COLORS.length];
               }
             }
-            return renderChecker(BAR_X + BAR_W / 2, TOTAL_H - FRAME - 60 - i * CHECKER_GAP, true, `bar-p0-${i}`, isDragging, haloColor);
+            return renderChecker(barCx, barP0FirstY - i * CHECKER_GAP, true, `bar-p0-${i}`, isDragging, haloColor);
           })}
           {p0Extra > 0 && (
             <text
-              x={BAR_X + BAR_W / 2}
-              y={TOTAL_H - FRAME - 60 - p0Combined * CHECKER_GAP + 4}
+              x={barCx}
+              y={barP0FirstY - p0Combined * CHECKER_GAP + 4}
               textAnchor="middle"
               fontSize="12"
               fontFamily="var(--cg-font-mono, monospace)"
@@ -613,6 +705,10 @@ export function Board({
     const p0CombinedOff = p0Off + (turn === 0 ? arrivals : 0);
     const p1CombinedOff = p1Off + (turn === 1 ? arrivals : 0);
 
+    // Spot-aware bear-off anchors (centers of the L/R trays).
+    const leftOffCx = spots ? spots.leftOffX * TOTAL_W : L_BEAR_X + BEAR_W / 2;
+    const rightOffCx = spots ? spots.rightOffX * TOTAL_W : R_BEAR_X + BEAR_W / 2;
+    const offHalfW = (BEAR_W - 20) / 2;
 
     return (
       <g>
@@ -633,7 +729,7 @@ export function Board({
             return (
               <rect
                 key={`p1off-${i}`}
-                x={L_BEAR_X + 10}
+                x={leftOffCx - offHalfW}
                 y={TOTAL_H - FRAME - 20 - i * 14}
                 width={BEAR_W - 20}
                 height={10}
@@ -646,7 +742,7 @@ export function Board({
             );
           })}
           <text
-             x={L_BEAR_X + BEAR_W/2}
+             x={leftOffCx}
              y={TOTAL_H - FRAME - 5}
              textAnchor="middle"
              fontSize="10"
@@ -674,7 +770,7 @@ export function Board({
             return (
               <rect
                 key={`p0off-${i}`}
-                x={R_BEAR_X + 10}
+                x={rightOffCx - offHalfW}
                 y={TOTAL_H - FRAME - 20 - i * 14}
                 width={BEAR_W - 20}
                 height={10}
@@ -687,7 +783,7 @@ export function Board({
             );
           })}
           <text
-             x={R_BEAR_X + BEAR_W/2}
+             x={rightOffCx}
              y={TOTAL_H - FRAME - 5}
              textAnchor="middle"
              fontSize="10"
