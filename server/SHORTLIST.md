@@ -11,6 +11,7 @@ What the server still does, what moved to the browser, and what the keeper owns.
 | AI move inference (ONNX via gnubg) | Browser runs ONNX; model fetched from 0G Storage, decrypted with wallet-derived AES key |
 | ENS `setText` for ELO / last_match_id | Browser calls `PublicResolver.setText` directly from player wallet |
 | `AgentVault.depositToEscrow` at match start | Browser calls `AgentVault.depositToEscrow`; NFT owner signs, no server key needed |
+| `POST /subname/mint` (human subnames) | Browser calls `PlayerSubnameRegistrar.selfMintSubname` directly (`ProfileBadge.tsx`). Agent subnames minted atomically inside `AgentRegistry.mintAgent` — no server key needed for either. |
 
 ---
 
@@ -27,7 +28,6 @@ What the server still does, what moved to the browser, and what the keeper owns.
 
 | Endpoint | Why it stays |
 |---|---|
-| `POST /subname/mint` | Registrar owner key lives on server |
 | `POST /keeper-workflow/{id}/run` | Webhook target for KeeperHub |
 | `GET /keeper-workflow/{id}` | Frontend polls for workflow progress |
 | `POST /webhooks/match/{id}/end` | Game-end hook → triggers keeper workflow |
