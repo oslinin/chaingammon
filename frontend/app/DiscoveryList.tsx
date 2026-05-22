@@ -21,6 +21,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useActiveChain, useActiveChainId, useEnsInfra } from "./chains";
 import { MatchRegistryABI, useChainContracts } from "./contracts";
 import { PersonCard, type MatchSummary } from "./PersonCard";
+import { useI18n } from "./i18n";
 
 // -------------------------------------------------------------------------
 // Types
@@ -167,6 +168,7 @@ export function DiscoveryList({ staticEntries, playersOnly }: DiscoveryListProps
   const { playerSubnameRegistrar, matchRegistry } = useChainContracts();
   const publicClient = usePublicClient({ chainId });
   const ensInfra = useEnsInfra();
+  const { t } = useI18n();
 
   // Partial entries from event scan (elo + endpoint added below via resolver reads).
   const [scanEntries, setScanEntries] = useState<ScanEntry[]>([]);
@@ -408,12 +410,12 @@ export function DiscoveryList({ staticEntries, playersOnly }: DiscoveryListProps
     if (!active) {
       return (
         <p className="text-sm text-zinc-500 dark:text-zinc-400">
-          No Chaingammon deployment on this chain. Switch your wallet to see identities.
+          {t("no_deployment")}. Switch your wallet to see identities.
         </p>
       );
     }
     if (loading) {
-      return <p className="text-sm text-zinc-500 dark:text-zinc-400">Loading…</p>;
+      return <p className="text-sm text-zinc-500 dark:text-zinc-400">{t("loading")}</p>;
     }
     if (scanError) {
       return (
@@ -432,10 +434,10 @@ export function DiscoveryList({ staticEntries, playersOnly }: DiscoveryListProps
           data-testid="discovery-humans-header"
           className="mb-4 text-lg font-semibold text-zinc-900 dark:text-zinc-50"
         >
-          Players
+          {t("players")}
         </h2>
         {humans.length === 0 ? (
-          <p className="text-sm text-zinc-500 dark:text-zinc-400">No players registered yet.</p>
+          <p className="text-sm text-zinc-500 dark:text-zinc-400">{t("no_players")}</p>
         ) : (
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {humans.map((e) => (
@@ -451,10 +453,10 @@ export function DiscoveryList({ staticEntries, playersOnly }: DiscoveryListProps
             data-testid="discovery-agents-header"
             className="mb-4 text-lg font-semibold text-zinc-900 dark:text-zinc-50"
           >
-            Agents
+            {t("agents")}
           </h2>
           {agents.length === 0 ? (
-            <p className="text-sm text-zinc-500 dark:text-zinc-400">No agents registered yet.</p>
+            <p className="text-sm text-zinc-500 dark:text-zinc-400">{t("no_agents")}</p>
           ) : (
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {agents.map((e) => (

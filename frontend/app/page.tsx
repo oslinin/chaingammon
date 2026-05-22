@@ -1,10 +1,15 @@
+"use client";
+
 import Link from "next/link";
 
 import { AgentsList } from "./AgentsList";
 import { DiscoveryList } from "./DiscoveryList";
 import { HomeActionChips } from "./HomeActionChips";
+import { useI18n } from "./i18n";
 
 export default function Home() {
+  const { t } = useI18n();
+
   return (
     <div style={{ display: "flex", flex: 1, flexDirection: "column", background: "var(--cg-bg-0)" }}>
       <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-10 px-4 py-10 sm:px-8 sm:py-16">
@@ -31,7 +36,7 @@ export default function Home() {
               boxShadow: "0 0 10px rgba(201,155,92,0.7)",
               flexShrink: 0,
             }} />
-            Open backgammon protocol · v1
+            {t("hero_eyebrow")}
           </div>
 
           <h1 style={{
@@ -44,9 +49,9 @@ export default function Home() {
             margin: 0,
             maxWidth: "min(640px, 100%)",
           }}>
-            Skill is permanent.<br />
-            <span style={{ color: "var(--cg-fg-2)", fontStyle: "italic" }}>Now your rating is</span>
-            <span style={{ color: "var(--cg-brass)" }}>,&nbsp;too.</span>
+            {t("hero_line1")}<br />
+            <span style={{ color: "var(--cg-fg-2)", fontStyle: "italic" }}>{t("hero_line2_italic")}</span>
+            <span style={{ color: "var(--cg-brass)" }}>{t("hero_line2_end")}</span>
           </h1>
 
           <p className="cg-fade-up-1" style={{ maxWidth: 500, fontSize: 15, lineHeight: 1.65, color: "var(--cg-fg-2)", margin: 0 }}>
@@ -71,7 +76,7 @@ export default function Home() {
                 textTransform: "uppercase",
                 color: "var(--cg-fg-3)",
               }}>
-                Live agents · Sepolia testnet
+                {t("live_agents")}
               </div>
               <HomeActionChips />
             </div>
@@ -87,7 +92,7 @@ export default function Home() {
           href="/transactions"
           style={{ fontSize: 13, color: "var(--cg-fg-4)", textDecoration: "none" }}
         >
-          Transactions
+          {t("transactions")}
         </Link>
       </main>
     </div>

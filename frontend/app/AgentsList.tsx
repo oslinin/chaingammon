@@ -13,11 +13,13 @@ import { useReadContract, useReadContracts } from "wagmi";
 import { useActiveChain, useActiveChainId } from "./chains";
 import { AgentCard } from "./AgentCard";
 import { AgentRegistryABI, useChainContracts } from "./contracts";
+import { useI18n } from "./i18n";
 
 export function AgentsList() {
   const active = useActiveChain();
   const chainId = useActiveChainId();
   const { agentRegistry } = useChainContracts();
+  const { t } = useI18n();
 
   const { data: activeCount, isLoading, error } = useReadContract({
     address: agentRegistry,
@@ -52,7 +54,7 @@ export function AgentsList() {
   if (!active) {
     return (
       <p style={{ fontSize: 14, color: "var(--cg-fg-3)", fontFamily: "var(--cg-font-sans)" }}>
-        No Chaingammon deployment on this chain ({chainName}). Switch your
+        {t("no_deployment")} ({chainName}). Switch your
         wallet to one of the supported chains to see agents.
       </p>
     );
@@ -61,7 +63,7 @@ export function AgentsList() {
   if (isLoading) {
     return (
       <p style={{ fontSize: 14, color: "var(--cg-fg-3)", fontFamily: "var(--cg-font-sans)" }}>
-        Loading agents…
+        {t("loading_agents")}
       </p>
     );
   }
@@ -69,7 +71,7 @@ export function AgentsList() {
   if (error || activeCount === undefined) {
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 14, color: "var(--cg-fg-3)" }}>
-        <p style={{ margin: 0 }}>No agents found.</p>
+        <p style={{ margin: 0 }}>{t("no_agents_found")}</p>
         <p style={{ margin: 0, fontSize: 12 }}>
           Could not reach{" "}
           <code style={{ fontFamily: "var(--cg-font-mono)" }}>AgentRegistry</code> at{" "}
@@ -87,7 +89,7 @@ export function AgentsList() {
   if (count === 0) {
     return (
       <p style={{ fontSize: 14, color: "var(--cg-fg-3)", fontFamily: "var(--cg-font-sans)" }}>
-        No agents registered yet.
+        {t("no_agents")}
       </p>
     );
   }
