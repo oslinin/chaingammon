@@ -1,6 +1,6 @@
 "use client";
 
-import { useI18n } from "./i18n";
+import React from "react";
 import { BOARD_THEMES, THEME_ORDER, type BoardThemeKey } from "./boardThemes";
 
 interface Props {
@@ -9,27 +9,17 @@ interface Props {
 }
 
 export function BoardThemePicker({ value, onChange }: Props) {
-  const { t } = useI18n();
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-      <span style={{
-        fontSize: 11,
-        fontFamily: "var(--cg-font-sans)",
-        color: "var(--cg-fg-4)",
-        letterSpacing: "0.06em",
-        textTransform: "uppercase",
-        fontWeight: 600,
-        whiteSpace: "nowrap",
-      }}>
-        {t('board_theme')}
-      </span>
-      <div style={{ display: "flex", gap: 6 }}>
-        {THEME_ORDER.map((key) => {
+    <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+        {THEME_ORDER.map((key, idx) => {
           const t = BOARD_THEMES[key];
           const active = key === value;
           return (
+            <React.Fragment key={key}>
+              {(idx === 11 || idx === 17) && (
+                <span style={{ width: "100%", height: 1, background: "rgba(255,255,255,0.12)", flexShrink: 0, margin: "2px 0" }} />
+              )}
             <button
-              key={key}
               title={t.label}
               onClick={() => onChange(key)}
               style={{
@@ -104,9 +94,9 @@ export function BoardThemePicker({ value, onChange }: Props) {
                 </>
               )}
             </button>
+            </React.Fragment>
           );
         })}
-      </div>
     </div>
   );
 }

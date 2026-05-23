@@ -19,7 +19,7 @@ What the server still does, what moved to the browser, and what the keeper owns.
 
 | Step | Status |
 |---|---|
-| Trigger `settleWithSessionKeys` on game end | **Pending** — currently browser calls it; keeper workflow should do this instead (session key stored in game record on 0G) |
+| Call `recordMatchAndSplit` on game end (staked) | Done — registered KeeperHub workflow (`7f9dqwtohidj6lc89tuht`) calls it directly via Para MPC wallet. Pending `setSettler()` on-chain to activate. |
 | Verify escrow deposit, rules check, audit upload | Done — `keeper_workflow.py` 8-step workflow |
 
 ---
@@ -30,8 +30,9 @@ What the server still does, what moved to the browser, and what the keeper owns.
 |---|---|
 | `POST /keeper-workflow/{id}/run` | Webhook target for KeeperHub |
 | `GET /keeper-workflow/{id}` | Frontend polls for workflow progress |
-| `POST /webhooks/match/{id}/end` | Game-end hook → triggers keeper workflow |
-| `POST /matches/{id}/forfeit-check` | Forfeit detection |
+| `POST /upload-game-record` | Browser calls before `settleWithSessionKeys` (`team-demo/page.tsx`) |
+| `POST /finalize-direct-staked` | Browser calls with `keeper_settle=true` to hand off staked settlement to keeper |
+| `POST /matches/{id}/forfeit-check` | Forfeit detection — referenced in `match-settle.yaml` spec; not used by registered workflow |
 | `POST /training/*` | Training job management (server compute) |
 
 ---
@@ -50,17 +51,17 @@ What the server still does, what moved to the browser, and what the keeper owns.
 
 ## Settlement split by game type
 
-| Game type | Who settles | Who pays gas |
+| Game type | Who settles | How |
 |---|---|---|
-| Free (ELO-only) | Server → `recordMatch` via `/finalize-direct` | Server wallet |
-| Staked | Keeper → `settleWithSessionKeysAndSplit` | Keeper (funded by pot fee) |
+| Free (ELO-only) | Server | `/finalize-direct` → `recordMatch` |
+| Staked (keeper path) | KeeperHub Para MPC wallet | Browser calls `/finalize-direct-staked?keeper_settle=true` → keeper reads `/replay` → calls `recordMatchAndSplit` directly |
+| Staked (browser-direct) | Browser | `settleWithSessionKeys` + `settleWithSessionKeysAndSplit` — fully permissionless, no server or keeper key needed |
 
-Free games have no pot to incentivise a keeper, so the server remains the settler. Staked games route through the keeper for tab-close resilience.
+Free games have no pot to incentivise a keeper, so the server remains the settler. The keeper path for staked games removes the server from the settlement tx entirely.
 
 ## Dead / to remove
 
 | Endpoint | Why |
 |---|---|
-| `POST /finalize-direct-staked` | Keeper handles staked settlement; this manual path is redundant |
-| `POST /settle` | Was server relay for `settleWithSessionKeys`; keeper calls chain directly |
-| `POST /upload-game-record` | Removed from scope; browser uploads via 0G SDK or server stays as relay (low priority) |
+| `POST /settle` | Was server relay for keeper-signed settlement; keeper now calls chain directly |
+| `POST /webhooks/match/{id}/end` | Designed for mid-flow KeeperHub webhook wait (unsupported by KeeperHub); registered workflow dropped the step. Server fires it internally — nothing consumes it. |

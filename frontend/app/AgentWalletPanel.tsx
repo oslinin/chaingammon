@@ -11,6 +11,7 @@ import {
 
 import { AgentVaultABI, useChainContracts } from "./contracts";
 import { useActiveChainId } from "./chains";
+import { useI18n } from "./i18n";
 
 interface Props {
   agentId: number;
@@ -34,6 +35,7 @@ export function AgentWalletPanel({ agentId, stakeWei, onBalanceChange }: Props) 
   const chainId = useActiveChainId();
   const { agentVault } = useChainContracts();
 
+  const { t } = useI18n();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -62,8 +64,8 @@ export function AgentWalletPanel({ agentId, stakeWei, onBalanceChange }: Props) 
   }, [refetchBalance, onBalanceChange]);
 
   const onFund = async () => {
-    if (!walletClient || !address) { setError("Connect your wallet to fund the agent."); return; }
-    if (noVault) { setError("AgentVault not deployed on this chain."); return; }
+    if (!walletClient || !address) { setError(t("connect_to_fund")); return; }
+    if (noVault) { setError(t("vault_not_deployed")); return; }
     const value = shortfall > BigInt(0) ? shortfall : stakeWei > BigInt(0) ? stakeWei : BigInt(10) ** BigInt(15); // 0.001 ETH default top-up
     try {
       setBusy(true); setError(null);
@@ -84,9 +86,9 @@ export function AgentWalletPanel({ agentId, stakeWei, onBalanceChange }: Props) 
   };
 
   const onWithdraw = async () => {
-    if (!address) { setError("Connect your wallet to withdraw."); return; }
-    if (noVault) { setError("AgentVault not deployed on this chain."); return; }
-    if (balanceWei === BigInt(0)) { setError("Nothing to withdraw."); return; }
+    if (!address) { setError(t("connect_to_withdraw")); return; }
+    if (noVault) { setError(t("vault_not_deployed")); return; }
+    if (balanceWei === BigInt(0)) { setError(t("nothing_to_withdraw")); return; }
     try {
       setBusy(true); setError(null);
       const hash = await writeContractAsync({
@@ -107,7 +109,7 @@ export function AgentWalletPanel({ agentId, stakeWei, onBalanceChange }: Props) 
   if (noVault) {
     return (
       <div className="text-xs text-zinc-500 dark:text-zinc-400">
-        Agent vault not deployed on this chain.
+        {t("vault_not_deployed_chain")}
       </div>
     );
   }
@@ -118,11 +120,11 @@ export function AgentWalletPanel({ agentId, stakeWei, onBalanceChange }: Props) 
         <span className="font-medium text-zinc-700 dark:text-zinc-300">
           Agent #{agentId} vault
         </span>
-        <span className="font-mono text-zinc-500 dark:text-zinc-400">on-chain</span>
+        <span className="font-mono text-zinc-500 dark:text-zinc-400">{t("on_chain")}</span>
       </div>
 
       <div className="mb-2 flex items-baseline justify-between">
-        <span className="text-zinc-500 dark:text-zinc-400">Balance</span>
+        <span className="text-zinc-500 dark:text-zinc-400">{t("balance")}</span>
         <span className={`font-mono ${needsFunding ? "text-amber-600 dark:text-amber-400" : "text-zinc-900 dark:text-zinc-100"}`}>
           {formatEth(balanceWei)} ETH
         </span>
@@ -130,7 +132,7 @@ export function AgentWalletPanel({ agentId, stakeWei, onBalanceChange }: Props) 
 
       {needsFunding && stakeWei > BigInt(0) && (
         <p className="mb-2 text-amber-600 dark:text-amber-400">
-          Need {formatEth(shortfall)} ETH more to cover the stake.
+          {t("need_eth_more").replace("{n}", formatEth(shortfall))}
         </p>
       )}
       {error && <p className="mb-2 text-red-600 dark:text-red-400">{error}</p>}
@@ -143,7 +145,7 @@ export function AgentWalletPanel({ agentId, stakeWei, onBalanceChange }: Props) 
           className="flex-1 rounded border border-indigo-200 bg-indigo-50 px-2 py-1 text-indigo-700 hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-indigo-700/40 dark:bg-indigo-900/20 dark:text-indigo-300 dark:hover:bg-indigo-900/40"
           title={needsFunding ? `Deposit ${formatEth(shortfall)} ETH` : "Top up vault"}
         >
-          {busy ? "…" : needsFunding ? `Fund ${formatEth(shortfall)} ETH` : "Top up"}
+          {busy ? "…" : needsFunding ? `Fund ${formatEth(shortfall)} ETH` : t("top_up")}
         </button>
         <button
           type="button"
@@ -151,7 +153,7 @@ export function AgentWalletPanel({ agentId, stakeWei, onBalanceChange }: Props) 
           disabled={busy || !isConnected || balanceWei === BigInt(0)}
           className="flex-1 rounded border border-zinc-300 bg-white px-2 py-1 text-zinc-700 hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800"
         >
-          Withdraw all
+          {t("withdraw_all")}
         </button>
       </div>
     </div>

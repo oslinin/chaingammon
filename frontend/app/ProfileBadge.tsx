@@ -21,6 +21,7 @@ import { useChaingammonProfile, useSyncEnsProfile } from "./useChaingammonProfil
 import { useActiveChainId } from "./chains";
 import { MatchRegistryABI, useChainContracts } from "./contracts";
 import { recordTransaction } from "./transactions";
+import { useI18n } from "./i18n";
 
 const SELF_MINT_ABI = [
   {
@@ -40,12 +41,12 @@ function isValidLabel(s: string): boolean {
   return s.length >= 1 && s.length <= 63 && /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(s);
 }
 
-function labelValidationMessage(s: string): string | null {
+function labelValidationMessage(s: string, t: (key: string) => string): string | null {
   if (!s) return null;
-  if (s.length > 63) return "Name must be 63 characters or fewer.";
-  if (!/^[a-z0-9]/.test(s)) return "Name must start with a letter or number.";
-  if (s.endsWith("-")) return "Name cannot end with a hyphen.";
-  if (!/^[a-z0-9-]+$/.test(s)) return "Only lowercase letters, numbers, and hyphens allowed.";
+  if (s.length > 63) return t("name_too_long");
+  if (!/^[a-z0-9]/.test(s)) return t("name_must_start_alphanum");
+  if (s.endsWith("-")) return t("name_no_end_hyphen");
+  if (!/^[a-z0-9-]+$/.test(s)) return t("name_invalid_chars");
   return null;
 }
 
@@ -64,6 +65,7 @@ function isSubnameAlreadyTaken(error: Error | null): boolean {
 }
 
 export function ClaimForm({ address: _address }: { address: `0x${string}` }) {
+  const { t } = useI18n();
   const [claimInput, setClaimInput] = useState("");
   const [suggestion, setSuggestion] = useState<string | null>(null);
   const submittedLabelRef = useRef<string>("");
@@ -121,7 +123,7 @@ export function ClaimForm({ address: _address }: { address: `0x${string}` }) {
     });
   };
 
-  const validationError = claimInput ? labelValidationMessage(claimInput) : null;
+  const validationError = claimInput ? labelValidationMessage(claimInput, t) : null;
   const canSubmit = !claiming && isValidLabel(claimInput);
 
   return (
@@ -177,7 +179,7 @@ export function ClaimForm({ address: _address }: { address: `0x${string}` }) {
             fontFamily: "var(--cg-font-sans)",
           }}
         >
-          {signing ? "Signing…" : confirming ? "Confirming…" : "Claim"}
+          {signing ? t("signing") : confirming ? t("confirming") : t("claim")}
         </button>
       </div>
 
@@ -212,6 +214,7 @@ export function ClaimForm({ address: _address }: { address: `0x${string}` }) {
 }
 
 export function ProfileBadge({ address }: { address: `0x${string}` }) {
+  const { t } = useI18n();
   const { label, name, isLoading: nameLoading } = useChaingammonName(address);
   const { elo: ensElo, matchCount } = useChaingammonProfile(label);
   const { sync, syncing } = useSyncEnsProfile();
@@ -274,7 +277,7 @@ export function ProfileBadge({ address }: { address: `0x${string}` }) {
         </a>
         {elo ? (
           <span
-            title="ELO rating"
+            title={t("elo_rating_label")}
             style={{
               borderRadius: "var(--cg-radius-sm)",
               background: "rgba(201,155,92,0.15)",
@@ -291,7 +294,7 @@ export function ProfileBadge({ address }: { address: `0x${string}` }) {
         ) : null}
         {chainElo && label && chainElo !== ensElo ? (
           <button
-            title={syncError ?? "Push current ELO to your ENS profile"}
+            title={syncError ?? t("push_elo_label")}
             disabled={syncing}
             onClick={async () => {
               setSyncError(null);
@@ -316,7 +319,7 @@ export function ProfileBadge({ address }: { address: `0x${string}` }) {
         ) : null}
         {matchCount ? (
           <span
-            title="Matches played"
+            title={t("matches_played_label")}
             style={{
               borderRadius: "var(--cg-radius-sm)",
               background: "var(--cg-bg-3)",
@@ -331,7 +334,7 @@ export function ProfileBadge({ address }: { address: `0x${string}` }) {
           </span>
         ) : null}
         <button
-          title="Claim a new name"
+          title={t("claim_a_name")}
           onClick={() => setRenaming(true)}
           style={{ fontSize: 12, color: "var(--cg-fg-4)", background: "none", border: "none", cursor: "pointer", transition: "color 120ms" }}
           onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "var(--cg-fg-2)"; }}

@@ -20,6 +20,7 @@ import { generatePrivateKey } from "viem/accounts";
 import { AgentWalletPanel } from "../AgentWalletPanel";
 import { AgentVaultABI, MatchEscrowABI, useChainContracts } from "../contracts";
 import { useAppMode } from "../AppModeContext";
+import { useI18n } from "../i18n";
 
 const ZERO_ADDR = "0x0000000000000000000000000000000000000000" as `0x${string}`;
 const ZERO_BIG = BigInt(0);
@@ -59,6 +60,7 @@ function MatchInner() {
   >("idle");
   const [depositError, setDepositError] = useState<string | null>(null);
 
+  const { t } = useI18n();
   const { address, isConnected } = useAccount();
   const publicClient = usePublicClient();
   const { matchEscrow, agentVault } = useChainContracts();
@@ -78,12 +80,12 @@ function MatchInner() {
       return;
     }
     if (!isConnected || !address) {
-      setDepositError("Connect your wallet to stake.");
+      setDepositError(t("connect_to_stake"));
       setDepositStatus("error");
       return;
     }
     if (matchEscrow === ZERO_ADDR) {
-      setDepositError("MatchEscrow not deployed on this chain.");
+      setDepositError(t("escrow_not_deployed"));
       setDepositStatus("error");
       return;
     }
@@ -129,7 +131,7 @@ function MatchInner() {
           href="/"
           className="text-sm text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-50"
         >
-          ← Agents
+          {t("back_to_agents")}
         </Link>
         <span className="font-mono text-sm text-zinc-500 dark:text-zinc-400">
           Agent #{agentId}
@@ -140,20 +142,15 @@ function MatchInner() {
         {/* KeeperHub info card */}
         <div className="w-full rounded-xl border border-emerald-200 bg-emerald-50 p-6 dark:border-emerald-700/40 dark:bg-emerald-900/10">
           <h2 className="mb-2 text-lg font-semibold text-emerald-900 dark:text-emerald-200">
-            KeeperHub mode
+            {t("keeper_hub_mode")}
           </h2>
           <p className="text-sm leading-6 text-emerald-800 dark:text-emerald-300">
-            When you click <strong>Start Game</strong>, KeeperHub takes over
-            settlement. Your result is recorded on 0G Chain and your ELO is
-            updated automatically — even if you close the tab before the game
-            ends.
+            {t("keeper_hub_desc")}
           </p>
           <ul className="mt-3 space-y-1 text-xs text-emerald-700 dark:text-emerald-400">
-            <li>✓ drand dice — publicly verifiable randomness each turn</li>
-            <li>✓ ONNX move validation — every move audited on-chain</li>
-            <li>
-              ✓ automatic ELO settlement — no manual "Settle on-chain" click
-            </li>
+            <li>✓ {t("drand_dice_feature")}</li>
+            <li>✓ {t("onnx_validation_feature")}</li>
+            <li>✓ {t("auto_elo_feature")}</li>
           </ul>
         </div>
 
@@ -164,7 +161,7 @@ function MatchInner() {
               htmlFor="stake-eth"
               className="mb-2 block text-sm font-medium text-zinc-700 dark:text-zinc-300"
             >
-              Stake per side (ETH) — leave 0 for a free match
+              {t("stake_per_side_label")}
             </label>
             <input
               id="stake-eth"
@@ -180,9 +177,7 @@ function MatchInner() {
             {isStaked && (
               <>
                 <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
-                  You and the agent each deposit {stakeEth} ETH; winner takes the
-                  pot. Agent funds come from its on-chain vault below — top
-                  it up before staking.
+                  {t("stake_info").replace("{n}", stakeEth)}
                 </p>
                 <div className="mt-3">
                   <AgentWalletPanel agentId={agentId} stakeWei={stakeWei} />
@@ -191,17 +186,17 @@ function MatchInner() {
             )}
             {depositStatus === "human-pending" && (
               <p className="mt-3 text-xs text-amber-600 dark:text-amber-400">
-                Confirm the deposit in your wallet…
+                {t("confirm_deposit_wallet")}
               </p>
             )}
             {depositStatus === "agent-pending" && (
               <p className="mt-3 text-xs text-amber-600 dark:text-amber-400">
-                Agent depositing…
+                {t("agent_depositing")}
               </p>
             )}
             {depositStatus === "ready" && (
               <p className="mt-3 text-xs text-emerald-600 dark:text-emerald-400">
-                Both sides funded. Click Start to play.
+                {t("both_funded_start")}
               </p>
             )}
             {depositStatus === "error" && depositError && (
@@ -218,7 +213,7 @@ function MatchInner() {
           disabled={isDepositing}
           className="w-full rounded-lg bg-indigo-600 px-6 py-3 text-base font-semibold text-white shadow hover:bg-indigo-500 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 disabled:cursor-not-allowed disabled:bg-zinc-400"
         >
-          {isDepositing ? "Staking…" : `Start Game vs Agent #${agentId}`}
+          {isDepositing ? t("staking") : `${t("start_game_vs")}${agentId}`}
         </button>
       </main>
     </div>
