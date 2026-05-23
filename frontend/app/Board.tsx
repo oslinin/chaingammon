@@ -20,6 +20,7 @@ interface BoardProps {
   cubeValue?: number;       // current doubling cube value (1, 2, 4, 8…)
   cubeOwner?: number;       // -1 = centered, 0 = human, 1 = agent
   onCubeClick?: () => void; // called when the human clicks the cube to offer a double
+  playerAvatarUrls?: { warm: string; cool: string };
 }
 
 const FRAME = 20;
@@ -61,6 +62,7 @@ export function Board({
   cubeValue = 1,
   cubeOwner = -1,
   onCubeClick,
+  playerAvatarUrls,
 }: BoardProps) {
   const theme = BOARD_THEMES[themeKey] ?? BOARD_THEMES.walnut;
   // Image-based themes own the board look entirely — skip the SVG-painted
@@ -914,6 +916,42 @@ export function Board({
               />
             </>
           )}
+
+          {/* Player coin portrait avatars — only for image themes with defined avatar spots */}
+          {usingImage && playerAvatarUrls && theme.avatarSpots && (() => {
+            const av = theme.avatarSpots;
+            const p0cx = av.p0.cx * TOTAL_W;
+            const p0cy = av.p0.cy * TOTAL_H;
+            const p1cx = av.p1.cx * TOTAL_W;
+            const p1cy = av.p1.cy * TOTAL_H;
+            const r = av.r * TOTAL_H; // TOTAL_H (440) is always < TOTAL_W (716)
+            return (
+              <g>
+                <defs>
+                  <clipPath id="cg-av-p0">
+                    <circle cx={p0cx} cy={p0cy} r={r} />
+                  </clipPath>
+                  <clipPath id="cg-av-p1">
+                    <circle cx={p1cx} cy={p1cy} r={r} />
+                  </clipPath>
+                </defs>
+                <image
+                  href={playerAvatarUrls.warm}
+                  x={p0cx - r} y={p0cy - r}
+                  width={r * 2} height={r * 2}
+                  preserveAspectRatio="xMidYMid meet"
+                  clipPath="url(#cg-av-p0)"
+                />
+                <image
+                  href={playerAvatarUrls.cool}
+                  x={p1cx - r} y={p1cy - r}
+                  width={r * 2} height={r * 2}
+                  preserveAspectRatio="xMidYMid meet"
+                  clipPath="url(#cg-av-p1)"
+                />
+              </g>
+            );
+          })()}
 
           {/* Bear-Off Trays */}
           {renderBearOff()}

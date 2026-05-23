@@ -32,6 +32,7 @@ import {
 import { useAgentMatchSummary } from "../../useAgentMatchSummary";
 import { AgentWalletPanel } from "../../AgentWalletPanel";
 import { useOgWeights } from "../../useOgWeights";
+import { useI18n } from "../../i18n";
 
 const SERVER = process.env.NEXT_PUBLIC_SERVER_URL ?? "http://localhost:8000";
 
@@ -64,6 +65,7 @@ export default function AgentClient() {
   const router = useRouter();
   const { address: userAddress } = useAccount();
 
+  const { t } = useI18n();
   // SSR-safe mount guard — avoids hydration mismatch in the static export.
   const [mounted, setMounted] = useState(false);
   useEffect(() => {
@@ -317,7 +319,7 @@ export default function AgentClient() {
   }, [burnSuccess, router]);
 
   const handleBurn = () => {
-    if (!confirm("Are you sure you want to permanently delete this agent? This cannot be undone.")) return;
+    if (!confirm(t("confirm_burn"))) return;
     writeContract({
       address: agentRegistry,
       abi: AgentRegistryABI,
@@ -339,10 +341,10 @@ export default function AgentClient() {
           href="/"
           className="text-sm text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-50"
         >
-          ← Home
+          {t("back_home")}
         </Link>
         <h1 className="text-lg font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
-          Agent Info
+          {t("agent_info")}
         </h1>
         <div className="flex items-center gap-2">
           {isContractOwner && (
@@ -351,7 +353,7 @@ export default function AgentClient() {
               disabled={burnSigning || burnConfirming}
               className="rounded-md bg-red-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-500 disabled:opacity-50"
             >
-              {burnSigning ? "Signing..." : burnConfirming ? "Burning..." : "Burn Agent"}
+              {burnSigning ? t("signing") : burnConfirming ? t("burning") : t("burn_agent")}
             </button>
           )}
           <div className="w-8" />
@@ -375,7 +377,7 @@ export default function AgentClient() {
               className="shrink-0 rounded bg-emerald-100 px-2 py-0.5 font-mono text-sm text-emerald-800 dark:bg-emerald-900 dark:text-emerald-200"
               title="Games trained — match_count embedded in the 0G Storage checkpoint blob"
             >
-              {ogWeights.match_count} trained
+              {t("n_trained").replace("{n}", String(ogWeights.match_count))}
             </span>
           )}
           {matchesPlayed !== undefined && matchesPlayed > 0 && (
@@ -383,7 +385,7 @@ export default function AgentClient() {
               className="shrink-0 rounded bg-indigo-100 px-2 py-0.5 font-mono text-sm text-indigo-800 dark:bg-indigo-900 dark:text-indigo-200"
               title="Matches played — derived from MatchRegistry.MatchRecorded events"
             >
-              {matchesPlayed} played
+              {t("n_played_badge").replace("{n}", String(matchesPlayed))}
             </span>
           )}
         </div>
@@ -400,7 +402,7 @@ export default function AgentClient() {
         >
           <div className="mb-4 flex items-center gap-3">
             <h3 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">
-              On-chain data
+              {t("on_chain_data")}
             </h3>
             {explorerUrl && agentRegistry && agentId > 0 && (
               <a
@@ -566,7 +568,7 @@ export default function AgentClient() {
           className="rounded-lg border border-zinc-200 bg-white p-6 dark:border-zinc-800 dark:bg-zinc-900"
         >
           <h3 className="mb-4 text-sm font-semibold uppercase tracking-wide text-zinc-500">
-            0G Storage hashes
+            {t("storage_hashes")}
           </h3>
           <dl className="flex flex-col gap-4 text-sm">
             <InfoField
@@ -598,7 +600,7 @@ export default function AgentClient() {
           className="rounded-lg border border-zinc-200 bg-white p-6 dark:border-zinc-800 dark:bg-zinc-900"
         >
           <h3 className="mb-1 text-sm font-semibold uppercase tracking-wide text-zinc-500">
-            Neural network weights
+            {t("nn_weights")}
           </h3>
           <p className="mb-4 text-xs text-zinc-500">
             Fetched directly from 0G Storage in the browser. Changes after each

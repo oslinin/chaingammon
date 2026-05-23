@@ -23,6 +23,7 @@ import { useEffect, useRef, useState } from "react";
 import { evaluateMoves } from "../lib/onnx_eval";
 import { generateLegalMoves } from "../lib/rules_engine";
 import { tagCandidates } from "../lib/move_tagger";
+import { useI18n } from "./i18n";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -112,6 +113,7 @@ export function AgentTeammatePanel({
   disabled = false,
   noLLM = false,
 }: Props) {
+  const { t } = useI18n();
   const [taggedCandidates, setTaggedCandidates] = useState<TaggedCandidate[]>([]);
   const [loadingCandidates, setLoadingCandidates] = useState(false);
   const [candidatesRanked, setCandidatesRanked] = useState(false);
@@ -241,10 +243,10 @@ export function AgentTeammatePanel({
   const handleSend = () => void sendStrategy(strategyInput);
 
   const QUICK_ACTIONS = [
-    "Play safe",
-    "Be aggressive",
-    "Validate my intuition",
-    "Build a prime",
+    t("quick_play_safe"),
+    t("quick_aggressive"),
+    t("quick_validate"),
+    t("quick_prime"),
   ];
 
   // ── Render ─────────────────────────────────────────────────────────────
@@ -280,10 +282,10 @@ export function AgentTeammatePanel({
               fontFamily: "var(--cg-font-sans)",
             }}
           >
-            {noLLM ? "Move advisor" : "Agent teammate"}
+            {noLLM ? t("move_advisor") : t("agent_teammate")}
           </span>
           <span style={{ fontSize: 10, color: "var(--cg-fg-4)" }}>
-            {noLLM ? "· ONNX-ranked moves" : "· AI micro-tactics"}
+            {noLLM ? t("onnx_ranked_moves") : t("ai_micro_tactics")}
           </span>
         </div>
       </div>
@@ -306,7 +308,7 @@ export function AgentTeammatePanel({
               }}
               className="animate-pulse"
             >
-              Evaluating moves…
+              {t("evaluating_moves")}
             </p>
           )}
           {taggedCandidates.length > 0 && (
@@ -321,7 +323,7 @@ export function AgentTeammatePanel({
                   color: "var(--cg-fg-4)",
                 }}
               >
-                {candidatesRanked ? "Top moves this turn" : "Legal moves this turn"}
+                {candidatesRanked ? t("top_moves") : t("legal_moves")}
               </p>
               <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
                 {taggedCandidates.map((c, i) => {
@@ -468,7 +470,7 @@ export function AgentTeammatePanel({
             style={{ fontSize: 12, color: "var(--cg-fg-3)", fontFamily: "var(--cg-font-sans)" }}
             className="animate-pulse"
           >
-            Agent teammate is thinking…
+            {t("teammate_thinking")}
           </p>
         )}
       </div>
@@ -488,11 +490,7 @@ export function AgentTeammatePanel({
           value={strategyInput}
           onChange={(e) => setStrategyInput(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && handleSend()}
-          placeholder={
-            disabled
-              ? "Waiting for your turn…"
-              : "Tell me your strategy…"
-          }
+          placeholder={disabled ? t("waiting_turn") : t("tell_strategy")}
           disabled={disabled || sending}
           style={{
             flex: 1,
@@ -522,7 +520,7 @@ export function AgentTeammatePanel({
           }}
           className="disabled:opacity-40 disabled:cursor-not-allowed"
         >
-          {sending ? "…" : "Ask"}
+          {sending ? "…" : t("ask_btn")}
         </button>
       </div>
     </div>

@@ -47,6 +47,12 @@ export interface BoardTheme {
     leftOffX: number;    // left tray x (agent/P1 bear-off)
     rightOffX: number;   // right tray x (human/P0 bear-off)
   };
+  /** Portrait avatar spots for player coin display (image themes only). All values fractions of 716×440. */
+  avatarSpots?: {
+    p0: { cx: number; cy: number };  // human/warm player avatar center
+    p1: { cx: number; cy: number };  // agent/cool player avatar center
+    r: number;                        // avatar circle radius as fraction of min(716,440)=440
+  };
   frameStart: string;
   frameEnd: string;
   frameInner: string;
@@ -391,12 +397,160 @@ export const BOARD_THEMES: Record<string, BoardTheme> = {
     checkerWarm: { fill: "#00CC88", stroke: "#009966" },
     checkerCool: { fill: "#FF3366", stroke: "#CC0044" },
   },
+
+  board_steampunk: {
+    label: "Steampunk — Brass & Iron",
+    backgroundImageUrl: "/boards/new/board4/board.png",
+    backgroundImageCrop: { srcX: 51, srcY: 88, srcW: 1217, srcH: 611, totalSrcW: 1344, totalSrcH: 768 },
+    checkerImages: {
+      warm: "/boards/new/board4/warm.svg",
+      cool: "/boards/new/board4/cool.svg",
+    },
+    checkerSpots: {
+      columnsX: [0.0377, 0.1096, 0.1815, 0.2534, 0.3254, 0.3973, 0.6181, 0.6900, 0.7620, 0.8339, 0.9058, 0.9777],
+      topY: 0.1195,
+      bottomY: 0.8494,
+      barX: 0.5103,
+      barTopY: 0.1347,
+      barBottomY: 0.8342,
+      leftOffX: 0.02,
+      rightOffX: 0.98,
+    },
+    avatarSpots: {
+      p0: { cx: 0.04, cy: 0.88 },
+      p1: { cx: 0.96, cy: 0.12 },
+      r: 0.06,
+    },
+    frameStart: "#2A1A08", frameEnd: "#150D04", frameInner: "#0A0602",
+    felt: "#1A1008", feltAccent: "#241808",
+    pointLight: "#C89030", pointDark: "#3A2010",
+    pointStroke: "rgba(200,144,48,0.3)",
+    bar: "#150D04", barEdge: "#0A0602",
+    rail: "#150D04", railText: "#C89030",
+    checkerWarm: { fill: "#E0A040", stroke: "#A06010" },
+    checkerCool: { fill: "#2A1A08", stroke: "#000000" },
+  },
+
+  board_celtic: {
+    label: "Celtic — Ornate Green",
+    backgroundImageUrl: "/boards/new/board1/board.png",
+    backgroundImageCrop: { srcX: 0, srcY: 128, srcW: 1024, srcH: 856, totalSrcW: 1024, totalSrcH: 1024 },
+    checkerImages: {
+      warm: "/boards/new/board1/warm.svg",
+      cool: "/boards/new/board1/cool.svg",
+    },
+    checkerSpots: {
+      columnsX: [0.0996, 0.1650, 0.2305, 0.2959, 0.3613, 0.4268, 0.5742, 0.6396, 0.7051, 0.7705, 0.8359, 0.8994],
+      topY: 0.1647,
+      bottomY: 0.8353,
+      barX: 0.4854,
+      barTopY: 0.4229,
+      barBottomY: 0.5748,
+      leftOffX: 0.02,
+      rightOffX: 0.98,
+    },
+    avatarSpots: {
+      p0: { cx: 0.04, cy: 0.88 },
+      p1: { cx: 0.96, cy: 0.12 },
+      r: 0.06,
+    },
+    // Fallback SVG colors — match the green/gold board art:
+    frameStart: "#2D5A1B", frameEnd: "#1A3A0F", frameInner: "#0F2208",
+    felt: "#1A4A10", feltAccent: "#244F16",
+    pointLight: "#E8C84A", pointDark: "#0A2A06",
+    pointStroke: "rgba(0,0,0,0.3)",
+    bar: "#1A3A0F", barEdge: "#0F2208",
+    rail: "#1A3A0F", railText: "#E8C84A",
+    checkerWarm: { fill: "#8B4513", stroke: "#5C2D0A" },
+    checkerCool: { fill: "#40B8B8", stroke: "#1A8A8A" },
+  },
+  board_medieval: {
+    label: "Medieval — Dark Wood",
+    frameStart: "#3D1F0A", frameEnd: "#1C0D04", frameInner: "#0C0602",
+    felt: "#2A1208", feltAccent: "#3A1A0A",
+    pointLight: "#C8A060", pointDark: "#3A1A0A", pointStroke: "rgba(0,0,0,0.4)",
+    bar: "#1C0D04", barEdge: "#0C0602", rail: "#1C0D04", railText: "#C8A060",
+    checkerWarm: { fill: "#E8D8B0", stroke: "#A09060" },
+    checkerCool: { fill: "#2A1A0A", stroke: "#000000" },
+  },
+  board_roman: {
+    label: "Roman — Marble Court",
+    backgroundImageUrl: "/boards/new/board3/board.png",
+    backgroundImageCrop: { srcX: 168, srcY: 185, srcW: 990, srcH: 570, totalSrcW: 1248, totalSrcH: 832 },
+    checkerImages: {
+      warm: "/boards/new/board3/warm.svg",
+      cool: "/boards/new/board3/cool.svg",
+    },
+    checkerSpots: {
+      columnsX: [0.0374, 0.1121, 0.1869, 0.2616, 0.3374, 0.4121, 0.5879, 0.6626, 0.7374, 0.8121, 0.8879, 0.9626],
+      topY: 0.2544,
+      bottomY: 0.8684,
+      barX: 0.5000,
+      barTopY: 0.2544,
+      barBottomY: 0.8684,
+      leftOffX: 0.03,
+      rightOffX: 0.97,
+    },
+    avatarSpots: {
+      p0: { cx: 0.103, cy: 0.035 },
+      p1: { cx: 0.871, cy: 0.035 },
+      r: 0.044,
+    },
+    // Fallback SVG colors — marble cream + dark red:
+    frameStart: "#5A3820", frameEnd: "#3A2010", frameInner: "#1A1008",
+    felt: "#D8C8A8", feltAccent: "#E8D8C0",
+    pointLight: "#F0E8D0", pointDark: "#8B1A1A", pointStroke: "rgba(0,0,0,0.2)",
+    bar: "#A89878", barEdge: "#7A6848", rail: "#7A6848", railText: "#2A1008",
+    checkerWarm: { fill: "#F5F0E8", stroke: "#C8B89A" },
+    checkerCool: { fill: "#4A2010", stroke: "#2A1008" },
+  },
+  board_darkwood: {
+    label: "Dark Wood — Tavern Table",
+    frameStart: "#3A2010", frameEnd: "#1E1008", frameInner: "#0E0804",
+    felt: "#1A0E06", feltAccent: "#241408",
+    pointLight: "#B88040", pointDark: "#2A1408", pointStroke: "rgba(0,0,0,0.4)",
+    bar: "#1E1008", barEdge: "#0E0804", rail: "#1E1008", railText: "#B88040",
+    checkerWarm: { fill: "#E8D0A0", stroke: "#A09060" },
+    checkerCool: { fill: "#241408", stroke: "#000000" },
+  },
+  board_cyber2: {
+    label: "Cyber — Neural Grid",
+    backgroundImageUrl: "/boards/new/board6/board.png",
+    backgroundImageCrop: { srcX: 183, srcY: 90, srcW: 973, srcH: 598, totalSrcW: 1344, totalSrcH: 768 },
+    checkerImages: {
+      warm: "/boards/new/board6/warm.svg",
+      cool: "/boards/new/board6/cool.svg",
+    },
+    checkerSpots: {
+      columnsX: [0.2199, 0.2610, 0.3022, 0.3433, 0.3844, 0.4255, 0.5899, 0.6413, 0.6927, 0.7441, 0.7955, 0.8469],
+      topY: 0.1672,
+      bottomY: 0.7943,
+      barX: 0.5077,
+      barTopY: 0.2007,
+      barBottomY: 0.6689,
+      leftOffX: 0.04,
+      rightOffX: 0.96,
+    },
+    avatarSpots: {
+      p0: { cx: 0.04, cy: 0.88 },
+      p1: { cx: 0.96, cy: 0.12 },
+      r: 0.06,
+    },
+    // Fallback SVG colors — cyber green + red:
+    frameStart: "#0A0A0A", frameEnd: "#000000", frameInner: "#000000",
+    felt: "#050505", feltAccent: "#0A0A0A",
+    pointLight: "#00CC44", pointDark: "#CC0022", pointStroke: "rgba(0,204,68,0.4)",
+    bar: "#0A0A0A", barEdge: "#000000", rail: "#0A0A0A", railText: "#00CC44",
+    checkerWarm: { fill: "#00CC44", stroke: "#009933" },
+    checkerCool: { fill: "#CC0022", stroke: "#990019" },
+  },
 };
 
 export const THEME_ORDER = [
   "walnut", "emerald", "slate", "onyx", "linen",
   "nard", "tabula", "east_asian", "english", "manhattan", "neural_net",
   "board_desert", "board_classic", "board_asian", "board_minimal", "board_adventure", "board_scifi",
+  "board_celtic", "board_medieval", "board_roman", "board_steampunk", "board_darkwood", "board_cyber2",
 ] as const;
 export type BoardThemeKey = typeof THEME_ORDER[number];
 
@@ -418,4 +572,27 @@ export function loadTheme(): BoardThemeKey {
 
 export function saveTheme(key: BoardThemeKey) {
   localStorage.setItem(STORAGE_KEY, key);
+}
+
+/** URLs for the 6 historical coin portrait avatars. */
+export const COIN_POOL = [
+  '/boards/new/coins/coin1.svg',
+  '/boards/new/coins/coin2.svg',
+  '/boards/new/coins/coin3.svg',
+  '/boards/new/coins/coin4.svg',
+  '/boards/new/coins/coin5.svg',
+  '/boards/new/coins/coin6.svg',
+] as const;
+
+/**
+ * Pick 2 distinct coins from the pool for a game session.
+ * warm = P0 (human, bottom), cool = P1 (agent, top).
+ * Call once per game start and store the result in component state.
+ */
+export function pickGameCoins(): { warm: string; cool: string } {
+  const pool = [...COIN_POOL];
+  const i1 = Math.floor(Math.random() * pool.length);
+  const [warm] = pool.splice(i1, 1);
+  const i2 = Math.floor(Math.random() * pool.length);
+  return { warm, cool: pool[i2] };
 }

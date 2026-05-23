@@ -26,7 +26,7 @@ import {
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 
 import { Board } from "../Board";
-import { loadTheme, saveTheme, type BoardThemeKey } from "../boardThemes";
+import { loadTheme, saveTheme, pickGameCoins, BOARD_THEMES, type BoardThemeKey } from "../boardThemes";
 import { AgentTeammatePanel } from "../ChiefOfStaffPanel";
 import { DiceRoll } from "../DiceRoll";
 import { rollDice } from "../dice";
@@ -51,6 +51,7 @@ import { CubeTransactionOverlay } from "./CubeTransactionOverlay";
 import { loadAgentModel } from "../../lib/onnx_eval";
 import { loadAgentOnnxBytes } from "../../lib/agent_model_loader";
 import { type Board as GameBoard } from "../../lib/rules_engine";
+import { useI18n } from "../i18n";
 
 const ZERO_HASH =
   "0x0000000000000000000000000000000000000000000000000000000000000000" as `0x${string}`;
@@ -220,6 +221,7 @@ function WrongNetworkBanner({
   switchError: string | null;
   onSwitch: () => void;
 }) {
+  const { t } = useI18n();
   const [isMobile, setIsMobile] = useState(false);
   useEffect(() => {
     setIsMobile(
@@ -247,8 +249,8 @@ function WrongNetworkBanner({
       }}
     >
       <div>
-        Your wallet is on <strong>{fromLabel}</strong>. Switch to{" "}
-        <strong>{targetChainName}</strong> to continue.
+        {t("wallet_on_network")} <strong>{fromLabel}</strong>. {t("switch_to")}{" "}
+        <strong>{targetChainName}</strong> {t("to_continue")}
       </div>
       <button
         type="button"
@@ -267,16 +269,11 @@ function WrongNetworkBanner({
           opacity: isSwitching ? 0.6 : 1,
         }}
       >
-        {isSwitching ? "Switching…" : `Switch to ${targetChainName}`}
+        {isSwitching ? t("switching") : t("switch_to_chain").replace("{chain}", targetChainName)}
       </button>
       {isMobile && (
         <div style={{ fontSize: 11, color: "var(--cg-fg-3)", lineHeight: 1.5 }}>
-          On MetaMask Mobile the in-app browser may reload after the switch.
-          If the page comes back and still says wrong network, switch
-          directly inside MetaMask: tap the network selector at the top of
-          the app, pick <strong>{targetChainName}</strong>, then return to
-          this tab. Enable test networks under Settings → Advanced if{" "}
-          {targetChainName} isn&apos;t listed.
+          {t("metamask_mobile_hint").replace(/{chain}/g, targetChainName)}
         </div>
       )}
       {switchError && (
@@ -306,11 +303,12 @@ function SettlementBanner({
   error: string | null;
   onRetry: () => void;
 }) {
+  const { t } = useI18n();
   if (status === "settling") {
     return (
       <div style={{ marginTop: 12 }}>
         <p style={{ fontSize: 14, color: "var(--cg-fg-3)" }} className="animate-pulse">
-          Submitting on-chain settlement…
+          {t("settling")}
         </p>
         {txHash && (
           <p style={{ marginTop: 4, fontSize: 12, fontFamily: "var(--cg-font-mono)", color: "var(--cg-fg-3)" }}>
@@ -332,7 +330,7 @@ function SettlementBanner({
         }}
       >
         <p style={{ fontSize: 14, fontWeight: 600, color: "var(--cg-success)" }}>
-          Match recorded on-chain.
+          {t("settled")}
         </p>
         {txHash && (
           <p style={{ marginTop: 4, fontSize: 12, fontFamily: "var(--cg-font-mono)", color: "var(--cg-fg-3)" }}>
@@ -346,7 +344,7 @@ function SettlementBanner({
     return (
       <div style={{ marginTop: 12 }}>
         <p style={{ fontSize: 12, color: "var(--cg-danger)" }}>
-          Settlement failed: {error ?? "unknown error"}
+          {t("settlement_failed")} {error ?? "unknown error"}
         </p>
         <button
           type="button"
@@ -363,7 +361,7 @@ function SettlementBanner({
             cursor: "pointer",
           }}
         >
-          Retry
+          {t("retry")}
         </button>
       </div>
     );
@@ -449,6 +447,7 @@ function TeamDemoPageInner() {
   const [settleTxHash, setSettleTxHash] = useState<`0x${string}` | null>(null);
   const [hasStaleSession, setHasStaleSession] = useState(false);
   const [boardTheme, setBoardTheme] = useState<BoardThemeKey>(() => loadTheme());
+  const [gameCoins, setGameCoins] = useState<{ warm: string; cool: string } | null>(null);
   useEffect(() => {
     const handler = (e: Event) => setBoardTheme((e as CustomEvent<BoardThemeKey>).detail);
     window.addEventListener("board-theme-change", handler);
@@ -460,6 +459,7 @@ function TeamDemoPageInner() {
   const [pendingOffer, setPendingOffer] = useState<MatchState | null>(null);
   const [cubeProcessing, setCubeProcessing] = useState(false);
 
+  const { t } = useI18n();
   const { address, chain: walletChain, chainId: walletChainId } = useAccount();
   const chainId = useActiveChainId();
   const activeChain = useActiveChain();
@@ -684,6 +684,7 @@ function TeamDemoPageInner() {
     try {
       const state = newMatch(3);
       setGame({ ...state, dice: rollDice() });
+      setGameCoins(pickGameCoins());
     } catch (e) {
       setError(String(e));
     }
@@ -830,6 +831,7 @@ function TeamDemoPageInner() {
       }
       const state = newMatch(3);
       setGame({ ...state, dice: rollDice() });
+      setGameCoins(pickGameCoins());
     } catch (e) {
       setError(String(e));
     } finally {
@@ -936,7 +938,7 @@ function TeamDemoPageInner() {
     if (!walletOnSupportedChain) {
       setSettleStatus("error");
       setSettleError(
-        "Switch your wallet to Sepolia (or 0G Galileo Testnet) before settling.",
+        t("switch_to_chain").replace("{chain}", activeChain?.chain.name ?? "Sepolia"),
       );
       return;
     }
@@ -1143,7 +1145,7 @@ function TeamDemoPageInner() {
 
   const doForfeit = () => {
     if (!game || game.game_over) return;
-    if (!window.confirm("Resign this match? You'll be marked as the loser.")) return;
+    if (!window.confirm(`${t("resign")}? You'll be marked as the loser.`)) return;
     try {
       setGame(resignMatch(game));
     } catch (e) {
@@ -1276,20 +1278,18 @@ function TeamDemoPageInner() {
           <h1
             style={{ color: "var(--cg-fg-1)", fontWeight: 500, fontSize: 24, fontFamily: "var(--cg-font-sans)" }}
           >
-            {settleOnChain ? "On-chain game" : "Off-chain game"}
+            {settleOnChain ? t("onchain_game") : t("offchain_game")}
           </h1>
           <p style={{ color: "var(--cg-fg-2)", fontSize: 14 }}>
-            {settleOnChain
-              ? "Pick your opponent, then review the KeeperHub settlement terms before the match starts. Your rating is updated on-chain when the game ends."
-              : "Configure a training match (no settlement). Play alongside an AI teammate against an opposing agent."}
+            {settleOnChain ? t("onchain_game_desc") : t("offchain_game_desc")}
           </p>
         </header>
 
         <section className="flex flex-col gap-4">
           <h2 style={eyebrow}>
-            Choose your teammate{" "}
+            {t("choose_teammate")}{" "}
             <span style={{ textTransform: "none", fontWeight: 400, color: "var(--cg-fg-4)" }}>
-              (optional — skip to play solo)
+              {t("teammate_optional")}
             </span>
           </h2>
           <div className="flex flex-wrap gap-2">
@@ -1332,7 +1332,7 @@ function TeamDemoPageInner() {
         </section>
 
         <section className="flex flex-col gap-4">
-          <h2 style={eyebrow}>Choose opponents</h2>
+          <h2 style={eyebrow}>{t("choose_opponents")}</h2>
           <div className="flex flex-wrap gap-2">
             {agents.map((a) => {
               const active = opponentIds.includes(a.agent_id);
@@ -1388,7 +1388,7 @@ function TeamDemoPageInner() {
           }}
           className="disabled:opacity-40"
         >
-          {settleOnChain ? "Next: KeeperHub setup →" : "Start off-chain game"}
+          {settleOnChain ? t("next_keeperhub") : t("start_offchain")}
         </button>
       </main>
     );
@@ -1402,7 +1402,7 @@ function TeamDemoPageInner() {
         style={{ color: "var(--cg-fg-3)", fontFamily: "var(--cg-font-sans)" }}
         className="flex flex-1 items-center justify-center"
       >
-        Loading board…
+        {t("loading_board")}
       </div>
     );
   }
@@ -1425,7 +1425,7 @@ function TeamDemoPageInner() {
             }}
           >
             {(() => {
-              const prefix = settleOnChain ? "Official game" : "Off-chain game";
+              const prefix = settleOnChain ? t("official_game") : t("offchain_game");
               const oppLabel = primaryOpponentId
                 ? `Agent ${primaryOpponentId}${opponentElo !== undefined ? ` (ELO ${opponentElo})` : ""}`
                 : `Agents [${opponentIds.join(",")}]`;
@@ -1460,7 +1460,7 @@ function TeamDemoPageInner() {
             }}
             className="animate-pulse"
           >
-            Sign the match authorization in your wallet to start.
+            {t("sign_match_auth")}
           </div>
         )}
         {settleOnChain && settleStatus === "auth-rejected" && (
@@ -1474,7 +1474,7 @@ function TeamDemoPageInner() {
               color: "var(--cg-danger)",
             }}
           >
-            Authorization rejected. Reload to try again.
+            {t("auth_rejected")}
             {settleError && (
               <span style={{ display: "block", marginTop: 4, fontSize: 11, color: "var(--cg-fg-3)" }}>
                 {settleError}
@@ -1494,9 +1494,7 @@ function TeamDemoPageInner() {
             }}
           >
             <p style={{ marginBottom: 6 }}>
-              You left a previous match against agent {primaryOpponentId} unfinished. Submit the
-              forfeit to update ratings — or just keep playing this new match (the unfinished one
-              will overwrite when you settle).
+              {t("stale_session").replace("{n}", String(primaryOpponentId))}
             </p>
             <button
               type="button"
@@ -1512,7 +1510,7 @@ function TeamDemoPageInner() {
                 cursor: "pointer",
               }}
             >
-              Submit forfeit
+              {t("submit_forfeit")}
             </button>
           </div>
         )}
@@ -1545,11 +1543,16 @@ function TeamDemoPageInner() {
               onBarClick={isHumanTurn && currentBar[0] > 0 ? () => setSelectedSource(25) : undefined}
               onOffClick={isHumanTurn && selectedSource !== null ? () => stageMove(selectedSource === 25 ? "bar" : selectedSource, "off") : undefined}
               selectedPoint={selectedSource}
+              playerAvatarUrls={
+                BOARD_THEMES[boardTheme]?.backgroundImageUrl && gameCoins
+                  ? gameCoins
+                  : undefined
+              }
             />
 
             {game.dice && (
               <div className="flex items-center gap-3">
-                <span style={{ color: "var(--cg-fg-3)", fontSize: 13 }}>Rolled:</span>
+                <span style={{ color: "var(--cg-fg-3)", fontSize: 13 }}>{t("rolled")}</span>
                 <DiceRoll dice={game.dice} />
               </div>
             )}
@@ -1557,7 +1560,7 @@ function TeamDemoPageInner() {
             {stagedMoves.length > 0 && (
               <div className="flex items-center gap-3">
                 <p style={{ color: "var(--cg-brass)", fontSize: 12 }}>
-                  {stagedMoves.length}/{diceCount} moves staged
+                  {t("moves_staged").replace("{n}", String(stagedMoves.length)).replace("{m}", String(diceCount))}
                 </p>
                 <button
                   onClick={() => {
@@ -1568,7 +1571,7 @@ function TeamDemoPageInner() {
                   style={{ color: "var(--cg-fg-3)", fontSize: 12, background: "none", border: "none", cursor: "pointer" }}
                   className="underline"
                 >
-                  Undo
+                  {t("undo")}
                 </button>
                 {stagedMoves.length > 0 && (
                   <button
@@ -1585,7 +1588,7 @@ function TeamDemoPageInner() {
                       boxShadow: "var(--cg-shadow-1)",
                     }}
                   >
-                    Commit move
+                    {t("commit_move")}
                   </button>
                 )}
               </div>
@@ -1600,7 +1603,7 @@ function TeamDemoPageInner() {
                 style={{ color: "var(--cg-fg-3)", fontSize: 14 }}
                 className="animate-pulse"
               >
-                {fastForward ? "Fast forwarding…" : "Opponent team is thinking…"}
+                {fastForward ? t("fast_forwarding") : t("opponent_thinking")}
               </p>
             )}
 
@@ -1641,7 +1644,7 @@ function TeamDemoPageInner() {
                   }}
                   className="disabled:opacity-50"
                 >
-                  {fastForward ? "Fast forwarding…" : "Fast forward"}
+                  {fastForward ? t("fast_forwarding") : t("fast_forward")}
                 </button>
                 <button
                   type="button"
@@ -1660,7 +1663,7 @@ function TeamDemoPageInner() {
                   }}
                   className="disabled:opacity-50"
                 >
-                  Resign
+                  {t("resign")}
                 </button>
               </div>
             )}
@@ -1677,11 +1680,11 @@ function TeamDemoPageInner() {
                 >
                   {game.winner === 0
                     ? teammateIds.length > 0
-                      ? "Your team wins."
-                      : "You win."
+                      ? t("your_team_wins")
+                      : t("you_win")
                     : primaryOpponentId
-                    ? `Agent ${primaryOpponentId} wins.`
-                    : "Opponents win."}
+                    ? t("agent_wins").replace("{n}", String(primaryOpponentId))
+                    : t("opponents_win")}
                 </p>
 
                 {settleOnChain ? (
@@ -1794,7 +1797,7 @@ function TeamDemoPageInner() {
               padding: 12,
             }}
           >
-            <h3 style={eyebrow}>Manual move</h3>
+            <h3 style={eyebrow}>{t("manual_move")}</h3>
             <div className="flex gap-2">
               <input
                 value={moveInput}

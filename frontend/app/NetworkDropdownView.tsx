@@ -13,6 +13,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import type { ChainEntry } from "./chains";
+import { useI18n } from "./i18n";
 
 interface Props {
   activeChainId: number;
@@ -29,6 +30,7 @@ export function NetworkDropdownView({
   error = null,
   onSwitch,
 }: Props) {
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
 
@@ -55,8 +57,8 @@ export function NetworkDropdownView({
   const onWrongChain = !activeEntry;
 
   let triggerLabel: string;
-  if (isPending) triggerLabel = "Switching…";
-  else if (onWrongChain) triggerLabel = "Wrong network";
+  if (isPending) triggerLabel = t("switching");
+  else if (onWrongChain) triggerLabel = t("wrong_network");
   else triggerLabel = activeEntry.chain.name;
 
   return (

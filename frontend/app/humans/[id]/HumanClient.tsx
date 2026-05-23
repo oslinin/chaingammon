@@ -10,6 +10,7 @@ import { useActiveChain, useActiveChainId } from "../../chains";
 import { MatchRegistryABI, useChainContracts } from "../../contracts";
 import { useHumanMatchSummary } from "../../useHumanMatchSummary";
 import { useChaingammonName } from "../../useChaingammonName";
+import { useI18n } from "../../i18n";
 
 const SUBNAME_MINTED_EVENT = parseAbiItem(
   "event SubnameMinted(string label, bytes32 indexed node, address indexed subnameOwner, uint256 inftId)",
@@ -19,6 +20,7 @@ const MAX_BLOCK_RANGE = BigInt(49_000);
 export default function HumanClient() {
   const params = useParams();
 
+  const { t } = useI18n();
   // SSR-safe mount guard
   const [mounted, setMounted] = useState(false);
   useEffect(() => {
@@ -144,10 +146,10 @@ export default function HumanClient() {
           href="/"
           className="text-sm text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-50"
         >
-          ← Home
+          {t("back_home")}
         </Link>
         <h1 className="text-lg font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
-          Player Info
+          {t("player_info")}
         </h1>
         <div className="w-8" />
       </header>
@@ -156,17 +158,17 @@ export default function HumanClient() {
         {/* Identity row */}
         <div className="flex flex-wrap items-center gap-3">
           <h2 className="break-all font-mono text-xl font-bold text-zinc-900 dark:text-zinc-50">
-            {displayName || targetAddress || "Loading..."}
+            {displayName || targetAddress || t("loading")}
           </h2>
           <span className="shrink-0 rounded bg-zinc-100 px-2 py-0.5 font-mono text-sm text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
-            Human
+            {t("human_badge")}
           </span>
           {matchesPlayed !== undefined && matchesPlayed > 0 && (
             <span
               className="shrink-0 rounded bg-indigo-100 px-2 py-0.5 font-mono text-sm text-indigo-800 dark:bg-indigo-900 dark:text-indigo-200"
               title="Matches played — derived from MatchRegistry.MatchRecorded events"
             >
-              {matchesPlayed} played
+              {t("n_played_badge").replace("{n}", String(matchesPlayed))}
             </span>
           )}
         </div>
@@ -178,7 +180,7 @@ export default function HumanClient() {
         >
           <div className="mb-4 flex items-center gap-3">
             <h3 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">
-              On-chain data
+              {t("on_chain_data")}
             </h3>
             {explorerUrl && targetAddress && (
               <a
@@ -241,7 +243,7 @@ export default function HumanClient() {
           className="rounded-lg border border-zinc-200 bg-white p-6 dark:border-zinc-800 dark:bg-zinc-900"
         >
           <h3 className="mb-4 text-sm font-semibold uppercase tracking-wide text-zinc-500">
-            0G Storage hashes
+            {t("storage_hashes")}
           </h3>
           <dl className="flex flex-col gap-4 text-sm">
             <InfoField
@@ -267,10 +269,10 @@ export default function HumanClient() {
           className="rounded-lg border border-zinc-200 bg-white p-6 dark:border-zinc-800 dark:bg-zinc-900"
         >
           <h3 className="mb-1 text-sm font-semibold uppercase tracking-wide text-zinc-500">
-            Neural network weights
+            {t("nn_weights")}
           </h3>
           <p className="mb-4 text-xs text-zinc-500">
-            Human players rely on their own brain. No weights to display.
+            {t("nn_human_desc")}
           </p>
 
           <div className="mb-3 flex flex-wrap gap-2">
@@ -280,7 +282,7 @@ export default function HumanClient() {
           </div>
 
           <p className="mb-4 text-sm italic text-zinc-600 dark:text-zinc-400">
-            This human player relies on natural intelligence — no measurable artificial playing style yet.
+            {t("nn_human_italic")}
           </p>
 
         </section>
