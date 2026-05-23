@@ -1410,7 +1410,7 @@ function TeamDemoPageInner() {
   // ── Game screen ───────────────────────────────────────────────────────────
 
   return (
-    <main className="mx-auto flex w-full max-w-5xl flex-1 flex-col gap-6 p-6 lg:flex-row">
+    <main className="mx-auto flex w-full max-w-5xl flex-1 flex-col gap-6 p-6 landscape:max-lg:flex-row lg:flex-row">
       <div className="flex flex-1 flex-col gap-6">
         {/* Match header */}
         <header
@@ -1734,7 +1734,7 @@ function TeamDemoPageInner() {
           overflow: "hidden",
           ...(panelPos ? { boxShadow: "var(--cg-shadow-2)" } : {}),
         }}
-        className="w-full lg:w-80"
+        className="w-full landscape:max-lg:w-56 lg:w-80"
       >
         {/* Drag handle */}
         <div
