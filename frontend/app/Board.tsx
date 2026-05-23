@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useRef, useState, PointerEvent } from "react";
-import { BOARD_THEMES, type BoardThemeKey } from "./boardThemes";
+import { BOARD_THEMES, type BoardThemeKey, type CheckerImageSpec } from "./boardThemes";
 
 interface BoardProps {
   board: number[];          // length 24; board[i] = checkers on point (i+1). Positive = player 0, negative = player 1
@@ -349,34 +349,32 @@ export function Board({
   };
 
   const renderChecker = (cx: number, cy: number, isP0: boolean, key: string, isDragging: boolean = false, haloColor?: string) => {
-    const imgUrl = isP0 ? theme.checkerImages?.warm : theme.checkerImages?.cool;
-    if (imgUrl) {
-      // 3D checker asset — slightly larger than the SVG disc to leave room for
-      // the rendered shadow that comes baked into the PNG. The image's own
-      // aspect ratio is preserved via `meet`, so non-square assets letterbox
-      // inside the bounding box without distortion.
-      const size = CHECKER_R * 2.6;
+    const imgSpec: CheckerImageSpec | undefined = isP0 ? theme.checkerImages?.warm : theme.checkerImages?.cool;
+    if (imgSpec) {
+      const size = CHECKER_R * 2;
+      const clipId = `cc-${key}`;
+      const cxVB = imgSpec.srcX + imgSpec.srcW / 2;
+      const cyVB = imgSpec.srcY + imgSpec.srcH / 2;
+      const rVB = Math.min(imgSpec.srcW, imgSpec.srcH) / 2 * 0.75;
       return (
         <g key={key} style={{ pointerEvents: "none" }} opacity={isDragging ? 0.4 : 1}>
           {haloColor && (
-            <circle
-              cx={cx}
-              cy={cy}
-              r={CHECKER_R + 2}
-              fill="none"
-              stroke={haloColor}
-              strokeWidth="3"
-              opacity={0.8}
-            />
+            <circle cx={cx} cy={cy} r={CHECKER_R + 2} fill="none" stroke={haloColor} strokeWidth="3" opacity={0.8} />
           )}
-          <image
-            href={imgUrl}
+          <svg
             x={cx - size / 2}
             y={cy - size / 2}
             width={size}
             height={size}
-            preserveAspectRatio="xMidYMid meet"
-          />
+            viewBox={`${imgSpec.srcX} ${imgSpec.srcY} ${imgSpec.srcW} ${imgSpec.srcH}`}
+          >
+            <defs>
+              <clipPath id={clipId}>
+                <circle cx={cxVB} cy={cyVB} r={rVB} />
+              </clipPath>
+            </defs>
+            <image href={imgSpec.url} x={0} y={0} width={imgSpec.totalW} height={imgSpec.totalH} clipPath={`url(#${clipId})`} />
+          </svg>
         </g>
       );
     }
@@ -1082,19 +1080,28 @@ export function Board({
 
           {/* Drag Ghost */}
           {dragState && (() => {
-            const ghostUrl = dragState.isP0 ? theme.checkerImages?.warm : theme.checkerImages?.cool;
-            if (ghostUrl) {
-              const size = CHECKER_R * 2.8;
+            const ghostSpec: CheckerImageSpec | undefined = dragState.isP0 ? theme.checkerImages?.warm : theme.checkerImages?.cool;
+            if (ghostSpec) {
+              const size = CHECKER_R * 2.2;
+              const gcxVB = ghostSpec.srcX + ghostSpec.srcW / 2;
+              const gcyVB = ghostSpec.srcY + ghostSpec.srcH / 2;
+              const grVB = Math.min(ghostSpec.srcW, ghostSpec.srcH) / 2 * 0.75;
               return (
                 <g filter="url(#cg-glow)" style={{ pointerEvents: "none" }}>
-                  <image
-                    href={ghostUrl}
+                  <svg
                     x={dragState.svgX - size / 2}
                     y={dragState.svgY - size / 2}
                     width={size}
                     height={size}
-                    preserveAspectRatio="xMidYMid meet"
-                  />
+                    viewBox={`${ghostSpec.srcX} ${ghostSpec.srcY} ${ghostSpec.srcW} ${ghostSpec.srcH}`}
+                  >
+                    <defs>
+                      <clipPath id="cc-ghost">
+                        <circle cx={gcxVB} cy={gcyVB} r={grVB} />
+                      </clipPath>
+                    </defs>
+                    <image href={ghostSpec.url} x={0} y={0} width={ghostSpec.totalW} height={ghostSpec.totalH} clipPath="url(#cc-ghost)" />
+                  </svg>
                 </g>
               );
             }
