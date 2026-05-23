@@ -26,7 +26,7 @@ import {
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 
 import { Board } from "../Board";
-import { loadTheme, saveTheme, pickGameCoins, BOARD_THEMES, type BoardThemeKey } from "../boardThemes";
+import { loadTheme, saveTheme, loadPrefer3d, pickGameCoins, BOARD_THEMES, type BoardThemeKey } from "../boardThemes";
 import { AgentTeammatePanel } from "../ChiefOfStaffPanel";
 import { DiceRoll } from "../DiceRoll";
 import { rollDice } from "../dice";
@@ -447,11 +447,17 @@ function TeamDemoPageInner() {
   const [settleTxHash, setSettleTxHash] = useState<`0x${string}` | null>(null);
   const [hasStaleSession, setHasStaleSession] = useState(false);
   const [boardTheme, setBoardTheme] = useState<BoardThemeKey>(() => loadTheme());
+  const [prefer3d, setPrefer3d] = useState<boolean>(() => loadPrefer3d());
   const [gameCoins, setGameCoins] = useState<{ warm: string; cool: string } | null>(null);
   useEffect(() => {
-    const handler = (e: Event) => setBoardTheme((e as CustomEvent<BoardThemeKey>).detail);
-    window.addEventListener("board-theme-change", handler);
-    return () => window.removeEventListener("board-theme-change", handler);
+    const themeHandler = (e: Event) => setBoardTheme((e as CustomEvent<BoardThemeKey>).detail);
+    const prefer3dHandler = (e: Event) => setPrefer3d((e as CustomEvent<boolean>).detail);
+    window.addEventListener("board-theme-change", themeHandler);
+    window.addEventListener("prefer-3d-change", prefer3dHandler);
+    return () => {
+      window.removeEventListener("board-theme-change", themeHandler);
+      window.removeEventListener("prefer-3d-change", prefer3dHandler);
+    };
   }, []);
 
   // Doubling cube UI state
@@ -1525,6 +1531,7 @@ function TeamDemoPageInner() {
               turn={game.turn}
               ghostMove={hoveredMove}
               themeKey={boardTheme}
+              prefer3d={prefer3d}
               cubeValue={game.cubeValue ?? 1}
               cubeOwner={game.cubeOwner ?? -1}
               onCubeClick={canHumanDouble ? handleCubeClick : undefined}
