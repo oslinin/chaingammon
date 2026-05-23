@@ -47,6 +47,10 @@ export interface BoardTheme {
     leftOffX: number;    // left tray x (agent/P1 bear-off)
     rightOffX: number;   // right tray x (human/P0 bear-off)
   };
+  /** When true, the background image is pre-rendered with a perspective tilt; 2D mode compensates with an inverse CSS transform. */
+  imageIs3d?: boolean;
+  /** Degrees of rotateX tilt applied in 3D mode (default 20). */
+  perspectiveDeg?: number;
   /** Portrait avatar spots for player coin display (image themes only). All values fractions of 716×440. */
   avatarSpots?: {
     p0: { cx: number; cy: number };  // human/warm player avatar center
@@ -475,6 +479,7 @@ export const BOARD_THEMES: Record<string, BoardTheme> = {
   },
   board_roman: {
     label: "Roman — Marble Court",
+    imageIs3d: true,
     backgroundImageUrl: "/boards/new/board3/board.png",
     backgroundImageCrop: { srcX: 168, srcY: 185, srcW: 990, srcH: 570, totalSrcW: 1248, totalSrcH: 832 },
     checkerImages: {
@@ -515,6 +520,7 @@ export const BOARD_THEMES: Record<string, BoardTheme> = {
   },
   board_cyber2: {
     label: "Cyber — Neural Grid",
+    imageIs3d: true,
     backgroundImageUrl: "/boards/new/board6/board.png",
     backgroundImageCrop: { srcX: 183, srcY: 90, srcW: 973, srcH: 598, totalSrcW: 1344, totalSrcH: 768 },
     checkerImages: {
@@ -572,6 +578,17 @@ export function loadTheme(): BoardThemeKey {
 
 export function saveTheme(key: BoardThemeKey) {
   localStorage.setItem(STORAGE_KEY, key);
+}
+
+const PREFER_3D_KEY = "chaingammon.prefer3d";
+
+export function loadPrefer3d(): boolean {
+  if (typeof window === "undefined") return false;
+  return localStorage.getItem(PREFER_3D_KEY) === "true";
+}
+
+export function savePrefer3d(v: boolean) {
+  localStorage.setItem(PREFER_3D_KEY, String(v));
 }
 
 /** URLs for the 6 historical coin portrait avatars. */

@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useI18n, LANGUAGES, Language } from "../i18n";
 import { BoardThemePicker } from "../BoardThemePicker";
-import { loadTheme, saveTheme, type BoardThemeKey } from "../boardThemes";
+import { loadTheme, saveTheme, loadPrefer3d, savePrefer3d, type BoardThemeKey } from "../boardThemes";
 import { useAppMode, type AppMode } from "../AppModeContext";
 
 export default function SettingsPage() {
@@ -12,12 +12,14 @@ export default function SettingsPage() {
   const { language, setLanguage, t } = useI18n();
   const { mode, setMode } = useAppMode();
   const [boardTheme, setBoardTheme] = useState<BoardThemeKey>("walnut");
+  const [prefer3d, setPrefer3d] = useState(false);
   const [trainerMode, setTrainerMode] = useState<string>("round_robin");
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
     setMounted(true);
     setBoardTheme(loadTheme());
+    setPrefer3d(loadPrefer3d());
     const savedTrainerMode = localStorage.getItem("trainer_mode");
     if (savedTrainerMode === "round_robin" || savedTrainerMode === "challenge") {
       setTrainerMode(savedTrainerMode);
@@ -83,6 +85,26 @@ export default function SettingsPage() {
               saveTheme(k);
             }}
           />
+        </section>
+
+        {/* Board Style (2D / 3D) */}
+        <section>
+          <h2 className="mb-4 text-sm font-semibold tracking-wider text-zinc-400 uppercase">
+            Board Style
+          </h2>
+          <label className="flex items-center gap-3 text-sm text-zinc-300 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={prefer3d}
+              onChange={(e) => {
+                setPrefer3d(e.target.checked);
+                savePrefer3d(e.target.checked);
+                window.dispatchEvent(new CustomEvent("prefer-3d-change", { detail: e.target.checked }));
+              }}
+              className="h-4 w-4 border-zinc-700 bg-zinc-900"
+            />
+            3D perspective (image boards only)
+          </label>
         </section>
 
         {/* App Mode Selection */}

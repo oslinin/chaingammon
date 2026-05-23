@@ -21,6 +21,7 @@ interface BoardProps {
   cubeOwner?: number;       // -1 = centered, 0 = human, 1 = agent
   onCubeClick?: () => void; // called when the human clicks the cube to offer a double
   playerAvatarUrls?: { warm: string; cool: string };
+  prefer3d?: boolean;
 }
 
 const FRAME = 20;
@@ -63,12 +64,22 @@ export function Board({
   cubeOwner = -1,
   onCubeClick,
   playerAvatarUrls,
+  prefer3d = false,
 }: BoardProps) {
   const theme = BOARD_THEMES[themeKey] ?? BOARD_THEMES.walnut;
   // Image-based themes own the board look entirely — skip the SVG-painted
   // frame, felt, point triangles, bar, and bear-off trays so the two
   // visual systems don't bleed through each other.
   const usingImage = !!theme.backgroundImageUrl;
+
+  const perspectiveDeg = theme.perspectiveDeg ?? 20;
+  let bgTransform: string | undefined;
+  if (usingImage) {
+    if (prefer3d && !theme.imageIs3d)
+      bgTransform = `perspective(800px) rotateX(${perspectiveDeg}deg)`;
+    else if (!prefer3d && theme.imageIs3d)
+      bgTransform = `perspective(800px) rotateX(-${perspectiveDeg}deg)`;
+  }
 
   // Per-theme play-area grid. Image themes that declare `checkerSpots`
   // use per-spot lookup for checker placement; classic SVG themes fall back
@@ -812,12 +823,27 @@ export function Board({
         {turnLabel}
       </p>
 
-      <div style={{ width: "100%", maxWidth: `${TOTAL_W}px`, overflow: "hidden" }}>
+      <div style={{ width: "100%", maxWidth: `${TOTAL_W}px`, overflow: "hidden", position: "relative" }}>
+        {usingImage && (() => {
+          const crop = theme.backgroundImageCrop;
+          const imgStyle: React.CSSProperties = crop ? {
+            position: "absolute",
+            width:  `${crop.totalSrcW / crop.srcW * 100}%`,
+            height: `${crop.totalSrcH / crop.srcH * 100}%`,
+            left:   `${-crop.srcX / crop.srcW * 100}%`,
+            top:    `${-crop.srcY / crop.srcH * 100}%`,
+          } : { position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" as const };
+          return (
+            <div style={{ position: "absolute", inset: 0, overflow: "hidden", transform: bgTransform, transformOrigin: "50% 50%" }}>
+              <img src={theme.backgroundImageUrl} style={imgStyle} alt="" draggable={false} />
+            </div>
+          );
+        })()}
         <svg
           ref={svgRef}
           viewBox={`0 0 ${TOTAL_W} ${TOTAL_H}`}
           width="100%"
-          style={{ touchAction: dragState ? "none" : "auto", display: "block" }}
+          style={{ touchAction: dragState ? "none" : "auto", display: "block", position: "relative" }}
           onPointerMove={handlePointerMove}
           onPointerUp={handlePointerUp}
           onPointerLeave={handlePointerUp}
@@ -860,48 +886,10 @@ export function Board({
                 <feMergeNode in="SourceGraphic" />
               </feMerge>
             </filter>
-            {/* Clip region for cropped sprite-sheet backgrounds */}
-            {usingImage && theme.backgroundImageCrop && (
-              <clipPath id="cg-bg-crop">
-                <rect x={0} y={0} width={TOTAL_W} height={TOTAL_H} />
-              </clipPath>
-            )}
           </defs>
 
-          {/* Image-based themes: render only the image; classic themes: render the SVG frame + felt */}
-          {usingImage ? (
-            (() => {
-              const crop = theme.backgroundImageCrop;
-              if (crop) {
-                // Scale so the cropped section of the sprite exactly fills the
-                // 716×440 viewport, then offset the image element so the crop
-                // origin sits at (0,0).
-                const scaleX = TOTAL_W / crop.srcW;
-                const scaleY = TOTAL_H / crop.srcH;
-                return (
-                  <image
-                    href={theme.backgroundImageUrl}
-                    x={-crop.srcX * scaleX}
-                    y={-crop.srcY * scaleY}
-                    width={crop.totalSrcW * scaleX}
-                    height={crop.totalSrcH * scaleY}
-                    clipPath="url(#cg-bg-crop)"
-                    preserveAspectRatio="none"
-                  />
-                );
-              }
-              return (
-                <image
-                  href={theme.backgroundImageUrl}
-                  x="0"
-                  y="0"
-                  width={TOTAL_W}
-                  height={TOTAL_H}
-                  preserveAspectRatio="none"
-                />
-              );
-            })()
-          ) : (
+          {/* Classic SVG themes: render the frame + felt. Image themes: background is in the HTML layer above. */}
+          {!usingImage && (
             <>
               {/* Outer Frame */}
               <rect
