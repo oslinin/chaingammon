@@ -1,13 +1,24 @@
 "use client";
 
+/** Crop spec for a single checker PNG. srcX/Y/W/H are viewBox coords in the source image. */
+export interface CheckerImageSpec {
+  url: string;
+  srcX: number;
+  srcY: number;
+  srcW: number;
+  srcH: number;
+  totalW: number;
+  totalH: number;
+}
+
 export interface BoardTheme {
   label: string;
   /** Optional background image URL. When set, the frame and felt become semi-transparent overlays. */
   backgroundImageUrl?: string;
   /** Optional pre-rendered 3D checker assets. When set, replaces the SVG circle rendering. */
   checkerImages?: {
-    warm: string; // P0 (human, bottom)
-    cool: string; // P1 (agent, top)
+    warm: CheckerImageSpec; // P0 (human, bottom)
+    cool: CheckerImageSpec; // P1 (agent, top)
   };
   /**
    * When set, the background image is cropped to the given rectangle instead
@@ -278,143 +289,23 @@ export const BOARD_THEMES: Record<string, BoardTheme> = {
   //   row 1 (y 341–681)  Asian          Minimal
   //   row 2 (y 682–1023) Adventure      Sci-fi
 
-  board_desert: {
-    label: "Desert Sands",
-    backgroundImageUrl: "/api/board-sprite",
-    backgroundImageCrop: { srcX: 0, srcY: 0, srcW: 512, srcH: 341, totalSrcW: 1024, totalSrcH: 1024 },
-    frameStart:  "#C8960C",
-    frameEnd:    "#7A4E12",
-    frameInner:  "#4A2E08",
-    felt:        "#D4A855",
-    feltAccent:  "#E6C56A",
-    pointLight:  "#FFD780",
-    pointDark:   "#8B3A0F",
-    pointStroke: "rgba(0,0,0,0.2)",
-    bar:         "#7A4E12",
-    barEdge:     "#4A2E08",
-    rail:        "#7A4E12",
-    railText:    "#FFD780",
-    checkerWarm: { fill: "#2DD4BF", stroke: "#0D9488" },
-    checkerCool: { fill: "#B45309", stroke: "#78350F" },
-  },
-
-  board_classic: {
-    label: "Classic Mahogany",
-    backgroundImageUrl: "/api/board-sprite",
-    backgroundImageCrop: { srcX: 512, srcY: 0, srcW: 512, srcH: 341, totalSrcW: 1024, totalSrcH: 1024 },
-    frameStart:  "#3D1F0F",
-    frameEnd:    "#1C0D06",
-    frameInner:  "#0C0603",
-    felt:        "#2D1508",
-    feltAccent:  "#3D1F0F",
-    pointLight:  "#F5EBD8",
-    pointDark:   "#8B1A1A",
-    pointStroke: "rgba(0,0,0,0.3)",
-    bar:         "#1C0D06",
-    barEdge:     "#0C0603",
-    rail:        "#1C0D06",
-    railText:    "#F5EBD8",
-    checkerWarm: { fill: "#F5F0E8", stroke: "#C8B89A" },
-    checkerCool: { fill: "#1A1208", stroke: "#000000" },
-  },
-
-  board_asian: {
-    label: "Imperial Dragon",
-    backgroundImageUrl: "/api/board-sprite",
-    backgroundImageCrop: { srcX: 0, srcY: 341, srcW: 512, srcH: 341, totalSrcW: 1024, totalSrcH: 1024 },
-    frameStart:  "#1A1A1A",
-    frameEnd:    "#0A0A0A",
-    frameInner:  "#000000",
-    felt:        "#0D1F0D",
-    feltAccent:  "#142814",
-    pointLight:  "#CA8A04",
-    pointDark:   "#1A2E1A",
-    pointStroke: "rgba(202,138,4,0.3)",
-    bar:         "#1A1A1A",
-    barEdge:     "#000000",
-    rail:        "#1A1A1A",
-    railText:    "#CA8A04",
-    checkerWarm: { fill: "#10B981", stroke: "#059669" },
-    checkerCool: { fill: "#F5F0E8", stroke: "#C8B89A" },
-  },
-
-  board_minimal: {
-    label: "Shadow Steel",
-    backgroundImageUrl: "/api/board-sprite",
-    backgroundImageCrop: { srcX: 512, srcY: 341, srcW: 512, srcH: 341, totalSrcW: 1024, totalSrcH: 1024 },
-    frameStart:  "#1E2028",
-    frameEnd:    "#0E1018",
-    frameInner:  "#080A10",
-    felt:        "#242830",
-    feltAccent:  "#1C2028",
-    pointLight:  "#8BAAC8",
-    pointDark:   "#3A4560",
-    pointStroke: "rgba(0,0,0,0.35)",
-    bar:         "#0E1018",
-    barEdge:     "#080A10",
-    rail:        "#0E1018",
-    railText:    "#8BAAC8",
-    checkerWarm: { fill: "#C8D8E8", stroke: "#8BAAC8" },
-    checkerCool: { fill: "#1A1E28", stroke: "#000000" },
-  },
-
-  board_adventure: {
-    label: "Old World Adventure",
-    backgroundImageUrl: "/api/board-sprite",
-    backgroundImageCrop: { srcX: 0, srcY: 682, srcW: 512, srcH: 342, totalSrcW: 1024, totalSrcH: 1024 },
-    frameStart:  "#4A2C0A",
-    frameEnd:    "#2A1806",
-    frameInner:  "#180E03",
-    felt:        "#3A2208",
-    feltAccent:  "#4A2C0A",
-    pointLight:  "#D4A040",
-    pointDark:   "#2A1806",
-    pointStroke: "rgba(0,0,0,0.35)",
-    bar:         "#2A1806",
-    barEdge:     "#180E03",
-    rail:        "#2A1806",
-    railText:    "#D4A040",
-    checkerWarm: { fill: "#E8C050", stroke: "#A07820" },
-    checkerCool: { fill: "#1C1008", stroke: "#000000" },
-  },
-
-  board_scifi: {
-    label: "Cyber Matrix",
-    backgroundImageUrl: "/api/board-sprite",
-    backgroundImageCrop: { srcX: 512, srcY: 682, srcW: 512, srcH: 342, totalSrcW: 1024, totalSrcH: 1024 },
-    frameStart:  "#060606",
-    frameEnd:    "#000000",
-    frameInner:  "#000000",
-    felt:        "#020202",
-    feltAccent:  "#050505",
-    pointLight:  "#00CC88",
-    pointDark:   "#CC0044",
-    pointStroke: "rgba(0,204,136,0.4)",
-    bar:         "#0A0A0A",
-    barEdge:     "#000000",
-    rail:        "#0A0A0A",
-    railText:    "#00CC88",
-    checkerWarm: { fill: "#00CC88", stroke: "#009966" },
-    checkerCool: { fill: "#FF3366", stroke: "#CC0044" },
-  },
-
   board_steampunk: {
-    label: "Steampunk — Brass & Iron",
-    backgroundImageUrl: "/boards/new/board4/board.png",
-    backgroundImageCrop: { srcX: 51, srcY: 88, srcW: 1217, srcH: 611, totalSrcW: 1344, totalSrcH: 768 },
+    label: "Manhattan — 1920s High-Roller",
+    backgroundImageUrl: "/boards/new/board4/board.jpeg",
+    backgroundImageCrop: { srcX: 145, srcY: 115, srcW: 758, srcH: 430, totalSrcW: 1024, totalSrcH: 585 },
     checkerImages: {
-      warm: "/boards/new/board4/warm.svg",
-      cool: "/boards/new/board4/cool.svg",
+      warm: { url: "/boards/new/board4/light_checker.png", srcX: 288, srcY: 0, srcW: 768, srcH: 768, totalW: 1344, totalH: 768 },
+      cool: { url: "/boards/new/board4/dark_checker.png",  srcX: 288, srcY: 0, srcW: 768, srcH: 768, totalW: 1344, totalH: 768 },
     },
     checkerSpots: {
-      columnsX: [0.0377, 0.1096, 0.1815, 0.2534, 0.3254, 0.3973, 0.6181, 0.6900, 0.7620, 0.8339, 0.9058, 0.9777],
-      topY: 0.1195,
-      bottomY: 0.8494,
-      barX: 0.5103,
-      barTopY: 0.1347,
-      barBottomY: 0.8342,
-      leftOffX: 0.02,
-      rightOffX: 0.98,
+      columnsX: [0.131, 0.194, 0.257, 0.320, 0.382, 0.446, 0.642, 0.699, 0.756, 0.813, 0.871, 0.927],
+      topY: 0.157,
+      bottomY: 0.924,
+      barX: 0.548,
+      barTopY: 0.361,
+      barBottomY: 0.640,
+      leftOffX: 0.04,
+      rightOffX: 0.96,
     },
     avatarSpots: {
       p0: { cx: 0.04, cy: 0.88 },
@@ -432,22 +323,22 @@ export const BOARD_THEMES: Record<string, BoardTheme> = {
   },
 
   board_celtic: {
-    label: "Celtic — Ornate Green",
-    backgroundImageUrl: "/boards/new/board1/board.png",
-    backgroundImageCrop: { srcX: 0, srcY: 128, srcW: 1024, srcH: 856, totalSrcW: 1024, totalSrcH: 1024 },
+    label: "Persian — The Nard Era",
+    backgroundImageUrl: "/boards/new/board1/board.jpeg",
+    backgroundImageCrop: { srcX: 0, srcY: 0, srcW: 1024, srcH: 595, totalSrcW: 1024, totalSrcH: 595 },
     checkerImages: {
-      warm: "/boards/new/board1/warm.svg",
-      cool: "/boards/new/board1/cool.svg",
+      warm: { url: "/boards/new/board1/checkers.png", srcX: 0,   srcY: 256, srcW: 512, srcH: 512, totalW: 1024, totalH: 1024 },
+      cool: { url: "/boards/new/board1/checkers.png", srcX: 512, srcY: 256, srcW: 512, srcH: 512, totalW: 1024, totalH: 1024 },
     },
     checkerSpots: {
-      columnsX: [0.0996, 0.1650, 0.2305, 0.2959, 0.3613, 0.4268, 0.5742, 0.6396, 0.7051, 0.7705, 0.8359, 0.8994],
-      topY: 0.1647,
-      bottomY: 0.8353,
-      barX: 0.4854,
-      barTopY: 0.4229,
-      barBottomY: 0.5748,
-      leftOffX: 0.02,
-      rightOffX: 0.98,
+      columnsX: [0.108, 0.149, 0.190, 0.231, 0.272, 0.314, 0.440, 0.481, 0.522, 0.564, 0.605, 0.645],
+      topY: 0.164,
+      bottomY: 0.830,
+      barX: 0.376,
+      barTopY: 0.370,
+      barBottomY: 0.630,
+      leftOffX: 0.03,
+      rightOffX: 0.97,
     },
     avatarSpots: {
       p0: { cx: 0.04, cy: 0.88 },
@@ -465,7 +356,28 @@ export const BOARD_THEMES: Record<string, BoardTheme> = {
     checkerCool: { fill: "#40B8B8", stroke: "#1A8A8A" },
   },
   board_medieval: {
-    label: "Medieval — Dark Wood",
+    label: "English — Restoration Era",
+    backgroundImageUrl: "/boards/new/board2/board.jpeg",
+    backgroundImageCrop: { srcX: 0, srcY: 0, srcW: 1024, srcH: 567, totalSrcW: 1024, totalSrcH: 567 },
+    checkerImages: {
+      warm: { url: "/boards/new/board2/light_checker.png", srcX: 0, srcY: 0, srcW: 1024, srcH: 1024, totalW: 1024, totalH: 1024 },
+      cool: { url: "/boards/new/board2/dark_checker.png",  srcX: 0, srcY: 0, srcW: 1024, srcH: 1024, totalW: 1024, totalH: 1024 },
+    },
+    checkerSpots: {
+      columnsX: [0.123, 0.188, 0.252, 0.316, 0.381, 0.445, 0.566, 0.629, 0.691, 0.754, 0.816, 0.879],
+      topY: 0.115,
+      bottomY: 0.888,
+      barX: 0.506,
+      barTopY: 0.350,
+      barBottomY: 0.650,
+      leftOffX: 0.03,
+      rightOffX: 0.97,
+    },
+    avatarSpots: {
+      p0: { cx: 0.103, cy: 0.035 },
+      p1: { cx: 0.871, cy: 0.035 },
+      r: 0.044,
+    },
     frameStart: "#3D1F0A", frameEnd: "#1C0D04", frameInner: "#0C0602",
     felt: "#2A1208", feltAccent: "#3A1A0A",
     pointLight: "#C8A060", pointDark: "#3A1A0A", pointStroke: "rgba(0,0,0,0.4)",
@@ -474,20 +386,20 @@ export const BOARD_THEMES: Record<string, BoardTheme> = {
     checkerCool: { fill: "#2A1A0A", stroke: "#000000" },
   },
   board_roman: {
-    label: "Roman — Marble Court",
-    backgroundImageUrl: "/boards/new/board3/board.png",
-    backgroundImageCrop: { srcX: 168, srcY: 185, srcW: 990, srcH: 570, totalSrcW: 1248, totalSrcH: 832 },
+    label: "Roman — The Tabula Era",
+    backgroundImageUrl: "/boards/new/board3/board.jpeg",
+    backgroundImageCrop: { srcX: 0, srcY: 0, srcW: 1024, srcH: 545, totalSrcW: 1024, totalSrcH: 545 },
     checkerImages: {
-      warm: "/boards/new/board3/warm.svg",
-      cool: "/boards/new/board3/cool.svg",
+      warm: { url: "/boards/new/board3/light_checker.png", srcX: 208, srcY: 0, srcW: 832, srcH: 832, totalW: 1248, totalH: 832 },
+      cool: { url: "/boards/new/board3/dark_checker.png",  srcX: 208, srcY: 0, srcW: 832, srcH: 832, totalW: 1248, totalH: 832 },
     },
     checkerSpots: {
-      columnsX: [0.0374, 0.1121, 0.1869, 0.2616, 0.3374, 0.4121, 0.5879, 0.6626, 0.7374, 0.8121, 0.8879, 0.9626],
-      topY: 0.2544,
-      bottomY: 0.8684,
-      barX: 0.5000,
-      barTopY: 0.2544,
-      barBottomY: 0.8684,
+      columnsX: [0.117, 0.180, 0.242, 0.305, 0.367, 0.430, 0.567, 0.630, 0.692, 0.755, 0.817, 0.880],
+      topY: 0.100,
+      bottomY: 0.904,
+      barX: 0.497,
+      barTopY: 0.349,
+      barBottomY: 0.651,
       leftOffX: 0.03,
       rightOffX: 0.97,
     },
@@ -505,29 +417,50 @@ export const BOARD_THEMES: Record<string, BoardTheme> = {
     checkerCool: { fill: "#4A2010", stroke: "#2A1008" },
   },
   board_darkwood: {
-    label: "Dark Wood — Tavern Table",
-    frameStart: "#3A2010", frameEnd: "#1E1008", frameInner: "#0E0804",
-    felt: "#1A0E06", feltAccent: "#241408",
-    pointLight: "#B88040", pointDark: "#2A1408", pointStroke: "rgba(0,0,0,0.4)",
-    bar: "#1E1008", barEdge: "#0E0804", rail: "#1E1008", railText: "#B88040",
-    checkerWarm: { fill: "#E8D0A0", stroke: "#A09060" },
-    checkerCool: { fill: "#241408", stroke: "#000000" },
+    label: "Manhattan — 1920s Art Deco",
+    backgroundImageUrl: "/boards/new/board5/board.jpeg",
+    backgroundImageCrop: { srcX: 0, srcY: 0, srcW: 1024, srcH: 591, totalSrcW: 1024, totalSrcH: 591 },
+    checkerImages: {
+      warm: { url: "/boards/new/board5/light_checker.png", srcX: 208, srcY: 0, srcW: 832, srcH: 832, totalW: 1248, totalH: 832 },
+      cool: { url: "/boards/new/board5/dark_checker.png",  srcX: 208, srcY: 0, srcW: 832, srcH: 832, totalW: 1248, totalH: 832 },
+    },
+    checkerSpots: {
+      columnsX: [0.130, 0.175, 0.220, 0.265, 0.310, 0.355, 0.500, 0.545, 0.590, 0.635, 0.680, 0.725],
+      topY: 0.150,
+      bottomY: 0.870,
+      barX: 0.428,
+      barTopY: 0.350,
+      barBottomY: 0.650,
+      leftOffX: 0.04,
+      rightOffX: 0.96,
+    },
+    avatarSpots: {
+      p0: { cx: 0.04, cy: 0.88 },
+      p1: { cx: 0.96, cy: 0.12 },
+      r: 0.06,
+    },
+    frameStart: "#1A1A1A", frameEnd: "#0A0A0A", frameInner: "#000000",
+    felt: "#0D1A0D", feltAccent: "#142014",
+    pointLight: "#CA8A04", pointDark: "#1A2E1A", pointStroke: "rgba(202,138,4,0.3)",
+    bar: "#1A1A1A", barEdge: "#000000", rail: "#1A1A1A", railText: "#CA8A04",
+    checkerWarm: { fill: "#10B981", stroke: "#059669" },
+    checkerCool: { fill: "#F5F0E8", stroke: "#C8B89A" },
   },
   board_cyber2: {
     label: "Cyber — Neural Grid",
-    backgroundImageUrl: "/boards/new/board6/board.png",
-    backgroundImageCrop: { srcX: 183, srcY: 90, srcW: 973, srcH: 598, totalSrcW: 1344, totalSrcH: 768 },
+    backgroundImageUrl: "/boards/new/board6/board.jpeg",
+    backgroundImageCrop: { srcX: 0, srcY: 0, srcW: 1024, srcH: 585, totalSrcW: 1024, totalSrcH: 585 },
     checkerImages: {
-      warm: "/boards/new/board6/warm.svg",
-      cool: "/boards/new/board6/cool.svg",
+      warm: { url: "/boards/new/board6/light_checker.png", srcX: 288, srcY: 0,    srcW: 768,  srcH: 768,  totalW: 1344, totalH: 768  },
+      cool: { url: "/boards/new/board6/dark_checker.png",  srcX: 0,   srcY: 0,    srcW: 1024, srcH: 1024, totalW: 1024, totalH: 1024 },
     },
     checkerSpots: {
-      columnsX: [0.2199, 0.2610, 0.3022, 0.3433, 0.3844, 0.4255, 0.5899, 0.6413, 0.6927, 0.7441, 0.7955, 0.8469],
-      topY: 0.1672,
-      bottomY: 0.7943,
-      barX: 0.5077,
-      barTopY: 0.2007,
-      barBottomY: 0.6689,
+      columnsX: [0.130, 0.175, 0.220, 0.265, 0.310, 0.355, 0.500, 0.545, 0.590, 0.635, 0.680, 0.725],
+      topY: 0.150,
+      bottomY: 0.850,
+      barX: 0.428,
+      barTopY: 0.350,
+      barBottomY: 0.650,
       leftOffX: 0.04,
       rightOffX: 0.96,
     },
@@ -549,18 +482,9 @@ export const BOARD_THEMES: Record<string, BoardTheme> = {
 export const THEME_ORDER = [
   "walnut", "emerald", "slate", "onyx", "linen",
   "nard", "tabula", "east_asian", "english", "manhattan", "neural_net",
-  "board_desert", "board_classic", "board_asian", "board_minimal", "board_adventure", "board_scifi",
   "board_celtic", "board_medieval", "board_roman", "board_steampunk", "board_darkwood", "board_cyber2",
 ] as const;
 export type BoardThemeKey = typeof THEME_ORDER[number];
-
-/**
- * URL of the composite board sprite sheet used by the six image-skin themes.
- * Points to the Next.js proxy route which serves public/boards/source.png
- * when present, or falls back to the GitHub CDN upload.
- * Run `node scripts/download_board_sprite.mjs` to cache the sprite locally.
- */
-export const BOARD_SPRITE_URL = "/api/board-sprite";
 
 const STORAGE_KEY = "chaingammon.boardTheme";
 
