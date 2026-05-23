@@ -58,6 +58,10 @@ export interface BoardTheme {
     leftOffX: number;    // left tray x (agent/P1 bear-off)
     rightOffX: number;   // right tray x (human/P0 bear-off)
   };
+  /** When true, the background image is pre-rendered with a perspective tilt; 2D mode compensates with an inverse CSS transform. */
+  imageIs3d?: boolean;
+  /** Degrees of rotateX tilt applied in 3D mode (default 20). */
+  perspectiveDeg?: number;
   /** Portrait avatar spots for player coin display (image themes only). All values fractions of 716×440. */
   avatarSpots?: {
     p0: { cx: number; cy: number };  // human/warm player avatar center
@@ -387,8 +391,9 @@ export const BOARD_THEMES: Record<string, BoardTheme> = {
   },
   board_roman: {
     label: "Roman — The Tabula Era",
-    backgroundImageUrl: "/boards/new/board3/board.jpeg",
-    backgroundImageCrop: { srcX: 0, srcY: 0, srcW: 1024, srcH: 545, totalSrcW: 1024, totalSrcH: 545 },
+    imageIs3d: true,
+    backgroundImageUrl: "/boards/new/board3/board.png",
+    backgroundImageCrop: { srcX: 168, srcY: 185, srcW: 990, srcH: 570, totalSrcW: 1248, totalSrcH: 832 },
     checkerImages: {
       warm: { url: "/boards/new/board3/light_checker.png", srcX: 208, srcY: 0, srcW: 832, srcH: 832, totalW: 1248, totalH: 832 },
       cool: { url: "/boards/new/board3/dark_checker.png",  srcX: 208, srcY: 0, srcW: 832, srcH: 832, totalW: 1248, totalH: 832 },
@@ -448,8 +453,9 @@ export const BOARD_THEMES: Record<string, BoardTheme> = {
   },
   board_cyber2: {
     label: "Cyber — Neural Grid",
-    backgroundImageUrl: "/boards/new/board6/board.jpeg",
-    backgroundImageCrop: { srcX: 0, srcY: 0, srcW: 1024, srcH: 585, totalSrcW: 1024, totalSrcH: 585 },
+    imageIs3d: true,
+    backgroundImageUrl: "/boards/new/board6/board.png",
+    backgroundImageCrop: { srcX: 183, srcY: 90, srcW: 973, srcH: 598, totalSrcW: 1344, totalSrcH: 768 },
     checkerImages: {
       warm: { url: "/boards/new/board6/light_checker.png", srcX: 288, srcY: 0,    srcW: 768,  srcH: 768,  totalW: 1344, totalH: 768  },
       cool: { url: "/boards/new/board6/dark_checker.png",  srcX: 0,   srcY: 0,    srcW: 1024, srcH: 1024, totalW: 1024, totalH: 1024 },
@@ -496,6 +502,17 @@ export function loadTheme(): BoardThemeKey {
 
 export function saveTheme(key: BoardThemeKey) {
   localStorage.setItem(STORAGE_KEY, key);
+}
+
+const PREFER_3D_KEY = "chaingammon.prefer3d";
+
+export function loadPrefer3d(): boolean {
+  if (typeof window === "undefined") return false;
+  return localStorage.getItem(PREFER_3D_KEY) === "true";
+}
+
+export function savePrefer3d(v: boolean) {
+  localStorage.setItem(PREFER_3D_KEY, String(v));
 }
 
 /** URLs for the 6 historical coin portrait avatars. */
