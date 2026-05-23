@@ -1,0 +1,39 @@
+
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" role="img" aria-label="ChainGammon">
+  <defs>
+    <linearGradient id="cg-brass" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#E3B779"></stop>
+      <stop offset="55%" stop-color="#C99B5C"></stop>
+      <stop offset="100%" stop-color="#8B6A3A"></stop>
+    </linearGradient>
+    <linearGradient id="cg-warm" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#E3B779"></stop>
+      <stop offset="100%" stop-color="#A87B3D"></stop>
+    </linearGradient>
+    <linearGradient id="cg-bone" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#F2EBE0"></stop>
+      <stop offset="100%" stop-color="#B5A998"></stop>
+    </linearGradient>
+    <radialGradient id="cg-disc" cx="50%" cy="38%" r="65%">
+      <stop offset="0%" stop-color="#211A14"></stop>
+      <stop offset="100%" stop-color="#0B0908"></stop>
+    </radialGradient>
+  </defs>
+
+  
+  <circle cx="32" cy="32" r="30" fill="url(#cg-brass)"></circle>
+  
+  <circle cx="32" cy="32" r="26" fill="url(#cg-disc)"></circle>
+  
+  <circle cx="32" cy="32" r="25.5" fill="none" stroke="#3F3326" stroke-width="0.5"></circle>
+
+  
+  
+  <path d="M 17 11 L 47 11 L 32 32 Z" fill="url(#cg-warm)"></path>
+  
+  <path d="M 17 53 L 47 53 L 32 32 Z" fill="url(#cg-bone)"></path>
+
+  
+  <circle cx="32" cy="32" r="2.6" fill="#0B0908"></circle>
+  <circle cx="32" cy="32" r="1.2" fill="#C99B5C"></circle>
+</svg>

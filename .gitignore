@@ -44,3 +44,7 @@ server/data/
 
 # LibreOffice / OpenOffice editor lock files
 .~lock.*#
+
+docs/video/
+
+.claude/worktrees
