@@ -1,18 +1,20 @@
 /**
  * mobile_connect.spec.ts
  *
- * Verifies that on a mobile browser without window.ethereum (i.e. no injected
- * MetaMask extension), ConnectButton renders an "Open in MetaMask" deep link
- * whose href uses the metamask.app.link/dapp/ scheme.
+ * With Privy as the auth layer, mobile wallet handling moves inside Privy's
+ * modal: when a user on a phone taps "Log in" and chooses MetaMask or
+ * WalletConnect, Privy deep-links into the mobile wallet (or shows a QR).
+ * The app no longer renders its own "Open in MetaMask" deep link — Privy
+ * owns that flow.
  *
- * MetaMask Mobile does not inject window.ethereum in a regular mobile browser
- * (Chrome/Safari on iOS or Android) — it only does so inside its own in-app
- * browser. The deep link sends the user there, where the normal "Browser
- * wallet" flow then works.
+ * This test therefore just verifies that the Privy "Log in" entry point
+ * renders on a mobile viewport (iPhone 12) without an injected wallet, so a
+ * phone user can reach the login options. The wallet selection itself is
+ * Privy's responsibility and needs live network access to test end-to-end.
  *
- * We use a Playwright mobile viewport + user-agent (iPhone 12) and
- * deliberately do NOT inject a mock window.ethereum so the injected connector
- * is absent, triggering the mobile-fallback branch in ConnectButton.
+ * NOTE: `test.use()` for a device profile must be top-level (not inside a
+ * describe block) because the device's `defaultBrowserType` forces a new
+ * worker — Playwright rejects it inside describe().
  */
 
 import { test, expect } from "@playwright/test";
@@ -20,33 +22,27 @@ import { devices } from "@playwright/test";
 
 const iPhone = devices["iPhone 12"];
 
-test.describe("mobile connect — no injected wallet", () => {
-  test.use({
-    ...iPhone,
-  });
+test.use({ ...iPhone });
 
-  test('shows "Open in MetaMask" deep link on mobile without window.ethereum', async ({
-    page,
-  }) => {
-    // No mock ethereum injected — simulates a regular mobile browser.
-    await page.goto("/");
+// Cold compile of a route with Privy's bundle can exceed the 30s default.
+const NAV_TIMEOUT = 90_000;
 
-    const link = page.getByTestId("open-in-metamask");
-    await expect(link).toBeVisible({ timeout: 8000 });
+test("mobile: Privy Log in button renders without an injected wallet", async ({ page }) => {
+  test.setTimeout(120_000);
+  // No mock window.ethereum injected — simulates a regular mobile browser.
+  // `domcontentloaded` (not the default "load") because Privy keeps a
+  // backend fetch open during init, so the "load" event may never fire.
+  await page.goto("/", { waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT });
 
-    const href = await link.getAttribute("href");
-    expect(href).toMatch(/^https:\/\/metamask\.app\.link\/dapp\//);
-    // href must include the current hostname
-    expect(href).toContain("localhost");
-  });
+  const loginButton = page.getByTestId("login-button");
+  await expect(loginButton).toBeVisible({ timeout: 20_000 });
+  await expect(loginButton).toHaveText("Log in");
+});
 
-  test("deep link href contains the current path", async ({ page }) => {
-    await page.goto("/help");
+test("mobile: Log in button is present on a deep-linked page", async ({ page }) => {
+  test.setTimeout(120_000);
+  await page.goto("/help", { waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT });
 
-    const link = page.getByTestId("open-in-metamask");
-    await expect(link).toBeVisible({ timeout: 8000 });
-
-    const href = await link.getAttribute("href");
-    expect(href).toContain("/help");
-  });
+  const loginButton = page.getByTestId("login-button");
+  await expect(loginButton).toBeVisible({ timeout: 20_000 });
 });

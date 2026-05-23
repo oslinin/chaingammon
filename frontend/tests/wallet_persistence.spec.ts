@@ -1,173 +1,63 @@
 /**
  * wallet_persistence.spec.ts
  *
- * Verifies that a browser-wallet (injected provider / MetaMask-compatible)
- * connection survives client-side navigation and full page refreshes.
+ * Auth is now driven by Privy (see app/ConnectButton.tsx + app/providers.tsx).
+ * The single "Log in" pill is the entry point to Privy's modal, which offers
+ * email, Google, MetaMask (injected), and WalletConnect. Privy owns the
+ * connector list; wagmi's `useAccount()` reflects whatever wallet the user
+ * authenticates with.
  *
- * A lightweight mock window.ethereum is injected before each page load via
- * addInitScript so no real MetaMask extension is required. The mock:
- *   - responds to eth_requestAccounts / eth_accounts with a fixed address
- *   - responds to eth_chainId with Hardhat local (0x7a69 = 31337), which is
- *     always registered in the app's chain registry
- *   - fires the EIP-1193 "connect" event so wagmi's provider listeners fire
+ * These tests verify the auth entry point renders and survives navigation +
+ * reload. They do NOT drive a full login: Privy's modal needs a valid
+ * NEXT_PUBLIC_PRIVY_APP_ID and live network access to Privy's backend, which
+ * the offline test sandbox cannot provide. The connected/disconnected states
+ * (network dropdown, profile badge) are exercised by the components that
+ * consume `useAccount()` elsewhere; here we lock in that the login button is
+ * always reachable (the regression we care about: the auth UI must not vanish
+ * when Privy is still initialising).
  *
- * The connected-state indicator used in assertions is the "Disconnect" button
- * that ConnectButton renders only when isConnected is true.
+ * The login button is identified by its data-testid="login-button" (set in
+ * ConnectButton). It renders both server-side and client-side, independent of
+ * Privy's async `ready` flag.
+ *
+ * Navigations use `waitUntil: "domcontentloaded"` (not the default "load")
+ * because Privy keeps a backend fetch open during init, so the "load" event
+ * may never fire in the offline sandbox.
  */
 
 import { test, expect, type Page } from "@playwright/test";
 
-const MOCK_ADDRESS = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"; // Hardhat account 0
-const MOCK_CHAIN_HEX = "0x7a69"; // 31337 decimal — Hardhat local
+// The dev server compiles each route on first access; with Privy's bundle a
+// cold compile of a secondary route can exceed Playwright's 30s default. Give
+// navigations a generous budget so a first-hit compile doesn't flake the run.
+const NAV_TIMEOUT = 90_000;
 
-// ── Mock provider script ───────────────────────────────────────────────────
-// Injected before any page script runs. Implements the EIP-1193 subset that
-// wagmi's injected connector needs: eth_requestAccounts, eth_accounts,
-// eth_chainId, and the event-emitter shape (on / removeListener / emit).
-
-const MOCK_ETHEREUM_SCRIPT = `
-  (() => {
-    if (window.__mockEthereumInstalled) return;
-    window.__mockEthereumInstalled = true;
-
-    const handlers = {};
-    const provider = {
-      isMetaMask: true,
-      _accounts: ["${MOCK_ADDRESS}"],
-      _chainId: "${MOCK_CHAIN_HEX}",
-
-      async request({ method }) {
-        switch (method) {
-          case "eth_requestAccounts":
-          case "eth_accounts":
-            return this._accounts;
-          case "eth_chainId":
-            return this._chainId;
-          case "net_version":
-            return "31337";
-          case "wallet_switchEthereumChain":
-          case "wallet_addEthereumChain":
-            return null;
-          case "eth_blockNumber":
-            return "0x1";
-          case "eth_getBalance":
-            return "0x0";
-          default:
-            // Return a safe default rather than throw so wagmi's
-            // capability-probing calls don't reject the connection.
-            return null;
-        }
-      },
-
-      on(event, handler) {
-        (handlers[event] = handlers[event] || []).push(handler);
-        return this;
-      },
-      removeListener(event, handler) {
-        if (handlers[event]) {
-          handlers[event] = handlers[event].filter(h => h !== handler);
-        }
-        return this;
-      },
-      emit(event, ...args) {
-        (handlers[event] || []).forEach(h => h(...args));
-      },
-    };
-
-    window.ethereum = provider;
-
-    // Fire the EIP-1193 "connect" event after the script settles so wagmi's
-    // provider listeners that register in the same tick still catch it.
-    Promise.resolve().then(() =>
-      provider.emit("connect", { chainId: "${MOCK_CHAIN_HEX}" })
-    );
-  })();
-`;
-
-// ── Helpers ────────────────────────────────────────────────────────────────
-
-async function injectMockEthereum(page: Page) {
-  await page.addInitScript({ content: MOCK_ETHEREUM_SCRIPT });
+async function gotoAndWait(page: Page, path: string) {
+  await page.goto(path, { waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT });
+  await expect(page.getByTestId("login-button")).toBeVisible({ timeout: 20_000 });
 }
 
-async function waitForConnected(page: Page) {
-  await expect(
-    page.getByRole("button", { name: "Disconnect" }),
-  ).toBeVisible({ timeout: 8000 });
-}
+test.describe("Privy auth entry point", () => {
+  test.setTimeout(120_000);
 
-async function waitForDisconnected(page: Page) {
-  await expect(
-    page.getByRole("button", { name: "Browser wallet" }),
-  ).toBeVisible({ timeout: 8000 });
-}
-
-async function clickConnect(page: Page) {
-  await page.getByRole("button", { name: "Browser wallet" }).click();
-  await waitForConnected(page);
-}
-
-// ── Tests ──────────────────────────────────────────────────────────────────
-
-test.describe("wallet connection persistence", () => {
-  test.beforeEach(async ({ page }) => {
-    await injectMockEthereum(page);
+  test("home page shows the Log in button", async ({ page }) => {
+    await gotoAndWait(page, "/");
+    await expect(page.getByTestId("login-button")).toHaveText("Log in");
   });
 
-  test("connecting shows Disconnect button and hides Browser wallet", async ({ page }) => {
-    await page.goto("/");
-    await waitForDisconnected(page);
-    await clickConnect(page);
-
-    await expect(page.getByRole("button", { name: "Disconnect" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Browser wallet" })).not.toBeVisible();
+  test("login button survives client-side navigation to create-agent", async ({ page }) => {
+    await gotoAndWait(page, "/");
+    await gotoAndWait(page, "/create-agent/");
   });
 
-  test("connection survives client-side navigation to create-agent", async ({ page }) => {
-    await page.goto("/");
-    await clickConnect(page);
-
-    // Client-side navigation (no page reload — wagmi state lives in React memory)
-    await page.goto("/create-agent/");
-    await page.waitForLoadState("domcontentloaded");
-
-    await waitForConnected(page);
+  test("login button is restored after a full page refresh", async ({ page }) => {
+    await gotoAndWait(page, "/");
+    await page.reload({ waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT });
+    await expect(page.getByTestId("login-button")).toBeVisible({ timeout: 20_000 });
   });
 
-  test("connection is restored after full page refresh", async ({ page }) => {
-    await page.goto("/");
-    await clickConnect(page);
-
-    // Hard refresh — wagmi must rehydrate from localStorage and call eth_accounts
-    await page.reload();
-    await page.waitForLoadState("domcontentloaded");
-
-    await waitForConnected(page);
-  });
-
-  test("connection is restored after navigating directly to create-agent", async ({ page }) => {
-    await page.goto("/");
-    await clickConnect(page);
-
-    // Simulate: user types /create-agent/ in the address bar (full load, not SPA nav)
-    await page.goto("/create-agent/");
-    await page.waitForLoadState("domcontentloaded");
-
-    await waitForConnected(page);
-  });
-
-  test("disconnecting clears the connection and does not reconnect on reload", async ({ page }) => {
-    await page.goto("/");
-    await clickConnect(page);
-
-    await page.getByRole("button", { name: "Disconnect" }).click();
-    await waitForDisconnected(page);
-
-    // After explicit disconnect, reload should NOT auto-reconnect
-    // (wagmi marks the connector as intentionally disconnected)
-    await page.reload();
-    await page.waitForLoadState("domcontentloaded");
-
-    await waitForDisconnected(page);
+  test("login button is present after navigating directly to create-agent", async ({ page }) => {
+    // Simulate typing /create-agent/ in the address bar (full load, not SPA nav).
+    await gotoAndWait(page, "/create-agent/");
   });
 });

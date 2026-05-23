@@ -9,14 +9,24 @@ const nextConfig: NextConfig = {
   // `accounts` is an optional peer dep of @wagmi/core and @wagmi/connectors that
   // is not published to npm. @wagmi/core/tempo references it but the feature is
   // unused. Without this alias Webpack chokes trying to resolve the import.
+  //
+  // `@coinbase/wallet-sdk` is intentionally NOT aliased to `false` — Privy's
+  // react-auth bundles it for the (optional) Coinbase Wallet login path and
+  // breaks at import time if the module resolves to an empty stub. The other
+  // aliases (porto, @metamask/connect-evm) stay because they're dead branches
+  // pulled in transitively by wagmi connectors but never executed at runtime.
   webpack: (config, { isServer }) => {
     config.resolve.alias = {
       ...config.resolve.alias,
       accounts: false,
-      '@coinbase/wallet-sdk': false,
       '@metamask/connect-evm': false,
       'porto': false,
-      'porto/internal': false
+      'porto/internal': false,
+      // Privy lazily references Farcaster's Solana mini-app SDK for a login
+      // path we don't enable (Ethereum-only: email/Google/MetaMask/WC). It's
+      // an optional peer dep that isn't installed, so alias it to an empty
+      // module to silence the "Can't resolve" Webpack warning.
+      '@farcaster/mini-app-solana': false,
     };
     if (!isServer) {
       config.resolve.fallback = {

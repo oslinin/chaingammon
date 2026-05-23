@@ -405,6 +405,13 @@ cp frontend/.env.example frontend/.env.local
 
 Fund the deployer wallet with Sepolia ETH from any public faucet.
 
+Login is handled by [Privy](https://privy.io): set `NEXT_PUBLIC_PRIVY_APP_ID`
+in `frontend/.env.local` (free app from [dashboard.privy.io](https://dashboard.privy.io))
+so the "Log in" modal can mount — it offers email, Google, MetaMask, and
+WalletConnect. Set `NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID` (free from
+[cloud.walletconnect.com](https://cloud.walletconnect.com)) to enable the
+WalletConnect QR option; email/Google/MetaMask work without it.
+
 ### Bootstrap and run
 
 ```bash
