@@ -15,6 +15,9 @@ import { AgentCard } from "./AgentCard";
 import { AgentRegistryABI, useChainContracts } from "./contracts";
 import { useI18n } from "./i18n";
 
+// Cap rendered agent cards so a large roster doesn't overflow the grid.
+const MAX_VISIBLE_AGENTS = 20;
+
 export function AgentsList() {
   const active = useActiveChain();
   const chainId = useActiveChainId();
@@ -96,7 +99,7 @@ export function AgentsList() {
 
   return (
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-      {agentIds.map((id) => (
+      {agentIds.slice(0, MAX_VISIBLE_AGENTS).map((id) => (
         <AgentCard key={id} agentId={id} />
       ))}
     </div>

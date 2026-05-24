@@ -158,6 +158,10 @@ const RESOLVER_ABI = [
 // publicnode Sepolia caps eth_getLogs at 50k blocks; stay safely under.
 const MAX_BLOCK_RANGE = BigInt(49_000);
 
+// Cap how many cards each section renders so a large roster doesn't overflow
+// the home grid. Discovery still scans everyone; only the render is truncated.
+const MAX_VISIBLE_ENTRIES = 20;
+
 // -------------------------------------------------------------------------
 // Main component
 // -------------------------------------------------------------------------
@@ -440,7 +444,7 @@ export function DiscoveryList({ staticEntries, playersOnly }: DiscoveryListProps
           <p className="text-sm text-zinc-500 dark:text-zinc-400">{t("no_players")}</p>
         ) : (
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {humans.map((e) => (
+            {humans.slice(0, MAX_VISIBLE_ENTRIES).map((e) => (
               <EntryCard key={e.node} entry={e} />
             ))}
           </div>
@@ -459,7 +463,7 @@ export function DiscoveryList({ staticEntries, playersOnly }: DiscoveryListProps
             <p className="text-sm text-zinc-500 dark:text-zinc-400">{t("no_agents")}</p>
           ) : (
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {agents.map((e) => (
+              {agents.slice(0, MAX_VISIBLE_ENTRIES).map((e) => (
                 <EntryCard key={e.node} entry={e} />
               ))}
             </div>
