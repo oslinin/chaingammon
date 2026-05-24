@@ -1,5 +1,12 @@
 "use client";
 
+import calBoardSteampunk from "../lib/calibration/board_steampunk.json";
+import calBoardCeltic    from "../lib/calibration/board_celtic.json";
+import calBoardMedieval  from "../lib/calibration/board_medieval.json";
+import calBoardDarkwood  from "../lib/calibration/board_darkwood.json";
+import calBoardTokyo     from "../lib/calibration/board_tokyo.json";
+import calBoardCyber2    from "../lib/calibration/board_cyber2.json";
+
 /** Crop spec for a single checker PNG. srcX/Y/W/H are viewBox coords in the source image. */
 export interface CheckerImageSpec {
   url: string;
@@ -286,16 +293,7 @@ export const BOARD_THEMES: Record<string, BoardTheme> = {
       warm: { url: "/boards/new/board4/light_checker.png", srcX: 208, srcY: 0, srcW: 832, srcH: 832, totalW: 1248, totalH: 832 },
       cool: { url: "/boards/new/board4/dark_checker.png",  srcX: 208, srcY: 0, srcW: 832, srcH: 832, totalW: 1248, totalH: 832 },
     },
-    checkerSpots: {
-      columnsX: [0.102, 0.173, 0.245, 0.316, 0.387, 0.458, 0.542, 0.613, 0.684, 0.755, 0.827, 0.898],
-      topY: 0.100,
-      bottomY: 0.900,
-      barX: 0.500,
-      barTopY: 0.390,
-      barBottomY: 0.610,
-      leftOffX: 0.030,
-      rightOffX: 0.970,
-    },
+    checkerSpots: calBoardSteampunk,
     // board4 new image has no portrait circles — no avatarSpots
     frameStart: "#2A1A0A", frameEnd: "#150D04", frameInner: "#0A0602",
     felt: "#3A2810", feltAccent: "#4A3418",
@@ -313,16 +311,7 @@ export const BOARD_THEMES: Record<string, BoardTheme> = {
       warm: { url: "/boards/new/board1/checkers.png", srcX: 0,   srcY: 256, srcW: 512, srcH: 512, totalW: 1024, totalH: 1024 },
       cool: { url: "/boards/new/board1/checkers.png", srcX: 512, srcY: 256, srcW: 512, srcH: 512, totalW: 1024, totalH: 1024 },
     },
-    checkerSpots: {
-      columnsX: [0.108, 0.149, 0.190, 0.231, 0.272, 0.314, 0.440, 0.481, 0.522, 0.564, 0.605, 0.645],
-      topY: 0.164,
-      bottomY: 0.830,
-      barX: 0.376,
-      barTopY: 0.370,
-      barBottomY: 0.630,
-      leftOffX: 0.03,
-      rightOffX: 0.97,
-    },
+    checkerSpots: calBoardCeltic,
     avatarSpots: {
       p0: { cx: 0.063, cy: 0.123 },
       p1: { cx: 0.937, cy: 0.123 },
@@ -346,16 +335,7 @@ export const BOARD_THEMES: Record<string, BoardTheme> = {
       warm: { url: "/boards/new/board2/light_checker.png", srcX: 0, srcY: 0, srcW: 1024, srcH: 1024, totalW: 1024, totalH: 1024 },
       cool: { url: "/boards/new/board2/dark_checker.png",  srcX: 0, srcY: 0, srcW: 1024, srcH: 1024, totalW: 1024, totalH: 1024 },
     },
-    checkerSpots: {
-      columnsX: [0.134, 0.196, 0.259, 0.321, 0.384, 0.446, 0.528, 0.596, 0.663, 0.730, 0.798, 0.865],
-      topY: 0.140,
-      bottomY: 0.860,
-      barX: 0.485,
-      barTopY: 0.394,
-      barBottomY: 0.608,
-      leftOffX: 0.049,
-      rightOffX: 0.945,
-    },
+    checkerSpots: calBoardMedieval,
     // board2 has no portrait circles — no avatarSpots
     frameStart: "#6B3010", frameEnd: "#3A1808", frameInner: "#1A0C04",
     felt: "#E8E0D0", feltAccent: "#F5EED8",
@@ -363,34 +343,6 @@ export const BOARD_THEMES: Record<string, BoardTheme> = {
     bar: "#C8A040", barEdge: "#A07820", rail: "#A07820", railText: "#1A0C04",
     checkerWarm: { fill: "#F0E8D0", stroke: "#C0A060" },
     checkerCool: { fill: "#5A1A1A", stroke: "#2A0808" },
-  },
-  board_roman: {
-    label: "Roman — The Tabula Era",
-    imageIs3d: true,
-    backgroundImageUrl: "/boards/new/board3/board.png",
-    backgroundImageCrop: { srcX: 168, srcY: 185, srcW: 990, srcH: 570, totalSrcW: 1248, totalSrcH: 832 },
-    checkerImages: {
-      warm: { url: "/boards/new/board3/light_checker.png", srcX: 208, srcY: 0, srcW: 832, srcH: 832, totalW: 1248, totalH: 832 },
-      cool: { url: "/boards/new/board3/dark_checker.png",  srcX: 208, srcY: 0, srcW: 832, srcH: 832, totalW: 1248, totalH: 832 },
-    },
-    checkerSpots: {
-      columnsX: [0.117, 0.180, 0.242, 0.305, 0.367, 0.430, 0.567, 0.630, 0.692, 0.755, 0.817, 0.880],
-      topY: 0.100,
-      bottomY: 0.904,
-      barX: 0.497,
-      barTopY: 0.349,
-      barBottomY: 0.651,
-      leftOffX: 0.03,
-      rightOffX: 0.97,
-    },
-    // board3 portrait slots are above srcY=185 crop line — no avatarSpots
-    // Fallback SVG colors — marble cream + dark red:
-    frameStart: "#5A3820", frameEnd: "#3A2010", frameInner: "#1A1008",
-    felt: "#D8C8A8", feltAccent: "#E8D8C0",
-    pointLight: "#F0E8D0", pointDark: "#8B1A1A", pointStroke: "rgba(0,0,0,0.2)",
-    bar: "#A89878", barEdge: "#7A6848", rail: "#7A6848", railText: "#2A1008",
-    checkerWarm: { fill: "#F5F0E8", stroke: "#C8B89A" },
-    checkerCool: { fill: "#4A2010", stroke: "#2A1008" },
   },
   board_darkwood: {
     label: "Manhattan — 1920s Art Deco",
@@ -400,16 +352,7 @@ export const BOARD_THEMES: Record<string, BoardTheme> = {
       warm: { url: "/boards/new/board5/light_checker.png", srcX: 208, srcY: 0, srcW: 832, srcH: 832, totalW: 1248, totalH: 832 },
       cool: { url: "/boards/new/board5/dark_checker.png",  srcX: 208, srcY: 0, srcW: 832, srcH: 832, totalW: 1248, totalH: 832 },
     },
-    checkerSpots: {
-      columnsX: [0.130, 0.175, 0.220, 0.265, 0.310, 0.355, 0.500, 0.545, 0.590, 0.635, 0.680, 0.725],
-      topY: 0.150,
-      bottomY: 0.870,
-      barX: 0.428,
-      barTopY: 0.350,
-      barBottomY: 0.650,
-      leftOffX: 0.04,
-      rightOffX: 0.96,
-    },
+    checkerSpots: calBoardDarkwood,
     // board5 has no portrait circles — no avatarSpots
     frameStart: "#1A1A1A", frameEnd: "#0A0A0A", frameInner: "#000000",
     felt: "#0D1A0D", feltAccent: "#142014",
@@ -426,16 +369,7 @@ export const BOARD_THEMES: Record<string, BoardTheme> = {
       warm: { url: "/boards/new/board7/light_checker.jpeg", srcX: 193, srcY: 11, srcW: 640, srcH: 640, totalW: 1024, totalH: 655 },
       cool: { url: "/boards/new/board7/dark_checker.jpeg",  srcX: 193, srcY: 11, srcW: 640, srcH: 640, totalW: 1024, totalH: 655 },
     },
-    checkerSpots: {
-      columnsX: [0.115, 0.190, 0.266, 0.341, 0.416, 0.491, 0.568, 0.632, 0.695, 0.759, 0.822, 0.886],
-      topY: 0.122,
-      bottomY: 0.870,
-      barX: 0.530,
-      barTopY: 0.374,
-      barBottomY: 0.634,
-      leftOffX: 0.046,
-      rightOffX: 0.955,
-    },
+    checkerSpots: calBoardTokyo,
     // board7 has no portrait circles — no avatarSpots
     frameStart: "#3D2010", frameEnd: "#1E0D06", frameInner: "#0C0602",
     felt: "#2A1808", feltAccent: "#3A2010",
@@ -452,16 +386,7 @@ export const BOARD_THEMES: Record<string, BoardTheme> = {
       warm: { url: "/boards/new/board6/light_checker.png", srcX: 288, srcY: 0,    srcW: 768,  srcH: 768,  totalW: 1344, totalH: 768  },
       cool: { url: "/boards/new/board6/dark_checker.png",  srcX: 0,   srcY: 0,    srcW: 1024, srcH: 1024, totalW: 1024, totalH: 1024 },
     },
-    checkerSpots: {
-      columnsX: [0.054, 0.134, 0.214, 0.294, 0.374, 0.455, 0.550, 0.630, 0.710, 0.790, 0.870, 0.950],
-      topY: 0.043,
-      bottomY: 0.957,
-      barX: 0.502,
-      barTopY: 0.378,
-      barBottomY: 0.616,
-      leftOffX: 0.010,
-      rightOffX: 0.990,
-    },
+    checkerSpots: calBoardCyber2,
     // board6 has no avatar portrait circles — no avatarSpots
     frameStart: "#0A0A0A", frameEnd: "#000000", frameInner: "#000000",
     felt: "#050505", feltAccent: "#0A0A0A",
@@ -475,7 +400,7 @@ export const BOARD_THEMES: Record<string, BoardTheme> = {
 export const THEME_ORDER = [
   "walnut", "emerald", "slate", "onyx", "linen",
   "nard", "tabula", "east_asian", "english", "manhattan", "neural_net",
-  "board_celtic", "board_medieval", "board_roman", "board_steampunk", "board_darkwood", "board_tokyo", "board_cyber2",
+  "board_celtic", "board_medieval", "board_steampunk", "board_darkwood", "board_tokyo", "board_cyber2",
 ] as const;
 export type BoardThemeKey = typeof THEME_ORDER[number];
 
