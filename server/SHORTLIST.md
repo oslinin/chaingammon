@@ -30,7 +30,7 @@ What the server still does, what moved to the browser, and what the keeper owns.
 |---|---|
 | `POST /keeper-workflow/{id}/run` | Webhook target for KeeperHub |
 | `GET /keeper-workflow/{id}` | Frontend polls for workflow progress |
-| `POST /upload-game-record` | Browser calls before `settleWithSessionKeys` (`team-demo/page.tsx`) |
+| `POST /upload-game-record` | Browser calls before `settle()` (`team-demo/page.tsx`) |
 | `POST /finalize-direct-staked` | Browser calls with `keeper_settle=true` to hand off staked settlement to keeper |
 | `POST /matches/{id}/forfeit-check` | Forfeit detection — referenced in `match-settle.yaml` spec; not used by registered workflow |
 | `POST /training/*` | Training job management (server compute) |
@@ -55,9 +55,19 @@ What the server still does, what moved to the browser, and what the keeper owns.
 |---|---|---|
 | Free (ELO-only) | Server | `/finalize-direct` → `recordMatch` |
 | Staked (keeper path) | KeeperHub Para MPC wallet | Browser calls `/finalize-direct-staked?keeper_settle=true` → keeper reads `/replay` → calls `recordMatchAndSplit` directly |
-| Staked (browser-direct) | Browser | `settleWithSessionKeys` + `settleWithSessionKeysAndSplit` — fully permissionless, no server or keeper key needed |
+| Staked (browser-direct) | Browser | `settle(params, …, escrowMatchId, winners, shares)` — fully permissionless |
+| Human-vs-human (free) | Browser | `settle(params, …, bytes32(0), [], [])` — same function, agentId=0, empty payout |
+| Embedded-wallet relay | Server (`/relay-settle`) | Server submits `settle()` tx; operator pays gas. Contract still verifies all sigs — server cannot forge a result. |
+
+One `settle()` function handles all modes: `agentId != 0` → PvE, `agentId == 0` → HvH. Pass non-empty `winners` to trigger escrow payout; pass empty arrays for ELO-only. Auth hash uses `"Chaingammon:open"` (PvE) or `"Chaingammon:open-hvh"` (HvH). Result hash always binds `escrowMatchId + keccak256(abi.encode(winners, shares))`.
 
 Free games have no pot to incentivise a keeper, so the server remains the settler. The keeper path for staked games removes the server from the settlement tx entirely.
+
+---
+
+## KV storage — server-side fallback
+
+`put_kv` / `get_kv` in `og_storage_client.py` try the og-bridge Node script first. If it fails (testnet, before the 0G SDK ships a KV client), they fall back to a local JSON file (`KV_MOCK_PATH`, default `/tmp/chaingammon-kv-mock.json`). Style vectors and weights written via the fallback persist across server restarts and are readable via the same fallback path. No config change needed — the fallback activates automatically on script failure.
 
 ## Dead / to remove
 
