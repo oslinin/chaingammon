@@ -1,254 +1,178 @@
-// FindHumanButton — basic-mode human-vs-human matchmaking, fully serverless.
+// FindHumanButton — one-press ELO-biased human-vs-human matchmaking.
 //
-// Clicking "Play a human" writes a `searching` text record (a unix-ms
-// timestamp) to your OWN <label>.chaingammon.eth subname via the ENS
-// PublicResolver — the same owner-signed setText path useSyncEnsProfile uses
-// for `elo`. Other clients read that record directly from the resolver, so
-// presence lives on-chain in ENS, not on any server. While you're searching,
-// this surfaces the other humans whose `searching` flag is still live (written
-// within SEARCHING_TTL_MS) and offers to connect to the nearest-ELO one using
-// the existing per-human play link.
+// Press Play → publish Nostr presence → auto-matcher pairs you with the
+// nearest-ELO peer → WebRTC data channel opens → navigate to the game.
+// No list of searchers, no opponent to pick, no wallet popup until match
+// start (the auth-sig ceremony happens on the play-human page).
 //
-// Scope: this is the *matchmaking* (find a human who is also searching). The
-// actual game connection reuses whatever the discovery list already links to
-// for a human (their `endpoint` record, else their profile page).
+// Presence is published on an ephemeral per-session Nostr keypair so
+// nothing ties back to the ENS identity or wallet; the ENS label + ELO
+// travel as content inside the presence event and are re-verified by
+// peers against ENS before pairing.
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import Link from "next/link";
-import { parseAbiItem } from "viem";
-import {
-  useAccount,
-  usePublicClient,
-  useReadContracts,
-  useWriteContract,
-} from "wagmi";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
+import { keccak256, toBytes } from "viem";
+import { useAccount } from "wagmi";
 
-import { useActiveChain, useActiveChainId, useEnsInfra } from "./chains";
-import { PublicResolverABI, useChainContracts } from "./contracts";
 import { useAppMode } from "./AppModeContext";
+import { useChaingammonName } from "./useChaingammonName";
+import { useChaingammonProfile } from "./useChaingammonProfile";
+import { NostrMatchClient, newIdentity, type PresenceContent } from "../lib/nostr";
+import { computePairing, type Searcher } from "../lib/matchmaker";
+import { connectPeer } from "../lib/webrtc_match";
+import { peerMatches } from "../lib/peer_connections";
 
-const SUBNAME_MINTED_EVENT = parseAbiItem(
-  "event SubnameMinted(string label, bytes32 indexed node, address indexed subnameOwner, uint256 inftId)",
-);
+// How long to accumulate presence events before attempting to pair.
+const STABILIZE_MS = 3_000;
+// Presence expires after this window — peers older are dropped from the set.
+const PRESENCE_TTL_S = 35;
+// How often to re-run pairing after the initial attempt.
+const REPAIR_MS = 5_000;
+// WebRTC handshake timeout before retrying.
+const CONNECT_TIMEOUT_MS = 15_000;
 
-// publicnode Sepolia caps eth_getLogs at 50k blocks; stay safely under.
-const MAX_BLOCK_RANGE = BigInt(49_000);
-// A `searching` flag counts as live only if written within this window.
-const SEARCHING_TTL_MS = 90_000;
-// How often to re-read the searching set (and re-check freshness) in queue.
-const POLL_MS = 12_000;
-const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000" as const;
-
-interface HumanNode {
-  label: string;
-  node: `0x${string}`;
-  owner: `0x${string}`;
+function matchId(pubA: string, pubB: string): string {
+  const [lo, hi] = pubA < pubB ? [pubA, pubB] : [pubB, pubA];
+  return keccak256(toBytes(lo + hi));
 }
 
 export function FindHumanButton() {
   const { mode, hydrated } = useAppMode();
-  const { address, isConnected } = useAccount();
-  const chainId = useActiveChainId();
-  const active = useActiveChain();
-  const publicClient = usePublicClient({ chainId });
-  const ensInfra = useEnsInfra();
-  const { playerSubnameRegistrar } = useChainContracts();
-  const { writeContractAsync, isPending } = useWriteContract();
+  const { address } = useAccount();
+  const router = useRouter();
 
-  const [humans, setHumans] = useState<HumanNode[]>([]);
+  const { label } = useChaingammonName(address);
+  const { elo } = useChaingammonProfile(label);
+
   const [searching, setSearching] = useState(false);
+  const [status, setStatus] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
-  const [now, setNow] = useState(() => Date.now());
 
-  const resolver = ensInfra?.publicResolver as `0x${string}` | undefined;
+  const nostrRef = useRef<NostrMatchClient | null>(null);
+  const searchersRef = useRef<Map<string, { s: Searcher; at: number }>>(new Map());
+  const connectingRef = useRef(false);
+  const cleanupRef = useRef<(() => void) | null>(null);
 
-  // 1. Enumerate human subnames via SubnameMinted (inftId == 0 == human),
-  //    mirroring DiscoveryList's chunked scan.
-  useEffect(() => {
-    if (!publicClient || !playerSubnameRegistrar || !active) return;
-    let cancelled = false;
+  const stop = useCallback(() => {
+    cleanupRef.current?.();
+    cleanupRef.current = null;
+    connectingRef.current = false;
+    nostrRef.current?.stopPresence();
+    nostrRef.current?.close();
+    nostrRef.current = null;
+    searchersRef.current.clear();
+    setSearching(false);
+    setStatus("");
+    setError(null);
+  }, []);
 
-    const fromBlock: bigint | "earliest" =
-      chainId === 31337
-        ? "earliest"
-        : typeof active.deployedBlock === "number"
-        ? BigInt(active.deployedBlock)
-        : BigInt(0);
+  const tryConnect = useCallback(
+    (nostr: NostrMatchClient, myElo: number) => {
+      if (connectingRef.current) return;
 
-    const scan = async () => {
-      if (fromBlock === "earliest") {
-        return publicClient.getLogs({
-          address: playerSubnameRegistrar,
-          event: SUBNAME_MINTED_EVENT,
-          fromBlock,
-        });
+      // Drop stale peers.
+      const now = Date.now() / 1000;
+      for (const [pk, entry] of searchersRef.current) {
+        if (now - entry.at > PRESENCE_TTL_S) searchersRef.current.delete(pk);
       }
-      const tip = await publicClient.getBlockNumber();
-      const chunks: { fromBlock: bigint; toBlock: bigint }[] = [];
-      let from = fromBlock;
-      while (from <= tip) {
-        const to = from + MAX_BLOCK_RANGE <= tip ? from + MAX_BLOCK_RANGE : tip;
-        chunks.push({ fromBlock: from, toBlock: to });
-        from = to + 1n;
-      }
-      const results = await Promise.all(
-        chunks.map((c) =>
-          publicClient.getLogs({
-            address: playerSubnameRegistrar,
-            event: SUBNAME_MINTED_EVENT,
-            ...c,
-          }),
-        ),
-      );
-      return results.flat();
-    };
 
-    scan()
-      .then((logs) => {
-        if (cancelled) return;
-        const seen = new Set<string>();
-        const out: HumanNode[] = [];
-        for (const log of logs) {
-          const { label, node, subnameOwner, inftId } = log.args as {
-            label?: string;
-            node?: `0x${string}`;
-            subnameOwner?: `0x${string}`;
-            inftId?: bigint;
-          };
-          if (!node || !label || seen.has(node)) continue;
-          if ((inftId ?? 0n) > 0n) continue; // agents have a non-zero iNFT id
-          seen.add(node);
-          out.push({ label, node, owner: subnameOwner ?? ZERO_ADDRESS });
+      const searchers: Searcher[] = [
+        { pubkey: nostr.pubkey, elo: myElo },
+        ...Array.from(searchersRef.current.values()).map((e) => e.s),
+      ];
+
+      const { partner, isOfferer } = computePairing(nostr.pubkey, searchers);
+      if (!partner) {
+        setStatus(
+          searchersRef.current.size === 0
+            ? "Searching… no one else searching yet"
+            : `Searching… ${searchersRef.current.size} also searching`,
+        );
+        return;
+      }
+
+      connectingRef.current = true;
+      const mid = matchId(nostr.pubkey, partner.pubkey);
+      setStatus(`Connecting to opponent…`);
+
+      const peer = connectPeer(nostr, partner.pubkey, mid, isOfferer);
+      peerMatches.set(mid, { peer, isOfferer });
+
+      let timedOut = false;
+      const timer = setTimeout(() => {
+        timedOut = true;
+        connectingRef.current = false;
+        peer.close();
+        peerMatches.delete(mid);
+        setStatus("Handshake timed out, retrying…");
+      }, CONNECT_TIMEOUT_MS);
+
+      peer.onState((s) => {
+        if (timedOut) return;
+        if (s === "open") {
+          clearTimeout(timer);
+          nostr.stopPresence();
+          router.push(`/play-human/${mid}`);
+        } else if (s === "failed" || s === "closed") {
+          clearTimeout(timer);
+          connectingRef.current = false;
+          peerMatches.delete(mid);
+          setStatus("Connection failed, retrying…");
         }
-        setHumans(out);
-      })
-      .catch(() => {
-        /* non-fatal — the button just won't find anyone */
       });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [publicClient, playerSubnameRegistrar, active, chainId]);
-
-  // My own subname (must own one to advertise that I'm searching).
-  const mine = useMemo(
-    () =>
-      address
-        ? humans.find((h) => h.owner.toLowerCase() === address.toLowerCase())
-        : undefined,
-    [humans, address],
+    },
+    [router],
   );
 
-  // 2. Read `searching` / `elo` / `endpoint` for every human node. Polls only
-  //    while I'm in queue so we're not hammering the RPC otherwise.
-  const calls = resolver
-    ? humans.flatMap((h) => [
-        {
-          address: resolver,
-          abi: PublicResolverABI,
-          functionName: "text" as const,
-          args: [h.node, "searching"] as [`0x${string}`, string],
-          chainId,
-        },
-        {
-          address: resolver,
-          abi: PublicResolverABI,
-          functionName: "text" as const,
-          args: [h.node, "elo"] as [`0x${string}`, string],
-          chainId,
-        },
-        {
-          address: resolver,
-          abi: PublicResolverABI,
-          functionName: "text" as const,
-          args: [h.node, "endpoint"] as [`0x${string}`, string],
-          chainId,
-        },
-      ])
-    : [];
-
-  const { data: textResults } = useReadContracts({
-    contracts: calls,
-    query: {
-      enabled: humans.length > 0 && !!resolver,
-      refetchInterval: searching ? POLL_MS : false,
-    },
-  });
-
-  // Re-evaluate freshness between polls.
-  useEffect(() => {
-    if (!searching) return;
-    const id = setInterval(() => setNow(Date.now()), 5_000);
-    return () => clearInterval(id);
-  }, [searching]);
-
-  const myElo = useMemo(() => {
-    if (!mine) return 1500;
-    const i = humans.indexOf(mine);
-    const raw = (textResults?.[i * 3 + 1]?.result as string) ?? "";
-    const n = Number(raw);
-    return Number.isFinite(n) && n > 0 ? n : 1500;
-  }, [mine, humans, textResults]);
-
-  // Other humans whose `searching` flag is still live.
-  const candidates = humans
-    .map((h, i) => {
-      const ts = Number((textResults?.[i * 3]?.result as string) ?? "");
-      const elo = (textResults?.[i * 3 + 1]?.result as string) ?? "";
-      const endpoint = (textResults?.[i * 3 + 2]?.result as string) ?? "";
-      const fresh = Number.isFinite(ts) && ts > 0 && now - ts < SEARCHING_TTL_MS;
-      return { ...h, elo, endpoint, fresh };
-    })
-    .filter(
-      (h) =>
-        h.fresh &&
-        (!address || h.owner.toLowerCase() !== address.toLowerCase()),
-    );
-
-  // Match = nearest by ELO (falls back to 1500 when a rating is missing).
-  const match = candidates
-    .slice()
-    .sort(
-      (a, b) =>
-        Math.abs(Number(a.elo || 1500) - myElo) -
-        Math.abs(Number(b.elo || 1500) - myElo),
-    )[0];
-
-  const playHref = (h: { label: string; endpoint: string }) =>
-    h.endpoint
-      ? `/match?endpoint=${encodeURIComponent(h.endpoint)}`
-      : `/humans/${h.label}`;
-
-  const setFlag = async (value: string) => {
-    if (!resolver || !mine) throw new Error("no subname");
-    await writeContractAsync({
-      address: resolver,
-      abi: PublicResolverABI,
-      functionName: "setText",
-      args: [mine.node, "searching", value],
-    });
-  };
-
-  const onToggle = async () => {
+  const startSearching = useCallback(() => {
     setError(null);
-    try {
-      if (!searching) {
-        await setFlag(String(Date.now()));
-        setNow(Date.now());
-        setSearching(true);
-      } else {
-        await setFlag("");
-        setSearching(false);
-      }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    }
-  };
+    const id = newIdentity();
+    const nostr = new NostrMatchClient(id);
+    nostrRef.current = nostr;
 
-  // Basic mode only, and only once mode has hydrated + wallet is connected.
-  if (!hydrated || mode !== "elo" || !isConnected) return null;
+    const myEloNum = Number(elo ?? "1500") || 1500;
+
+    const content: PresenceContent = {
+      ensLabel: label ?? "",
+      address: address ?? "",
+      sessionPubkey: nostr.pubkey,
+      elo: myEloNum,
+    };
+    nostr.startPresence(content);
+
+    const unsub = nostr.subscribePresence((p, pubkey, at) => {
+      const searcher: Searcher = { pubkey, elo: p.elo ?? 1500 };
+      searchersRef.current.set(pubkey, { s: searcher, at });
+    });
+
+    // Wait for the presence set to stabilize before the first pairing attempt.
+    const stabilizeTimer = setTimeout(() => {
+      tryConnect(nostr, myEloNum);
+    }, STABILIZE_MS);
+
+    // Periodic re-attempt if not yet connected.
+    const repairTimer = setInterval(() => {
+      if (!connectingRef.current) {
+        tryConnect(nostr, myEloNum);
+      }
+    }, REPAIR_MS);
+
+    cleanupRef.current = () => {
+      clearTimeout(stabilizeTimer);
+      clearInterval(repairTimer);
+      unsub();
+    };
+
+    setSearching(true);
+    setStatus("Searching for an opponent…");
+  }, [address, label, elo, tryConnect]);
+
+  // Cleanup on unmount.
+  useEffect(() => () => stop(), [stop]);
+
+  if (!hydrated || mode !== "elo") return null;
 
   return (
     <div
@@ -265,55 +189,23 @@ export function FindHumanButton() {
       <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
         <button
           type="button"
-          onClick={onToggle}
-          disabled={isPending || !mine}
+          onClick={searching ? stop : startSearching}
           className="cg-btn-primary"
-          style={{ opacity: !mine ? 0.5 : 1 }}
         >
-          {isPending
-            ? "Confirm in wallet…"
-            : searching
-            ? "Stop searching"
-            : "Play a human"}
+          {searching ? "Stop searching" : "Play a human"}
         </button>
-        {searching && (
-          <span style={{ fontSize: 13, color: "var(--cg-fg-3)", fontFamily: "var(--cg-font-sans)" }}>
-            Searching for an opponent…{" "}
-            {candidates.length > 0
-              ? `${candidates.length} also searching`
-              : "no one else searching yet"}
-          </span>
-        )}
-        {!mine && (
-          <span style={{ fontSize: 13, color: "var(--cg-fg-4)" }}>
-            Claim your &lt;name&gt;.chaingammon.eth first to be matchable.
+        {searching && status && (
+          <span
+            style={{
+              fontSize: 13,
+              color: "var(--cg-fg-3)",
+              fontFamily: "var(--cg-font-sans)",
+            }}
+          >
+            {status}
           </span>
         )}
       </div>
-
-      {searching && match && (
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            gap: 12,
-            padding: "10px 14px",
-            borderRadius: "var(--cg-radius)",
-            border: "1px solid var(--cg-brass)",
-            background: "rgba(201,155,92,0.12)",
-          }}
-        >
-          <span style={{ fontFamily: "var(--cg-font-mono)", fontSize: 14, color: "var(--cg-fg-1)" }}>
-            Matched: {match.label}.chaingammon.eth
-            {match.elo ? ` · ELO ${match.elo}` : ""}
-          </span>
-          <Link href={playHref(match)} className="cg-chip cg-chip-gold">
-            Play
-          </Link>
-        </div>
-      )}
-
       {error && (
         <p style={{ fontSize: 12, color: "var(--cg-danger)", margin: 0 }}>{error}</p>
       )}

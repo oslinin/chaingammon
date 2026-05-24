@@ -112,7 +112,7 @@ export class NostrMatchClient {
   ): () => void {
     const sub = this.pool.subscribeMany(
       this.relays,
-      [{ kinds: [PRESENCE_KIND], "#t": [MATCH_TAG], since: nowSec() - sinceSec }],
+      { kinds: [PRESENCE_KIND], "#t": [MATCH_TAG], since: nowSec() - sinceSec },
       {
         onevent: (evt: Event) => {
           if (evt.pubkey === this.id.pubkey) return; // ignore self echoes
@@ -150,7 +150,7 @@ export class NostrMatchClient {
   ): () => void {
     const sub = this.pool.subscribeMany(
       this.relays,
-      [{ kinds: [SIGNAL_KIND], "#p": [this.id.pubkey], since: nowSec() }],
+      { kinds: [SIGNAL_KIND], "#p": [this.id.pubkey], since: nowSec() },
       {
         onevent: (evt: Event) => {
           const matchId = evt.tags.find((t) => t[0] === "d")?.[1] ?? "";
