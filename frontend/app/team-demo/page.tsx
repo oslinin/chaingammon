@@ -502,6 +502,12 @@ function TeamDemoPageInner() {
   const [boardTheme, setBoardTheme] = useState<BoardThemeKey>("walnut");
   const [prefer3d, setPrefer3d] = useState(false);
   const [gameCoins, setGameCoins] = useState<{ warm: string; cool: string } | null>(null);
+  // SSG renders this page with no URL — opponentIds/setup/settleOnChain all
+  // start at their "no params" defaults in the prerendered HTML. On hydration
+  // we may be on a URL that has those params, which would diff the rendered
+  // button (`disabled`, label) and trip React's hydration check. Keep the
+  // first client render identical to SSG, then swap in the URL-derived UI.
+  const [mounted, setMounted] = useState(false);
   useEffect(() => {
     setBoardTheme(loadTheme());
     setPrefer3d(loadPrefer3d());
@@ -509,6 +515,7 @@ function TeamDemoPageInner() {
     const prefer3dHandler = (e: Event) => setPrefer3d((e as CustomEvent<boolean>).detail);
     window.addEventListener("board-theme-change", themeHandler);
     window.addEventListener("prefer-3d-change", prefer3dHandler);
+    setMounted(true);
     return () => {
       window.removeEventListener("board-theme-change", themeHandler);
       window.removeEventListener("prefer-3d-change", prefer3dHandler);
@@ -1350,6 +1357,17 @@ function TeamDemoPageInner() {
   };
 
   // ── Setup screen ──────────────────────────────────────────────────────────
+
+  if (!mounted) {
+    return (
+      <div
+        style={{ color: "var(--cg-fg-3)", fontFamily: "var(--cg-font-sans)" }}
+        className="flex flex-1 items-center justify-center"
+      >
+        Loading…
+      </div>
+    );
+  }
 
   if (setup) {
     const onClickSetupStart = () => {
