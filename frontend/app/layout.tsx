@@ -6,6 +6,7 @@
 import type { Metadata, Viewport } from "next";
 import { Space_Grotesk, JetBrains_Mono, Instrument_Serif } from "next/font/google";
 import Link from "next/link";
+import Script from "next/script";
 import "./globals.css";
 import { HeaderLinks } from "./HeaderLinks";
 import { ConditionalComputePill } from "./ConditionalComputePill";
@@ -59,14 +60,11 @@ export default function RootLayout({
       lang="en"
       className={`${cgSans.variable} ${cgMono.variable} ${cgDisplay.variable} h-full antialiased`}
     >
-      <head>
-        {/* Restore the URL after a GitHub Pages SPA redirect via 404.html.
-            404.html encodes the intended path as `/?/humans/oleg/`;
-            this script reverses that before React hydrates so the router
-            sees the original path instead of the root. */}
-        <script dangerouslySetInnerHTML={{ __html: `(function(l){if(l.search[1]==='/'){var d=l.search.slice(1).split('&').map(function(s){return s.replace(/~and~/g,'&')}).join('?');window.history.replaceState(null,null,l.pathname.slice(0,-1)+d+l.hash)}}(window.location))` }} />
-      </head>
       <body className="min-h-full flex flex-col overflow-x-hidden">
+        {/* Restore the URL after a GitHub Pages SPA redirect via 404.html.
+            beforeInteractive runs before React hydrates, which is required
+            so the router sees the original path instead of the root. */}
+        <Script id="ghpages-spa-redirect" strategy="beforeInteractive">{`(function(l){if(l.search[1]==='/'){var d=l.search.slice(1).split('&').map(function(s){return s.replace(/~and~/g,'&')}).join('?');window.history.replaceState(null,null,l.pathname.slice(0,-1)+d+l.hash)}}(window.location))`}</Script>
         <Providers>
           <SettingsModal />
           <div className="flex flex-1">
