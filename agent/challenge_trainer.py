@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import random
 import signal
 import sys
 import time
@@ -34,11 +33,16 @@ load_dotenv(_env_path, override=False)
 
 from agent_state_io import AgentState, load_or_seed, save_and_upload_checkpoint
 from sample_trainer import DEFAULT_EXTRAS_DIM, td_lambda_match
-from career_features import encode_career_context, sample_career_context, CareerContext
+from career_features import encode_career_context, CareerContext
 from challenge_policy import ChallengePolicy
 
 # Using the same phase G and hash logic from round_robin_trainer
-from round_robin_trainer import _resolve_weights_hash, _maybe_build_0g_infer_fn, TdMatchFn
+from round_robin_trainer import (
+    _resolve_weights_hash,
+    _resolve_agent_style,
+    _maybe_build_0g_infer_fn,
+    TdMatchFn,
+)
 
 def _emit(fh: Optional[TextIO], event: str, **fields) -> None:
     if fh is None:
@@ -83,6 +87,7 @@ def run_challenge_loop(
     upload: bool = False,
     encrypt: bool = True,
     weights_hash_resolver: Callable[[int], str] = _resolve_weights_hash,
+    style_resolver: Callable[[int], dict[str, float]] = _resolve_agent_style,
     fetch_blob: Optional[Callable[[str], bytes]] = None,
     td_match: TdMatchFn = td_lambda_match,
     lr: float = 1e-3,
@@ -114,12 +119,11 @@ def run_challenge_loop(
     bankrolls: dict[int, int] = {}
     matches_played: dict[int, int] = {aid: 0 for aid in agent_ids}
 
-    # We need a way to mock opponent styles for evaluation. Since agents don't
-    # strictly "know" each other's styles deterministically, we can sample one per agent,
-    # or just keep a fixed style profile for them. We will generate a fixed random style
-    # for each agent to represent their public profile in the marketplace.
-    rng = random.Random(seed + 2000)
-    public_profiles = {aid: sample_career_context(rng).opponent_style for aid in agent_ids}
+    # Each agent's public profile in the marketplace is its *real* style
+    # overlay (fetched once via style_resolver), so the betting policy's
+    # score_opponent conditions on genuine opponent styles instead of a
+    # random vector. Cold-start agents resolve to {} -> a neutral profile.
+    public_profiles = {aid: style_resolver(aid) for aid in agent_ids}
 
     for aid in agent_ids:
         wh = weights_hash_resolver(aid)
@@ -197,11 +201,9 @@ def run_challenge_loop(
                 accepted_count += 1
                 total_stake_wei += stake
 
-                # PLAY
-                # Same career_features structure as before for td_lambda_match
-                # a_ctx = sample_career_context(career_rng)
-
-                # Let's use their public profiles
+                # PLAY — both sides' extras carry the OPPONENT's real
+                # public profile (set above), so td_lambda_match conditions
+                # on genuine styles rather than a random career context.
                 a_ctx = CareerContext(
                     opponent_style=public_profiles[target],
                     teammate_style=None,

@@ -471,3 +471,50 @@ def test_pick_move_infer_fn_overrides_net():
     assert len(captured_args) == 1
     assert captured_args[0][0] == (2, 198)
     assert captured_args[0][1] == (2, 16)
+
+
+# ─── Phase 1: real opponent profiles (style_resolver) ──────────────────────
+
+
+def test_opponent_style_fed_from_resolver():
+    """Each learner conditions on its OPPONENT's resolved style, not a
+    random career context: the learner's extras must carry the opponent's
+    hits_blot at the corresponding STYLE_AXES slot."""
+    from career_features import STYLE_AXES
+
+    hb = STYLE_AXES.index("hits_blot")
+    styles = {1: {"hits_blot": 0.9}, 2: {"hits_blot": 0.2}}
+
+    captured: list[tuple] = []
+
+    def stub(agent, opp, agent_extras, opp_extras, *, gamma, lam, lr, **kwargs):
+        captured.append((id(agent), id(opp), agent_extras.clone()))
+        return 30, 1
+
+    buf = io.StringIO()
+    agents = run_round_robin(
+        agent_ids=[1, 2],
+        epochs=1,
+        status_fh=buf,
+        td_match=stub,
+        weights_hash_resolver=lambda aid: "",
+        style_resolver=lambda aid: styles.get(aid, {}),
+    )
+
+    id_to_aid = {id(s.net): aid for aid, s in agents.items()}
+    assert captured  # at least one match ran
+    for _learner_id, opp_id, extras in captured:
+        opp_aid = id_to_aid[opp_id]
+        # The learner's extras encode the OPPONENT's style at slot `hb`.
+        assert extras[hb].item() == pytest.approx(styles[opp_aid]["hits_blot"])
+
+
+def test_resolve_agent_style_offline_returns_empty(monkeypatch):
+    """_resolve_agent_style must fast-path to {} when 0G isn't configured
+    (no localhost mock, no testnet env) — never spawning the KV subprocess."""
+    from round_robin_trainer import _resolve_agent_style
+
+    for k in ("OG_STORAGE_MODE", "OG_STORAGE_RPC", "OG_STORAGE_INDEXER",
+              "OG_STORAGE_PRIVATE_KEY"):
+        monkeypatch.delenv(k, raising=False)
+    assert _resolve_agent_style(123) == {}
