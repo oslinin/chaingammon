@@ -10,48 +10,61 @@ const IMAGE_KEYS = (Object.keys(BOARD_THEMES) as BoardThemeKey[]).filter(
   (k) => !!BOARD_THEMES[k].backgroundImageUrl
 );
 
-// 17 wizard steps: topY, bottomY, barX, barTopY, barBottomY, col0..col11
-const STEP_DEFS: { id: string; useX: boolean; label: string }[] = [
+// 16 wizard steps: col0 top, col0 bottom, barX, barTopY, barBottomY, col1..col11
+// col0 top  → captures col0_x + topY
+// col0 bot  → captures col0_x (averaged) + bottomY
+// cols 1-11 → captures X only (topY/bottomY are uniform across all columns)
+const STEP_DEFS: { id: string; useX: boolean; useY: boolean; label: string }[] = [
   {
-    id: "topY",
-    useX: false,
-    label: "Top row Y — click where the first checker center sits on the TOP points (row starting at point 13, leftmost)",
+    id: "col0top",
+    useX: true,
+    useY: true,
+    label: "Column 1 TOP — click the checker center on the TOP of column 1 (point 13). Sets col1 X and top-row Y.",
   },
   {
-    id: "bottomY",
-    useX: false,
-    label: "Bottom row Y — click where the first checker center sits on the BOTTOM points (row starting at point 12, leftmost)",
+    id: "col0bot",
+    useX: true,
+    useY: true,
+    label: "Column 1 BOTTOM — click the checker center on the BOTTOM of column 1 (point 12). Sets bottom-row Y.",
   },
   {
     id: "barX",
     useX: true,
+    useY: false,
     label: "Bar X — click the center of the bar strip",
   },
   {
     id: "barTopY",
     useX: false,
+    useY: true,
     label: "Bar top Y — click where the first AGENT (top) bar checker center sits",
   },
   {
     id: "barBottomY",
     useX: false,
+    useY: true,
     label: "Bar bottom Y — click where the first HUMAN (bottom) bar checker center sits",
   },
-  ...Array.from({ length: 12 }, (_, i) => ({
-    id: `col${i}`,
+  ...Array.from({ length: 11 }, (_, i) => ({
+    id: `col${i + 1}`,
     useX: true,
-    label: `Column ${i + 1}/12 X — click the center of column ${i + 1} (left→right). Col 1 = points 13/12, col 6 = just left of bar, col 7 = just right of bar, col 12 = points 24/1`,
+    useY: false,
+    label: `Column ${i + 2}/12 X — click anywhere in column ${i + 2} (left→right). Col 6 = just left of bar, col 7 = just right of bar, col 12 = points 24/1`,
   })),
 ];
 
 function buildJson(coords: Record<string, number>): string {
-  const columnsX = Array.from({ length: 12 }, (_, i) =>
-    parseFloat(((coords[`col${i}_x`] ?? 0)).toFixed(4))
-  );
+  const col0x = ((coords["col0top_x"] ?? 0) + (coords["col0bot_x"] ?? 0)) / 2;
+  const columnsX = [
+    parseFloat(col0x.toFixed(4)),
+    ...Array.from({ length: 11 }, (_, i) =>
+      parseFloat((coords[`col${i + 1}_x`] ?? 0).toFixed(4))
+    ),
+  ];
   const result = {
     columnsX,
-    topY: parseFloat((coords["topY_y"] ?? 0).toFixed(4)),
-    bottomY: parseFloat((coords["bottomY_y"] ?? 0).toFixed(4)),
+    topY: parseFloat((coords["col0top_y"] ?? 0).toFixed(4)),
+    bottomY: parseFloat((coords["col0bot_y"] ?? 0).toFixed(4)),
     barX: parseFloat((coords["barX_x"] ?? 0).toFixed(4)),
     barTopY: parseFloat((coords["barTopY_y"] ?? 0).toFixed(4)),
     barBottomY: parseFloat((coords["barBottomY_y"] ?? 0).toFixed(4)),
@@ -117,20 +130,19 @@ export default function CalibratePage() {
 
   const done = step >= STEP_DEFS.length;
 
-  // Background image crop math — mirrors Board.tsx exactly
+  // Background crop math for the HTML img layer (mirrors Board.tsx)
   const crop = theme.backgroundImageCrop;
-  let imgX = 0,
-    imgY = 0,
-    imgW = W,
-    imgH = H;
-  if (crop) {
-    const scaleX = W / crop.srcW;
-    const scaleY = H / crop.srcH;
-    imgX = -crop.srcX * scaleX;
-    imgY = -crop.srcY * scaleY;
-    imgW = crop.totalSrcW * scaleX;
-    imgH = crop.totalSrcH * scaleY;
-  }
+  const bgImgStyle: React.CSSProperties = crop ? {
+    position: "absolute",
+    width:  `${crop.totalSrcW / crop.srcW * 100}%`,
+    height: `${crop.totalSrcH / crop.srcH * 100}%`,
+    left:   `${-crop.srcX / crop.srcW * 100}%`,
+    top:    `${-crop.srcY / crop.srcH * 100}%`,
+  } : { position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" as const };
+
+  // Calibrate always in 2D — no CSS transform applied to any board.
+  // imageIs3d boards can't be truly flattened via CSS; calibrate on the native image.
+  const bgTransform = undefined;
 
   return (
     <div
@@ -232,7 +244,11 @@ export default function CalibratePage() {
 
       <div style={{ display: "flex", gap: 24, alignItems: "flex-start" }}>
         {/* Board image with overlay */}
-        <div style={{ flexShrink: 0 }}>
+        <div style={{ flexShrink: 0, position: "relative", width: W, height: H, border: "1px solid #333" }}>
+          {/* Background image layer — inverse-tilt applied for imageIs3d boards so calibration is always flat */}
+          <div style={{ position: "absolute", inset: 0, overflow: "hidden", transform: bgTransform, transformOrigin: "50% 50%" }}>
+            <img src={theme.backgroundImageUrl} style={bgImgStyle} alt="" draggable={false} />
+          </div>
           <svg
             ref={svgRef}
             width={W}
@@ -240,70 +256,45 @@ export default function CalibratePage() {
             viewBox={`0 0 ${W} ${H}`}
             style={{
               display: "block",
+              position: "relative",
               cursor: done ? "default" : "crosshair",
-              border: "1px solid #333",
             }}
             onMouseMove={handleMouseMove}
             onMouseLeave={() => setHover(null)}
             onClick={handleClick}
           >
-            <defs>
-              <clipPath id="cal-clip">
-                <rect x={0} y={0} width={W} height={H} />
-              </clipPath>
-            </defs>
+            <defs />
 
-            {/* Board background */}
-            <image
-              href={theme.backgroundImageUrl}
-              x={imgX}
-              y={imgY}
-              width={imgW}
-              height={imgH}
-              clipPath="url(#cal-clip)"
-              preserveAspectRatio="none"
-            />
-
-            {/* Existing checkerSpots — faded white dashed circles */}
-            {existing &&
-              existing.columnsX.map((cx, i) => (
-                <g key={`ex-col${i}`}>
-                  <circle
-                    cx={cx * W}
-                    cy={existing.topY * H}
-                    r={7}
-                    fill="none"
-                    stroke="rgba(255,255,255,0.5)"
-                    strokeWidth={1.5}
-                    strokeDasharray="3 2"
-                  />
-                  <circle
-                    cx={cx * W}
-                    cy={existing.bottomY * H}
-                    r={7}
-                    fill="none"
-                    stroke="rgba(255,255,255,0.5)"
-                    strokeWidth={1.5}
-                    strokeDasharray="3 2"
-                  />
-                </g>
-              ))}
-            {existing && (
+            {/* Reference circle for current step — shows only the one spot being asked for */}
+            {existing && !done && (() => {
+              const id = STEP_DEFS[step]?.id;
+              const ref = (cx: number, cy: number, r = 10) => (
+                <circle cx={cx * W} cy={cy * H} r={r} fill="rgba(255,255,0,0.25)" stroke="#ffff00" strokeWidth={3} />
+              );
+              if (id === "col0top") return ref(existing.columnsX[0], existing.topY);
+              if (id === "col0bot") return ref(existing.columnsX[0], existing.bottomY);
+              if (id === "barX") return <>{ref(existing.barX, existing.barTopY, 9)}{ref(existing.barX, existing.barBottomY, 9)}</>;
+              if (id === "barTopY") return ref(existing.barX, existing.barTopY, 9);
+              if (id === "barBottomY") return ref(existing.barX, existing.barBottomY, 9);
+              const colMatch = id?.match(/^col(\d+)$/);
+              if (colMatch) {
+                const i = parseInt(colMatch[1]);
+                const cx = existing.columnsX[i];
+                return ref(cx, existing.topY);
+              }
+              return null;
+            })()}
+            {/* When done, show all spots as confirmation */}
+            {existing && done && (
               <>
-                <circle
-                  cx={existing.barX * W}
-                  cy={existing.barTopY * H}
-                  r={9}
-                  fill="none"
-                  stroke="rgba(255,255,255,0.5)"
-                  strokeWidth={1.5}
-                  strokeDasharray="3 2"
-                />
-                <circle
-                  cx={existing.barX * W}
-                  cy={existing.barBottomY * H}
-                  r={9}
-                  fill="none"
+                {existing.columnsX.map((cx, i) => (
+                  <g key={`ex-col${i}`}>
+                    <circle cx={cx * W} cy={existing.topY * H} r={7} fill="none" stroke="rgba(255,255,255,0.5)" strokeWidth={1.5} strokeDasharray="3 2" />
+                    <circle cx={cx * W} cy={existing.bottomY * H} r={7} fill="none" stroke="rgba(255,255,255,0.5)" strokeWidth={1.5} strokeDasharray="3 2" />
+                  </g>
+                ))}
+                <circle cx={existing.barX * W} cy={existing.barTopY * H} r={9} fill="none" stroke="rgba(255,255,255,0.5)" strokeWidth={1.5} strokeDasharray="3 2" />
+                <circle cx={existing.barX * W} cy={existing.barBottomY * H} r={9} fill="none"
                   stroke="rgba(255,255,255,0.5)"
                   strokeWidth={1.5}
                   strokeDasharray="3 2"
@@ -312,7 +303,7 @@ export default function CalibratePage() {
             )}
 
             {/* Recorded clicks — green dots */}
-            {STEP_DEFS.map(({ id, useX }) => {
+            {STEP_DEFS.map(({ id, useX, useY }) => {
               const x = coords[`${id}_x`];
               const y = coords[`${id}_y`];
               if (x === undefined) return null;
@@ -322,16 +313,11 @@ export default function CalibratePage() {
                 <g key={id} pointerEvents="none">
                   <circle cx={px} cy={py} r={7} fill="#4ade80" opacity={0.85} />
                   <circle cx={px} cy={py} r={7} fill="none" stroke="#065f46" strokeWidth={1.5} />
-                  {/* For X-only steps, also show a vertical line */}
                   {useX && (
-                    <line
-                      x1={px}
-                      y1={0}
-                      x2={px}
-                      y2={H}
-                      stroke="rgba(74,222,128,0.3)"
-                      strokeWidth={1}
-                    />
+                    <line x1={px} y1={0} x2={px} y2={H} stroke="rgba(74,222,128,0.3)" strokeWidth={1} />
+                  )}
+                  {useY && !useX && (
+                    <line x1={0} y1={py} x2={W} y2={py} stroke="rgba(74,222,128,0.3)" strokeWidth={1} />
                   )}
                   <text
                     x={px + 9}

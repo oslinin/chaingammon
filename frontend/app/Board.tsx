@@ -73,13 +73,11 @@ export function Board({
   const usingImage = !!theme.backgroundImageUrl;
 
   const perspectiveDeg = theme.perspectiveDeg ?? 20;
-  let bgTransform: string | undefined;
-  if (usingImage) {
-    if (prefer3d && !theme.imageIs3d)
-      bgTransform = `perspective(800px) rotateX(${perspectiveDeg}deg)`;
-    else if (!prefer3d && theme.imageIs3d)
-      bgTransform = `perspective(800px) rotateX(-${perspectiveDeg}deg)`;
-  }
+  // Apply CSS tilt to the whole container (board + checkers) when 3D mode is on.
+  const bgTransform =
+    usingImage && prefer3d
+      ? `perspective(800px) rotateX(${perspectiveDeg}deg)`
+      : undefined;
 
   // Per-theme play-area grid. Image themes that declare `checkerSpots`
   // use per-spot lookup for checker placement; classic SVG themes fall back
@@ -112,6 +110,7 @@ export function Board({
   };
 
   const svgRef = useRef<SVGSVGElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
   const [dragState, setDragState] = useState<DragState>(null);
   const [pendingDrop, setPendingDrop] = useState<number | "off" | null>(null);
 
@@ -215,6 +214,33 @@ export function Board({
   };
 
   const clientToSvg = (clientX: number, clientY: number) => {
+    // In 3D mode the container has a CSS perspective+rotateX transform that
+    // getScreenCTM() can't account for.  Use the analytical inverse instead.
+    if (prefer3d && usingImage && containerRef.current) {
+      const el = containerRef.current;
+      const nW = el.offsetWidth;
+      const nH = el.offsetHeight;
+      // For rotateX around the element center, the center stays fixed in screen
+      // space.  BoundingClientRect center ≈ transform origin (small error ~<20px).
+      const rect = el.getBoundingClientRect();
+      const cx = rect.left + rect.width / 2;
+      const cy = rect.top + rect.height / 2;
+      const dx = clientX - cx;
+      const dy = clientY - cy;
+      // Inverse of perspective(d) rotateX(theta):
+      //   dy_screen = y_local * cos(t) * d / (d - y_local * sin(t))
+      //   → y_local = dy * d / (cos(t)*d + dy*sin(t))
+      const d = 800;
+      const t = (perspectiveDeg * Math.PI) / 180;
+      const cosT = Math.cos(t);
+      const sinT = Math.sin(t);
+      const yLocal = (dy * d) / (cosT * d + dy * sinT);
+      const xLocal = (dx * (d - yLocal * sinT)) / d;
+      return {
+        x: (xLocal + nW / 2) * (TOTAL_W / nW),
+        y: (yLocal + nH / 2) * (TOTAL_H / nH),
+      };
+    }
     if (!svgRef.current) return { x: 0, y: 0 };
     const pt = svgRef.current.createSVGPoint();
     pt.x = clientX;
@@ -821,7 +847,13 @@ export function Board({
         {turnLabel}
       </p>
 
-      <div style={{ width: "100%", maxWidth: `${TOTAL_W}px`, overflow: "hidden", position: "relative" }}>
+      <div
+        ref={containerRef}
+        style={{
+          width: "100%", maxWidth: `${TOTAL_W}px`, overflow: "hidden", position: "relative",
+          ...(bgTransform && { transform: bgTransform, transformOrigin: "50% 50%" }),
+        }}
+      >
         {usingImage && (() => {
           const crop = theme.backgroundImageCrop;
           const imgStyle: React.CSSProperties = crop ? {
@@ -832,7 +864,7 @@ export function Board({
             top:    `${-crop.srcY / crop.srcH * 100}%`,
           } : { position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" as const };
           return (
-            <div style={{ position: "absolute", inset: 0, overflow: "hidden", transform: bgTransform, transformOrigin: "50% 50%" }}>
+            <div style={{ position: "absolute", inset: 0, overflow: "hidden" }}>
               <img src={theme.backgroundImageUrl} style={imgStyle} alt="" draggable={false} />
             </div>
           );
@@ -903,17 +935,22 @@ export function Board({
             </>
           )}
 
-          {/* Player coin portrait avatars — only for image themes with defined avatar spots */}
+          {/* Player coin portrait avatars — only when board image has defined slots */}
           {usingImage && playerAvatarUrls && theme.avatarSpots && (() => {
             const av = theme.avatarSpots;
             const p0cx = av.p0.cx * TOTAL_W;
             const p0cy = av.p0.cy * TOTAL_H;
             const p1cx = av.p1.cx * TOTAL_W;
             const p1cy = av.p1.cy * TOTAL_H;
-            const r = av.r * TOTAL_H; // TOTAL_H (440) is always < TOTAL_W (716)
+            const r = av.r * TOTAL_H;
             return (
               <g>
                 <defs>
+                  {/* Removes white/near-white backgrounds from coin PNGs/JPEGs */}
+                  <filter id="cg-coin-dewhite" colorInterpolationFilters="sRGB" x="0%" y="0%" width="100%" height="100%">
+                    <feColorMatrix type="matrix"
+                      values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  -1 -1 -1 0 3" />
+                  </filter>
                   <clipPath id="cg-av-p0">
                     <circle cx={p0cx} cy={p0cy} r={r} />
                   </clipPath>
@@ -925,16 +962,20 @@ export function Board({
                   href={playerAvatarUrls.warm}
                   x={p0cx - r} y={p0cy - r}
                   width={r * 2} height={r * 2}
-                  preserveAspectRatio="xMidYMid meet"
+                  preserveAspectRatio="xMidYMid slice"
                   clipPath="url(#cg-av-p0)"
+                  filter="url(#cg-coin-dewhite)"
                 />
+                <circle cx={p0cx} cy={p0cy} r={r} fill="none" stroke="rgba(255,255,255,0.25)" strokeWidth="1.5" />
                 <image
                   href={playerAvatarUrls.cool}
                   x={p1cx - r} y={p1cy - r}
                   width={r * 2} height={r * 2}
-                  preserveAspectRatio="xMidYMid meet"
+                  preserveAspectRatio="xMidYMid slice"
                   clipPath="url(#cg-av-p1)"
+                  filter="url(#cg-coin-dewhite)"
                 />
+                <circle cx={p1cx} cy={p1cy} r={r} fill="none" stroke="rgba(255,255,255,0.25)" strokeWidth="1.5" />
               </g>
             );
           })()}

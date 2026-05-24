@@ -62,6 +62,7 @@ const DICTIONARY: Record<Language, Record<string, string>> = {
     no_players: "No players registered yet.",
     agents: "Agents",
     // ConnectButton
+    log_in: "Log in",
     connect_wallet: "Connect wallet",
     connecting: "Connecting…",
     disconnect: "Disconnect",
@@ -233,6 +234,7 @@ const DICTIONARY: Record<Language, Record<string, string>> = {
     no_players: "No hay jugadores registrados.",
     agents: "Agentes",
     // ConnectButton
+    log_in: "Iniciar sesión",
     connect_wallet: "Conectar billetera",
     connecting: "Conectando…",
     disconnect: "Desconectar",
@@ -404,6 +406,7 @@ const DICTIONARY: Record<Language, Record<string, string>> = {
     no_players: "Henüz oyuncu kayıtlı değil.",
     agents: "Ajanlar",
     // ConnectButton
+    log_in: "Giriş yap",
     connect_wallet: "Cüzdan bağla",
     connecting: "Bağlanıyor…",
     disconnect: "Bağlantıyı kes",
@@ -575,6 +578,7 @@ const DICTIONARY: Record<Language, Record<string, string>> = {
     no_players: "Игроки ещё не зарегистрированы.",
     agents: "Агенты",
     // ConnectButton
+    log_in: "Войти",
     connect_wallet: "Подключить кошелёк",
     connecting: "Подключение…",
     disconnect: "Отключить",
@@ -746,6 +750,7 @@ const DICTIONARY: Record<Language, Record<string, string>> = {
     no_players: "Гравці ще не зареєстровані.",
     agents: "Агенти",
     // ConnectButton
+    log_in: "Увійти",
     connect_wallet: "Підключити гаманець",
     connecting: "Підключення…",
     disconnect: "Відключити",

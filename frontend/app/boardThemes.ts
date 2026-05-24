@@ -294,36 +294,36 @@ export const BOARD_THEMES: Record<string, BoardTheme> = {
   //   row 2 (y 682–1023) Adventure      Sci-fi
 
   board_steampunk: {
-    label: "Manhattan — 1920s High-Roller",
+    label: "Shuanglu — Imperial Courtyard",
     backgroundImageUrl: "/boards/new/board4/board.jpeg",
-    backgroundImageCrop: { srcX: 145, srcY: 115, srcW: 758, srcH: 430, totalSrcW: 1024, totalSrcH: 585 },
+    backgroundImageCrop: { srcX: 0, srcY: 0, srcW: 1024, srcH: 571, totalSrcW: 1024, totalSrcH: 571 },
     checkerImages: {
-      warm: { url: "/boards/new/board4/light_checker.png", srcX: 288, srcY: 0, srcW: 768, srcH: 768, totalW: 1344, totalH: 768 },
-      cool: { url: "/boards/new/board4/dark_checker.png",  srcX: 288, srcY: 0, srcW: 768, srcH: 768, totalW: 1344, totalH: 768 },
+      warm: { url: "/boards/new/board4/light_checker.png", srcX: 208, srcY: 0, srcW: 832, srcH: 832, totalW: 1248, totalH: 832 },
+      cool: { url: "/boards/new/board4/dark_checker.png",  srcX: 208, srcY: 0, srcW: 832, srcH: 832, totalW: 1248, totalH: 832 },
     },
     checkerSpots: {
-      columnsX: [0.131, 0.194, 0.257, 0.320, 0.382, 0.446, 0.642, 0.699, 0.756, 0.813, 0.871, 0.927],
-      topY: 0.157,
-      bottomY: 0.924,
-      barX: 0.548,
-      barTopY: 0.361,
-      barBottomY: 0.640,
-      leftOffX: 0.04,
-      rightOffX: 0.96,
+      columnsX: [0.117, 0.180, 0.242, 0.305, 0.367, 0.430, 0.567, 0.630, 0.692, 0.755, 0.817, 0.880],
+      topY: 0.100,
+      bottomY: 0.900,
+      barX: 0.497,
+      barTopY: 0.349,
+      barBottomY: 0.651,
+      leftOffX: 0.03,
+      rightOffX: 0.97,
     },
     avatarSpots: {
-      p0: { cx: 0.04, cy: 0.88 },
-      p1: { cx: 0.96, cy: 0.12 },
-      r: 0.06,
+      p0: { cx: 0.127, cy: 0.117 },
+      p1: { cx: 0.873, cy: 0.117 },
+      r: 0.138,
     },
-    frameStart: "#2A1A08", frameEnd: "#150D04", frameInner: "#0A0602",
-    felt: "#1A1008", feltAccent: "#241808",
-    pointLight: "#C89030", pointDark: "#3A2010",
-    pointStroke: "rgba(200,144,48,0.3)",
-    bar: "#150D04", barEdge: "#0A0602",
-    rail: "#150D04", railText: "#C89030",
-    checkerWarm: { fill: "#E0A040", stroke: "#A06010" },
-    checkerCool: { fill: "#2A1A08", stroke: "#000000" },
+    frameStart: "#0A0A0A", frameEnd: "#1A1A0A", frameInner: "#000000",
+    felt: "#0A1A0A", feltAccent: "#0F200F",
+    pointLight: "#C8A820", pointDark: "#0A0A0A",
+    pointStroke: "rgba(200,168,32,0.4)",
+    bar: "#0A0A0A", barEdge: "#000000",
+    rail: "#0A0A0A", railText: "#C8A820",
+    checkerWarm: { fill: "#F0F0E8", stroke: "#C8C8A8" },
+    checkerCool: { fill: "#1A1A1A", stroke: "#000000" },
   },
 
   board_celtic: {
@@ -345,9 +345,9 @@ export const BOARD_THEMES: Record<string, BoardTheme> = {
       rightOffX: 0.97,
     },
     avatarSpots: {
-      p0: { cx: 0.04, cy: 0.88 },
-      p1: { cx: 0.96, cy: 0.12 },
-      r: 0.06,
+      p0: { cx: 0.063, cy: 0.123 },
+      p1: { cx: 0.937, cy: 0.123 },
+      r: 0.099,
     },
     // Fallback SVG colors — match the green/gold board art:
     frameStart: "#2D5A1B", frameEnd: "#1A3A0F", frameInner: "#0F2208",
@@ -377,11 +377,7 @@ export const BOARD_THEMES: Record<string, BoardTheme> = {
       leftOffX: 0.03,
       rightOffX: 0.97,
     },
-    avatarSpots: {
-      p0: { cx: 0.103, cy: 0.035 },
-      p1: { cx: 0.871, cy: 0.035 },
-      r: 0.044,
-    },
+    // board2 has no portrait circles — no avatarSpots
     frameStart: "#3D1F0A", frameEnd: "#1C0D04", frameInner: "#0C0602",
     felt: "#2A1208", feltAccent: "#3A1A0A",
     pointLight: "#C8A060", pointDark: "#3A1A0A", pointStroke: "rgba(0,0,0,0.4)",
@@ -408,11 +404,7 @@ export const BOARD_THEMES: Record<string, BoardTheme> = {
       leftOffX: 0.03,
       rightOffX: 0.97,
     },
-    avatarSpots: {
-      p0: { cx: 0.103, cy: 0.035 },
-      p1: { cx: 0.871, cy: 0.035 },
-      r: 0.044,
-    },
+    // board3 portrait slots are above srcY=185 crop line — no avatarSpots
     // Fallback SVG colors — marble cream + dark red:
     frameStart: "#5A3820", frameEnd: "#3A2010", frameInner: "#1A1008",
     felt: "#D8C8A8", feltAccent: "#E8D8C0",
@@ -424,7 +416,7 @@ export const BOARD_THEMES: Record<string, BoardTheme> = {
   board_darkwood: {
     label: "Manhattan — 1920s Art Deco",
     backgroundImageUrl: "/boards/new/board5/board.jpeg",
-    backgroundImageCrop: { srcX: 0, srcY: 0, srcW: 1024, srcH: 591, totalSrcW: 1024, totalSrcH: 591 },
+    backgroundImageCrop: { srcX: 0, srcY: 0, srcW: 1024, srcH: 559, totalSrcW: 1024, totalSrcH: 559 },
     checkerImages: {
       warm: { url: "/boards/new/board5/light_checker.png", srcX: 208, srcY: 0, srcW: 832, srcH: 832, totalW: 1248, totalH: 832 },
       cool: { url: "/boards/new/board5/dark_checker.png",  srcX: 208, srcY: 0, srcW: 832, srcH: 832, totalW: 1248, totalH: 832 },
@@ -439,11 +431,7 @@ export const BOARD_THEMES: Record<string, BoardTheme> = {
       leftOffX: 0.04,
       rightOffX: 0.96,
     },
-    avatarSpots: {
-      p0: { cx: 0.04, cy: 0.88 },
-      p1: { cx: 0.96, cy: 0.12 },
-      r: 0.06,
-    },
+    // board5 has no portrait circles — no avatarSpots
     frameStart: "#1A1A1A", frameEnd: "#0A0A0A", frameInner: "#000000",
     felt: "#0D1A0D", feltAccent: "#142014",
     pointLight: "#CA8A04", pointDark: "#1A2E1A", pointStroke: "rgba(202,138,4,0.3)",
@@ -470,11 +458,7 @@ export const BOARD_THEMES: Record<string, BoardTheme> = {
       leftOffX: 0.04,
       rightOffX: 0.96,
     },
-    avatarSpots: {
-      p0: { cx: 0.04, cy: 0.88 },
-      p1: { cx: 0.96, cy: 0.12 },
-      r: 0.06,
-    },
+    // board6 avatar portraits fall above the crop line (srcY=90) — no avatarSpots
     // Fallback SVG colors — cyber green + red:
     frameStart: "#0A0A0A", frameEnd: "#000000", frameInner: "#000000",
     felt: "#050505", feltAccent: "#0A0A0A",
@@ -517,12 +501,12 @@ export function savePrefer3d(v: boolean) {
 
 /** URLs for the 6 historical coin portrait avatars. */
 export const COIN_POOL = [
-  '/boards/new/coins/coin1.svg',
-  '/boards/new/coins/coin2.svg',
-  '/boards/new/coins/coin3.svg',
-  '/boards/new/coins/coin4.svg',
-  '/boards/new/coins/coin5.svg',
-  '/boards/new/coins/coin6.svg',
+  '/boards/new/coins/coin1.png',
+  '/boards/new/coins/coin2.png',
+  '/boards/new/coins/coin3.png',
+  '/boards/new/coins/coin4.jpeg',
+  '/boards/new/coins/coin5.png',
+  '/boards/new/coins/coin6.png',
 ] as const;
 
 /**

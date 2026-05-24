@@ -2,19 +2,17 @@
 // chainId → {viem Chain, deployed contract addresses}.
 //
 // To add a chain: edit `chains.ts`, not this file.
+//
+// The config is created via `@privy-io/wagmi`'s `createConfig` so that the
+// PrivyProvider can register its own connector at runtime. Privy supplies
+// the EIP-1193 provider for whatever wallet the user logs in with — email,
+// Google (embedded wallet), MetaMask, or WalletConnect — and surfaces it
+// to wagmi through that connector. We do NOT pre-register `injected()` /
+// `walletConnect()` here; Privy owns the wallet list.
 
 import { http } from "viem";
-import { createConfig, createStorage, noopStorage } from "wagmi";
-// Import `injected` from `@wagmi/core` rather than `wagmi/connectors` to
-// avoid the latter's umbrella export, which transitively pulls in
-// `@wagmi/core/tempo` — that file imports a missing `accounts` package
-// and crashes Webpack at build time. Turbopack happens to skip the dead
-// branch; Webpack does not. `walletConnect` is NOT in @wagmi/core so it
-// comes from `@wagmi/connectors` directly (same avoidance of
-// `wagmi/connectors` umbrella). next.config.ts aliases `accounts → false`
-// so Webpack resolves the optional peer without crashing.
-import { injected } from "@wagmi/core";
-import { walletConnect } from "@wagmi/connectors";
+import { createStorage, noopStorage } from "wagmi";
+import { createConfig } from "@privy-io/wagmi";
 
 import { ALL_CHAINS, CHAIN_REGISTRY } from "./chains";
 
@@ -29,33 +27,8 @@ const storage = createStorage({
   storage: typeof window !== "undefined" ? window.localStorage : noopStorage,
 });
 
-// WalletConnect requires a Project ID from cloud.walletconnect.com.
-// Set NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID in your .env (or GitHub secrets
-// for CI). If it is missing we skip the connector so the app still boots.
-const projectId = process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID;
-
-// WalletConnect uses IndexedDB for session persistence; guard against SSR
-// where indexedDB is not defined.
-const connectors =
-  typeof window !== "undefined" && projectId
-    ? [
-        injected(),
-        walletConnect({
-          projectId,
-          metadata: {
-            name: "Chaingammon",
-            description: "Open protocol for portable backgammon reputation",
-            url: window.location.origin,
-            icons: ["https://oslinin.github.io/chaingammon/favicon.ico"],
-          },
-          showQrModal: true,
-        }),
-      ]
-    : [injected()];
-
 export const config = createConfig({
   chains: ALL_CHAINS,
-  connectors,
   transports,
   ssr: true,
   storage,
@@ -69,4 +42,3 @@ declare module "wagmi" {
 
 // Re-export the registry and full chain list for providers/hooks.
 export { ALL_CHAINS, CHAIN_REGISTRY };
-

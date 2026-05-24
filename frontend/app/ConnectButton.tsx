@@ -1,21 +1,32 @@
 "use client";
 
-// Connect / disconnect button with injected-wallet and WalletConnect support.
+// Privy login button — replaces the previous wagmi-only injected/WalletConnect
+// connect flow. A single "Log in" pill opens Privy's modal, which surfaces:
+//   - Email (one-time code → Privy embedded wallet)
+//   - Google OAuth (→ Privy embedded wallet)
+//   - MetaMask (window.ethereum, when injected)
+//   - WalletConnect (any mobile wallet via QR)
+//
+// After login, Privy's wagmi connector promotes the active wallet into
+// wagmi state, so `useAccount()` returns the connected address and every
+// existing `useReadContract` / `useWriteContract` keeps working unchanged.
 //
 // States:
-//   1. Not mounted (SSR)                      → null (avoids hydration mismatch)
-//   2. Mobile, no injected wallet + WC        → "Connect wallet" (WalletConnect)
-//   3. No wallet / no WC config               → "Install MetaMask" link
-//   4. Not connected, wallet(s) available     → connect buttons
-//   5. Connected                              → network dropdown, profile badge, disconnect
+//   1. Not authenticated                       → "Log in" button (opens Privy modal)
+//   2. Authenticated, wallet not yet in wagmi   → "Connecting…" (embedded-wallet provisioning)
+//   3. Authenticated + connected wallet         → network dropdown, profile badge, disconnect
 //
-// SSR note: wagmi is configured with ssr:true so the server renders connectors
-// as []. The `mounted` guard defers the real render until after hydration so
-// both trees agree and the click handler is never silently dropped.
+// SSR note: no `mounted` guard is needed. During prerender Privy reports
+// `authenticated=false` and wagmi has no account, so the server renders the
+// "Log in" button; the client's first (hydration) render matches because
+// Privy hasn't restored a session yet. A stored session promotes to the
+// connected view on a later render, which React permits post-hydration. The
+// button shows independent of Privy's async `ready` flag, so the auth entry
+// point never disappears if Privy's backend is slow or unreachable — the
+// click handler guards on `ready` so a click before init is a safe no-op.
 
-import { useAccount, useConnect, useDisconnect } from "wagmi";
-import type { Connector } from "wagmi";
-import { useState, useEffect } from "react";
+import { usePrivy } from "@privy-io/react-auth";
+import { useAccount } from "wagmi";
 
 import { NetworkDropdown } from "./NetworkDropdown";
 import { ProfileBadge } from "./ProfileBadge";
@@ -50,147 +61,58 @@ const secondaryBtn: React.CSSProperties = {
   border: "1px solid var(--cg-line-2)",
 };
 
-/** True when running on a phone or tablet (UA-based; post-mount only). */
-function isMobileBrowser(): boolean {
-  return /Android|iPhone|iPad|iPod|IEMobile|Opera Mini/i.test(navigator.userAgent);
-}
-
-/** True when an EIP-1193 provider (window.ethereum) is actually injected. */
-function hasInjectedProvider(): boolean {
-  return typeof window !== "undefined" && Boolean((window as { ethereum?: unknown }).ethereum);
-}
-
-/** Deep link that opens the current page inside MetaMask Mobile's in-app browser. */
-function metaMaskDeepLink(): string {
-  const { hostname, pathname, search } = window.location;
-  return `https://metamask.app.link/dapp/${hostname}${pathname}${search}`;
-}
-
 export function ConnectButton() {
-  const { address, isConnected } = useAccount();
-  const { connectors, connect, isPending: connectPending, error: connectError } = useConnect();
-  const { disconnect } = useDisconnect();
-  const [mounted, setMounted] = useState(false);
-  const [isMobile, setIsMobile] = useState(false);
-  const [hasProvider, setHasProvider] = useState(false);
-  const [userAttempted, setUserAttempted] = useState(false);
   const { t } = useI18n();
+  const { ready, authenticated, login, logout } = usePrivy();
+  const { address, isConnected } = useAccount();
 
-  useEffect(() => {
-    setMounted(true);
-    setIsMobile(isMobileBrowser());
-    setHasProvider(hasInjectedProvider());
-  }, []);
-
-  // wagmi v3 always includes the `injected()` connector in its config regardless
-  // of whether window.ethereum exists, so a truthy `connectors.find(...)` does
-  // NOT mean a wallet is installed. Gate the injected flow on `hasProvider`
-  // (a runtime window.ethereum check) — otherwise clicking "Browser wallet" on
-  // a vanilla mobile browser throws `ProviderNotFoundError`.
-  const injectedConnector = hasProvider
-    ? connectors.find((c: Connector) => c.type === "injected")
-    : undefined;
-  const wcConnector = connectors.find((c: Connector) => c.type === "walletConnect");
-
-  if (!mounted) return null;
-
-  if (!isConnected) {
-    // Mobile browser without window.ethereum — show both the MetaMask deep
-    // link (opens dapp in MetaMask's browser where ethereum is injected) and
-    // WalletConnect (QR / deep link into any mobile wallet).
-    if (isMobile && !injectedConnector) {
-      return (
-        <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "flex-end", gap: 8 }}>
-          <a
-            href={metaMaskDeepLink()}
-            data-testid="open-in-metamask"
-            style={primaryBtn}
-            className="cg-btn-primary"
-          >
-            {t("open_in_metamask")}
-          </a>
-          {wcConnector && (
-            <button
-              type="button"
-              onClick={() => { setUserAttempted(true); connect({ connector: wcConnector }); }}
-              disabled={connectPending}
-              style={secondaryBtn}
-              className="disabled:opacity-60"
-            >
-              WalletConnect
-            </button>
-          )}
-        </div>
-      );
-    }
-
-    const hasAnyConnector = injectedConnector || wcConnector;
-    if (!hasAnyConnector) {
-      return (
-        <a
-          href="https://metamask.io/download/"
-          target="_blank"
-          rel="noopener noreferrer"
-          style={secondaryBtn}
-        >
-          {t("install_metamask")}
-        </a>
-      );
-    }
+  // Connected: Privy authenticated AND wagmi has promoted the active wallet.
+  if (authenticated && isConnected && address) {
     return (
-      <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
-        <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "flex-end", gap: 8 }}>
-          {injectedConnector && (
-            <button
-              type="button"
-              onClick={() => { setUserAttempted(true); connect({ connector: injectedConnector }); }}
-              disabled={connectPending}
-              style={primaryBtn}
-              className="cg-btn-primary disabled:opacity-60"
-            >
-              {connectPending ? t("connecting") : t("connect_wallet")}
-            </button>
-          )}
-          {wcConnector && (
-            <button
-              type="button"
-              onClick={() => { setUserAttempted(true); connect({ connector: wcConnector }); }}
-              disabled={connectPending}
-              style={secondaryBtn}
-              className="disabled:opacity-60"
-            >
-              WalletConnect
-            </button>
-          )}
-        </div>
-        {userAttempted && connectError ? (
-          <span style={{ fontSize: 11, color: "var(--cg-danger)" }}>
-            {connectError.message}
-          </span>
-        ) : null}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          flexWrap: "wrap",
+          justifyContent: "flex-end",
+          gap: 8,
+        }}
+      >
+        <NetworkDropdown />
+        <ProfileBadge address={address} />
+        <button
+          type="button"
+          onClick={() => { void logout(); }}
+          style={{ ...secondaryBtn, height: 32, fontSize: 12 }}
+        >
+          {t("disconnect")}
+        </button>
       </div>
     );
   }
 
-  return (
-    <div
-      style={{
-        display: "flex",
-        alignItems: "center",
-        flexWrap: "wrap",
-        justifyContent: "flex-end",
-        gap: 8,
-      }}
-    >
-      <NetworkDropdown />
-      {address ? <ProfileBadge address={address} /> : null}
-      <button
-        type="button"
-        onClick={() => disconnect()}
-        style={{ ...secondaryBtn, height: 32, fontSize: 12 }}
-      >
-        {t("disconnect")}
+  // Authenticated via Privy, but wagmi hasn't wired up an address yet —
+  // common while an embedded wallet (email/Google login) is provisioning,
+  // or immediately after login before Privy's wagmi connector finishes.
+  if (authenticated) {
+    return (
+      <button type="button" disabled style={{ ...secondaryBtn, opacity: 0.6 }}>
+        {t("connecting")}
       </button>
-    </div>
+    );
+  }
+
+  // Not authenticated → "Log in". Shown regardless of `ready`; the handler
+  // is a no-op until Privy finishes initialising.
+  return (
+    <button
+      type="button"
+      data-testid="login-button"
+      onClick={() => { if (ready) login(); }}
+      style={primaryBtn}
+      className="cg-btn-primary"
+    >
+      {t("log_in")}
+    </button>
   );
 }

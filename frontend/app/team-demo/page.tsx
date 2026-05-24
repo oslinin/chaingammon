@@ -446,10 +446,12 @@ function TeamDemoPageInner() {
   const [settleError, setSettleError] = useState<string | null>(null);
   const [settleTxHash, setSettleTxHash] = useState<`0x${string}` | null>(null);
   const [hasStaleSession, setHasStaleSession] = useState(false);
-  const [boardTheme, setBoardTheme] = useState<BoardThemeKey>(() => loadTheme());
-  const [prefer3d, setPrefer3d] = useState<boolean>(() => loadPrefer3d());
+  const [boardTheme, setBoardTheme] = useState<BoardThemeKey>("walnut");
+  const [prefer3d, setPrefer3d] = useState(false);
   const [gameCoins, setGameCoins] = useState<{ warm: string; cool: string } | null>(null);
   useEffect(() => {
+    setBoardTheme(loadTheme());
+    setPrefer3d(loadPrefer3d());
     const themeHandler = (e: Event) => setBoardTheme((e as CustomEvent<BoardThemeKey>).detail);
     const prefer3dHandler = (e: Event) => setPrefer3d((e as CustomEvent<boolean>).detail);
     window.addEventListener("board-theme-change", themeHandler);
@@ -1550,11 +1552,7 @@ function TeamDemoPageInner() {
               onBarClick={isHumanTurn && currentBar[0] > 0 ? () => setSelectedSource(25) : undefined}
               onOffClick={isHumanTurn && selectedSource !== null ? () => stageMove(selectedSource === 25 ? "bar" : selectedSource, "off") : undefined}
               selectedPoint={selectedSource}
-              playerAvatarUrls={
-                BOARD_THEMES[boardTheme]?.backgroundImageUrl && gameCoins
-                  ? gameCoins
-                  : undefined
-              }
+              playerAvatarUrls={gameCoins ?? undefined}
             />
 
             {game.dice && (
