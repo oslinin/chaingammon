@@ -27,6 +27,7 @@
 
 import { usePrivy } from "@privy-io/react-auth";
 import { useAccount } from "wagmi";
+import { useState, useEffect } from "react";
 
 import { NetworkDropdown } from "./NetworkDropdown";
 import { ProfileBadge } from "./ProfileBadge";
@@ -61,7 +62,11 @@ const secondaryBtn: React.CSSProperties = {
   border: "1px solid var(--cg-line-2)",
 };
 
-export function ConnectButton() {
+// @privy-io/wagmi's WagmiProvider does not provide wagmi context during SSR
+// in Next.js App Router. Guard all wagmi hook calls behind a mount check so
+// the server renders a static "Log in" pill (correct — Privy never has an
+// authenticated session during SSR) and the client hydrates cleanly.
+function ConnectButtonInner() {
   const { t } = useI18n();
   const { ready, authenticated, login, logout } = usePrivy();
   const { address, isConnected } = useAccount();
@@ -94,11 +99,22 @@ export function ConnectButton() {
   // Authenticated via Privy, but wagmi hasn't wired up an address yet —
   // common while an embedded wallet (email/Google login) is provisioning,
   // or immediately after login before Privy's wagmi connector finishes.
+  // The state can wedge (e.g. a stored session whose wallet no longer
+  // restores), so pair it with a log-out escape hatch.
   if (authenticated) {
     return (
-      <button type="button" disabled style={{ ...secondaryBtn, opacity: 0.6 }}>
-        {t("connecting")}
-      </button>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <button type="button" disabled style={{ ...secondaryBtn, opacity: 0.6 }}>
+          {t("connecting")}
+        </button>
+        <button
+          type="button"
+          onClick={() => { void logout(); }}
+          style={{ ...secondaryBtn, height: 32, fontSize: 12 }}
+        >
+          {t("disconnect")}
+        </button>
+      </div>
     );
   }
 
@@ -115,4 +131,17 @@ export function ConnectButton() {
       {t("log_in")}
     </button>
   );
+}
+
+export function ConnectButton() {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => { setMounted(true); }, []);
+  if (!mounted) {
+    return (
+      <button type="button" style={primaryBtn} className="cg-btn-primary">
+        Log in
+      </button>
+    );
+  }
+  return <ConnectButtonInner />;
 }

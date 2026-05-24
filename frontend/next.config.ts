@@ -1,9 +1,21 @@
 import type { NextConfig } from "next";
+import path from "node:path";
+import { createRequire } from "node:module";
 
 // BASE_PATH is set at build time for GitHub Pages (e.g. "/chaingammon").
 // Leave unset (empty string) for local dev or a custom domain deployment.
 // Example for GitHub Pages: BASE_PATH=/chaingammon pnpm frontend:build
 const basePath = process.env.BASE_PATH ?? "";
+
+// Pin wagmi to a single resolved path. pnpm's peer-dep hashing has
+// produced two wagmi@3.6.5 installs in node_modules/.pnpm (different
+// peer contexts → different hashes). Webpack resolved different files
+// in different chunks, giving each one its own WagmiContext object;
+// WagmiProvider mounted on one context, useAccount read from the other,
+// hence WagmiProviderNotFoundError at runtime. Aliasing forces every
+// `import ... from "wagmi"` to land on the same module instance.
+const requireFromHere = createRequire(import.meta.url);
+const wagmiDir = path.dirname(requireFromHere.resolve("wagmi/package.json"));
 
 const nextConfig: NextConfig = {
   // `accounts` is an optional peer dep of @wagmi/core and @wagmi/connectors that
@@ -21,6 +33,8 @@ const nextConfig: NextConfig = {
       // an optional peer dep that isn't installed, so alias it to an empty
       // module to silence the "Can't resolve" Webpack warning.
       '@farcaster/mini-app-solana': false,
+      wagmi$: wagmiDir,
+      wagmi: wagmiDir,
     };
     if (!isServer) {
       config.resolve.fallback = {
