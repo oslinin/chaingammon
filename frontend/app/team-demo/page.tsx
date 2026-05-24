@@ -24,6 +24,7 @@ import {
   type PrivateKeyAccount,
 } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
+import { useWallets } from "@privy-io/react-auth";
 
 import { Board } from "../Board";
 import { loadTheme, saveTheme, loadPrefer3d, pickGameCoins, BOARD_THEMES, type BoardThemeKey } from "../boardThemes";
@@ -106,6 +107,58 @@ async function uploadGameRecord(opts: {
     // Non-fatal: fall through to ZERO_HASH.
   }
   return ZERO_HASH;
+}
+
+/**
+ * Relay settleWithSessionKeys through the server so the operator pays gas.
+ * Used for Privy embedded-wallet (email/Google) players who hold no gas
+ * token. The server submits the exact signed args the wallet would have;
+ * the contract still verifies both signatures, so this is not a trust
+ * downgrade. Returns the settlement tx hash (already mined server-side).
+ * Throws on failure so the caller surfaces the error like a wallet revert.
+ */
+async function relaySettle(args: {
+  human: string;
+  agentId: number;
+  matchLength: number;
+  humanWins: boolean;
+  gameRecordHash: string;
+  nonce: bigint;
+  sessionKey: string;
+  humanAuthSig: string;
+  resultSig: string;
+}): Promise<`0x${string}`> {
+  const resp = await fetch(`${SERVER}/relay-settle`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      human: args.human,
+      agent_id: args.agentId,
+      match_length: args.matchLength,
+      human_wins: args.humanWins,
+      game_record_hash: args.gameRecordHash,
+      nonce: args.nonce.toString(),
+      session_key: args.sessionKey,
+      human_auth_sig: args.humanAuthSig,
+      result_sig: args.resultSig,
+    }),
+  });
+  if (!resp.ok) {
+    let detail = `relay-settle failed (${resp.status})`;
+    try {
+      const err = await resp.json();
+      if (err?.detail) {
+        detail = typeof err.detail === "string" ? err.detail : JSON.stringify(err.detail);
+      }
+    } catch {
+      // Keep the status-code fallback message.
+    }
+    throw new Error(detail);
+  }
+  const data = await resp.json();
+  const txHash = data?.tx_hash as string | undefined;
+  if (!txHash?.startsWith("0x")) throw new Error("relay-settle: missing tx_hash in response");
+  return txHash as `0x${string}`;
 }
 
 function settleSessionKey(
@@ -469,6 +522,20 @@ function TeamDemoPageInner() {
 
   const { t } = useI18n();
   const { address, chain: walletChain, chainId: walletChainId } = useAccount();
+  const { wallets } = useWallets();
+  // Privy email/Google login produces an embedded wallet (walletClientType
+  // "privy" / "privy-v2") that holds no gas token. Settle through the server
+  // relay for these players; external wallets keep submitting the tx
+  // themselves. Matched against the active address so a user who linked both
+  // an embedded and an external wallet relays only when the embedded one is
+  // active.
+  const isEmbeddedWallet =
+    !!address &&
+    wallets.some(
+      (w) =>
+        w.address?.toLowerCase() === address.toLowerCase() &&
+        (w.walletClientType === "privy" || w.walletClientType === "privy-v2"),
+    );
   const chainId = useActiveChainId();
   const activeChain = useActiveChain();
   const { agentRegistry, matchRegistry, agentVault } = useChainContracts();
@@ -1063,23 +1130,37 @@ function TeamDemoPageInner() {
           });
         }
 
-        txHash = await writeContractAsync({
-          address: matchRegistry,
-          abi: MatchRegistryABI,
-          functionName: "settleWithSessionKeys",
-          args: [
-            address,
-            BigInt(primaryOpponentId),
+        if (isEmbeddedWallet) {
+          txHash = await relaySettle({
+            human: address,
+            agentId: primaryOpponentId,
             matchLength,
             humanWins,
             gameRecordHash,
-            authNonce,
-            sessionAccount.address,
+            nonce: authNonce,
+            sessionKey: sessionAccount.address,
             humanAuthSig,
             resultSig,
-          ],
-          chainId,
-        });
+          });
+        } else {
+          txHash = await writeContractAsync({
+            address: matchRegistry,
+            abi: MatchRegistryABI,
+            functionName: "settleWithSessionKeys",
+            args: [
+              address,
+              BigInt(primaryOpponentId),
+              matchLength,
+              humanWins,
+              gameRecordHash,
+              authNonce,
+              sessionAccount.address,
+              humanAuthSig,
+              resultSig,
+            ],
+            chainId,
+          });
+        }
       }
       setSettleTxHash(txHash);
     } catch (e) {
