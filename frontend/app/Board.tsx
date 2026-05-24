@@ -39,6 +39,10 @@ const TOTAL_H = 440;
 
 const INNER_H = TOTAL_H - 2 * FRAME;
 
+// Avatar coins carry a faint glow margin; draw them slightly oversized so the
+// disc overfills the circular clip and no backing crescent shows.
+const AVATAR_FILL = 1.04;
+
 type DragState = {
   fromPoint: number | "bar";
   isP0: boolean;
@@ -841,6 +845,33 @@ export function Board({
     if (board[i] < 0) pip1 += (24 - i) * (-board[i]);
   }
 
+  // Small inline checker swatch shown beside each player label so it's clear
+  // which colour each player is. Mirrors renderChecker: image crop for image
+  // themes, flat colour otherwise.
+  const checkerSwatch = (isP0: boolean) => {
+    const SW = 16;
+    const imgSpec = isP0 ? theme.checkerImages?.warm : theme.checkerImages?.cool;
+    const wrap: React.CSSProperties = { display: "inline-block", verticalAlign: "-3px", marginRight: 5 };
+    if (imgSpec) {
+      const cxVB = imgSpec.srcX + imgSpec.srcW / 2;
+      const cyVB = imgSpec.srcY + imgSpec.srcH / 2;
+      const rVB = (Math.min(imgSpec.srcW, imgSpec.srcH) / 2) * 0.75;
+      const clipId = `cg-sw-${isP0 ? "p0" : "p1"}-${themeKey}`;
+      return (
+        <svg width={SW} height={SW} viewBox={`${imgSpec.srcX} ${imgSpec.srcY} ${imgSpec.srcW} ${imgSpec.srcH}`} style={wrap}>
+          <defs><clipPath id={clipId}><circle cx={cxVB} cy={cyVB} r={rVB} /></clipPath></defs>
+          <image href={imgSpec.url} x={0} y={0} width={imgSpec.totalW} height={imgSpec.totalH} clipPath={`url(#${clipId})`} />
+        </svg>
+      );
+    }
+    const c = isP0 ? theme.checkerWarm : theme.checkerCool;
+    return (
+      <svg width={SW} height={SW} viewBox="0 0 16 16" style={wrap}>
+        <circle cx={8} cy={8} r={6.5} fill={c.fill} stroke={c.stroke} strokeWidth={1.5} />
+      </svg>
+    );
+  };
+
   return (
     <div className="flex flex-col gap-2">
       <p style={{ color: turnColor, fontWeight: "bold", fontSize: "14px" }}>
@@ -935,47 +966,45 @@ export function Board({
             </>
           )}
 
-          {/* Player coin portrait avatars — only when board image has defined slots */}
+          {/* Player avatars in the board's top corners (image themes only).
+              An opaque backing fully covers any portrait baked into the board
+              artwork, so exactly one avatar shows per corner. Default source is
+              a coin; a user-picked avatar will replace it later. */}
           {usingImage && playerAvatarUrls && theme.avatarSpots && (() => {
             const av = theme.avatarSpots;
-            const p0cx = av.p0.cx * TOTAL_W;
-            const p0cy = av.p0.cy * TOTAL_H;
-            const p1cx = av.p1.cx * TOTAL_W;
-            const p1cy = av.p1.cy * TOTAL_H;
             const r = av.r * TOTAL_H;
-            return (
-              <g>
+            const renderAvatar = (
+              cx: number,
+              cy: number,
+              href: string,
+              clipId: string,
+            ) => (
+              <g key={clipId}>
                 <defs>
-                  {/* Removes white/near-white backgrounds from coin PNGs/JPEGs */}
-                  <filter id="cg-coin-dewhite" colorInterpolationFilters="sRGB" x="0%" y="0%" width="100%" height="100%">
-                    <feColorMatrix type="matrix"
-                      values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  -1 -1 -1 0 3" />
-                  </filter>
-                  <clipPath id="cg-av-p0">
-                    <circle cx={p0cx} cy={p0cy} r={r} />
-                  </clipPath>
-                  <clipPath id="cg-av-p1">
-                    <circle cx={p1cx} cy={p1cy} r={r} />
+                  <clipPath id={clipId}>
+                    <circle cx={cx} cy={cy} r={r} />
                   </clipPath>
                 </defs>
+                {/* Opaque backing hides baked-in portrait art beneath. */}
+                <circle cx={cx} cy={cy} r={r} fill="#15110A" />
+                {/* Draw the avatar slightly larger than the clip circle so the
+                    coin disc overfills it — the coin assets carry a faint glow
+                    margin that would otherwise leave a backing crescent. */}
                 <image
-                  href={playerAvatarUrls.warm}
-                  x={p0cx - r} y={p0cy - r}
-                  width={r * 2} height={r * 2}
+                  href={href}
+                  x={cx - r * AVATAR_FILL} y={cy - r * AVATAR_FILL}
+                  width={r * 2 * AVATAR_FILL} height={r * 2 * AVATAR_FILL}
                   preserveAspectRatio="xMidYMid slice"
-                  clipPath="url(#cg-av-p0)"
-                  filter="url(#cg-coin-dewhite)"
+                  clipPath={`url(#${clipId})`}
                 />
-                <circle cx={p0cx} cy={p0cy} r={r} fill="none" stroke="rgba(255,255,255,0.25)" strokeWidth="1.5" />
-                <image
-                  href={playerAvatarUrls.cool}
-                  x={p1cx - r} y={p1cy - r}
-                  width={r * 2} height={r * 2}
-                  preserveAspectRatio="xMidYMid slice"
-                  clipPath="url(#cg-av-p1)"
-                  filter="url(#cg-coin-dewhite)"
-                />
-                <circle cx={p1cx} cy={p1cy} r={r} fill="none" stroke="rgba(255,255,255,0.25)" strokeWidth="1.5" />
+                <circle cx={cx} cy={cy} r={r} fill="none" stroke="rgba(0,0,0,0.55)" strokeWidth="3" />
+                <circle cx={cx} cy={cy} r={r} fill="none" stroke="rgba(255,255,255,0.35)" strokeWidth="1.5" />
+              </g>
+            );
+            return (
+              <g pointerEvents="none">
+                {renderAvatar(av.p0.cx * TOTAL_W, av.p0.cy * TOTAL_H, playerAvatarUrls.warm, `cg-av-${themeKey}-p0`)}
+                {renderAvatar(av.p1.cx * TOTAL_W, av.p1.cy * TOTAL_H, playerAvatarUrls.cool, `cg-av-${themeKey}-p1`)}
               </g>
             );
           })()}
@@ -1181,10 +1210,12 @@ export function Board({
 
       <div className="flex gap-6 text-sm text-zinc-600 dark:text-zinc-400">
         <span>
+          {checkerSwatch(true)}
           <span style={{ color: "var(--cg-player-warm)" }} className="font-semibold">You</span>{" "}
           borne off: {off[0]} / 15 · <span className="font-mono">{pip0} pip{pip0 !== 1 ? "s" : ""}</span>
         </span>
         <span>
+          {checkerSwatch(false)}
           <span style={{ color: "var(--cg-player-cool)" }} className="font-semibold">{opponentName ?? "Agent"}</span>{" "}
           borne off: {off[1]} / 15 · <span className="font-mono">{pip1} pip{pip1 !== 1 ? "s" : ""}</span>
         </span>

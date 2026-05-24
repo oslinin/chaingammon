@@ -294,7 +294,7 @@ export const BOARD_THEMES: Record<string, BoardTheme> = {
       cool: { url: "/boards/new/board4/dark_checker.png",  srcX: 208, srcY: 0, srcW: 832, srcH: 832, totalW: 1248, totalH: 832 },
     },
     checkerSpots: calBoardSteampunk,
-    // board4 new image has no portrait circles — no avatarSpots
+    avatarSpots: { p0: { cx: 0.043, cy: 0.12 }, p1: { cx: 0.957, cy: 0.12 }, r: 0.052 },
     frameStart: "#2A1A0A", frameEnd: "#150D04", frameInner: "#0A0602",
     felt: "#3A2810", feltAccent: "#4A3418",
     pointLight: "#A07840", pointDark: "#2A1808", pointStroke: "rgba(0,0,0,0.45)",
@@ -315,7 +315,7 @@ export const BOARD_THEMES: Record<string, BoardTheme> = {
     avatarSpots: {
       p0: { cx: 0.063, cy: 0.123 },
       p1: { cx: 0.937, cy: 0.123 },
-      r: 0.099,
+      r: 0.105,
     },
     // Fallback SVG colors — match the green/gold board art:
     frameStart: "#2D5A1B", frameEnd: "#1A3A0F", frameInner: "#0F2208",
@@ -336,7 +336,7 @@ export const BOARD_THEMES: Record<string, BoardTheme> = {
       cool: { url: "/boards/new/board2/dark_checker.png",  srcX: 0, srcY: 0, srcW: 1024, srcH: 1024, totalW: 1024, totalH: 1024 },
     },
     checkerSpots: calBoardMedieval,
-    // board2 has no portrait circles — no avatarSpots
+    avatarSpots: { p0: { cx: 0.043, cy: 0.12 }, p1: { cx: 0.957, cy: 0.12 }, r: 0.052 },
     frameStart: "#6B3010", frameEnd: "#3A1808", frameInner: "#1A0C04",
     felt: "#E8E0D0", feltAccent: "#F5EED8",
     pointLight: "#F0EAD8", pointDark: "#8B1A1A", pointStroke: "rgba(0,0,0,0.18)",
@@ -353,7 +353,7 @@ export const BOARD_THEMES: Record<string, BoardTheme> = {
       cool: { url: "/boards/new/board5/dark_checker.png",  srcX: 208, srcY: 0, srcW: 832, srcH: 832, totalW: 1248, totalH: 832 },
     },
     checkerSpots: calBoardDarkwood,
-    // board5 has no portrait circles — no avatarSpots
+    avatarSpots: { p0: { cx: 0.043, cy: 0.12 }, p1: { cx: 0.957, cy: 0.12 }, r: 0.052 },
     frameStart: "#1A1A1A", frameEnd: "#0A0A0A", frameInner: "#000000",
     felt: "#0D1A0D", feltAccent: "#142014",
     pointLight: "#CA8A04", pointDark: "#1A2E1A", pointStroke: "rgba(202,138,4,0.3)",
@@ -370,7 +370,7 @@ export const BOARD_THEMES: Record<string, BoardTheme> = {
       cool: { url: "/boards/new/board7/dark_checker.jpeg",  srcX: 193, srcY: 11, srcW: 640, srcH: 640, totalW: 1024, totalH: 655 },
     },
     checkerSpots: calBoardTokyo,
-    // board7 has no portrait circles — no avatarSpots
+    avatarSpots: { p0: { cx: 0.043, cy: 0.12 }, p1: { cx: 0.957, cy: 0.12 }, r: 0.052 },
     frameStart: "#3D2010", frameEnd: "#1E0D06", frameInner: "#0C0602",
     felt: "#2A1808", feltAccent: "#3A2010",
     pointLight: "#D4B896", pointDark: "#1A0E06", pointStroke: "rgba(0,0,0,0.4)",
@@ -387,7 +387,8 @@ export const BOARD_THEMES: Record<string, BoardTheme> = {
       cool: { url: "/boards/new/board6/dark_checker.png",  srcX: 0,   srcY: 0,    srcW: 1024, srcH: 1024, totalW: 1024, totalH: 1024 },
     },
     checkerSpots: calBoardCyber2,
-    // board6 has no avatar portrait circles — no avatarSpots
+    // No avatarSpots: the neon board's point wedges reach the corners, leaving
+    // no room for a corner avatar. Player colours still show via label swatches.
     frameStart: "#0A0A0A", frameEnd: "#000000", frameInner: "#000000",
     felt: "#050505", feltAccent: "#0A0A0A",
     pointLight: "#CC44FF", pointDark: "#0088CC", pointStroke: "rgba(204,68,255,0.4)",
@@ -429,12 +430,12 @@ export function savePrefer3d(v: boolean) {
 
 /** URLs for the 6 historical coin portrait avatars. */
 export const COIN_POOL = [
-  '/boards/new/coins/coin1.png',
-  '/boards/new/coins/coin2.png',
-  '/boards/new/coins/coin3.png',
-  '/boards/new/coins/coin4.jpeg',
-  '/boards/new/coins/coin5.png',
-  '/boards/new/coins/coin6.png',
+  '/boards/new/coins/coin1_avatar.png',
+  '/boards/new/coins/coin2_avatar.png',
+  '/boards/new/coins/coin3_avatar.png',
+  '/boards/new/coins/coin4_avatar.png',
+  '/boards/new/coins/coin5_avatar.png',
+  '/boards/new/coins/coin6_avatar.png',
 ] as const;
 
 /**
