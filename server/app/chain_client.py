@@ -177,6 +177,9 @@ _MATCH_REGISTRY_ABI = [
             {"name": "authSigB", "type": "bytes"},
             {"name": "resultSigA", "type": "bytes"},
             {"name": "resultSigB", "type": "bytes"},
+            {"name": "escrowMatchId", "type": "bytes32"},
+            {"name": "winners", "type": "address[]"},
+            {"name": "shares", "type": "uint256[]"},
         ],
         "outputs": [{"name": "matchId", "type": "uint256"}],
     },
@@ -555,6 +558,9 @@ class ChainClient:
             b"",                                        # authSigB (unused in PvE)
             self.w3.to_bytes(hexstr=result_sig),        # resultSigA
             b"",                                        # resultSigB (unused in PvE)
+            b"\x00" * 32,                               # escrowMatchId (bytes32(0))
+            [],                                         # winners (ELO-only)
+            [],                                         # shares
         )
 
         # Pre-flight: surface the revert reason cleanly before burning gas.

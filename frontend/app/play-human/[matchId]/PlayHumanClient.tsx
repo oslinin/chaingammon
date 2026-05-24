@@ -259,6 +259,9 @@ function HumanMatchInner() {
             authSigB,
             resultSigA,
             resultSigB,
+            ZERO_HASH,  // escrowMatchId (ELO-only)
+            [],
+            [],
           ],
         });
         setSettleTxHash(txHash as `0x${string}`);
@@ -300,10 +303,16 @@ function HumanMatchInner() {
         aWins = isALower ? myAddrWins : !myAddrWins;
       }
 
+      // escrowMatchId and splitHash are bound in the result hash even for
+      // ELO-only games (zeros/empty) to prevent relayer payout injection.
+      const emptySplitHash = keccak256(encodeAbiParameters(
+        parseAbiParameters("address[], uint256[]"),
+        [[], []],
+      ));
       const resultHashRaw = keccak256(
         encodeAbiParameters(
           parseAbiParameters(
-            "string, uint256, address, address, uint256, address, uint256, bool, bytes32",
+            "string, uint256, address, address, uint256, address, uint256, bool, bytes32, bytes32, bytes32",
           ),
           [
             "Chaingammon:result-hvh",
@@ -315,6 +324,8 @@ function HumanMatchInner() {
             nonceB,
             aWins,
             ZERO_HASH,
+            ZERO_HASH,         // escrowMatchId (none for HvH ELO-only)
+            emptySplitHash,
           ],
         ),
       );
