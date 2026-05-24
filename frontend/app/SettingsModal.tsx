@@ -3,12 +3,13 @@
 import { useEffect, useState } from "react";
 import { useI18n, LANGUAGES, Language } from "./i18n";
 import { BoardThemePicker } from "./BoardThemePicker";
-import { loadTheme, saveTheme, type BoardThemeKey } from "./boardThemes";
+import { loadTheme, saveTheme, loadPrefer3d, savePrefer3d, type BoardThemeKey } from "./boardThemes";
 import { useAppMode, type AppMode } from "./AppModeContext";
 
 export function SettingsModal() {
   const [open, setOpen] = useState(false);
   const [boardTheme, setBoardTheme] = useState<BoardThemeKey>("walnut");
+  const [prefer3d, setPrefer3d] = useState(false);
   const [trainerMode, setTrainerMode] = useState<string>("round_robin");
   const [mounted, setMounted] = useState(false);
   const { language, setLanguage, t } = useI18n();
@@ -17,6 +18,7 @@ export function SettingsModal() {
   useEffect(() => {
     setMounted(true);
     setBoardTheme(loadTheme());
+    setPrefer3d(loadPrefer3d());
     const saved = localStorage.getItem("trainer_mode");
     if (saved === "round_robin" || saved === "challenge") setTrainerMode(saved);
 
@@ -106,6 +108,19 @@ export function SettingsModal() {
                 window.dispatchEvent(new CustomEvent("board-theme-change", { detail: k }));
               }}
             />
+            <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10, fontSize: 12, color: "var(--cg-fg-2)", cursor: "pointer" }}>
+              <input
+                type="checkbox"
+                checked={prefer3d}
+                onChange={(e) => {
+                  setPrefer3d(e.target.checked);
+                  savePrefer3d(e.target.checked);
+                  window.dispatchEvent(new CustomEvent("prefer-3d-change", { detail: e.target.checked }));
+                }}
+                style={{ width: 14, height: 14 }}
+              />
+              3D perspective
+            </label>
           </section>
 
           {/* App mode */}

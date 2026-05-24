@@ -66,7 +66,7 @@ function MatchInner() {
   const { matchEscrow, agentVault } = useChainContracts();
   const { writeContractAsync } = useWriteContract();
   const { mode } = useAppMode();
-  const showStake = mode === "money" || mode === "advanced";
+  const showStake = mode === "money" || mode === "advanced" || params.get("stake") === "1";
 
   const stakeWei = stakeEth.trim() ? safeParseEther(stakeEth) : ZERO_BIG;
   const isStaked = stakeWei > ZERO_BIG;

@@ -13,10 +13,14 @@ const nextConfig: NextConfig = {
     config.resolve.alias = {
       ...config.resolve.alias,
       accounts: false,
-      '@coinbase/wallet-sdk': false,
       '@metamask/connect-evm': false,
       'porto': false,
-      'porto/internal': false
+      'porto/internal': false,
+      // Privy lazily references Farcaster's Solana mini-app SDK for a login
+      // path we don't enable (Ethereum-only: email/Google/MetaMask/WC). It's
+      // an optional peer dep that isn't installed, so alias it to an empty
+      // module to silence the "Can't resolve" Webpack warning.
+      '@farcaster/mini-app-solana': false,
     };
     if (!isServer) {
       config.resolve.fallback = {
@@ -78,7 +82,7 @@ const nextConfig: NextConfig = {
   // HMR to be refused, React never hydrates, and the navbar / agents
   // list show their pre-hydration shell forever.
   // To test on a phone: add your machine's LAN IP here (e.g. "192.168.1.5").
-  allowedDevOrigins: ["192.168.2.9", "172.19.0.1"],
+  allowedDevOrigins: ["192.168.2.9", "172.19.0.1", "132.145.158.84"],
 };
 
 export default nextConfig;

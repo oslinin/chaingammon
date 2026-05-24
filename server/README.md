@@ -81,6 +81,31 @@ EOF
 bash server/scripts/setup.sh
 ```
 
+### Frontend (Next.js)
+
+The frontend runs as a systemd service (`chaingammon-frontend`). nginx on port 443 proxies to it at `localhost:3000`. The service unit is checked into `frontend/chaingammon-frontend.service`.
+
+**First-time install** (already done on `132.145.158.84`):
+
+```bash
+sudo cp frontend/chaingammon-frontend.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable chaingammon-frontend
+sudo systemctl start chaingammon-frontend
+```
+
+**Control and logs:**
+
+```bash
+sudo systemctl start   chaingammon-frontend
+sudo systemctl stop    chaingammon-frontend
+sudo systemctl restart chaingammon-frontend
+sudo systemctl status  chaingammon-frontend
+
+journalctl -u chaingammon-frontend -f        # tail live logs
+journalctl -u chaingammon-frontend -n 50     # last 50 lines
+```
+
 ### Deploy a change
 
 `deploy.sh` pulls the latest commit, re-syncs deps in case `uv.lock` changed, and restarts the service.

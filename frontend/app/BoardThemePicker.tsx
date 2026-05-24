@@ -16,7 +16,7 @@ export function BoardThemePicker({ value, onChange }: Props) {
           const active = key === value;
           return (
             <React.Fragment key={key}>
-              {(idx === 11 || idx === 17) && (
+              {idx === 11 && (
                 <span style={{ width: "100%", height: 1, background: "rgba(255,255,255,0.12)", flexShrink: 0, margin: "2px 0" }} />
               )}
             <button
