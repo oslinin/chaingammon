@@ -154,18 +154,29 @@ _MATCH_REGISTRY_ABI = [
     },
     {
         "type": "function",
-        "name": "settleWithSessionKeys",
+        "name": "settle",
         "stateMutability": "nonpayable",
         "inputs": [
-            {"name": "human", "type": "address"},
-            {"name": "agentId", "type": "uint256"},
-            {"name": "matchLength", "type": "uint16"},
-            {"name": "humanWins", "type": "bool"},
-            {"name": "gameRecordHash", "type": "bytes32"},
-            {"name": "nonce", "type": "uint256"},
-            {"name": "sessionKey", "type": "address"},
-            {"name": "humanAuthSig", "type": "bytes"},
-            {"name": "resultSig", "type": "bytes"},
+            {
+                "name": "p",
+                "type": "tuple",
+                "components": [
+                    {"name": "playerA", "type": "address"},
+                    {"name": "playerB", "type": "address"},
+                    {"name": "agentId", "type": "uint256"},
+                    {"name": "matchLength", "type": "uint16"},
+                    {"name": "aWins", "type": "bool"},
+                    {"name": "gameRecordHash", "type": "bytes32"},
+                    {"name": "nonceA", "type": "uint256"},
+                    {"name": "nonceB", "type": "uint256"},
+                    {"name": "sessionKeyA", "type": "address"},
+                    {"name": "sessionKeyB", "type": "address"},
+                ],
+            },
+            {"name": "authSigA", "type": "bytes"},
+            {"name": "authSigB", "type": "bytes"},
+            {"name": "resultSigA", "type": "bytes"},
+            {"name": "resultSigB", "type": "bytes"},
         ],
         "outputs": [{"name": "matchId", "type": "uint256"}],
     },
@@ -510,7 +521,7 @@ class ChainClient:
         human_auth_sig: str,
         result_sig: str,
     ) -> FinalizedMatch:
-        """Relay a trustless settleWithSessionKeys tx from the operator's
+        """Relay a trustless settle() tx (PvE mode) from the operator's
         gas-paying account and wait for inclusion. Returns the new matchId.
 
         The contract verifies the human's auth signature and the session
@@ -525,37 +536,41 @@ class ChainClient:
 
         human_addr = Web3.to_checksum_address(human)
         session_addr = Web3.to_checksum_address(session_key)
+        zero_addr = "0x0000000000000000000000000000000000000000"
+        params = {
+            "playerA": human_addr,
+            "playerB": zero_addr,
+            "agentId": int(agent_id),
+            "matchLength": int(match_length),
+            "aWins": bool(human_wins),
+            "gameRecordHash": self.w3.to_bytes(hexstr=game_record_hash),
+            "nonceA": int(nonce),
+            "nonceB": 0,
+            "sessionKeyA": session_addr,
+            "sessionKeyB": zero_addr,
+        }
         call_args = (
-            human_addr,
-            int(agent_id),
-            int(match_length),
-            bool(human_wins),
-            self.w3.to_bytes(hexstr=game_record_hash),
-            int(nonce),
-            session_addr,
-            self.w3.to_bytes(hexstr=human_auth_sig),
-            self.w3.to_bytes(hexstr=result_sig),
+            params,
+            self.w3.to_bytes(hexstr=human_auth_sig),  # authSigA
+            b"",                                        # authSigB (unused in PvE)
+            self.w3.to_bytes(hexstr=result_sig),        # resultSigA
+            b"",                                        # resultSigB (unused in PvE)
         )
 
-        # Pre-flight: surface the revert reason (bad signature, nonce
-        # mismatch, zero address) cleanly instead of burning gas on a
-        # guaranteed-revert tx. Inputs come from the browser, so a revert
-        # here is a client error, not an operator fault.
+        # Pre-flight: surface the revert reason cleanly before burning gas.
         try:
-            self.match_registry.functions.settleWithSessionKeys(*call_args).call(
+            self.match_registry.functions.settle(*call_args).call(
                 {"from": self.account.address}
             )
         except Exception as e:
-            raise ChainError(f"settleWithSessionKeys would revert: {e}") from e
+            raise ChainError(f"settle would revert: {e}") from e
 
         tx_nonce = self.w3.eth.get_transaction_count(self.account.address)
-        tx = self.match_registry.functions.settleWithSessionKeys(*call_args).build_transaction(
+        tx = self.match_registry.functions.settle(*call_args).build_transaction(
             {
                 "from": self.account.address,
                 "nonce": tx_nonce,
                 "chainId": self.w3.eth.chain_id,
-                # Comparable to recordMatch — two ecrecovers plus the same
-                # mapping writes.
                 "gas": 600_000,
             }
         )
@@ -563,7 +578,7 @@ class ChainClient:
         tx_hash = self.w3.eth.send_raw_transaction(signed.raw_transaction)
         receipt: TxReceipt = self.w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
         if receipt.status != 1:
-            raise ChainError(f"settleWithSessionKeys tx reverted: {tx_hash.hex()}")
+            raise ChainError(f"settle tx reverted: {tx_hash.hex()}")
 
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", category=UserWarning)

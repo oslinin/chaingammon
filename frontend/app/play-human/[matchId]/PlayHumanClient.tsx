@@ -252,9 +252,9 @@ function HumanMatchInner() {
         const txHash = await writeContractAsync({
           address: matchRegistry,
           abi: MatchRegistryABI,
-          functionName: "settleHumanVsHuman",
+          functionName: "settle",
           args: [
-            { playerA, playerB, matchLength: MATCH_LENGTH, aWins, gameRecordHash: ZERO_HASH, nonceA, nonceB, sessionKeyA, sessionKeyB },
+            { playerA, playerB, agentId: 0n, matchLength: MATCH_LENGTH, aWins, gameRecordHash: ZERO_HASH, nonceA, nonceB, sessionKeyA, sessionKeyB },
             authSigA,
             authSigB,
             resultSigA,
