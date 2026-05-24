@@ -402,6 +402,176 @@ contract MatchRegistry is Ownable {
         _payoutFromEscrow(escrowMatchId, winners, shares);
     }
 
+    /// @dev Shared parameter struct for both H-vs-H settlement functions.
+    ///      Packing the 9 non-signature fields into one calldata struct
+    ///      reduces the number of live stack slots so the Yul optimizer
+    ///      stays within the EVM's 16-slot accessible-stack limit.
+    struct HvHParams {
+        address playerA;     // lower address (canonical: uint160(playerA) < uint160(playerB))
+        address playerB;     // higher address
+        uint16  matchLength;
+        bool    aWins;       // true = playerA is the winner
+        bytes32 gameRecordHash;
+        uint256 nonceA;
+        uint256 nonceB;
+        address sessionKeyA;
+        address sessionKeyB;
+    }
+
+    /// @notice Trustless human-vs-human settlement via dual session keys.
+    ///
+    /// Both wallets pre-authorize ephemeral session keys at game open.
+    /// At game end both session keys co-sign the agreed result. Either
+    /// player or any relayer may submit.
+    ///
+    /// Auth hash per player (EIP-191 wrapper applied before recovery):
+    ///   keccak256(abi.encode(
+    ///       "Chaingammon:open-hvh",
+    ///       block.chainid, address(this),
+    ///       self, opponent, nonce, matchLength, sessionKey
+    ///   ))
+    ///
+    /// Result hash (both session keys sign identical bytes):
+    ///   keccak256(abi.encode(
+    ///       "Chaingammon:result-hvh",
+    ///       block.chainid, address(this),
+    ///       playerA, nonceA, playerB, nonceB, aWins, gameRecordHash
+    ///   ))
+    function settleHumanVsHuman(
+        HvHParams calldata p,
+        bytes calldata authSigA,
+        bytes calldata authSigB,
+        bytes calldata resultSigA,
+        bytes calldata resultSigB
+    ) external returns (uint256 matchId) {
+        require(p.playerA != address(0) && p.playerB != address(0), "zero player");
+        require(uint160(p.playerA) < uint160(p.playerB), "playerA must be lower address");
+
+        // ── 1. Auth — playerA ─────────────────────────────────────────────
+        {
+            bytes32 h = MessageHashUtils.toEthSignedMessageHash(
+                keccak256(abi.encode(
+                    "Chaingammon:open-hvh",
+                    block.chainid, address(this),
+                    p.playerA, p.playerB, p.nonceA, p.matchLength, p.sessionKeyA
+                ))
+            );
+            require(ECDSA.recover(h, authSigA) == p.playerA, "authSigA bad");
+        }
+
+        // ── 2. Auth — playerB ─────────────────────────────────────────────
+        {
+            bytes32 h = MessageHashUtils.toEthSignedMessageHash(
+                keccak256(abi.encode(
+                    "Chaingammon:open-hvh",
+                    block.chainid, address(this),
+                    p.playerB, p.playerA, p.nonceB, p.matchLength, p.sessionKeyB
+                ))
+            );
+            require(ECDSA.recover(h, authSigB) == p.playerB, "authSigB bad");
+        }
+
+        // ── 3. Result — both session keys must co-sign ────────────────────
+        {
+            bytes32 h = MessageHashUtils.toEthSignedMessageHash(
+                keccak256(abi.encode(
+                    "Chaingammon:result-hvh",
+                    block.chainid, address(this),
+                    p.playerA, p.nonceA, p.playerB, p.nonceB, p.aWins, p.gameRecordHash
+                ))
+            );
+            require(ECDSA.recover(h, resultSigA) == p.sessionKeyA, "resultSigA bad");
+            require(ECDSA.recover(h, resultSigB) == p.sessionKeyB, "resultSigB bad");
+        }
+
+        // ── 4. Consume both nonces ────────────────────────────────────────
+        require(nonces[p.playerA] == p.nonceA, "nonceA mismatch");
+        require(nonces[p.playerB] == p.nonceB, "nonceB mismatch");
+        nonces[p.playerA] += 1;
+        nonces[p.playerB] += 1;
+
+        // ── 5. Record ─────────────────────────────────────────────────────
+        if (p.aWins) {
+            return _doRecord(0, p.playerA, 0, p.playerB, p.matchLength, p.gameRecordHash);
+        } else {
+            return _doRecord(0, p.playerB, 0, p.playerA, p.matchLength, p.gameRecordHash);
+        }
+    }
+
+    /// @notice Trustless H-vs-H settlement WITH on-chain escrow payout.
+    ///         Same dual-auth flow as `settleHumanVsHuman`; result hash
+    ///         uses a distinct prefix and binds escrowMatchId + splitHash
+    ///         to prevent cross-path replay and relayer tampering.
+    ///         Auth hash is identical to `settleHumanVsHuman` so a single
+    ///         wallet auth sig covers both settlement paths.
+    function settleHumanVsHumanAndSplit(
+        HvHParams calldata p,
+        bytes calldata authSigA,
+        bytes calldata authSigB,
+        bytes calldata resultSigA,
+        bytes calldata resultSigB,
+        bytes32 escrowMatchId,
+        address[] calldata winners,
+        uint256[] calldata shares
+    ) external returns (uint256 matchId) {
+        require(p.playerA != address(0) && p.playerB != address(0), "zero player");
+        require(uint160(p.playerA) < uint160(p.playerB), "playerA must be lower address");
+
+        // ── 1. Auth — playerA ─────────────────────────────────────────────
+        {
+            bytes32 h = MessageHashUtils.toEthSignedMessageHash(
+                keccak256(abi.encode(
+                    "Chaingammon:open-hvh",
+                    block.chainid, address(this),
+                    p.playerA, p.playerB, p.nonceA, p.matchLength, p.sessionKeyA
+                ))
+            );
+            require(ECDSA.recover(h, authSigA) == p.playerA, "authSigA bad");
+        }
+
+        // ── 2. Auth — playerB ─────────────────────────────────────────────
+        {
+            bytes32 h = MessageHashUtils.toEthSignedMessageHash(
+                keccak256(abi.encode(
+                    "Chaingammon:open-hvh",
+                    block.chainid, address(this),
+                    p.playerB, p.playerA, p.nonceB, p.matchLength, p.sessionKeyB
+                ))
+            );
+            require(ECDSA.recover(h, authSigB) == p.playerB, "authSigB bad");
+        }
+
+        // ── 3. Result with split binding ─────────────────────────────────
+        {
+            bytes32 h = MessageHashUtils.toEthSignedMessageHash(
+                keccak256(abi.encode(
+                    "Chaingammon:result-hvh-split",
+                    block.chainid, address(this),
+                    p.playerA, p.nonceA, p.playerB, p.nonceB, p.aWins, p.gameRecordHash,
+                    escrowMatchId, keccak256(abi.encode(winners, shares))
+                ))
+            );
+            require(ECDSA.recover(h, resultSigA) == p.sessionKeyA, "resultSigA bad");
+            require(ECDSA.recover(h, resultSigB) == p.sessionKeyB, "resultSigB bad");
+        }
+
+        // ── 4. Consume both nonces ────────────────────────────────────────
+        require(nonces[p.playerA] == p.nonceA, "nonceA mismatch");
+        require(nonces[p.playerB] == p.nonceB, "nonceB mismatch");
+        nonces[p.playerA] += 1;
+        nonces[p.playerB] += 1;
+
+        // ── 5. Record ─────────────────────────────────────────────────────
+        if (p.aWins) {
+            matchId = _doRecord(0, p.playerA, 0, p.playerB, p.matchLength, p.gameRecordHash);
+        } else {
+            matchId = _doRecord(0, p.playerB, 0, p.playerA, p.matchLength, p.gameRecordHash);
+        }
+
+        // ── 6. Pay out from escrow ────────────────────────────────────────
+        _payoutFromEscrow(escrowMatchId, winners, shares);
+    }
+
     // ── Internal helpers ──────────────────────────────────────────────────────
 
     /// @dev Pay out the escrowed pot via `IMatchEscrow.payoutSplit`.
