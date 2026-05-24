@@ -62,9 +62,8 @@ export default function RootLayout({
     >
       <body className="min-h-full flex flex-col overflow-x-hidden">
         {/* Restore the URL after a GitHub Pages SPA redirect via 404.html.
-            beforeInteractive runs before React hydrates, which is required
-            so the router sees the original path instead of the root. */}
-        <Script id="ghpages-spa-redirect" strategy="beforeInteractive">{`(function(l){if(l.search[1]==='/'){var d=l.search.slice(1).split('&').map(function(s){return s.replace(/~and~/g,'&')}).join('?');window.history.replaceState(null,null,l.pathname.slice(0,-1)+d+l.hash)}}(window.location))`}</Script>
+            beforeInteractive + external src avoids React 19's inline-script warning. */}
+        <Script src="/ghpages-redirect.js" strategy="beforeInteractive" />
         <Providers>
           <SettingsModal />
           <div className="flex flex-1">
