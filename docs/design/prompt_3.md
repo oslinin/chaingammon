@@ -1,3 +1,5 @@
+https://gemini.google.com/app/8db6a686b55de2ab
+
 Chaingammon: Historical Eras Asset Specification Manual
 
 This document serves as the master art direction and asset production manual for the 2D flat-lay graphics of the backgammon boards, checkers, and branding elements across six pivotal historical eras.
