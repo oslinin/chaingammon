@@ -351,8 +351,13 @@ export function generateLegalMoves(board: Board, side: number, dice: [number, nu
     }
   }
 
-  // Group identical sequences
-  const resultStrings = new Set<string>();
+  // Group sequences that differ only in the order of their sub-moves: the same
+  // multiset of moves reaches the same position (e.g. "12/10 12/11" is the same
+  // play as "12/11 12/10"). Dedupe by a canonical sorted key, but display a real
+  // generated ordering — never synthesise an order that wasn't actually played,
+  // since some orders are illegal. Among legal orderings we keep the
+  // lexicographically-largest for a stable, conventional ordering.
+  const byKey = new Map<string, string>();
 
   for (const seq of validSeqs) {
       const counts = new Map<string, number>();
@@ -363,16 +368,18 @@ export function generateLegalMoves(board: Board, side: number, dice: [number, nu
 
       const parts: string[] = [];
       for (const [str, count] of counts.entries()) {
-          if (count > 1) {
-              parts.push(`${str}(${count})`);
-          } else {
-              parts.push(str);
-          }
+          parts.push(count > 1 ? `${str}(${count})` : str);
       }
-      resultStrings.add(parts.join(" "));
+
+      const display = parts.join(" ");
+      const key = [...parts].sort().join(" ");
+      const existing = byKey.get(key);
+      if (existing === undefined || display > existing) {
+          byKey.set(key, display);
+      }
   }
 
-  return Array.from(resultStrings);
+  return Array.from(byKey.values());
 }
 
 function getSingleMoves(board: Board, side: number, availablePips: number[]): Array<{move: CheckerMove, pipUsed: number, newBoard: Board}> {
