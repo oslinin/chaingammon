@@ -1,0 +1,11 @@
+# Discord Bot Mode Optimization Rules
+
+## Interaction Format Restrictions
+- NEVER generate interactive Discord UI elements, buttons, or multi-select dropdown menus.
+- ALWAYS ask clarifying questions as standard, plain text.
+- Formulate multiple-choice options as a numbered list (e.g., 1, 2, 3) or lettered list (e.g., A, B, C) in the body of the message.
+- Ensure all questions can be answered by the user sending a simple text reply.
+
+## Output Formatting
+- Avoid heavy markdown blocks that break Discord's 2,000-character message limit.
+- If an output or code block is long, split it into smaller chunks automatically.
