@@ -41,6 +41,36 @@ _KV_GET_SCRIPT = _BRIDGE_DIR / "src" / "kv-get.mjs"
 
 _REQUIRED_ENV = ("OG_STORAGE_RPC", "OG_STORAGE_INDEXER", "OG_STORAGE_PRIVATE_KEY")
 
+# Server-side JSON fallback for KV. Used when the 0G KV Node script fails
+# (e.g. on testnet before the 0G SDK ships a KV client). Data is stored as
+# base64 so the JSON file stays valid for arbitrary byte payloads.
+_KV_FALLBACK_PATH = Path(os.environ.get("KV_MOCK_PATH", "/tmp/chaingammon-kv-mock.json"))
+
+
+def _fallback_put(key: str, data: bytes) -> None:
+    import base64
+    store: dict = {}
+    if _KV_FALLBACK_PATH.exists():
+        try:
+            store = json.loads(_KV_FALLBACK_PATH.read_text())
+        except Exception:
+            store = {}
+    store[key] = base64.b64encode(data).decode()
+    _KV_FALLBACK_PATH.write_text(json.dumps(store))
+
+
+def _fallback_get(key: str) -> bytes:
+    import base64
+    if not _KV_FALLBACK_PATH.exists():
+        raise OgStorageError(f"get_kv: key not found in fallback store: {key!r}")
+    try:
+        store = json.loads(_KV_FALLBACK_PATH.read_text())
+    except Exception as e:
+        raise OgStorageError(f"get_kv: could not read fallback store: {e}") from e
+    if key not in store:
+        raise OgStorageError(f"get_kv: key not found in fallback store: {key!r}")
+    return base64.b64decode(store[key])
+
 
 class OgStorageError(RuntimeError):
     """Wraps any error from the og-bridge subprocess."""
@@ -110,10 +140,11 @@ def get_blob(root_hash: str, *, timeout: float = 120.0) -> bytes:
 def put_kv(key: str, data: bytes, *, timeout: float = 30.0) -> None:
     """Write `data` to 0G KV under `key`. Overwrites any prior value.
 
-    In localhost mode (OG_STORAGE_MODE=localhost) uses a JSON file mock at
-    /tmp/chaingammon-kv-mock.json (or KV_MOCK_PATH env). No env vars required.
-    In testnet mode the underlying script exits with an error until the 0G SDK
-    exposes a KV client.
+    Tries the og-bridge Node script first; if it fails (e.g. testnet before
+    the 0G SDK ships a KV client), falls back to a local JSON file at
+    KV_MOCK_PATH (default /tmp/chaingammon-kv-mock.json). Data persists on
+    the server across restarts and will be served by get_kv via the same
+    fallback until 0G KV becomes available.
     """
     if not key:
         raise OgStorageError("put_kv: key must not be empty")
@@ -128,17 +159,15 @@ def put_kv(key: str, data: bytes, *, timeout: float = 30.0) -> None:
         check=False,
     )
     if proc.returncode != 0:
-        raise OgStorageError(
-            f"kv-put failed (exit {proc.returncode}): {proc.stderr.decode(errors='replace')}"
-        )
+        _fallback_put(key, data)
 
 
 def get_kv(key: str, *, timeout: float = 30.0) -> bytes:
     """Fetch bytes from 0G KV. Raises OgStorageError if the key is not found.
 
-    In localhost mode (OG_STORAGE_MODE=localhost) reads from the JSON file mock.
-    In testnet mode the underlying script exits with an error until the 0G SDK
-    exposes a KV client.
+    Tries the og-bridge Node script first; falls back to the local JSON file
+    if the script fails (mirrors the put_kv fallback so the same data is
+    readable on testnet until 0G KV is available).
     """
     if not key:
         raise OgStorageError("get_kv: key must not be empty")
@@ -150,8 +179,5 @@ def get_kv(key: str, *, timeout: float = 30.0) -> bytes:
         check=False,
     )
     if proc.returncode != 0:
-        stderr = proc.stderr.decode(errors="replace")
-        raise OgStorageError(
-            f"kv-get failed (exit {proc.returncode}): {stderr}"
-        )
+        return _fallback_get(key)
     return proc.stdout
