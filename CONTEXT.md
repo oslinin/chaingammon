@@ -179,6 +179,7 @@ See `## Frontend Policies` below for the three rules every frontend change must 
 | `frontend/app/profile/[ensName]/page.tsx` | Player profile page (reads ENS text records) |
 | `frontend/app/match/[matchId]/page.tsx` | Match replay + audit trail |
 | `docs/keeperhub-feedback.md` | Required for KeeperHub bounty |
+| `docs/human-vs-human.md` | Design + build plan for serverless human-vs-human: Nostr matchmaking, WebRTC transport, drand dice, two-signature session-key settlement. |
 
 ## Environment Variables
 
