@@ -891,6 +891,71 @@ def upload_game_record(req: UploadGameRecordRequest):
 
 
 # ---------------------------------------------------------------------------
+# POST /relay-settle — gasless settlement relay for Privy embedded wallets.
+#
+# Email/Google players get a Privy embedded wallet that holds no gas token,
+# so they cannot submit settleWithSessionKeys themselves. The browser builds
+# the identical humanAuthSig + session-key resultSig it would sign for a
+# wallet-direct settlement and POSTs them here; the server submits the tx
+# from the operator's gas-paying account. The contract still verifies both
+# signatures and the per-human nonce, so the relayer only sponsors gas — it
+# cannot forge a result. External wallets keep submitting directly.
+# ---------------------------------------------------------------------------
+
+
+class RelaySettleRequest(BaseModel):
+    """Signed args for a gasless relay of MatchRegistry.settleWithSessionKeys.
+
+    `nonce` is the on-chain `nonces[human]` value the signatures were bound
+    to. Signatures are 0x-prefixed hex as produced by the browser wallet /
+    session key.
+    """
+
+    human: str
+    agent_id: int
+    match_length: int
+    human_wins: bool
+    game_record_hash: str
+    nonce: int
+    session_key: str
+    human_auth_sig: str
+    result_sig: str
+
+
+@app.post("/relay-settle")
+def relay_settle(req: RelaySettleRequest):
+    """Sponsor gas for a trustless settleWithSessionKeys tx. Returns
+    {match_id, tx_hash}.
+
+    The MatchRecorded event this emits drives the same post-settle-audit
+    (ENS + overlay) workflow as a wallet-submitted settlement, so no audit
+    runs inline here — keeping parity with the wallet-direct path.
+    """
+    try:
+        chain = ChainClient.from_env()
+    except ChainError as e:
+        raise HTTPException(status_code=503, detail=f"chain client not configured: {e}") from e
+
+    try:
+        finalized = chain.settle_with_session_keys(
+            human=req.human,
+            agent_id=int(req.agent_id),
+            match_length=int(req.match_length),
+            human_wins=bool(req.human_wins),
+            game_record_hash=req.game_record_hash,
+            nonce=int(req.nonce),
+            session_key=req.session_key,
+            human_auth_sig=req.human_auth_sig,
+            result_sig=req.result_sig,
+        )
+    except ChainError as e:
+        # Bad signature, nonce mismatch, or malformed input — client error.
+        raise HTTPException(status_code=400, detail=f"relay settlement failed: {e}") from e
+
+    return {"match_id": finalized.match_id, "tx_hash": finalized.tx_hash}
+
+
+# ---------------------------------------------------------------------------
 # POST /post-settle-audit — called by the post-settle-audit.yaml KeeperHub
 # workflow after any MatchRecorded event on MatchRegistry (Sepolia).
 #

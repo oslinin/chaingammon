@@ -497,6 +497,85 @@ class ChainClient:
             tx_hash_hex = "0x" + tx_hash_hex
         return FinalizedMatch(match_id=match_id, tx_hash=tx_hash_hex)
 
+    def settle_with_session_keys(
+        self,
+        *,
+        human: str,
+        agent_id: int,
+        match_length: int,
+        human_wins: bool,
+        game_record_hash: str,
+        nonce: int,
+        session_key: str,
+        human_auth_sig: str,
+        result_sig: str,
+    ) -> FinalizedMatch:
+        """Relay a trustless settleWithSessionKeys tx from the operator's
+        gas-paying account and wait for inclusion. Returns the new matchId.
+
+        The contract verifies the human's auth signature and the session
+        key's result signature and consumes the per-human nonce, so the
+        relayer only sponsors gas — it cannot forge a result. `nonce` is the
+        on-chain `nonces[human]` value the signatures were bound to (distinct
+        from the relayer's EVM transaction nonce, managed below)."""
+        if not game_record_hash.startswith("0x"):
+            raise ChainError(f"game_record_hash must start with 0x: {game_record_hash!r}")
+        if not human_auth_sig.startswith("0x") or not result_sig.startswith("0x"):
+            raise ChainError("humanAuthSig and resultSig must be 0x-prefixed hex")
+
+        human_addr = Web3.to_checksum_address(human)
+        session_addr = Web3.to_checksum_address(session_key)
+        call_args = (
+            human_addr,
+            int(agent_id),
+            int(match_length),
+            bool(human_wins),
+            self.w3.to_bytes(hexstr=game_record_hash),
+            int(nonce),
+            session_addr,
+            self.w3.to_bytes(hexstr=human_auth_sig),
+            self.w3.to_bytes(hexstr=result_sig),
+        )
+
+        # Pre-flight: surface the revert reason (bad signature, nonce
+        # mismatch, zero address) cleanly instead of burning gas on a
+        # guaranteed-revert tx. Inputs come from the browser, so a revert
+        # here is a client error, not an operator fault.
+        try:
+            self.match_registry.functions.settleWithSessionKeys(*call_args).call(
+                {"from": self.account.address}
+            )
+        except Exception as e:
+            raise ChainError(f"settleWithSessionKeys would revert: {e}") from e
+
+        tx_nonce = self.w3.eth.get_transaction_count(self.account.address)
+        tx = self.match_registry.functions.settleWithSessionKeys(*call_args).build_transaction(
+            {
+                "from": self.account.address,
+                "nonce": tx_nonce,
+                "chainId": self.w3.eth.chain_id,
+                # Comparable to recordMatch — two ecrecovers plus the same
+                # mapping writes.
+                "gas": 600_000,
+            }
+        )
+        signed = self.account.sign_transaction(tx)
+        tx_hash = self.w3.eth.send_raw_transaction(signed.raw_transaction)
+        receipt: TxReceipt = self.w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
+        if receipt.status != 1:
+            raise ChainError(f"settleWithSessionKeys tx reverted: {tx_hash.hex()}")
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", category=UserWarning)
+            logs = self.match_registry.events.MatchRecorded().process_receipt(receipt)
+        if not logs:
+            raise ChainError("MatchRecorded event missing from receipt")
+        match_id = int(logs[0]["args"]["matchId"])
+        tx_hash_hex = tx_hash.hex()
+        if not tx_hash_hex.startswith("0x"):
+            tx_hash_hex = "0x" + tx_hash_hex
+        return FinalizedMatch(match_id=match_id, tx_hash=tx_hash_hex)
+
     def get_match(self, match_id: int) -> dict:
         """Read a recorded match. Returns a dict mirroring MatchInfo struct."""
         raw = self.match_registry.functions.getMatch(match_id).call()
