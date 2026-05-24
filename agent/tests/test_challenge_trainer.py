@@ -161,3 +161,41 @@ def test_accept_rate_in_epoch_end():
     events = _read_events(buf)
     epoch_end = next(e for e in events if e["event"] == "epoch_end")
     assert epoch_end["accept_rate"] == 1.0
+
+
+# ─── Phase 1: real opponent profiles (style_resolver) ──────────────────────
+
+
+def test_public_profiles_from_style_resolver():
+    """The marketplace conditions on each agent's resolved real style: in an
+    accepted match the proposer's extras encode the TARGET's style."""
+    from career_features import STYLE_AXES
+
+    hb = STYLE_AXES.index("hits_blot")
+    styles = {1: {"hits_blot": 0.9}, 2: {"hits_blot": 0.2}}
+
+    captured: list[float] = []
+
+    def stub(agent, opp, agent_extras, opp_extras, **kwargs):
+        # agent_extras is the proposer's context, whose opponent_style is
+        # the TARGET's profile.
+        captured.append(round(agent_extras[hb].item(), 3))
+        return 47, 1
+
+    buf = io.StringIO()
+    run_challenge_loop(
+        agent_ids=[1, 2],
+        epochs=1,
+        starting_bankroll=100000,
+        min_stake=1000,
+        max_stake_fraction=0.25,
+        accept_threshold=0.0,  # accept all proposals
+        status_fh=buf,
+        td_match=stub,
+        weights_hash_resolver=lambda aid: "",
+        style_resolver=lambda aid: styles.get(aid, {}),
+    )
+
+    # 2 agents → agent 1 challenges 2 (target style 0.2), agent 2 challenges 1
+    # (target style 0.9); both accepted → both targets' styles must appear.
+    assert sorted(captured) == [0.2, 0.9]

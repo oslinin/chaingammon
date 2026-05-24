@@ -161,6 +161,11 @@ See `## Frontend Policies` below for the three rules every frontend change must 
 | `agent/coach_service.py` | Legacy Python coaching service — no longer started locally. The active coach LLM runs on 0G Compute, called from `frontend/app/api/coach/hint/route.ts`. |
 | `frontend/lib/match_engine.ts` | Client-side game engine: replaces gnubg_service. Uses rules_engine.ts (legality) + onnx_eval.ts (BackgammonNet inference). |
 | `frontend/lib/move_tagger.ts` | Heuristic strategy labels (Safe/Aggressive/Priming/Anchor/Blitz). TypeScript port of agent/move_tagger.py. |
+| `frontend/lib/drand_dice.ts` | drand-derived verifiable dice for human-vs-human (`keccak256(round_digest ‖ turn_index) mod 36`; TS port of `agent/drand_dice.py`). |
+| `frontend/lib/matchmaker.ts` | Pure deterministic ELO-biased pairing of Nostr searchers (no matchmaking server). |
+| `frontend/lib/nostr.ts` | Serverless presence + WebRTC signaling over public Nostr relays (human-vs-human matchmaking). |
+| `frontend/lib/webrtc_match.ts` | WebRTC peer connection + data channel carrying moves for human-vs-human. |
+| `frontend/app/FindHumanButton.tsx` | Basic-mode "Play a human" — one-press Nostr presence, auto-pair, connect. |
 | `scripts/upload_gnubg_docs.py` | One-time script: upload gnubg strategy docs to 0G Storage for coach RAG |
 | `contracts/src/PlayerSubnameRegistrar.sol` | ENS-shaped subname registrar. Issues `<label>.chaingammon.eth` subnames with text records (`elo`, `match_count`, `last_match_id`, `style_uri`, `archive_uri`). |
 | `contracts/src/EloMath.sol` | Fixed-point ELO formula — test extensively |
@@ -174,6 +179,7 @@ See `## Frontend Policies` below for the three rules every frontend change must 
 | `frontend/app/profile/[ensName]/page.tsx` | Player profile page (reads ENS text records) |
 | `frontend/app/match/[matchId]/page.tsx` | Match replay + audit trail |
 | `docs/keeperhub-feedback.md` | Required for KeeperHub bounty |
+| `docs/human-vs-human.md` | Design + build plan for serverless human-vs-human: Nostr matchmaking, WebRTC transport, drand dice, two-signature session-key settlement. |
 
 ## Environment Variables
 

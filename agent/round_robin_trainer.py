@@ -44,7 +44,6 @@ import itertools
 import json
 import math
 import os
-import random
 import signal
 import sys
 import time
@@ -63,7 +62,7 @@ _env_path = _Path(__file__).resolve().parents[1] / "server" / ".env"
 load_dotenv(_env_path, override=False)
 
 from agent_state_io import AgentState, load_or_seed, save_and_upload_checkpoint
-from career_features import encode_career_context, sample_career_context
+from career_features import encode_career_context, CareerContext
 from sample_trainer import DEFAULT_EXTRAS_DIM, td_lambda_match
 
 
@@ -180,6 +179,37 @@ def _resolve_weights_hash(agent_id: int) -> str:
     return ""
 
 
+def _resolve_agent_style(agent_id: int) -> dict[str, float]:
+    """Fetch `agent_id`'s real style overlay from 0G KV and return its
+    category->value map, for use as an *opponent* descriptor in the extras
+    vector. Returns {} for cold-start agents (no overlay yet) or whenever
+    0G isn't configured / reachable — callers treat {} as a neutral profile.
+
+    Offline-safe: skips the KV subprocess entirely unless 0G is actually
+    configured (testnet env vars) or the localhost mock is active, so
+    hermetic test runs and chainless dev don't spawn `node` per agent.
+    """
+    try:
+        if os.environ.get("OG_STORAGE_MODE") != "localhost" and not all(
+            os.environ.get(k)
+            for k in ("OG_STORAGE_RPC", "OG_STORAGE_INDEXER", "OG_STORAGE_PRIVATE_KEY")
+        ):
+            return {}
+        from pathlib import Path as _P
+        _repo_root = _P(__file__).resolve().parents[1]
+        if str(_repo_root) not in sys.path:
+            sys.path.insert(0, str(_repo_root))
+        from server.app.og_storage_client import get_kv
+        from server.app.agent_overlay import Overlay
+
+        blob = get_kv(f"chaingammon/overlay/agent/{agent_id}")
+        return dict(Overlay.from_bytes(blob).values)
+    except Exception:
+        # Same stance as _resolve_weights_hash: infra problems must never
+        # abort training — fall through to a neutral profile.
+        return {}
+
+
 @contextmanager
 def _maybe_open_status_file(path: Optional[str]):
     """Line-buffered append-mode open so the FastAPI status reader sees
@@ -213,6 +243,7 @@ def run_round_robin(
     upload: bool = False,
     encrypt: bool = True,
     weights_hash_resolver: Callable[[int], str] = _resolve_weights_hash,
+    style_resolver: Callable[[int], dict[str, float]] = _resolve_agent_style,
     fetch_blob: Optional[Callable[[str], bytes]] = None,
     td_match: TdMatchFn = td_lambda_match,
     lr: float = 1e-3,
@@ -272,20 +303,27 @@ def run_round_robin(
         loaded={aid: a.profile_kind for aid, a in agents.items()},
     )
 
-    # Career-context RNG seeded deterministically off the master seed
-    # so two runs with the same args replay identically.
-    career_rng = random.Random(seed + 1000)
+    # Resolve each agent's real style profile once (static for the run);
+    # used as the *opponent* descriptor in every match's extras vector.
+    styles = {aid: style_resolver(aid) for aid in agent_ids}
 
     for epoch in range(epochs):
         _emit(status_fh, "epoch_start", epoch=epoch, total=epochs)
         # Use permutations so (a, b) and (b, a) both play — every agent
         # learns against every other once per epoch.
         for a_id, b_id in itertools.permutations(agent_ids, 2):
-            # Career context per match — same shape sample_trainer.py
-            # uses in --career-mode. Asymmetric (a has a teammate, b
-            # does not) so the extras head sees a non-trivial signal.
-            a_ctx = sample_career_context(career_rng, force_team=True)
-            b_ctx = sample_career_context(career_rng, force_team=False)
+            # Each learner conditions on its *opponent's* real style
+            # profile, so the extras head sees a genuine opponent signal
+            # instead of a random career context. Cold-start agents
+            # resolve to {} -> a neutral (zero) profile.
+            a_ctx = CareerContext(
+                opponent_style=styles[b_id], teammate_style=None,
+                stake_wei=0, tournament_position=0.0, is_team_match=False,
+            )
+            b_ctx = CareerContext(
+                opponent_style=styles[a_id], teammate_style=None,
+                stake_wei=0, tournament_position=0.0, is_team_match=False,
+            )
             a_extras = encode_career_context(a_ctx, dim=extras_dim)
             b_extras = encode_career_context(b_ctx, dim=extras_dim)
 
