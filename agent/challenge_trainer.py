@@ -225,7 +225,7 @@ def run_challenge_loop(
                 if infer_fn is not None:
                     kwargs["infer_fn"] = infer_fn
 
-                steps, won = td_match(
+                steps, won, *_ = td_match(
                     agents[proposer].net, agents[target].net,
                     a_extras, b_extras,
                     **kwargs,

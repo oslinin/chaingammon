@@ -943,7 +943,7 @@ def _update_agent_overlay_kv(
             current = Overlay.from_bytes(raw)
         except (OgStorageError, OverlayError):
             current = Overlay.default()
-        new_overlay = update_overlay(current, moves, won, current.match_count)
+        new_overlay = update_overlay(current, moves, current.match_count)
         put_kv(kv_key, new_overlay.to_bytes())
         overlay_updates.append({"agent_id": agent_id, "match_count": new_overlay.match_count})
     except Exception as e:

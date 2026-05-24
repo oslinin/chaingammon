@@ -24,8 +24,8 @@ What this module does:
   - `apply_overlay(candidates, overlay) → ranked` — re-rank gnubg's
     candidate moves by `gnubg_equity + sum(v[c] * classifier_c(move))`.
     Picks `argmax(biased_score)`; with a zero overlay this is a no-op.
-  - `update_overlay(overlay, agent_moves, won, match_count) → new` —
-    exposure-weighted, outcome-driven, damped reinforcement.
+  - `update_overlay(overlay, agent_moves, match_count) → new` —
+    exposure-weighted neutral EMA: reflects observed style, no win/loss bias.
 
 What this module is NOT doing:
   - Position evaluation — gnubg still does that, the network stays frozen.
@@ -80,7 +80,9 @@ CATEGORIES: tuple[str, ...] = (
 )
 
 
-LEARNING_RATE = 0.05
+ACTIVE_CATEGORIES = CATEGORIES[:18]  # excludes cube_offer_aggressive, cube_take_aggressive
+
+LEARNING_RATE = 0.05  # kept for import compatibility; not used in update_overlay
 DAMPING_N = 20
 
 CURRENT_OVERLAY_VERSION = 1
@@ -272,46 +274,49 @@ def apply_overlay(candidates: list[Mapping], overlay: Overlay) -> list[Mapping]:
 def update_overlay(
     overlay: Overlay,
     agent_moves: list,
-    won: bool,
     match_count: int,
     *,
-    learning_rate: float = LEARNING_RATE,
     damping_n: int = DAMPING_N,
 ) -> Overlay:
-    """Apply the post-match update rule:
+    """Apply the post-match neutral EMA update:
 
-      1. Compute per-category exposure across the agent's moves.
-      2. Outcome signal: +1 win / -1 loss.
-      3. Proposed delta = LEARNING_RATE * outcome * exposure[c].
-      4. Damping: alpha = N / (N + match_count); blend old → proposed by alpha.
-      5. Clip to [-1, 1].
+      1. Compute per-category exposure across the agent's moves (ACTIVE_CATEGORIES only).
+      2. Normalize exposure so total = 1. If no moves, skip update.
+      3. target[c] = 2 * exposure[c] - 1  (maps [0,1] exposure to [-1,1]).
+      4. Damping: alpha = N / (N + match_count).
+      5. new[c] = (1 - alpha) * old[c] + alpha * target[c], clipped to [-1, 1].
+
+    Cube categories (cube_offer_aggressive, cube_take_aggressive) are not
+    updated — they have no v1 classifier and stay unchanged.
 
     `overlay` is the agent's pre-match overlay; `match_count` is the
     pre-match count (Overlay.match_count). The returned overlay has
     `match_count + 1` matches.
     """
-    # Step 1: exposure
-    exposure = {c: 0.0 for c in CATEGORIES}
+    # Step 1: exposure across ACTIVE_CATEGORIES
+    exposure = {c: 0.0 for c in ACTIVE_CATEGORIES}
     for m in agent_moves:
         cls = classify_move(m)
-        for c in CATEGORIES:
+        for c in ACTIVE_CATEGORIES:
             exposure[c] += cls[c]
     total = sum(exposure.values())
-    if total > 0:
-        exposure = {c: x / total for c, x in exposure.items()}
-    # else: no signal to apply — exposure stays all-zero, deltas are zero.
+    if total <= 0:
+        # No classifiable moves — increment match count but leave values unchanged.
+        return Overlay(
+            version=overlay.version,
+            values=dict(overlay.values),
+            match_count=overlay.match_count + 1,
+        )
+    exposure = {c: x / total for c, x in exposure.items()}
 
-    # Step 2: outcome
-    outcome = 1.0 if won else -1.0
-
-    # Step 3 + 4: damped reinforcement
+    # Steps 3-5: neutral EMA toward observed style target
     alpha = damping_n / (damping_n + match_count)
-    new_values = {}
-    for c in CATEGORIES:
-        proposed = overlay.values[c] + learning_rate * outcome * exposure[c]
-        new_values[c] = (1.0 - alpha) * overlay.values[c] + alpha * proposed
-        # Overlay.__post_init__ also clips; this clip keeps the math local.
+    new_values = dict(overlay.values)
+    for c in ACTIVE_CATEGORIES:
+        target = 2.0 * exposure[c] - 1.0
+        new_values[c] = (1.0 - alpha) * overlay.values[c] + alpha * target
         new_values[c] = max(-1.0, min(1.0, new_values[c]))
+    # Cube categories are left unchanged.
 
     return Overlay(
         version=overlay.version,

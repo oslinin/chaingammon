@@ -1,51 +1,36 @@
 """career_features.py — contextual feature encoder for the value net.
 
 The trainer's `BackgammonNet` exposes an `extras` head that consumes a
-fixed-dimension vector alongside the gnubg board features. In a
-single-game-vs-frozen-opponent self-play run, the extras vector is
-just a per-agent random projection (`sample_trainer.encode_extras`)
-— that's enough to demonstrate the architecture but it doesn't carry
-real career-mode information.
+fixed-dimension vector alongside the gnubg board features.
 
-This module replaces the placeholder when the trainer is run with
-`--career-mode`. It encodes the contextual inputs `chaingammon_plan.md`
-calls out for the career-mode head:
+Two encoding layouts are supported, selected by the `dim` argument to
+`encode_career_context`:
 
-  - opponent_style:      classifier signal {axis -> score in [-1, 1]}
-  - teammate_style:      same shape; None when there is no teammate
-  - stake_wei:           on-chain MatchEscrow deposit for this match
-  - tournament_position: scalar in [-1, 1]; 0 = casual
-  - is_team_match:       1.0 in doubles/chouette/human+agent
-
-into a 16-d vector compatible with `BackgammonNet.extras`. Pure
-function, no IO, no LLM.
-
-Slot layout (`dim` defaults to 16; smaller raises, larger zero-pads):
-
-    [0:6]    opponent_style projection — 6 canonical axes
+  dim < 40  (legacy 16-d layout):
+    [0:6]    opponent_style projection — 6 STYLE_AXES
     [6:12]   teammate_style projection — zero when teammate_style is None
     [12]     log1p(stake_wei) / 70, clamped to [0, 1]
     [13]     tournament_position, clamped to [-1, 1]
     [14]     1.0 if is_team_match else 0.0
-    [15]     1.0  bias ones-channel (so the extras head has a usable
-                  signal even before training)
+    [15]     1.0  bias ones-channel
 
-Why these six axes (drawn from `agent_overlay.CATEGORIES`):
-    opening_slot          aggressive opening
-    phase_prime_building  builds primes
-    runs_back_checker     running game preference
-    phase_holding_game    holding-game preference
-    bearoff_efficient     bear-off skill
-    hits_blot             aggression on contact
+  dim >= 40  (new 40-d layout — self+opponent style):
+    [0:18]   self_style projection — 18 ACTIVE_AXES (zero when None)
+    [18:36]  opponent_style projection — 18 ACTIVE_AXES
+    [36]     log1p(stake_wei) / 70, clamped to [0, 1]
+    [37]     tournament_position, clamped to [-1, 1]
+    [38]     1.0 if is_team_match else 0.0
+    [39]     1.0  bias ones-channel
 
-They cover the four distinguishable axes the coach already reads
-(opening, phase, mid-game risk, bear-off) and stay consistent with
-the style profile blob format on 0G Storage KV.
+`ACTIVE_AXES` = ALL_CATEGORIES[:18] — the 18 non-cube style categories that
+the overlay classifier tracks (excludes cube_offer_aggressive,
+cube_take_aggressive which have no v1 classifier).
 """
 from __future__ import annotations
 
 import math
 import random
+import re
 from dataclasses import dataclass
 from typing import Optional
 
@@ -91,6 +76,10 @@ ALL_CATEGORIES: tuple[str, ...] = (
     "cube_take_aggressive",
 )
 
+# The 18 non-cube style categories used in the 40-d extras layout and
+# overlay EMA updates (excludes the last two cube categories).
+ACTIVE_AXES: tuple[str, ...] = ALL_CATEGORIES[:18]
+
 _MIN_DIM = 16
 _STAKE_LOG_DIVISOR = 70.0
 """log1p(1e30) ≈ 69.08; divisor 70 maps stakes up to 1e30 wei into [0, 1]
@@ -101,90 +90,185 @@ without clamping. Larger stakes are clamped to 1.0 by the encoder."""
 class CareerContext:
     """Structured contextual inputs for one career-mode self-play match.
 
-    `opponent_style` and `teammate_style` are dicts keyed by axis name
-    (a subset of `agent_overlay.CATEGORIES`); unknown keys are ignored
-    and missing keys default to 0.0. Values are not range-checked here
-    — the encoder clamps as needed."""
+    `opponent_style`, `teammate_style`, and `self_style` are dicts keyed by
+    axis name (a subset of `agent_overlay.CATEGORIES`); unknown keys are
+    ignored and missing keys default to 0.0. Values are not range-checked
+    here — the encoder clamps as needed.
+
+    `self_style` is used only in the 40-d layout (dim >= 40); it carries the
+    agent's own accumulated style overlay so the extras head can see both its
+    own tendencies and the opponent's.
+    """
     opponent_style: dict[str, float]
     teammate_style: Optional[dict[str, float]]
     stake_wei: int
     tournament_position: float
     is_team_match: bool
+    self_style: Optional[dict[str, float]] = None
+
+
+# ---------------------------------------------------------------------------
+# Move classifier (mirrors server/app/agent_overlay.classify_move, restricted
+# to ACTIVE_AXES — cube categories have no v1 classifier and stay 0).
+# ---------------------------------------------------------------------------
+
+_MOVE_PIECE_RE = re.compile(r"(\d+|bar)/(\d+|off)(\*?)", re.IGNORECASE)
+
+
+def _parse_move_str(move_str: str) -> list[tuple[str, str, bool]]:
+    pieces = []
+    for src, dst, hit_marker in _MOVE_PIECE_RE.findall(move_str or ""):
+        pieces.append((src.lower(), dst.lower(), bool(hit_marker)))
+    return pieces
+
+
+def classify_move_str(move_str: str) -> dict[str, float]:
+    """Classify a move string into ACTIVE_AXES style scores in [0, 1].
+
+    Mirrors `server/app/agent_overlay.classify_move` but takes a bare string
+    instead of a MoveEntry-like object, and restricts output to ACTIVE_AXES
+    (no cube categories).
+    """
+    pieces = _parse_move_str(move_str)
+    scores: dict[str, float] = {c: 0.0 for c in ACTIVE_AXES}
+    if not pieces:
+        return scores
+    n = len(pieces)
+
+    for src, dst, hit in pieces:
+        if hit:
+            scores["hits_blot"] = min(1.0, scores["hits_blot"] + 1.0 / n)
+        if dst == "off":
+            scores["bearoff_efficient"] = min(1.0, scores["bearoff_efficient"] + 1.0 / n)
+        if dst == "5":
+            scores["build_5_point"] = min(1.0, scores["build_5_point"] + 1.0 / n)
+        elif dst == "7":
+            scores["build_bar_point"] = min(1.0, scores["build_bar_point"] + 1.0 / n)
+        if src == "24":
+            scores["runs_back_checker"] = min(1.0, scores["runs_back_checker"] + 1.0 / n)
+        if src == "bar":
+            scores["risk_hit_exposure"] = min(1.0, scores["risk_hit_exposure"] + 0.5 / n)
+
+    dests = [dst for _, dst, _ in pieces if dst != "off"]
+    if len(dests) == 2 and dests[0] == dests[1]:
+        if dests[0] in ("20", "21", "22", "23", "24"):
+            scores["anchors_back"] = 1.0
+        else:
+            scores["bearoff_safe"] = max(scores["bearoff_safe"], 0.5)
+            scores["opening_anchor"] = max(scores["opening_anchor"], 0.5)
+
+    if n == 2:
+        srcs = [src for src, _, _ in pieces]
+        if srcs == ["24", "13"] or srcs == ["13", "24"]:
+            scores["opening_split"] = 1.0
+        if any(dst == "5" for _, dst, _ in pieces) and "8" in srcs:
+            scores["opening_slot"] = max(scores["opening_slot"], 0.7)
+        if any(dst in ("4", "5", "7", "9") for _, dst, _ in pieces) and not any(
+            dst == s for _, dst, _ in pieces for s in srcs
+        ):
+            scores["opening_builder"] = max(scores["opening_builder"], 0.4)
+
+    return scores
+
+
+# ---------------------------------------------------------------------------
+# Style projection helpers
+# ---------------------------------------------------------------------------
 
 
 def _project_style(style: Optional[dict[str, float]]) -> list[float]:
-    """Project a style dict onto STYLE_AXES, clamping each component
-    to [-1, 1]. Returns a 6-element list of floats. None -> all zeros."""
+    """Project a style dict onto STYLE_AXES (6 axes, legacy layout).
+    Returns a 6-element list. None → all zeros."""
     if style is None:
         return [0.0] * len(STYLE_AXES)
-    out: list[float] = []
-    for axis in STYLE_AXES:
-        v = float(style.get(axis, 0.0))
-        out.append(max(-1.0, min(1.0, v)))
-    return out
+    return [max(-1.0, min(1.0, float(style.get(ax, 0.0)))) for ax in STYLE_AXES]
+
+
+def _project_style_full(style: Optional[dict[str, float]]) -> list[float]:
+    """Project a style dict onto ACTIVE_AXES (18 axes, new 40-d layout).
+    Returns an 18-element list. None → all zeros."""
+    if style is None:
+        return [0.0] * len(ACTIVE_AXES)
+    return [max(-1.0, min(1.0, float(style.get(ax, 0.0)))) for ax in ACTIVE_AXES]
 
 
 def encode_career_context(ctx: CareerContext, *, dim: int = _MIN_DIM) -> torch.Tensor:
     """Project a `CareerContext` into a `dim`-d feature tensor.
 
-    Raises `ValueError` if `dim < 16` — the slot layout is fixed at 16.
-    `dim > 16` zero-pads slots [16:dim).
+    Raises `ValueError` if `dim < 16`.
+
+    dim < 40: legacy 16-d layout (opponent_style, teammate_style, context).
+    dim >= 40: new 40-d layout (self_style, opponent_style, context).
     """
     if dim < _MIN_DIM:
         raise ValueError(
-            f"encode_career_context requires dim >= {_MIN_DIM} "
-            f"(slot layout is fixed at {_MIN_DIM}); got {dim}"
+            f"encode_career_context requires dim >= {_MIN_DIM}; got {dim}"
         )
 
     feat = torch.zeros(dim)
 
-    opp = _project_style(ctx.opponent_style)
-    for i, v in enumerate(opp):
-        feat[i] = v
-
-    team = _project_style(ctx.teammate_style)
-    for i, v in enumerate(team):
-        feat[6 + i] = v
-
-    stake = max(int(ctx.stake_wei), 0)
-    feat[12] = min(math.log1p(stake) / _STAKE_LOG_DIVISOR, 1.0)
-
-    feat[13] = max(-1.0, min(1.0, float(ctx.tournament_position)))
-
-    feat[14] = 1.0 if ctx.is_team_match else 0.0
-
-    feat[15] = 1.0
+    if dim >= 40:
+        # New 40-d layout: [own_18 | opp_18 | stake | tournament | is_team | bias]
+        own = _project_style_full(ctx.self_style)
+        opp = _project_style_full(ctx.opponent_style)
+        for i, v in enumerate(own):
+            feat[i] = v
+        for i, v in enumerate(opp):
+            feat[18 + i] = v
+        feat[36] = min(math.log1p(max(int(ctx.stake_wei), 0)) / _STAKE_LOG_DIVISOR, 1.0)
+        feat[37] = max(-1.0, min(1.0, float(ctx.tournament_position)))
+        feat[38] = 1.0 if ctx.is_team_match else 0.0
+        feat[39] = 1.0
+    else:
+        # Legacy 16-d layout: [opp_6 | teammate_6 | stake | tournament | is_team | bias]
+        opp = _project_style(ctx.opponent_style)
+        for i, v in enumerate(opp):
+            feat[i] = v
+        team = _project_style(ctx.teammate_style)
+        for i, v in enumerate(team):
+            feat[6 + i] = v
+        feat[12] = min(math.log1p(max(int(ctx.stake_wei), 0)) / _STAKE_LOG_DIVISOR, 1.0)
+        feat[13] = max(-1.0, min(1.0, float(ctx.tournament_position)))
+        feat[14] = 1.0 if ctx.is_team_match else 0.0
+        feat[15] = 1.0
 
     return feat
 
 
 def _sample_style(rng: random.Random) -> dict[str, float]:
-    """Sample a style dict over `STYLE_AXES` with each value drawn
-    uniformly from [-1, 1]."""
+    """Sample a style dict over `STYLE_AXES` (6 axes)."""
     return {axis: rng.uniform(-1.0, 1.0) for axis in STYLE_AXES}
 
 
-def sample_career_context(rng: random.Random, *, force_team: Optional[bool] = None) -> CareerContext:
+def _sample_style_full(rng: random.Random) -> dict[str, float]:
+    """Sample a style dict over all `ACTIVE_AXES` (18 axes)."""
+    return {axis: rng.uniform(-1.0, 1.0) for axis in ACTIVE_AXES}
+
+
+def sample_career_context(
+    rng: random.Random,
+    *,
+    force_team: Optional[bool] = None,
+    self_style: Optional[dict[str, float]] = None,
+    opponent_style: Optional[dict[str, float]] = None,
+) -> CareerContext:
     """Draw a synthetic `CareerContext` for one career-mode self-play match.
 
     Distributions:
-      opponent_style:      uniform [-1, 1] per axis
-      teammate_style:      same shape with prob 0.5 (else None)
-      stake_wei:           log-uniform across [0, 1e21] (i.e. 0..1000 ETH)
+      self_style:          provided or uniform [-1, 1] per ACTIVE_AXES (18)
+      opponent_style:      provided or uniform [-1, 1] per STYLE_AXES (6)
+      teammate_style:      same as STYLE_AXES with prob 0.5 (else None)
+      stake_wei:           log-uniform across [0, 1e21]
       tournament_position: uniform [-1, 1]
       is_team_match:       True iff teammate_style is not None (or forced)
-
-    The trainer calls this fresh per match so the value-net's extras
-    head sees a wide distribution of contexts during training.
     """
     has_teammate = force_team if force_team is not None else (rng.random() < 0.5)
     teammate_style = _sample_style(rng) if has_teammate else None
-
     log_stake = rng.uniform(0.0, math.log1p(10**21))
     stake_wei = max(0, int(math.expm1(log_stake)))
-
     return CareerContext(
-        opponent_style=_sample_style(rng),
+        self_style=self_style if self_style is not None else _sample_style_full(rng),
+        opponent_style=opponent_style if opponent_style is not None else _sample_style(rng),
         teammate_style=teammate_style,
         stake_wei=stake_wei,
         tournament_position=rng.uniform(-1.0, 1.0),

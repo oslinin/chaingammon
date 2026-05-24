@@ -247,7 +247,6 @@ def _push_ens_updates(
 
 def _update_agent_overlay_kv(
     agent_id: int,
-    won: bool,
     moves: list,
     overlay_updates: list,
 ) -> None:
@@ -267,7 +266,7 @@ def _update_agent_overlay_kv(
             current = Overlay.from_bytes(raw)
         except (OgStorageError, OverlayError):
             current = Overlay.default()
-        new_overlay = update_overlay(current, moves, won, current.match_count)
+        new_overlay = update_overlay(current, moves, current.match_count)
         put_kv(kv_key, new_overlay.to_bytes())
         overlay_updates.append({"agent_id": agent_id, "match_count": new_overlay.match_count})
     except Exception as e:
@@ -412,8 +411,8 @@ def finalize_direct(req: DirectFinalizeRequest):
         raise HTTPException(status_code=502, detail=f"recordMatch failed: {e}") from e
 
     overlay_updates: list[dict] = []
-    _update_agent_overlay_kv(req.winner_agent_id, True, move_entries, overlay_updates)
-    _update_agent_overlay_kv(req.loser_agent_id, False, move_entries, overlay_updates)
+    _update_agent_overlay_kv(req.winner_agent_id, move_entries, overlay_updates)
+    _update_agent_overlay_kv(req.loser_agent_id, move_entries, overlay_updates)
 
     ens_updates: list[dict] = []
     for side_name, label, agent_id, human_addr in [
@@ -559,8 +558,8 @@ def finalize_direct_staked(req: StakedFinalizeRequest):
         raise HTTPException(status_code=502, detail=f"recordMatchAndSplit failed: {e}") from e
 
     overlay_updates: list[dict] = []
-    _update_agent_overlay_kv(req.winner_agent_id, True, move_entries, overlay_updates)
-    _update_agent_overlay_kv(req.loser_agent_id, False, move_entries, overlay_updates)
+    _update_agent_overlay_kv(req.winner_agent_id, move_entries, overlay_updates)
+    _update_agent_overlay_kv(req.loser_agent_id, move_entries, overlay_updates)
 
     ens_updates: list[dict] = []
     for side_name, label, agent_id, human_addr in [
@@ -1048,8 +1047,8 @@ def post_settle_audit(req: PostSettleAuditRequest):
 
     # Step 4 — update agent style-overlay KV for each agent side (non-fatal).
     overlay_updates: list[dict] = []
-    _update_agent_overlay_kv(winner_agent_id, won=True, moves=moves, overlay_updates=overlay_updates)
-    _update_agent_overlay_kv(loser_agent_id, won=False, moves=moves, overlay_updates=overlay_updates)
+    _update_agent_overlay_kv(winner_agent_id, moves=moves, overlay_updates=overlay_updates)
+    _update_agent_overlay_kv(loser_agent_id, moves=moves, overlay_updates=overlay_updates)
 
     return {
         "match_id": req.matchId,
