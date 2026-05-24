@@ -28,7 +28,13 @@ import { I18nProvider } from "./i18n";
 // Silently switch to the app's default chain (Sepolia) when the wallet
 // connects on an unsupported chain. MetaMask persists the chain across
 // sessions, so this fires once and the prompt never reappears.
-function AutoSwitchChain() {
+//
+// Split into two components so wagmi hooks only run on the client.
+// During SSR the wagmi context is not yet hydrated; calling useAccount()
+// there throws WagmiProviderNotFoundError even though WagmiProvider wraps
+// this component — @privy-io/wagmi's provider only becomes active after
+// client-side hydration.
+function AutoSwitchChainEffect() {
   const { address, chainId: walletChainId } = useAccount();
   const { switchChain } = useSwitchChain();
   const supportedIds = new Set(ALL_CHAINS.map((c) => c.id));
@@ -42,6 +48,12 @@ function AutoSwitchChain() {
   }, [address, walletChainId]);
 
   return null;
+}
+
+function AutoSwitchChain() {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => { setMounted(true); }, []);
+  return mounted ? <AutoSwitchChainEffect /> : null;
 }
 
 // Privy App ID. Required for Privy to initialise — without it the login
