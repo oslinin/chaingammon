@@ -59,6 +59,7 @@ from pathlib import Path
 
 import torch
 from torch import nn
+from torch.utils.tensorboard import SummaryWriter
 
 from career_features import (
     CareerContext,
@@ -211,7 +212,9 @@ def encode_state(state, perspective: int) -> torch.Tensor:
         from full_board_state import FullBoardState
     except ImportError:
         FullBoardState = None  # type: ignore[assignment]
-    if FullBoardState is not None and isinstance(state, FullBoardState):
+    from onnx_board_state import OnnxBoardState
+    if (FullBoardState is not None and isinstance(state, FullBoardState)) or \
+            isinstance(state, OnnxBoardState):
         from gnubg_encoder import encode_full_board
         return encode_full_board(
             state.board, state.bar, state.off, perspective=perspective,
@@ -252,6 +255,9 @@ def legal_successors(state, dice: tuple[int, int]) -> list:
     legal_successors_full driven by the module-level gnubg client.
     RaceState → original fabricated-variants path below.
     """
+    from onnx_board_state import OnnxBoardState, legal_successors_onnx
+    if isinstance(state, OnnxBoardState):
+        return legal_successors_onnx(state, dice)
     try:
         from full_board_state import FullBoardState, legal_successors_full
     except ImportError:
@@ -668,6 +674,17 @@ def main() -> None:
                              "aborted. Empty by default; the trainer is "
                              "silent when unset, identical to pre-flag "
                              "behavior.")
+    parser.add_argument("--onnx-model", type=str, default=None,
+                        help="Path to a backgammon_net.onnx file used as "
+                             "the frozen opponent when --full-board is set. "
+                             "Defaults to frontend/public/backgammon_net.onnx "
+                             "next to the repo root.")
+    parser.add_argument("--logdir", type=str, default=None,
+                        help="Directory for TensorBoard event files. "
+                             "When set, scalars (rolling win-rate, eval "
+                             "win-rate) are written at each periodic "
+                             "evaluation step. Run `tensorboard --logdir "
+                             "<dir>` to view.")
     parser.add_argument("--career-mode", action="store_true",
                         help="Replace the placeholder per-agent random "
                              "extras with `career_features.encode_career_"
@@ -768,33 +785,18 @@ def main() -> None:
     # Skip when loading from a checkpoint or 0G Storage — the agent's
     # core has already diverged from the gnubg init through prior
     # training.
-    if not args.load_checkpoint and not args.init_from_0g:
+    if not args.load_checkpoint and not args.init_from_0g and not args.full_board:
         assert torch.allclose(agent.core.weight, opponent.core.weight), \
             "core weights should be identical at init (both seeded from gnubg published init)"
 
-    # Phase J.3: when --full-board is on, swap the state factory + set
-    # the module-level gnubg client so legal_successors dispatches to
-    # the gnubg-driven path. encode_state's dispatch is type-based and
-    # needs no setup. Latency here is dominated by gnubg subprocess
-    # cost (see full_board_state.py docstring).
     state_factory = None
     if args.full_board:
-        global _GNUBG_CLIENT_FOR_FULL_BOARD
-        # Add server/ to sys.path so we can import GnubgClient.
-        import sys
-        from pathlib import Path as _P
-        _server_root = _P(__file__).resolve().parents[1]
-        if str(_server_root) not in sys.path:
-            sys.path.insert(0, str(_server_root))
-        from server.app.gnubg_client import GnubgClient
-
-        from full_board_state import FullBoardState
-
-        client = GnubgClient()
-        _GNUBG_CLIENT_FOR_FULL_BOARD = client
-        state_factory = lambda: FullBoardState.initial(client)
-        print("Full-board mode active — each match drives gnubg subprocess; "
-              "expect ~100x slower per match than --race.", file=sys.stderr)
+        from onnx_board_state import OnnxBoardState, OnnxOpponent
+        state_factory = OnnxBoardState.initial
+        opponent = OnnxOpponent(args.onnx_model)
+        opponent_extras = torch.zeros(0)
+        print("Full-board mode active — pure-Python engine + ONNX opponent.",
+              file=sys.stderr)
 
     # Baseline win rate before training.
     baseline_wr = evaluate(agent, opponent, agent_extras, opponent_extras,
@@ -811,6 +813,8 @@ def main() -> None:
     # comparable across matches; only training extras vary in career mode.
     eval_agent_extras = agent_extras
     eval_opponent_extras = opponent_extras
+
+    tb_writer = SummaryWriter(log_dir=args.logdir) if args.logdir else None
 
     t0 = time.time()
     _emit("started", total=args.matches, career_mode=bool(args.career_mode))
@@ -839,15 +843,22 @@ def main() -> None:
         if (match_idx + 1) % 25 == 0 or match_idx == args.matches - 1:
             wr = evaluate(agent, opponent, eval_agent_extras, eval_opponent_extras,
                           n_matches=20, state_factory=state_factory)
+            rolling_wr = sum(rolling_outcomes) / len(rolling_outcomes)
             print(f"  match {match_idx + 1:>4}/{args.matches}  "
-                  f"rolling win-rate {sum(rolling_outcomes)/len(rolling_outcomes):.2%}  "
+                  f"rolling win-rate {rolling_wr:.2%}  "
                   f"eval vs frozen {wr:.2%}")
+            if tb_writer is not None:
+                tb_writer.add_scalar("train/rolling_win_rate", rolling_wr, match_idx + 1)
+                tb_writer.add_scalar("eval/win_rate_vs_frozen", wr, match_idx + 1)
 
     final_wr = evaluate(agent, opponent, eval_agent_extras, eval_opponent_extras,
                         n_matches=50, state_factory=state_factory)
     elapsed = time.time() - t0
     print(f"\nDone. {args.matches} matches in {elapsed:.1f}s. "
           f"Final win rate vs frozen opponent: {final_wr:.2%}")
+    if tb_writer is not None:
+        tb_writer.add_scalar("eval/final_win_rate", final_wr, args.matches)
+        tb_writer.close()
 
     if args.save_checkpoint:
         ckpt_path = Path(args.save_checkpoint)
