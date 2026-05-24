@@ -6,10 +6,10 @@ import {
   usePublicClient,
   useReadContract,
   useWalletClient,
-  useWriteContract,
 } from "wagmi";
 
 import { AgentVaultABI, useChainContracts } from "./contracts";
+import { useSponsoredWrite } from "./useSponsoredWrite";
 import { useActiveChainId } from "./chains";
 import { useI18n } from "./i18n";
 
@@ -51,7 +51,7 @@ export function AgentWalletPanel({ agentId, stakeWei, onBalanceChange }: Props) 
     query: { enabled: !noVault && agentId > 0 },
   });
 
-  const { writeContractAsync } = useWriteContract();
+  const { writeContractAsync } = useSponsoredWrite();
 
   const balanceWei = (rawBalance as bigint | undefined) ?? BigInt(0);
   const shortfall = stakeWei > balanceWei ? stakeWei - balanceWei : BigInt(0);

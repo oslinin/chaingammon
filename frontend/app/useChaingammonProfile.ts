@@ -10,10 +10,11 @@
 "use client";
 
 import { encodePacked, keccak256, toBytes } from "viem";
-import { usePublicClient, useReadContract, useWriteContract } from "wagmi";
+import { usePublicClient, useReadContract } from "wagmi";
 
 import { useActiveChainId, useEnsInfra } from "./chains";
 import { PlayerSubnameRegistrarABI, PublicResolverABI, useChainContracts } from "./contracts";
+import { useSponsoredWrite } from "./useSponsoredWrite";
 
 function subnameNode(parentNode: `0x${string}`, label: string): `0x${string}` {
   const labelHash = keccak256(toBytes(label));
@@ -79,7 +80,7 @@ export function useSyncEnsProfile() {
   const { playerSubnameRegistrar } = useChainContracts();
   const chainId = useActiveChainId();
   const publicClient = usePublicClient();
-  const { writeContractAsync, isPending } = useWriteContract();
+  const { writeContractAsync, isPending } = useSponsoredWrite();
 
   const { data: parentNode } = useReadContract({
     address: playerSubnameRegistrar,

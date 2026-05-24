@@ -20,10 +20,11 @@
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import { useAccount, useBalance, usePublicClient, useReadContracts, useWriteContract, useWaitForTransactionReceipt } from "wagmi";
+import { useAccount, useBalance, usePublicClient, useReadContracts, useWaitForTransactionReceipt } from "wagmi";
 import { formatEther, parseAbiItem } from "viem";
 
 import { useActiveChain, useActiveChainId } from "../../chains";
+import { useSponsoredWrite } from "../../useSponsoredWrite";
 import {
   AgentRegistryABI,
   MatchRegistryABI,
@@ -307,7 +308,7 @@ export default function AgentClient() {
 
   const isContractOwner = userAddress?.toLowerCase() === contractOwner?.toLowerCase();
 
-  const { writeContract, data: burnTxHash, isPending: burnSigning } = useWriteContract();
+  const { writeContract, data: burnTxHash, isPending: burnSigning } = useSponsoredWrite();
   const { isLoading: burnConfirming, isSuccess: burnSuccess } = useWaitForTransactionReceipt({
     hash: burnTxHash,
   });
