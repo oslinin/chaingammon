@@ -1,4 +1,5 @@
 https://gemini.google.com/app/8db6a686b55de2ab
+https://gemini.google.com/app/a926d14160655611
 
 Chaingammon: Historical Eras Asset Specification Manual
 
