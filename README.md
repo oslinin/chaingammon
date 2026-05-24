@@ -10,6 +10,7 @@ A decentralised, verifiable ELO ledger for backgammon — humans and agents shar
 - **Trustless dice.** Each turn's dice are `keccak256(drand_round_digest, turn_index) mod 36`. The server passes drand's BLS12-381 signature through to the client so an auditor can independently verify the round against drand's group public key.
 - **Optional stakes.** A match can be free (ELO-only) or staked (per-side ETH deposit, winner takes the pot). Agent funds live in `AgentVault` — only the NFT owner can withdraw; the server operator key can stake but not steal. Settlement is browser-direct via `settleWithSessionKeys`, with KeeperHub as fallback.
 - **No central server.** Move evaluation runs in the browser (ONNX Runtime Web). The coach LLM runs on 0G Compute (Qwen 2.5 7B) with a local fallback. KeeperHub orchestrates settlement.
+- **Serverless human-vs-human (in progress).** Press Play to be matched — by nearest ELO — with another human who is also searching, with no matchmaking server and nothing volatile on-chain: presence and the WebRTC handshake ride public Nostr relays, moves flow peer-to-peer over a WebRTC data channel, dice stay drand-verifiable, and settlement fires automatically from session keys both players sign before the game (gas via Privy or the pot).
 
 ---
 
@@ -101,6 +102,8 @@ sequenceDiagram
 **Sepolia** is the settlement chain (KeeperHub-native, real ENS subnames). Mainnet would be a chain swap; the design is identical.
 
 **drand** is the dice randomness beacon. Each turn's dice are `keccak256(drand_round_digest, turn_index) mod 36` — anyone replaying the match recovers the same dice without trusting the server.
+
+**Nostr + WebRTC (human-vs-human, in progress).** Live human-vs-human play runs with no server in the loop. Each searcher publishes ephemeral presence to public Nostr relays; clients pair deterministically by nearest ELO and exchange the WebRTC offer/answer over the same relays; moves then flow directly peer-to-peer over a WebRTC data channel. Dice use the same drand scheme (each browser fetches the round), and settlement reuses the session-key path — both players pre-authorize a session key, the result is auto-signed at game-end, and any relayer submits it with gas from Privy or the escrow pot.
 
 ---
 
@@ -536,7 +539,8 @@ Full deployment records (constructor args, deployer, block heights): `contracts/
 
 ## Roadmap
 
-- **Current:** human-vs-human and human-vs-agent gameplay; on-chain ELO; ENS subnames; agent iNFTs with hash-committed weights; 0G Storage match archive; drand dice; KeeperHub-orchestrated settlement on Sepolia.
+- **Current:** human-vs-agent gameplay; on-chain ELO; ENS subnames; agent iNFTs with hash-committed weights; 0G Storage match archive; drand dice; KeeperHub-orchestrated settlement on Sepolia.
+- **In progress — serverless human-vs-human:** one-press, ELO-biased matchmaking and live play with no central server. Presence + the WebRTC signaling handshake ride public Nostr relays, moves flow over a peer-to-peer data channel, dice are drand-verifiable (each browser fetches the round), and settlement is automatic from session keys both players authorize before the game — submitted by any relayer with gas from Privy or the escrow pot.
 - **Next:** all-agent autonomous tournaments driven by KeeperHub; 0G Compute for TEE-attested fine-tuning; team / chouette mode with the career head; per-agent cube doubling.
 - **Later:** ZK proofs of agent inference (zkML); betting markets and ELO derivative tokens; mainnet on Base/Optimism.
 

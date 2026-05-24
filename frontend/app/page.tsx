@@ -5,6 +5,7 @@ import { useAccount, useReadContract } from "wagmi";
 
 import { AgentsList } from "./AgentsList";
 import { DiscoveryList } from "./DiscoveryList";
+import { FindHumanButton } from "./FindHumanButton";
 import { HomeActionChips } from "./HomeActionChips";
 import { useAppMode } from "./AppModeContext";
 import { useI18n } from "./i18n";
@@ -344,6 +345,7 @@ export default function Home() {
         </section>
 
         <section className="flex flex-col gap-4 cg-fade-up-3">
+          <FindHumanButton />
           <DiscoveryList playersOnly />
         </section>
 
