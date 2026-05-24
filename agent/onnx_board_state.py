@@ -248,6 +248,7 @@ class OnnxBoardState:
     turn: int
     n_turns: int = 0
     dice: Optional[tuple[int, int]] = None
+    move_str: str = ""  # move taken to reach this state; set by legal_successors_onnx
 
     # Accessors that match FullBoardState's attribute names so encode_state
     # (which reads state.board / state.bar / state.off) works unchanged.
@@ -299,8 +300,9 @@ def legal_successors_onnx(
             _board=new_board,
             turn=1 - state.turn,
             n_turns=state.n_turns + 1,
+            move_str=ms,
         )
-        for new_board, _ in moves
+        for new_board, ms in moves
     ]
 
 

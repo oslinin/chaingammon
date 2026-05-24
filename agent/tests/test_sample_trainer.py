@@ -127,7 +127,7 @@ def test_td_lambda_match_mutates_agent_params_but_not_opponent():
     pre_opp_core = opponent.core.weight.clone()
     pre_opp_head = opponent.head.weight.clone()
 
-    steps, _won = td_lambda_match(
+    steps, _won, *_ = td_lambda_match(
         agent, opponent, agent_extras, opponent_extras,
         gamma=1.0, lam=0.7, lr=1e-2,  # higher LR to ensure visible mutation
     )
@@ -148,7 +148,7 @@ def test_match_terminates_within_max_turns():
     torch.manual_seed(0)
     agent = BackgammonNet(extras_dim=0)
     opponent = BackgammonNet(extras_dim=0)
-    steps, _ = td_lambda_match(
+    steps, *_ = td_lambda_match(
         agent, opponent,
         torch.zeros(0), torch.zeros(0),
         gamma=1.0, lam=0.7, lr=1e-3,
@@ -210,7 +210,7 @@ def test_match_with_drand_digest_is_deterministic_in_dice():
         opponent = BackgammonNet(core_seed=0xBACC, extras_seed=2)
         a_extras = torch.zeros(DEFAULT_EXTRAS_DIM)
         o_extras = torch.zeros(DEFAULT_EXTRAS_DIM)
-        steps, _ = td_lambda_match(
+        steps, *_ = td_lambda_match(
             agent, opponent, a_extras, o_extras,
             gamma=1.0, lam=0.7, lr=0.0,   # lr=0 → no weight drift between runs
             drand_round_digest=digest,
@@ -263,7 +263,7 @@ def test_career_mode_requires_extras_dim_at_least_16(tmp_path):
         capture_output=True, text=True, timeout=30,
     )
     assert result.returncode != 0
-    assert "extras-dim >= 16" in result.stderr
+    assert "extras-dim >= 40" in result.stderr
 
 
 def test_career_mode_extras_use_real_encoder():

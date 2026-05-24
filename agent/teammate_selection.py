@@ -82,16 +82,30 @@ def _build_extras(
     stake_wei: int = 0,
     tournament_position: float = 0.0,
 ) -> torch.Tensor:
-    """Project a teammate style into the 16-d extras vector via the
-    same encoder the trainer uses, with all other context slots
-    neutral. Returns a (extras_dim,) tensor."""
-    ctx = CareerContext(
-        opponent_style=dict(opponent_style or {}),
-        teammate_style=dict(teammate_style),
-        stake_wei=stake_wei,
-        tournament_position=tournament_position,
-        is_team_match=True,
-    )
+    """Project a candidate teammate's style into the extras vector.
+
+    16-d layout (extras_dim < 40): teammate_style → slots [6:12].
+    40-d layout (extras_dim >= 40): teammate_style → opponent_style
+      slot [18:36] (the agent evaluates the candidate as the opponent
+      it plays alongside; own_style slots [0:18] stay zero).
+    """
+    if extras_dim >= 40:
+        ctx = CareerContext(
+            self_style=None,
+            opponent_style=dict(teammate_style),
+            teammate_style=None,
+            stake_wei=stake_wei,
+            tournament_position=tournament_position,
+            is_team_match=True,
+        )
+    else:
+        ctx = CareerContext(
+            opponent_style=dict(opponent_style or {}),
+            teammate_style=dict(teammate_style),
+            stake_wei=stake_wei,
+            tournament_position=tournament_position,
+            is_team_match=True,
+        )
     return encode_career_context(ctx, dim=extras_dim)
 
 
@@ -99,7 +113,7 @@ def recommend_teammate(
     net: nn.Module,
     candidates: Sequence[Tuple[int, Mapping[str, float]]],
     *,
-    extras_dim: int = 16,
+    extras_dim: int = 40,
     n_reference_states: int = _DEFAULT_N_REFERENCE,
     seed: int = _REFERENCE_SEED,
 ) -> Recommendation:
@@ -210,7 +224,7 @@ def _main() -> int:
     parser.add_argument(
         "--extras-dim",
         type=int,
-        default=16,
+        default=40,
         help="Extras-input dim. Must match the checkpoint.",
     )
     parser.add_argument(

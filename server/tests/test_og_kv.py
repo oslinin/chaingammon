@@ -91,7 +91,7 @@ def test_overlay_json_roundtrip(_localhost_kv):
 
     overlay = Overlay.default()
     moves = [MoveEntry(turn=1, dice=[3, 1], move="8/5 6/5")]
-    updated = update_overlay(overlay, moves, won=True, match_count=0)
+    updated = update_overlay(overlay, moves, match_count=0)
 
     key = "chaingammon/overlay/agent/42"
     put_kv(key, updated.to_bytes())
@@ -110,7 +110,7 @@ def test_fetch_overlay_reads_from_kv(_localhost_kv):
 
     # Write an overlay to KV.
     moves = [MoveEntry(turn=1, dice=[6, 1], move="13/7 8/7")]
-    overlay = update_overlay(Overlay.default(), moves, won=False, match_count=0)
+    overlay = update_overlay(Overlay.default(), moves, match_count=0)
     put_kv("chaingammon/overlay/agent/99", overlay.to_bytes())
 
     # _fetch_overlay should read it back.

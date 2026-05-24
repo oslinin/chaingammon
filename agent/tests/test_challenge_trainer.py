@@ -169,18 +169,19 @@ def test_accept_rate_in_epoch_end():
 def test_public_profiles_from_style_resolver():
     """The marketplace conditions on each agent's resolved real style: in an
     accepted match the proposer's extras encode the TARGET's style."""
-    from career_features import STYLE_AXES
+    from career_features import ACTIVE_AXES
 
-    hb = STYLE_AXES.index("hits_blot")
+    # In 40-d layout: own_style [0:18], opponent_style [18:36].
+    hb = 18 + list(ACTIVE_AXES).index("hits_blot")
     styles = {1: {"hits_blot": 0.9}, 2: {"hits_blot": 0.2}}
 
     captured: list[float] = []
 
     def stub(agent, opp, agent_extras, opp_extras, **kwargs):
         # agent_extras is the proposer's context, whose opponent_style is
-        # the TARGET's profile.
+        # the TARGET's profile (at slot hb in the 40-d layout).
         captured.append(round(agent_extras[hb].item(), 3))
-        return 47, 1
+        return 47, 1, [], []
 
     buf = io.StringIO()
     run_challenge_loop(

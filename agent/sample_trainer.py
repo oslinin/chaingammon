@@ -62,7 +62,9 @@ from torch import nn
 from torch.utils.tensorboard import SummaryWriter
 
 from career_features import (
+    ACTIVE_AXES,
     CareerContext,
+    classify_move_str,
     encode_career_context,
     sample_career_context,
 )
@@ -81,7 +83,7 @@ from drand_dice import derive_dice
 # tournament position, stake size, etc.
 GNUBG_FEAT_DIM = 198
 DEFAULT_HIDDEN = 80
-DEFAULT_EXTRAS_DIM = 16
+DEFAULT_EXTRAS_DIM = 40
 
 
 def gnubg_published_core_init(in_dim: int, hidden: int, *, seed: int = 0xBACC) -> nn.Linear:
@@ -314,6 +316,42 @@ def pick_move(net: BackgammonNet, candidates: list[RaceState], extras: torch.Ten
     return candidates[best], equities[best:best + 1]
 
 
+def _update_style_overlay(
+    overlay: dict[str, float],
+    states: list,
+    match_count: int,
+    *,
+    damping_n: int = 20,
+) -> dict[str, float]:
+    """Neutral EMA: update an overlay dict to reflect observed move style.
+
+    `states` is a list of game states (OnnxBoardState or RaceState) chosen
+    during play. OnnxBoardState carries a `move_str` attribute with the move
+    taken to reach it; RaceState has none and contributes no signal.
+
+    Returns the updated overlay dict (new dict, does not mutate input).
+    """
+    exposure: dict[str, float] = {c: 0.0 for c in ACTIVE_AXES}
+    for state in states:
+        ms = getattr(state, "move_str", "") or ""
+        if not ms:
+            continue
+        cls = classify_move_str(ms)
+        for c in ACTIVE_AXES:
+            exposure[c] += cls.get(c, 0.0)
+    total = sum(exposure.values())
+    if total <= 0:
+        return dict(overlay)
+    exposure = {c: x / total for c, x in exposure.items()}
+    alpha = damping_n / (damping_n + match_count)
+    new_overlay = dict(overlay)
+    for c in ACTIVE_AXES:
+        target = 2.0 * exposure[c] - 1.0
+        new_overlay[c] = (1.0 - alpha) * overlay.get(c, 0.0) + alpha * target
+        new_overlay[c] = max(-1.0, min(1.0, new_overlay[c]))
+    return new_overlay
+
+
 def td_lambda_match(
     agent: BackgammonNet,
     opponent: BackgammonNet,
@@ -326,10 +364,13 @@ def td_lambda_match(
     drand_round_digest: bytes | None = None,
     state_factory=None,
     infer_fn=None,
-) -> tuple[int, int]:
+) -> tuple[int, int, list, list]:
     """Play a single self-play match. `agent` learns; `opponent` is frozen.
 
-    Returns `(steps_taken, agent_won_int)`.
+    Returns `(steps_taken, agent_won_int, agent_states, opp_states)` where
+    `agent_states` and `opp_states` are lists of chosen successor states.
+    OnnxBoardState carries a `move_str` attribute; RaceState does not. The
+    caller may pass these to `_update_style_overlay` to update style overlays.
 
     `drand_round_digest`: when supplied, every turn's dice are derived
     via `drand_dice.derive_dice(digest, turn_index)` — the same
@@ -344,6 +385,8 @@ def td_lambda_match(
     """
     state = state_factory() if state_factory is not None else RaceState()
     eligibility = {p: torch.zeros_like(p) for p in agent.parameters()}
+    agent_states: list = []
+    opp_states: list = []
 
     while not state.terminal():
         # Dice: derive from the drand round digest in production-shaped
@@ -366,6 +409,7 @@ def td_lambda_match(
 
             chosen, _ = pick_move(agent, cands, agent_extras, perspective=0,
                                    infer_fn=infer_fn)
+            agent_states.append(chosen)
             with torch.no_grad():
                 board_next = encode_state(chosen, perspective=0)
                 if infer_fn is not None:
@@ -404,10 +448,11 @@ def td_lambda_match(
         else:
             # Opponent's turn — frozen network picks greedily; no learning.
             chosen, _ = pick_move(opponent, cands, opponent_extras, perspective=1)
+            opp_states.append(chosen)
             state = chosen
 
     winner = state.winner() or 0
-    return state.n_turns, int(winner == 0)
+    return state.n_turns, int(winner == 0), agent_states, opp_states
 
 
 # ---------------------------------------------------------------------------
@@ -435,43 +480,47 @@ def evaluate(agent: BackgammonNet, opponent: BackgammonNet,
 
 
 def _compute_style_values(net: "BackgammonNet") -> dict[str, float]:
-    """Probe the trained net's extras head along each named
-    `career_features.STYLE_AXES` slot and report the signed equity
-    delta as a per-axis style value. Slots [0:6] in the extras vector
-    are the opponent_style projection (see career_features.py); slot
-    15 is the bias-ones channel, so the probe holds it at 1.0 to
-    match training-time inputs.
+    """Probe the trained net's extras head along each own-style slot and
+    report the signed equity delta as a per-axis style value.
 
-    Returns the full `career_features.ALL_CATEGORIES` set (mirrors
-    `server/app/agent_overlay.CATEGORIES`) so this profile-kind
-    presents the same axis list as the Phase-9 overlay path. The 6
-    probable axes carry their probed delta (normalized so max |value|
-    = 1.0, matching `OverlayWeightsTable`'s [−1, +1] range); the
-    remaining 14 categories aren't encoded as inputs to this network
-    and stay at 0.0. Returns {} when the net has no extras head."""
+    For 40-d extras (new layout): probes slots [0:18] (own_style) with
+    bias at slot [39].
+    For 16-d extras (legacy layout): probes slots [0:6] (opponent_style)
+    with bias at slot [15].
+
+    Returns the full `career_features.ALL_CATEGORIES` set. Probed axes
+    carry a normalized delta (max |value| = 1.0); unprobed axes stay 0.0.
+    Returns {} when the net has no extras head."""
     if net.extras is None:
         return {}
     try:
-        from career_features import ALL_CATEGORIES, STYLE_AXES
+        from career_features import ACTIVE_AXES, ALL_CATEGORIES, STYLE_AXES
     except ImportError:
         return {}
 
     extras_dim = net.extras.in_features
-    if extras_dim < len(STYLE_AXES):
-        return {}
-
     net.eval()
     board = torch.zeros(1, net.core.in_features)
     base = torch.zeros(1, extras_dim)
-    if extras_dim >= 16:
-        base[0, 15] = 1.0  # matches encode_career_context's bias channel
 
     probed: dict[str, float] = {}
     with torch.no_grad():
-        for i, axis in enumerate(STYLE_AXES):
-            up = base.clone(); up[0, i] = 1.0
-            dn = base.clone(); dn[0, i] = -1.0
-            probed[axis] = float((net(board, up) - net(board, dn)).item()) / 2.0
+        if extras_dim >= 40:
+            # New 40-d layout: probe own_style slots [0:18], bias at [39].
+            base[0, 39] = 1.0
+            for i, axis in enumerate(ACTIVE_AXES):
+                up = base.clone(); up[0, i] = 1.0
+                dn = base.clone(); dn[0, i] = -1.0
+                probed[axis] = float((net(board, up) - net(board, dn)).item()) / 2.0
+        elif extras_dim >= 16:
+            # Legacy 16-d layout: probe opponent_style slots [0:6], bias at [15].
+            base[0, 15] = 1.0
+            for i, axis in enumerate(STYLE_AXES):
+                up = base.clone(); up[0, i] = 1.0
+                dn = base.clone(); dn[0, i] = -1.0
+                probed[axis] = float((net(board, up) - net(board, dn)).item()) / 2.0
+        else:
+            return {}
 
     max_abs = max((abs(v) for v in probed.values()), default=0.0)
     if max_abs > 1e-9:
@@ -755,23 +804,30 @@ def main() -> None:
         agent = BackgammonNet(extras_dim=args.extras_dim, core_seed=0xBACC, extras_seed=1)
     opponent = BackgammonNet(extras_dim=args.extras_dim, core_seed=0xBACC, extras_seed=2)
 
-    if args.career_mode and args.extras_dim < 16:
-        parser.error("--career-mode requires --extras-dim >= 16 "
-                     "(career_features.encode_career_context slot layout)")
+    if args.career_mode and args.extras_dim < 40:
+        parser.error("--career-mode requires --extras-dim >= 40 "
+                     "(career_features.encode_career_context 40-d layout)")
 
     # Career-mode samples a fresh context per match (see the loop below);
     # the placeholder path is a single deterministic projection per agent.
     career_rng = random.Random(args.seed) if args.career_mode else None
 
+    # Per-agent style overlays — updated after each career-mode match.
+    # Keys are ACTIVE_AXES (18 non-cube style categories), values in [-1, 1].
+    agent_overlay: dict[str, float] = {c: 0.0 for c in ACTIVE_AXES}
+    opp_overlay: dict[str, float] = {c: 0.0 for c in ACTIVE_AXES}
+
     if args.career_mode:
-        # Eval contexts are fixed across the run so the win-rate-vs-frozen
-        # scalar is comparable from match to match. The contexts are
-        # asymmetric (agent has a teammate, opponent does not) to give
-        # the extras head a non-trivial signal in eval as well.
-        eval_agent_ctx = sample_career_context(random.Random(args.seed + 1001),
-                                                force_team=True)
-        eval_opponent_ctx = sample_career_context(random.Random(args.seed + 1002),
-                                                   force_team=False)
+        # Eval contexts are fixed across the run (using initial zero overlays)
+        # so win-rate-vs-frozen is comparable across all matches.
+        eval_agent_ctx = sample_career_context(
+            random.Random(args.seed + 1001), force_team=True,
+            self_style=agent_overlay, opponent_style=opp_overlay,
+        )
+        eval_opponent_ctx = sample_career_context(
+            random.Random(args.seed + 1002), force_team=False,
+            self_style=opp_overlay, opponent_style=agent_overlay,
+        )
         agent_extras = encode_career_context(eval_agent_ctx, dim=args.extras_dim)
         opponent_extras = encode_career_context(eval_opponent_ctx, dim=args.extras_dim)
     elif args.extras_dim > 0:
@@ -820,17 +876,30 @@ def main() -> None:
     _emit("started", total=args.matches, career_mode=bool(args.career_mode))
     for match_idx in range(args.matches):
         if career_rng is not None:
-            agent_ctx = sample_career_context(career_rng)
-            opponent_ctx = sample_career_context(career_rng)
+            # Build extras from current overlays so each agent sees its own
+            # accumulated style and the opponent's style in its extras head.
+            agent_ctx = sample_career_context(
+                career_rng,
+                self_style=agent_overlay, opponent_style=opp_overlay,
+            )
+            opponent_ctx = sample_career_context(
+                career_rng,
+                self_style=opp_overlay, opponent_style=agent_overlay,
+            )
             agent_extras = encode_career_context(agent_ctx, dim=args.extras_dim)
             opponent_extras = encode_career_context(opponent_ctx, dim=args.extras_dim)
 
-        steps, won = td_lambda_match(
+        steps, won, agent_states, opp_states = td_lambda_match(
             agent, opponent, agent_extras, opponent_extras,
             gamma=args.gamma, lam=args.lam, lr=args.lr,
             drand_round_digest=drand_digest,
             state_factory=state_factory,
         )
+
+        if career_rng is not None:
+            # Update both agents' style overlays based on moves made this match.
+            agent_overlay = _update_style_overlay(agent_overlay, agent_states, match_idx)
+            opp_overlay = _update_style_overlay(opp_overlay, opp_states, match_idx)
         _emit("match", match_idx=match_idx, total=args.matches,
               winner="agent" if won else "opponent",
               plies=int(steps))

@@ -23,10 +23,10 @@ from teammate_selection import (
 )
 
 
-def _make_net(*, extras_seed: int = 1) -> BackgammonNet:
+def _make_net(*, extras_seed: int = 1, extras_dim: int = 40) -> BackgammonNet:
     """Deterministic per-test net. The same `extras_seed` always yields
     the same extras-head weights, so equity rankings are reproducible."""
-    return BackgammonNet(extras_dim=16, core_seed=0xBACC, extras_seed=extras_seed)
+    return BackgammonNet(extras_dim=extras_dim, core_seed=0xBACC, extras_seed=extras_seed)
 
 
 def test_distinct_styles_produce_distinct_equities():
@@ -131,14 +131,13 @@ def test_reference_boards_shape():
 
 
 def test_build_extras_uses_teammate_slot():
-    """Slots [6:12] are the teammate-style projection. Non-zero teammate
-    style must produce non-zero slots [6:12]; everything else should
-    match the encoder's documented layout."""
+    """In legacy 16-d layout, slots [6:12] are the teammate-style projection.
+    Non-zero teammate style must produce non-zero slots [6:12]."""
     extras = _build_extras({"hits_blot": 0.7}, extras_dim=16)
     assert extras.shape == (16,)
-    # `hits_blot` is the last STYLE_AXES axis (index 5), so slot 11.
+    # `hits_blot` is the last STYLE_AXES axis (index 5), so slot 6+5=11.
     assert extras[11].item() == pytest.approx(0.7)
-    # The is_team_match slot is fixed True by this helper.
+    # The is_team_match slot (14) is fixed True by this helper.
     assert extras[14].item() == 1.0
 
 
@@ -152,15 +151,13 @@ def test_recommendation_dataclass_is_frozen():
 
 
 def test_extras_dim_propagates():
-    """Caller can specify an extras_dim larger than 16; the encoder
-    zero-pads. The function must round-trip without error."""
-    # Build a net with extras_dim=20 so the encoder pads slots [16:20]
-    # with zeros.
-    net = BackgammonNet(extras_dim=20, core_seed=0xBACC, extras_seed=1)
+    """Caller can specify extras_dim to match the net. The function must
+    round-trip without error regardless of the dim."""
+    net = BackgammonNet(extras_dim=40, core_seed=0xBACC, extras_seed=1)
     rec = recommend_teammate(
         net,
         [(1, {"hits_blot": 0.3}), (2, {"bearoff_efficient": 0.5})],
-        extras_dim=20,
+        extras_dim=40,
     )
     assert len(rec.equities) == 2
 

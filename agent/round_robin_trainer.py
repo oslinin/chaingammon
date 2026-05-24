@@ -68,8 +68,9 @@ from sample_trainer import DEFAULT_EXTRAS_DIM, td_lambda_match
 
 # Default `td_match` callable — overridable for tests. Signature must
 # match `td_lambda_match`'s positional `(agent, opp, agent_extras,
-# opp_extras)` plus keyword `gamma, lam, lr` and return `(steps, won)`.
-TdMatchFn = Callable[..., tuple[int, int]]
+# opp_extras)` plus keyword `gamma, lam, lr` and return
+# `(steps, won, agent_states, opp_states)`.
+TdMatchFn = Callable[..., tuple[int, int, list, list]]
 
 
 def _emit(fh: Optional[TextIO], event: str, **fields) -> None:
@@ -333,7 +334,7 @@ def run_round_robin(
             kwargs = {"gamma": gamma, "lam": lam, "lr": lr}
             if infer_fn is not None:
                 kwargs["infer_fn"] = infer_fn
-            steps, won = td_match(
+            steps, won, *_ = td_match(
                 agents[a_id].net, agents[b_id].net,
                 a_extras, b_extras,
                 **kwargs,
