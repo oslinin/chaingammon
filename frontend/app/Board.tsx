@@ -39,9 +39,9 @@ const TOTAL_H = 440;
 
 const INNER_H = TOTAL_H - 2 * FRAME;
 
-// Avatar coins carry a faint glow margin; draw them slightly oversized so the
-// disc overfills the circular clip and no backing crescent shows.
-const AVATAR_FILL = 1.04;
+// Show the whole coin scaled to fit the circular clip (no overscale, so the
+// coin's rim isn't cropped — the squared assets already fill the square).
+const AVATAR_FILL = 1.0;
 
 type DragState = {
   fromPoint: number | "bar";
