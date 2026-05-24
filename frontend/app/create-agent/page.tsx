@@ -29,11 +29,11 @@ import {
   usePublicClient,
   useWaitForTransactionReceipt,
   useWalletClient,
-  useWriteContract,
 } from "wagmi";
 import { decodeEventLog, parseEther } from "viem";
 
 import { AgentVaultABI, useChainContracts } from "../contracts";
+import { useSponsoredWrite } from "../useSponsoredWrite";
 import { recordTransaction } from "../transactions";
 import { ModelAdvisorPanel } from "./ModelAdvisorPanel";
 
@@ -172,7 +172,7 @@ export default function CreateAgentPage() {
   const { agentRegistry, agentVault } = useChainContracts();
   const { data: walletClient } = useWalletClient();
   const publicClient = usePublicClient();
-  const { writeContractAsync: writeVaultAsync } = useWriteContract();
+  const { writeContractAsync: writeVaultAsync } = useSponsoredWrite();
 
   const [agentLabel, setAgentLabel] = useState("");
   const [agentTier, setAgentTier] = useState<number>(0);
@@ -187,7 +187,7 @@ export default function CreateAgentPage() {
     error: writeError,
     isPending: signing,
     reset,
-  } = useWriteContract();
+  } = useSponsoredWrite();
 
   const { isLoading: confirming, isSuccess, data: receipt } =
     useWaitForTransactionReceipt({ hash: txHash });
