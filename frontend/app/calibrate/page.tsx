@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useTransition } from "react";
 import { BOARD_THEMES, type BoardThemeKey } from "../boardThemes";
 
 const W = 716;
@@ -53,16 +53,15 @@ const STEP_DEFS: { id: string; useX: boolean; useY: boolean; label: string }[] =
   })),
 ];
 
-function buildJson(coords: Record<string, number>): string {
+function buildSpots(coords: Record<string, number>) {
   const col0x = ((coords["col0top_x"] ?? 0) + (coords["col0bot_x"] ?? 0)) / 2;
-  const columnsX = [
-    parseFloat(col0x.toFixed(4)),
-    ...Array.from({ length: 11 }, (_, i) =>
-      parseFloat((coords[`col${i + 1}_x`] ?? 0).toFixed(4))
-    ),
-  ];
-  const result = {
-    columnsX,
+  return {
+    columnsX: [
+      parseFloat(col0x.toFixed(4)),
+      ...Array.from({ length: 11 }, (_, i) =>
+        parseFloat((coords[`col${i + 1}_x`] ?? 0).toFixed(4))
+      ),
+    ],
     topY: parseFloat((coords["col0top_y"] ?? 0).toFixed(4)),
     bottomY: parseFloat((coords["col0bot_y"] ?? 0).toFixed(4)),
     barX: parseFloat((coords["barX_x"] ?? 0).toFixed(4)),
@@ -71,7 +70,10 @@ function buildJson(coords: Record<string, number>): string {
     leftOffX: 0.03,
     rightOffX: 0.97,
   };
-  return `checkerSpots: ${JSON.stringify(result, null, 4)},`;
+}
+
+function buildJson(coords: Record<string, number>): string {
+  return JSON.stringify(buildSpots(coords), null, 2);
 }
 
 export default function CalibratePage() {
@@ -79,6 +81,8 @@ export default function CalibratePage() {
   const [step, setStep] = useState(0);
   const [coords, setCoords] = useState<Record<string, number>>({});
   const [hover, setHover] = useState<{ x: number; y: number } | null>(null);
+  const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "ok" | "err">("idle");
+  const [, startTransition] = useTransition();
   const svgRef = useRef<SVGSVGElement>(null);
 
   const theme = BOARD_THEMES[themeKey];
@@ -126,6 +130,23 @@ export default function CalibratePage() {
   const reset = () => {
     setCoords({});
     setStep(0);
+    setSaveStatus("idle");
+  };
+
+  const handleSave = () => {
+    setSaveStatus("saving");
+    startTransition(async () => {
+      try {
+        const res = await fetch("/api/calibrate/save", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ themeKey, spots: buildSpots(coords) }),
+        });
+        setSaveStatus(res.ok ? "ok" : "err");
+      } catch {
+        setSaveStatus("err");
+      }
+    });
   };
 
   const done = step >= STEP_DEFS.length;
@@ -236,9 +257,28 @@ export default function CalibratePage() {
             background: "#0f0f1f",
             border: "1px solid #2a2a4a",
             borderRadius: 6,
+            display: "flex",
+            alignItems: "center",
+            gap: 16,
           }}
         >
-          ✓ All steps done — copy the checkerSpots below into boardThemes.ts
+          <span>✓ All steps done</span>
+          <button
+            onClick={handleSave}
+            disabled={saveStatus === "saving"}
+            style={{
+              padding: "5px 16px",
+              background: saveStatus === "ok" ? "#065f46" : saveStatus === "err" ? "#7f1d1d" : "#1e3a2a",
+              color: saveStatus === "ok" ? "#4ade80" : saveStatus === "err" ? "#fca5a5" : "#4ade80",
+              border: `1px solid ${saveStatus === "ok" ? "#4ade80" : saveStatus === "err" ? "#f87171" : "#2a4a2a"}`,
+              borderRadius: 4,
+              cursor: saveStatus === "saving" ? "default" : "pointer",
+              fontFamily: "monospace",
+              fontSize: 13,
+            }}
+          >
+            {saveStatus === "saving" ? "Saving…" : saveStatus === "ok" ? "Saved ✓" : saveStatus === "err" ? "Error ✗" : "Save calibration.json"}
+          </button>
         </div>
       )}
 
@@ -399,13 +439,11 @@ export default function CalibratePage() {
           </div>
 
           {done && (
-            <textarea
-              readOnly
-              value={buildJson(coords)}
-              onClick={(e) => (e.target as HTMLTextAreaElement).select()}
+            <pre
               style={{
                 width: "100%",
                 height: 340,
+                overflowY: "auto",
                 background: "#0a0a0a",
                 color: "#4ade80",
                 fontFamily: "monospace",
@@ -413,9 +451,12 @@ export default function CalibratePage() {
                 padding: 12,
                 border: "1px solid #2a4a2a",
                 borderRadius: 6,
-                resize: "vertical",
+                margin: 0,
+                boxSizing: "border-box",
               }}
-            />
+            >
+              {buildJson(coords)}
+            </pre>
           )}
         </div>
       </div>
