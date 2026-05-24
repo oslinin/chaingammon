@@ -14,10 +14,11 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useReadContract, useWriteContract, useWaitForTransactionReceipt } from "wagmi";
+import { useReadContract, useWaitForTransactionReceipt } from "wagmi";
 
 import { useChaingammonName } from "./useChaingammonName";
 import { useChaingammonProfile, useSyncEnsProfile } from "./useChaingammonProfile";
+import { useSponsoredWrite } from "./useSponsoredWrite";
 import { useActiveChainId } from "./chains";
 import { MatchRegistryABI, useChainContracts } from "./contracts";
 import { recordTransaction } from "./transactions";
@@ -78,7 +79,7 @@ export function ClaimForm({ address: _address }: { address: `0x${string}` }) {
     error: writeError,
     isPending: signing,
     reset: resetWrite,
-  } = useWriteContract();
+  } = useSponsoredWrite();
 
   const { isLoading: confirming, isSuccess } = useWaitForTransactionReceipt({ hash: txHash });
 

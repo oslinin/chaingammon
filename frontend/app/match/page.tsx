@@ -12,13 +12,13 @@ import { useRouter, useSearchParams } from "next/navigation";
 import {
   useAccount,
   usePublicClient,
-  useWriteContract,
 } from "wagmi";
 import { parseEther } from "viem";
 import { generatePrivateKey } from "viem/accounts";
 
 import { AgentWalletPanel } from "../AgentWalletPanel";
 import { AgentVaultABI, MatchEscrowABI, useChainContracts } from "../contracts";
+import { useSponsoredWrite } from "../useSponsoredWrite";
 import { useAppMode } from "../AppModeContext";
 import { useI18n } from "../i18n";
 
@@ -64,7 +64,7 @@ function MatchInner() {
   const { address, isConnected } = useAccount();
   const publicClient = usePublicClient();
   const { matchEscrow, agentVault } = useChainContracts();
-  const { writeContractAsync } = useWriteContract();
+  const { writeContractAsync } = useSponsoredWrite();
   const { mode } = useAppMode();
   const showStake = mode === "money" || mode === "advanced" || params.get("stake") === "1";
 

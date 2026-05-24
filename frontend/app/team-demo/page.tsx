@@ -14,7 +14,6 @@ import {
   useSignMessage,
   useSwitchChain,
   useWaitForTransactionReceipt,
-  useWriteContract,
 } from "wagmi";
 import {
   encodeAbiParameters,
@@ -34,6 +33,7 @@ import { rollDice } from "../dice";
 import { useActiveChain, useActiveChainId } from "../chains";
 import { AgentRegistryABI, MatchRegistryABI, useChainContracts } from "../contracts";
 import { useChaingammonName } from "../useChaingammonName";
+import { useSponsoredWrite } from "../useSponsoredWrite";
 import {
   type MatchState,
   newMatch,
@@ -548,7 +548,7 @@ function TeamDemoPageInner() {
   const { agentRegistry, matchRegistry, agentVault } = useChainContracts();
   const { label: humanLabel } = useChaingammonName(address);
   const { signMessageAsync } = useSignMessage();
-  const { writeContractAsync } = useWriteContract();
+  const { writeContractAsync } = useSponsoredWrite();
   const { switchChain, isPending: isSwitchingChain, error: switchChainError } =
     useSwitchChain();
   const txReceipt = useWaitForTransactionReceipt({ hash: settleTxHash ?? undefined });
