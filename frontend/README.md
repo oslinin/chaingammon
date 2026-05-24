@@ -1,6 +1,6 @@
 # ChainGammon — Next.js frontend
 
-Browser-side application for matchmaking, live gameplay, match replay, agent profiles, and training management. Wallet connection is handled via wagmi + RainbowKit; on-chain reads go direct from the browser; heavier operations (move evaluation, match state) delegate to the FastAPI server.
+Browser-side application for matchmaking, live gameplay, match replay, agent profiles, and training management. Wallet connection is handled via wagmi + Privy (email / Google / external wallets → embedded wallet); on-chain reads go direct from the browser. Game logic — move legality, AI move selection, and match state — runs **in the browser** (`lib/match_engine.ts` + ONNX Runtime Web), not on a server. Human-vs-human play (in progress) is fully peer-to-peer: presence + WebRTC signaling over public Nostr relays, moves over a WebRTC data channel.
 
 ```mermaid
 graph LR
@@ -16,9 +16,9 @@ graph LR
     subgraph shared ["Shared"]
         CHAINS["chains.ts\nchain → contract addresses"]
         WAGMI["wagmi.ts\nwagmi config"]
-        PROVIDERS["providers.tsx\nwagmi + RainbowKit"]
+        PROVIDERS["providers.tsx\nwagmi + Privy"]
         CONTRACTS["contracts.ts\nABI + contract helpers"]
-        DICE["dice.ts\ndrand dice derivation"]
+        DICE["dice.ts\nlocal dice (vs agent)"]
     end
 
     subgraph api ["API routes (app/api/)"]
@@ -92,17 +92,23 @@ All `NEXT_PUBLIC_*` vars are inlined at build time and visible in the browser. S
 | File | Responsibility |
 |------|---------------|
 | `layout.tsx` | Root layout — fonts, wagmi providers, nav |
-| `providers.tsx` | wagmi + RainbowKit provider tree |
+| `providers.tsx` | wagmi + Privy provider tree |
 | `chains.ts` | Maps chain ID → deployed contract addresses (reads `contracts/deployments/*.json`) |
 | `contracts.ts` | ABI imports and typed contract helpers |
 | `wagmi.ts` | wagmi config — supported chains, transports, WalletConnect |
-| `dice.ts` | drand-based dice derivation (`keccak256(round_digest, turn_index) mod 36`) |
+| `dice.ts` | Local dice for human-vs-agent (`crypto.getRandomValues`) |
+| `lib/match_engine.ts` | In-browser backgammon match engine — state, move apply, AI move selection |
+| `lib/drand_dice.ts` | drand-derived verifiable dice for human-vs-human (`keccak256(round_digest ‖ turn_index) mod 36`; ports `agent/drand_dice.py`) |
+| `lib/nostr.ts` | Presence + WebRTC signaling over public Nostr relays (serverless matchmaking) |
+| `lib/webrtc_match.ts` | WebRTC peer connection + data channel for human-vs-human moves |
+| `lib/matchmaker.ts` | Deterministic ELO-biased pairing of searchers |
+| `FindHumanButton.tsx` | Basic-mode "Play a human" — Nostr presence, auto-pair, connect |
 | `Board.tsx` | Backgammon board SVG — checkers, points, dice, move highlights |
 | `AgentCard.tsx` | Agent hover card with ELO, tier, and style summary |
 | `AgentWalletPanel.tsx` | Session-key wallet UI — balance, fund, withdraw |
 | `ComputeBackendsContext.tsx` | Global context for local vs 0G Compute toggle |
 | `ComputeBackendsPill.tsx` | Header pill that shows and toggles compute backends |
-| `ConnectButton.tsx` | Styled RainbowKit connect button |
+| `ConnectButton.tsx` | Privy login button (email / Google / external wallet) |
 | `NetworkDropdown.tsx` | Chain switcher dropdown |
 | `app/api/coach/` | Server-side proxy to 0G Compute or local coach for `/hint` and `/chat` |
 | `app/api/agent-teammate/` | Server-side proxy for 0G Compute inference calls |
