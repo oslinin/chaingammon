@@ -62,8 +62,15 @@ export default function RootLayout({
     >
       <body className="min-h-full flex flex-col overflow-x-hidden">
         {/* Restore the URL after a GitHub Pages SPA redirect via 404.html.
-            beforeInteractive + external src avoids React 19's inline-script warning. */}
-        <Script src="/ghpages-redirect.js" strategy="beforeInteractive" />
+            Only injected when deployed under a base path (GitHub Pages).
+            A no-op in local dev — skipping it here silences the React 19
+            script-inside-component warning without affecting any behaviour. */}
+        {process.env.NEXT_PUBLIC_BASE_PATH && (
+          <Script
+            src={`${process.env.NEXT_PUBLIC_BASE_PATH}/ghpages-redirect.js`}
+            strategy="beforeInteractive"
+          />
+        )}
         <Providers>
           <SettingsModal />
           <div className="flex flex-1">
