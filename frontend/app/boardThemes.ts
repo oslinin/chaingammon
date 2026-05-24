@@ -274,24 +274,9 @@ export const BOARD_THEMES: Record<string, BoardTheme> = {
   },
 
   // ── Image-skin themes ────────────────────────────────────────────────────────
-  // These six themes share a single composite sprite served via /api/board-sprite
-  // (which proxies the GitHub CDN or serves a local copy from public/boards/source.png).
-  // Each theme declares a `backgroundImageCrop` that isolates one of the six
-  // panels in the 2-column × 3-row layout.  Board.tsx uses SVG image positioning
-  // to show only the relevant crop; no pre-split files are required at build time.
-  //
-  // To serve the sprite locally (recommended for production):
-  //   node scripts/download_board_sprite.mjs
-  //   # → writes frontend/public/boards/source.png
-  //
-  // To generate individually split PNG files:
-  //   node scripts/split_board_image.mjs
-  //
-  // The composite is a 1024×1024 PNG arranged as:
-  //   col 0 (x 0–511)    col 1 (x 512–1023)
-  //   row 0 (y 0–340)    Desert         Classic
-  //   row 1 (y 341–681)  Asian          Minimal
-  //   row 2 (y 682–1023) Adventure      Sci-fi
+  // Each theme declares a `backgroundImageUrl` plus a `backgroundImageCrop` that
+  // isolates the board panel. Board.tsx uses SVG image positioning to show only
+  // the relevant crop.
 
   board_steampunk: {
     label: "English — Dark Mahogany",
