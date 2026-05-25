@@ -63,7 +63,8 @@ load_dotenv(_env_path, override=False)
 
 from agent_state_io import AgentState, load_or_seed, save_and_upload_checkpoint
 from career_features import encode_career_context, CareerContext
-from sample_trainer import DEFAULT_EXTRAS_DIM, td_lambda_match
+from sample_trainer import DEFAULT_EXTRAS_DIM, td_lambda_match, encode_state
+from sklearn_agent import SklearnProxy, fit_and_export_sklearn, is_sklearn_code
 
 
 # Default `td_match` callable — overridable for tests. Signature must
@@ -251,6 +252,7 @@ def run_round_robin(
     lam: float = 0.7,
     gamma: float = 1.0,
     use_0g_inference: bool = False,
+    sklearn_codes: Optional[dict[int, str]] = None,
 ) -> dict[int, AgentState]:
     """Run the round-robin training loop.
 
@@ -288,6 +290,14 @@ def run_round_robin(
     # doesn't crash a run on a network without a provider — the wire
     # is in place for when one stands up.
     infer_fn = _maybe_build_0g_infer_fn(use_0g_inference, status_fh)
+
+    # Identify which agents use sklearn (non-MLP) models.
+    sklearn_codes = sklearn_codes or {}
+    sklearn_ids: set[int] = {aid for aid in agent_ids if aid in sklearn_codes}
+    # Per-agent SklearnProxy (for move selection) and training data accumulator.
+    sklearn_proxies: dict[int, SklearnProxy] = {aid: SklearnProxy() for aid in sklearn_ids}
+    # sklearn_data[aid] = list of (board_features np.ndarray, outcome float)
+    sklearn_data: dict[int, list[tuple]] = {aid: [] for aid in sklearn_ids}
 
     # Hybrid load: try AgentRegistry → 0G storage; else seed fresh.
     agents: dict[int, AgentState] = {}
@@ -330,18 +340,52 @@ def run_round_robin(
             a_extras = encode_career_context(a_ctx, dim=extras_dim)
             b_extras = encode_career_context(b_ctx, dim=extras_dim)
 
+            a_is_sklearn = a_id in sklearn_ids
+            b_is_sklearn = b_id in sklearn_ids
+
+            if a_is_sklearn and not b_is_sklearn:
+                # Put MLP (b) as the TD learner; sklearn (a) as opponent.
+                # Swap ids and extras so the td_match call is uniform below.
+                learner_id, opp_id = b_id, a_id
+                learner_net = agents[b_id].net
+                opp_net = sklearn_proxies[a_id]
+                learner_extras, opp_extras = b_extras, a_extras
+            else:
+                learner_id, opp_id = a_id, b_id
+                learner_net = sklearn_proxies[a_id] if a_is_sklearn else agents[a_id].net
+                opp_net = sklearn_proxies[b_id] if b_is_sklearn else agents[b_id].net
+                learner_extras, opp_extras = a_extras, b_extras
+
             # Pass infer_fn keyword only when set; the test stub
             # td_match signature (used by hermetic tests) doesn't
             # accept it.
-            kwargs = {"gamma": gamma, "lam": lam, "lr": lr}
+            kwargs: dict = {"gamma": gamma, "lam": lam, "lr": lr}
             if infer_fn is not None:
                 kwargs["infer_fn"] = infer_fn
-            steps, won, *_ = td_match(
-                agents[a_id].net, agents[b_id].net,
-                a_extras, b_extras,
+
+            # For sklearn-vs-sklearn, skip gradient updates entirely by
+            # passing proxy nets to td_match — they have no parameters so
+            # td_lambda_match's backward() becomes a no-op.
+            steps, won, agent_states, opp_states = td_match(
+                learner_net, opp_net,
+                learner_extras, opp_extras,
                 **kwargs,
             )
-            winner = a_id if won else b_id
+            winner = learner_id if won else opp_id
+
+            # Collect training data for sklearn agents from their states.
+            # opp_states are the positions chosen by opp_net (= sklearn agent
+            # when opp_id is sklearn). Label = 1.0 if sklearn agent won.
+            if opp_id in sklearn_ids and opp_states:
+                import numpy as _np
+                sk_won = float(winner == opp_id)
+                for s in opp_states:
+                    try:
+                        feat = encode_state(s, perspective=0).numpy()
+                        sklearn_data[opp_id].append((feat, sk_won))
+                    except Exception:
+                        pass
+
             _emit(
                 status_fh, "match",
                 epoch=epoch, agent_a=a_id, agent_b=b_id,
@@ -350,16 +394,34 @@ def run_round_robin(
 
         _emit(status_fh, "epoch_end", epoch=epoch)
 
+        # After each epoch re-fit sklearn models so they improve over time.
+        for sk_id, data in sklearn_data.items():
+            if len(data) < 10:
+                continue
+            try:
+                import numpy as _np
+                X = _np.stack([d[0] for d in data])
+                y = _np.array([d[1] for d in data], dtype="float32")
+                source = sklearn_codes[sk_id]
+                from sklearn_agent import build_sklearn_model
+                model = build_sklearn_model(source)
+                model.fit(X, y)
+                sklearn_proxies[sk_id].update_model(model)
+            except Exception as exc:
+                _emit(status_fh, "warning", detail=f"sklearn re-fit failed for agent {sk_id}: {exc}")
+
     # Signal that the training loop itself is finished. Checkpoint
     # save + 0G upload follow; the frontend uses this event to split
     # the "Train" step timer from the "Upload to 0G" step timer.
     _emit(status_fh, "training_complete")
 
-    # End-of-run save + optional upload.
+    # End-of-run save for MLP agents.
     if checkpoint_dir is not None:
         # Every agent was the 'learner' in (n - 1) games per epoch.
         matches_per_agent = epochs * (n - 1)
         for aid, state in agents.items():
+            if aid in sklearn_ids:
+                continue  # sklearn agents saved separately below
             try:
                 local_path, root_hash = save_and_upload_checkpoint(
                     state,
@@ -373,13 +435,37 @@ def run_round_robin(
                     agent_id=aid, path=str(local_path), root_hash=root_hash,
                 )
             except Exception as exc:
-                # Upload failure (e.g. missing OG_STORAGE_* env vars or
-                # network timeout) must not abort the run — the local
-                # checkpoint may still have been written. Surface the
-                # error in the status JSONL so the frontend can render it.
                 _emit(
                     status_fh, "agent_save_error",
                     agent_id=aid, detail=str(exc),
+                )
+
+    # End-of-run save for sklearn agents — final fit + ONNX export.
+    if checkpoint_dir is not None:
+        import numpy as _np
+        for sk_id in sklearn_ids:
+            data = sklearn_data[sk_id]
+            if not data:
+                _emit(status_fh, "agent_save_error", agent_id=sk_id,
+                      detail="no training data collected for sklearn agent")
+                continue
+            try:
+                X = _np.stack([d[0] for d in data])
+                y = _np.array([d[1] for d in data], dtype="float32")
+                local_path, root_hash = fit_and_export_sklearn(
+                    sklearn_codes[sk_id], X, y, sk_id,
+                    Path(checkpoint_dir),
+                    upload=upload,
+                    encrypt=encrypt,
+                )
+                _emit(
+                    status_fh, "agent_saved",
+                    agent_id=sk_id, path=str(local_path), root_hash=root_hash,
+                )
+            except Exception as exc:
+                _emit(
+                    status_fh, "agent_save_error",
+                    agent_id=sk_id, detail=str(exc),
                 )
 
     return agents
@@ -424,17 +510,24 @@ def main() -> int:
                              "flag is recorded in the JSONL events but the "
                              "Phase G eval bridge is not wired yet — for "
                              "this run, inference still runs locally.")
+    parser.add_argument("--model-codes-file", type=str, default=None,
+                        help="Path to a JSON file mapping agent_id (int key) "
+                             "to model source code. Agents whose source contains "
+                             "'from sklearn' are trained as sklearn models.")
     args = parser.parse_args()
 
     if len(args.agent_ids) < 2:
         parser.error("--agent-ids must have at least 2 IDs")
     if args.upload_to_0g and not args.checkpoint_dir:
         parser.error("--upload-to-0g requires --checkpoint-dir")
-    # --use-0g-inference is wired through to the per-candidate forward
-    # pass via _maybe_build_0g_infer_fn. When no backgammon-net provider
-    # is registered on the serving network, the helper emits a 'warning'
-    # event to the status JSONL and the trainer falls back to local
-    # inference for the run. Nothing to print here.
+
+    sklearn_codes: dict[int, str] = {}
+    if args.model_codes_file:
+        with open(args.model_codes_file) as _f:
+            raw_codes: dict = json.load(_f)
+        for _k, _v in raw_codes.items():
+            if is_sklearn_code(_v):
+                sklearn_codes[int(_k)] = _v
 
     # Seed torch for reproducible weight initialisation on fresh agents.
     # Do NOT seed Python's random module here — td_lambda_match draws dice
@@ -460,6 +553,7 @@ def main() -> int:
                 lam=args.lam,
                 gamma=args.gamma,
                 use_0g_inference=args.use_0g_inference,
+                sklearn_codes=sklearn_codes or None,
             )
             completed = True
         finally:

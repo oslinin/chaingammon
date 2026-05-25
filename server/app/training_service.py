@@ -120,6 +120,7 @@ def start_job(
     checkpoint_dir: Optional[Path] = None,
     upload_to_0g: bool = False,
     no_encrypt: bool = False,
+    model_codes: dict[int, str] | None = None,
 ) -> TrainingJob:
     """Spawn round_robin_trainer.py with the given args.
 
@@ -188,6 +189,13 @@ def start_job(
         cmd.append("--no-encrypt")
     if use_0g_inference:
         cmd.append("--use-0g-inference")
+
+    if model_codes:
+        import json as _json
+        _fd, _mc_path = tempfile.mkstemp(prefix="chaingammon-model-codes-", suffix=".json")
+        os.close(_fd)
+        Path(_mc_path).write_text(_json.dumps({str(k): v for k, v in model_codes.items()}))
+        cmd.extend(["--model-codes-file", _mc_path])
 
     # Pre-provision wallets for all agents so they show up in status.
     try:
