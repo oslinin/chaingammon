@@ -60,18 +60,19 @@ export default function RootLayout({
       lang="en"
       className={`${cgSans.variable} ${cgMono.variable} ${cgDisplay.variable} h-full antialiased`}
     >
+      {/* Synchronous inline script — runs during HTML parsing, before any
+          JS bundle loads. Polyfills crypto.randomUUID for HTTP (non-secure)
+          contexts; Privy calls it during module initialization. */}
+      <head>
+        <script dangerouslySetInnerHTML={{ __html:
+          "if(typeof globalThis!=='undefined'&&globalThis.crypto&&!globalThis.crypto.randomUUID){globalThis.crypto.randomUUID=function(){var b=new Uint8Array(16);globalThis.crypto.getRandomValues(b);b[6]=(b[6]&0x0f)|0x40;b[8]=(b[8]&0x3f)|0x80;return Array.from(b,function(n){return n.toString(16).padStart(2,'0')}).join('').replace(/^(.{8})(.{4})(.{4})(.{4})(.{12})$/,'$1-$2-$3-$4-$5');};}"
+        }} />
+      </head>
       <body className="min-h-full flex flex-col overflow-x-hidden">
         {/* Restore the URL after a GitHub Pages SPA redirect via 404.html.
             Only injected when deployed under a base path (GitHub Pages).
             A no-op in local dev — skipping it here silences the React 19
             script-inside-component warning without affecting any behaviour. */}
-        {/* Polyfill crypto.randomUUID for HTTP (non-secure) contexts.
-            Privy calls it internally; beforeInteractive runs before any
-            JS bundle so the polyfill is in place before Privy's module
-            code executes. */}
-        <Script id="crypto-uuid-polyfill" strategy="beforeInteractive">{`
-          if(typeof globalThis!=='undefined'&&globalThis.crypto&&!globalThis.crypto.randomUUID){globalThis.crypto.randomUUID=function(){var b=new Uint8Array(16);globalThis.crypto.getRandomValues(b);b[6]=(b[6]&0x0f)|0x40;b[8]=(b[8]&0x3f)|0x80;return Array.from(b,function(n){return n.toString(16).padStart(2,'0')}).join('').replace(/^(.{8})(.{4})(.{4})(.{4})(.{12})$/,'$1-$2-$3-$4-$5');};}
-        `}</Script>
         {process.env.NEXT_PUBLIC_BASE_PATH && (
           <Script
             src={`${process.env.NEXT_PUBLIC_BASE_PATH}/ghpages-redirect.js`}
