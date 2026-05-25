@@ -20,7 +20,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { evaluateMoves } from "../lib/onnx_eval";
+import { evaluateMoves, evaluateMovesWithAgent } from "../lib/onnx_eval";
 import { generateLegalMoves } from "../lib/rules_engine";
 import { tagCandidates } from "../lib/move_tagger";
 import { useI18n } from "./i18n";
@@ -62,6 +62,8 @@ interface Props {
   disabled?: boolean;
   /** When true, skip the LLM entirely — show ONNX-ranked moves only. */
   noLLM?: boolean;
+  /** Agent IDs of loaded team members whose evaluations appear as advisor signals. */
+  teammateIds?: number[];
 }
 
 // ── Tag colour palette — mapped to CG semantic tokens ─────────────────────
@@ -112,11 +114,13 @@ export function AgentTeammatePanel({
   onMoveHover,
   disabled = false,
   noLLM = false,
+  teammateIds = [],
 }: Props) {
   const { t } = useI18n();
   const [taggedCandidates, setTaggedCandidates] = useState<TaggedCandidate[]>([]);
   const [loadingCandidates, setLoadingCandidates] = useState(false);
   const [candidatesRanked, setCandidatesRanked] = useState(false);
+  const [advisorSignals, setAdvisorSignals] = useState<{ agentId: number; move: string; equity: number }[]>([]);
 
   const [dialogue, setDialogue] = useState<TeammateMessage[]>([]);
   const [strategyInput, setStrategyInput] = useState("");
@@ -171,6 +175,37 @@ export function AgentTeammatePanel({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [disabled, positionId, matchId, dice?.[0], dice?.[1]]);
+
+  // ── Teammate advisor signals ──────────────────────────────────────────
+  useEffect(() => {
+    if (disabled || !dice || !board || teammateIds.length === 0) {
+      setAdvisorSignals([]);
+      return;
+    }
+    const gameBoard = {
+      points: board,
+      bar: bar ?? ([0, 0] as [number, number]),
+      off: off ?? ([0, 0] as [number, number]),
+    };
+    let cancelled = false;
+    void (async () => {
+      const signals = await Promise.all(
+        teammateIds.map(async (agentId) => {
+          try {
+            const candidates = await evaluateMovesWithAgent(agentId, gameBoard, turn, dice);
+            return candidates.length > 0
+              ? { agentId, move: candidates[0].move, equity: candidates[0].equity }
+              : null;
+          } catch {
+            return null;
+          }
+        })
+      );
+      if (!cancelled) setAdvisorSignals(signals.filter(Boolean) as { agentId: number; move: string; equity: number }[]);
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [disabled, positionId, dice?.[0], dice?.[1], teammateIds.join(",")]);
 
   const autoSentRef = useRef<string>("");
   useEffect(() => {
@@ -376,6 +411,64 @@ export function AgentTeammatePanel({
               </div>
             </>
           )}
+        </div>
+      )}
+
+      {/* Teammate advisor signals */}
+      {advisorSignals.length > 0 && (
+        <div
+          style={{
+            flexShrink: 0,
+            borderBottom: "1px solid var(--cg-line-1)",
+            padding: "10px 16px",
+          }}
+        >
+          <p
+            style={{
+              marginBottom: 6,
+              fontSize: 10,
+              fontWeight: 600,
+              letterSpacing: "0.12em",
+              textTransform: "uppercase",
+              color: "var(--cg-fg-4)",
+            }}
+          >
+            {t("teammate_advisors") ?? "Teammate advisors"}
+          </p>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            {advisorSignals.map(({ agentId, move, equity }) => (
+              <button
+                key={agentId}
+                type="button"
+                disabled={disabled}
+                onClick={() => onMoveSelect?.(move)}
+                onMouseEnter={() => onMoveHover?.(move)}
+                onMouseLeave={() => onMoveHover?.(null)}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  borderRadius: "var(--cg-radius)",
+                  border: "1px solid var(--cg-line-2)",
+                  background: "var(--cg-bg-3)",
+                  padding: "5px 10px",
+                  textAlign: "left",
+                  cursor: disabled ? "not-allowed" : "pointer",
+                  opacity: disabled ? 0.5 : 1,
+                }}
+              >
+                <span style={{ fontSize: 10, color: "var(--cg-fg-4)", fontFamily: "var(--cg-font-sans)", minWidth: 56 }}>
+                  Agent {agentId}
+                </span>
+                <span style={{ fontFamily: "var(--cg-font-mono)", fontSize: 12, color: "var(--cg-fg-1)", flex: 1 }}>
+                  {move}
+                </span>
+                <span style={{ fontSize: 10, color: "var(--cg-fg-3)" }}>
+                  {equity.toFixed(3)}
+                </span>
+              </button>
+            ))}
+          </div>
         </div>
       )}
 
