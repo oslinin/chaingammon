@@ -1492,6 +1492,9 @@ class StartTrainingRequest(BaseModel):
     # requirement). Agents whose code contains 'from sklearn' are trained
     # as sklearn models instead of BackgammonNet MLP.
     model_codes: dict[str, str] = {}
+    # Per-agent search depth for expectiminimax. Keys are agent IDs as strings.
+    # 1 = greedy 1-ply (default). 2 = 2-ply (~21x slower but stronger signal).
+    search_depths: dict[str, int] = {}
 
 
 @app.post("/training/start")
@@ -1514,6 +1517,7 @@ def post_training_start(req: StartTrainingRequest):
             upload_to_0g=upload_to_0g,
             no_encrypt=req.no_encrypt,
             model_codes={int(k): v for k, v in req.model_codes.items()} if req.model_codes else None,
+            search_depths={int(k): int(v) for k, v in req.search_depths.items()} if req.search_depths else None,
         )
     except RuntimeError as e:
         # Already running.

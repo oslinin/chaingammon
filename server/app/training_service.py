@@ -121,6 +121,7 @@ def start_job(
     upload_to_0g: bool = False,
     no_encrypt: bool = False,
     model_codes: dict[int, str] | None = None,
+    search_depths: dict[int, int] | None = None,
 ) -> TrainingJob:
     """Spawn round_robin_trainer.py with the given args.
 
@@ -196,6 +197,10 @@ def start_job(
         os.close(_fd)
         Path(_mc_path).write_text(_json.dumps({str(k): v for k, v in model_codes.items()}))
         cmd.extend(["--model-codes-file", _mc_path])
+
+    if search_depths:
+        depths_str = ",".join(f"{k}:{v}" for k, v in search_depths.items())
+        cmd.extend(["--search-depths", depths_str])
 
     # Pre-provision wallets for all agents so they show up in status.
     try:
