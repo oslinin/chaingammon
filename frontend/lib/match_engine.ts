@@ -241,17 +241,7 @@ export function dropDouble(state: MatchState): MatchState {
   return makeState(freshBoard(), nextTurn, newScore, state.match_length, false, null, false, null, 1, -1);
 }
 
-/**
- * Check whether the current side has any legal moves at all.
- * Used to detect bar-dance situations before skipping the turn.
- */
-export function hasLegalMoves(
-  board: Board,
-  side: 0 | 1,
-  dice: [number, number]
-): boolean {
-  return generateLegalMoves(board, side, dice).length > 0;
-}
+export { hasLegalMoves } from "./rules_engine";
 
 /**
  * Fast-forward: run the full remaining match with both sides picking a random

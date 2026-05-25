@@ -114,7 +114,7 @@ test.describe("off-chain game flow", () => {
 
     // Header confirms we're in an off-chain game (not settlement mode).
     await expect(
-      page.locator("h1", { hasText: "Off-Chain Game" })
+      page.locator("h1", { hasText: "Off-chain game" })
     ).toBeVisible({ timeout: 10_000 });
 
     // Fast-forward button only renders once the game state is initialised; wait
@@ -142,7 +142,7 @@ test.describe("on-chain game flow", () => {
 
     // On-chain mode labels the header "Official Game".
     await expect(
-      page.locator("h1", { hasText: "Official Game" })
+      page.locator("h1", { hasText: "Official game" })
     ).toBeVisible({ timeout: 10_000 });
 
     // Click fast-forward to run playMatchToEnd (no ONNX needed).

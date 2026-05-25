@@ -555,3 +555,11 @@ export function encodeFullBoard(board: Board, perspective: number): Float32Array
 
   return feat;
 }
+
+export function hasLegalMoves(
+  board: Board,
+  side: 0 | 1,
+  dice: [number, number]
+): boolean {
+  return generateLegalMoves(board, side, dice).length > 0;
+}
