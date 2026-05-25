@@ -320,10 +320,12 @@ def run_round_robin(
             a_ctx = CareerContext(
                 opponent_style=styles[b_id], teammate_style=None,
                 stake_wei=0, tournament_position=0.0, is_team_match=False,
+                self_style=styles[a_id],
             )
             b_ctx = CareerContext(
                 opponent_style=styles[a_id], teammate_style=None,
                 stake_wei=0, tournament_position=0.0, is_team_match=False,
+                self_style=styles[b_id],
             )
             a_extras = encode_career_context(a_ctx, dim=extras_dim)
             b_extras = encode_career_context(b_ctx, dim=extras_dim)
