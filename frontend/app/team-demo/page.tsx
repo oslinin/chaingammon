@@ -39,6 +39,7 @@ import {
   newMatch,
   applyMoveToState,
   getBestMove,
+  getBestTeamMove,
   hasLegalMoves,
   skipTurn,
   playMatchToEnd,
@@ -49,7 +50,7 @@ import {
 } from "../../lib/match_engine";
 import { CubeModal } from "./CubeModal";
 import { CubeTransactionOverlay } from "./CubeTransactionOverlay";
-import { loadAgentModel } from "../../lib/onnx_eval";
+import { loadAgentModel, createAgentEvaluator, destroyAgentEvaluator } from "../../lib/onnx_eval";
 import { loadAgentOnnxBytes } from "../../lib/agent_model_loader";
 import { encodeStyleVector } from "../../lib/career_features";
 import { type Board as GameBoard } from "../../lib/rules_engine";
@@ -503,6 +504,8 @@ function TeamDemoPageInner() {
   const [boardTheme, setBoardTheme] = useState<BoardThemeKey>("walnut");
   const [prefer3d, setPrefer3d] = useState(false);
   const [gameCoins, setGameCoins] = useState<{ warm: string; cool: string } | null>(null);
+  // Track which teammate IDs have had their evaluator loaded.
+  const [loadedTeammateIds, setLoadedTeammateIds] = useState<number[]>([]);
   // SSG renders this page with no URL — opponentIds/setup/settleOnChain all
   // start at their "no params" defaults in the prerendered HTML. On hydration
   // we may be on a URL that has those params, which would diff the rendered
@@ -522,6 +525,40 @@ function TeamDemoPageInner() {
       window.removeEventListener("prefer-3d-change", prefer3dHandler);
     };
   }, []);
+
+  // Load/destroy per-agent evaluators as the teammate selection changes.
+  useEffect(() => {
+    const current = new Set(teammateIds);
+    // Destroy evaluators for teammates no longer selected.
+    setLoadedTeammateIds(prev => {
+      prev.filter(id => !current.has(id)).forEach(destroyAgentEvaluator);
+      return prev.filter(id => current.has(id));
+    });
+    // Load evaluators for newly added teammates.
+    for (const agentId of teammateIds) {
+      const agentInfo = agents.find(a => a.agent_id === agentId);
+      const weightsHash = agentInfo?.weights_hash ?? "";
+      if (!weightsHash || weightsHash === ZERO_HASH) continue;
+      void (async () => {
+        try {
+          const { loadAgentOnnxBytes: _load } = await import("../../lib/agent_model_loader");
+          const onnxBytes = await _load(weightsHash);
+          if (!onnxBytes) return;
+          let styleVec: number[] | undefined;
+          try {
+            const res = await fetch(`${SERVER}/agents/${agentId}/profile`);
+            if (res.ok) {
+              const profile = (await res.json()) as { values?: Record<string, number> };
+              if (profile?.values) styleVec = Array.from(encodeStyleVector(profile.values));
+            }
+          } catch { /* neutral style */ }
+          createAgentEvaluator(agentId, onnxBytes, styleVec);
+          setLoadedTeammateIds(prev => prev.includes(agentId) ? prev : [...prev, agentId]);
+        } catch { /* model unavailable — agent falls back to base */ }
+      })();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [teammateIds.join(",")]);
 
   // Doubling cube UI state
   const [cubeModal, setCubeModal] = useState<"offer" | "decision" | null>(null);
@@ -1831,6 +1868,7 @@ function TeamDemoPageInner() {
               onMoveSelect={previewMove}
               onMoveHover={setHoveredMove}
               noLLM={teammateIds.length === 0}
+              teammateIds={loadedTeammateIds}
             />
           )}
         </div>

@@ -19,7 +19,7 @@ import {
   isLegal,
   generateLegalMoves,
 } from "./rules_engine";
-import { evaluateMoves, CandidateMove } from "./onnx_eval";
+import { evaluateMoves, evaluateTeamMoves, CandidateMove } from "./onnx_eval";
 import { encodePositionId, encodeMatchId } from "./gnubg_state";
 
 // ── Public types ──────────────────────────────────────────────────────────────
@@ -173,6 +173,26 @@ export async function getBestMove(
     // game never freezes. Quality degrades but play continues.
     const moves = generateLegalMoves(board, side, dice);
     return moves.length > 0 ? moves[Math.floor(Math.random() * moves.length)] : null;
+  }
+}
+
+/**
+ * Pick the best move for a team of agents via ensemble averaging.
+ * Each agent evaluates all legal moves independently; equities are averaged
+ * per move across agents and the highest-average move is chosen.
+ * Falls back to the base model when no agent IDs are loaded.
+ */
+export async function getBestTeamMove(
+  agentIds: number[],
+  board: Board,
+  side: 0 | 1,
+  dice: [number, number],
+): Promise<string | null> {
+  try {
+    const candidates = await evaluateTeamMoves(agentIds, board, side, dice);
+    return candidates.length > 0 ? candidates[0].move : null;
+  } catch {
+    return getBestMove(board, side, dice);
   }
 }
 
