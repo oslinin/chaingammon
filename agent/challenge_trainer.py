@@ -209,14 +209,16 @@ def run_challenge_loop(
                     teammate_style=None,
                     stake_wei=stake,
                     tournament_position=0.0,
-                    is_team_match=False
+                    is_team_match=False,
+                    self_style=public_profiles[proposer],
                 )
                 b_ctx = CareerContext(
                     opponent_style=public_profiles[proposer],
                     teammate_style=None,
                     stake_wei=stake,
                     tournament_position=0.0,
-                    is_team_match=False
+                    is_team_match=False,
+                    self_style=public_profiles[target],
                 )
                 a_extras = encode_career_context(a_ctx, dim=extras_dim)
                 b_extras = encode_career_context(b_ctx, dim=extras_dim)
