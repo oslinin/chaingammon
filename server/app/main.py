@@ -281,6 +281,44 @@ def _update_agent_overlay_kv(
         overlay_updates.append({"agent_id": agent_id, "error": str(e)})
 
 
+_ZERO_ADDRESS = "0x0000000000000000000000000000000000000000"
+
+
+def _update_human_overlay_kv(
+    human_address: str,
+    moves: list,
+    overlay_updates: list,
+    *,
+    turn: int | None = None,
+) -> None:
+    """Write an updated style overlay to 0G KV for a human player.
+
+    Non-fatal: KV failures are logged and appended to overlay_updates with
+    an `error` field. Skips the zero address (no human in this slot).
+
+    `turn` (0 or 1) filters `moves` to only the human's own moves before
+    computing the overlay target.
+    """
+    import logging
+    if not human_address or human_address == _ZERO_ADDRESS:
+        return
+    logger = logging.getLogger(__name__)
+    kv_key = f"chaingammon/overlay/human/{human_address.lower()}"
+    try:
+        try:
+            raw = get_kv(kv_key)
+            current = Overlay.from_bytes(raw)
+        except (OgStorageError, OverlayError):
+            current = Overlay.default()
+        human_moves = [m for m in moves if m.turn == turn] if turn is not None else moves
+        new_overlay = update_overlay(current, human_moves, current.match_count)
+        put_kv(kv_key, new_overlay.to_bytes())
+        overlay_updates.append({"human_address": human_address, "match_count": new_overlay.match_count})
+    except Exception as e:
+        logger.warning("overlay KV write failed for human %s: %s", human_address, e)
+        overlay_updates.append({"human_address": human_address, "error": str(e)})
+
+
 
 # ---------------------------------------------------------------------------
 # KeeperHub integration: /finalize-direct, /settle (relayer)
@@ -424,6 +462,8 @@ def finalize_direct(req: DirectFinalizeRequest):
     overlay_updates: list[dict] = []
     _update_agent_overlay_kv(req.winner_agent_id, move_entries, overlay_updates, turn=req.winner_turn)
     _update_agent_overlay_kv(req.loser_agent_id, move_entries, overlay_updates, turn=req.loser_turn)
+    _update_human_overlay_kv(req.winner_human_address, move_entries, overlay_updates, turn=req.winner_turn)
+    _update_human_overlay_kv(req.loser_human_address, move_entries, overlay_updates, turn=req.loser_turn)
 
     ens_updates: list[dict] = []
     for side_name, label, agent_id, human_addr in [
@@ -571,6 +611,8 @@ def finalize_direct_staked(req: StakedFinalizeRequest):
     overlay_updates: list[dict] = []
     _update_agent_overlay_kv(req.winner_agent_id, move_entries, overlay_updates, turn=req.winner_turn)
     _update_agent_overlay_kv(req.loser_agent_id, move_entries, overlay_updates, turn=req.loser_turn)
+    _update_human_overlay_kv(req.winner_human_address, move_entries, overlay_updates, turn=req.winner_turn)
+    _update_human_overlay_kv(req.loser_human_address, move_entries, overlay_updates, turn=req.loser_turn)
 
     ens_updates: list[dict] = []
     for side_name, label, agent_id, human_addr in [
@@ -1060,7 +1102,7 @@ def post_settle_audit(req: PostSettleAuditRequest):
             _log.warning("post-settle-audit: ENS push failed for %s (%s): %s", label, side_name, e)
             ens_updates.append({"side": side_name, "label": label, "error": str(e)})
 
-    # Step 4 — update agent style-overlay KV for each agent side (non-fatal).
+    # Step 4 — update style-overlay KV for each side (agents and humans, non-fatal).
     # Infer each side's turn from the game record's PlayerRef kind: agents are
     # always turn 1 and humans are turn 0 in all current match configurations.
     winner_turn_inferred: int | None = (1 if winner_kind == "agent" else 0) if winner_kind else None
@@ -1068,6 +1110,8 @@ def post_settle_audit(req: PostSettleAuditRequest):
     overlay_updates: list[dict] = []
     _update_agent_overlay_kv(winner_agent_id, moves=moves, overlay_updates=overlay_updates, turn=winner_turn_inferred)
     _update_agent_overlay_kv(loser_agent_id, moves=moves, overlay_updates=overlay_updates, turn=loser_turn_inferred)
+    _update_human_overlay_kv(winner_human, moves=moves, overlay_updates=overlay_updates, turn=winner_turn_inferred)
+    _update_human_overlay_kv(loser_human, moves=moves, overlay_updates=overlay_updates, turn=loser_turn_inferred)
 
     return {
         "match_id": req.matchId,
