@@ -43,6 +43,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 _AGENT_DIR = _REPO_ROOT / "agent"
 _TRAINER = _AGENT_DIR / "round_robin_trainer.py"
 _CHALLENGE_TRAINER = _AGENT_DIR / "challenge_trainer.py"
+_TEAM_CHALLENGE_TRAINER = _AGENT_DIR / "team_challenge_trainer.py"
 
 
 # Used by /training/estimate when use_0g_inference is true. Calibrated
@@ -139,7 +140,10 @@ def start_job(
 
     if epochs < 1:
         raise ValueError("epochs must be >= 1")
-    if len(agent_ids) < 2:
+    if trainer_mode == "team_challenge":
+        if len(agent_ids) < 4 or len(agent_ids) % 2 != 0:
+            raise ValueError("team_challenge trainer requires an even number of agent_ids >= 4")
+    elif len(agent_ids) < 2:
         raise ValueError("agent_ids must have at least 2 entries")
 
     # Status file lives in tmp; one file per run. Persistent across
@@ -164,7 +168,12 @@ def start_job(
     # are available without requiring uv in the subprocess's PATH.
     _agent_python = _AGENT_DIR / ".venv" / "bin" / "python"
     _trainer_exe = str(_agent_python) if _agent_python.exists() else sys.executable
-    target_trainer = _CHALLENGE_TRAINER if trainer_mode == "challenge" else _TRAINER
+    if trainer_mode == "team_challenge":
+        target_trainer = _TEAM_CHALLENGE_TRAINER
+    elif trainer_mode == "challenge":
+        target_trainer = _CHALLENGE_TRAINER
+    else:
+        target_trainer = _TRAINER
     cmd = [
         _trainer_exe,
         str(target_trainer),
