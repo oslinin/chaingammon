@@ -356,6 +356,10 @@ Why: Tailwind class drift is invisible to TS and the build, but very visible to 
 
 Why: a frozen dev machine costs more time than a slightly slower bundler. Stability over speed for this project.
 
+## Known Limitations
+
+See [`docs/limitations.md`](docs/limitations.md) for a maintained list of known limitations with current status. Covers the player flywheel overlay, training search depth, sklearn agent constraints, and style drift.
+
 ## Out of Scope (do not implement without asking)
 
 Commit-reveal dice / VRF, betting/prediction markets, ELO derivative tokens, anti-cheat for human ratings, ZK move proofs, 0G Compute, mainnet deployment.
