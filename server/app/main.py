@@ -249,11 +249,17 @@ def _update_agent_overlay_kv(
     agent_id: int,
     moves: list,
     overlay_updates: list,
+    *,
+    turn: int | None = None,
 ) -> None:
     """Write an updated style overlay to 0G KV for `agent_id`.
 
     Non-fatal: KV failures are logged and appended to overlay_updates with
     an `error` field. Skips agent_id == 0 (human players have no overlay).
+
+    `turn` (0 or 1) filters `moves` to only the agent's own moves before
+    computing the overlay target. Pass None only when move history is absent
+    (legacy/empty move lists) so the no-op update still increments match_count.
     """
     import logging
     if agent_id == 0:
@@ -266,7 +272,8 @@ def _update_agent_overlay_kv(
             current = Overlay.from_bytes(raw)
         except (OgStorageError, OverlayError):
             current = Overlay.default()
-        new_overlay = update_overlay(current, moves, current.match_count)
+        agent_moves = [m for m in moves if m.turn == turn] if turn is not None else moves
+        new_overlay = update_overlay(current, agent_moves, current.match_count)
         put_kv(kv_key, new_overlay.to_bytes())
         overlay_updates.append({"agent_id": agent_id, "match_count": new_overlay.match_count})
     except Exception as e:
@@ -319,6 +326,10 @@ class DirectFinalizeRequest(BaseModel):
     score: list[int] = [0, 0]
     # Optional move history (empty for MVP; full history improves audit quality)
     moves: list[dict] = []
+    # Which gnubg turn (0 or 1) each side played. Required for correct
+    # per-agent overlay updates; None disables turn filtering (legacy/no moves).
+    winner_turn: int | None = None
+    loser_turn: int | None = None
 
 
 class StakedFinalizeRequest(DirectFinalizeRequest):
@@ -411,8 +422,8 @@ def finalize_direct(req: DirectFinalizeRequest):
         raise HTTPException(status_code=502, detail=f"recordMatch failed: {e}") from e
 
     overlay_updates: list[dict] = []
-    _update_agent_overlay_kv(req.winner_agent_id, move_entries, overlay_updates)
-    _update_agent_overlay_kv(req.loser_agent_id, move_entries, overlay_updates)
+    _update_agent_overlay_kv(req.winner_agent_id, move_entries, overlay_updates, turn=req.winner_turn)
+    _update_agent_overlay_kv(req.loser_agent_id, move_entries, overlay_updates, turn=req.loser_turn)
 
     ens_updates: list[dict] = []
     for side_name, label, agent_id, human_addr in [
@@ -558,8 +569,8 @@ def finalize_direct_staked(req: StakedFinalizeRequest):
         raise HTTPException(status_code=502, detail=f"recordMatchAndSplit failed: {e}") from e
 
     overlay_updates: list[dict] = []
-    _update_agent_overlay_kv(req.winner_agent_id, move_entries, overlay_updates)
-    _update_agent_overlay_kv(req.loser_agent_id, move_entries, overlay_updates)
+    _update_agent_overlay_kv(req.winner_agent_id, move_entries, overlay_updates, turn=req.winner_turn)
+    _update_agent_overlay_kv(req.loser_agent_id, move_entries, overlay_updates, turn=req.loser_turn)
 
     ens_updates: list[dict] = []
     for side_name, label, agent_id, human_addr in [
