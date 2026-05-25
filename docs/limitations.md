@@ -10,9 +10,9 @@ These were originally documented as limitations of the early 6-axis overlay. The
 
 ### 1. Static overlay is a lossy summary of state-dependent human behaviour
 
-**Status: Not a limitation.**
+**Status: Not a limitation — fixed in e591ced.**
 
-The overlay (18-float exposure-EMA) is static, but agents consume `(board_features, style_overlay)` jointly. The network learns to weight style signals differently depending on board context — e.g. "this blitz-preferring human is dangerous from mid-game positions but overextended here." State-dependence lives in the network weights, not in the overlay itself.
+The overlay (18-float exposure-EMA) is static, but agents consume `[board ‖ style]` as a single fused input. Before e591ced the MLP computed `sigmoid(core(board)) + sigmoid(extras(style))` — summing after the nonlinearity — which made style board-separable: a constant per-candidate style term cancelled in the argmax and style could never change move selection. e591ced moved the fusion before the nonlinearity: `sigmoid(core(board) + extras(style))`, so each hidden unit depends jointly on board and style (genuine interaction). The same fix applies to sklearn agents (style concatenated to board before fit/predict) and to 2-ply search (the eval_fn closure carries the style vector to every leaf). The ONNX contract is now `features = [board(198) ‖ style(40)]` → `equity` uniformly across all model types.
 
 ### 2. Style preference, not error/skill structure
 
