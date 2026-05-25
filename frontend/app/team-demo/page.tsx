@@ -51,6 +51,7 @@ import { CubeModal } from "./CubeModal";
 import { CubeTransactionOverlay } from "./CubeTransactionOverlay";
 import { loadAgentModel } from "../../lib/onnx_eval";
 import { loadAgentOnnxBytes } from "../../lib/agent_model_loader";
+import { encodeStyleVector } from "../../lib/career_features";
 import { type Board as GameBoard } from "../../lib/rules_engine";
 import { useI18n } from "../i18n";
 
@@ -887,7 +888,19 @@ function TeamDemoPageInner() {
       if (weightsHash && weightsHash !== ZERO_HASH) {
         const onnxBytes = await loadAgentOnnxBytes(weightsHash);
         if (onnxBytes) {
-          await loadAgentModel(onnxBytes).catch(() => {/* fall back to base */});
+          // Feed the agent's own style (self_style) so its trained board×style
+          // model plays with its personality; neutral style on any failure.
+          let styleVec: number[] | undefined;
+          try {
+            const res = await fetch(`${SERVER}/agents/${opponentIds[0]}/profile`);
+            if (res.ok) {
+              const profile = (await res.json()) as { values?: Record<string, number> };
+              if (profile?.values) styleVec = Array.from(encodeStyleVector(profile.values));
+            }
+          } catch {
+            /* server unreachable — worker falls back to a neutral style */
+          }
+          await loadAgentModel(onnxBytes, styleVec).catch(() => {/* fall back to base */});
         }
       }
       const state = newMatch(3);
