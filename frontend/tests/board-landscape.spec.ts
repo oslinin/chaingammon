@@ -31,7 +31,8 @@ async function mockAgentList(page: Page): Promise<void> {
 }
 
 test.describe("game layout — phone landscape", () => {
-  test.use({ ...devices["iPhone 12 landscape"] });
+  const { defaultBrowserType: _1, ...iphoneLandscape } = devices["iPhone 12 landscape"];
+  test.use(iphoneLandscape);
 
   test("board and advisor panel sit side-by-side", async ({ page }) => {
     await mockAgentList(page);
@@ -39,7 +40,7 @@ test.describe("game layout — phone landscape", () => {
 
     // Wait for the game screen to render (header is unique to it).
     await expect(
-      page.locator("h1", { hasText: "Off-Chain Game" })
+      page.locator("h1", { hasText: "Off-chain game" })
     ).toBeVisible({ timeout: 10_000 });
 
     // The game-screen <main> is the only one carrying `max-w-5xl`.
@@ -49,14 +50,15 @@ test.describe("game layout — phone landscape", () => {
 });
 
 test.describe("game layout — phone portrait", () => {
-  test.use({ ...devices["iPhone 12"] });
+  const { defaultBrowserType: _2, ...iphone } = devices["iPhone 12"];
+  test.use(iphone);
 
   test("layout stays stacked", async ({ page }) => {
     await mockAgentList(page);
     await page.goto("/team-demo?opponents=1");
 
     await expect(
-      page.locator("h1", { hasText: "Off-Chain Game" })
+      page.locator("h1", { hasText: "Off-chain game" })
     ).toBeVisible({ timeout: 10_000 });
 
     const main = page.locator("main.max-w-5xl");

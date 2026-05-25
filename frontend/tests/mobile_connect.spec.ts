@@ -18,12 +18,10 @@
 import { test, expect } from "@playwright/test";
 import { devices } from "@playwright/test";
 
-const iPhone = devices["iPhone 12"];
+const { defaultBrowserType: _dbt, ...iPhone } = devices["iPhone 12"];
 
 test.describe("mobile connect — no injected wallet", () => {
-  test.use({
-    ...iPhone,
-  });
+  test.use({ ...iPhone });
 
   test('shows "Open in MetaMask" deep link on mobile without window.ethereum', async ({
     page,

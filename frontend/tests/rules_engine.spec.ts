@@ -1,6 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { generateLegalMoves, OPENING_BOARD, encodeFullBoard, type Board } from "../lib/rules_engine";
-import { hasLegalMoves } from "../lib/match_engine";
+import { generateLegalMoves, hasLegalMoves, OPENING_BOARD, encodeFullBoard, type Board } from "../lib/rules_engine";
 
 test("generateLegalMoves opening board", () => {
     // Player 0 opening roll 3-1

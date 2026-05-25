@@ -72,6 +72,35 @@ Sponsor mix per ETHGlobal Open Agents (the three Chaingammon targets): **0G** (S
 
 The browser holds game state and signs the result with an in-browser session key authorised once per match by the wallet — no server-side game store, no operator key in the trust path.
 
+### Career Features / Style Overlay
+
+The `BackgammonNet` extras head takes a **40-d context vector** alongside the 198-d board features:
+
+```
+slots [0 :18]  own_style     — agent's own accumulated style (ACTIVE_AXES)
+slots [18:36]  opp_style     — opponent's public style profile (ACTIVE_AXES)
+slot  [36]     stake_wei     — log1p(stake) / _STAKE_LOG_DIVISOR, clamped [0, 1]
+slot  [37]     tournament    — tournament standing, clamped [−1, 1]
+slot  [38]     is_team_match — 1.0 if team-match context, else 0.0
+slot  [39]     bias          — always 1.0
+```
+
+`ACTIVE_AXES = CATEGORIES[:18]` — the 18 non-cube style categories from `server/app/agent_overlay.py`. The two cube-offer / cube-take axes are excluded because they have no v1 move classifier and are never set by `classify_move` or `classify_move_str`.
+
+**Neutral EMA overlay update.** After each career-mode training game `_update_style_overlay` in `sample_trainer.py` and `update_overlay` in `server/app/agent_overlay.py` update the style dict using exposure-based EMA — no win/loss signal:
+
+```
+target_c = 2 × (count_c / total_moves) − 1   # −1 if never played, +1 if always played
+alpha    = damping_n / (damping_n + match_count)
+new[c]   = (1 − alpha) × old[c] + alpha × target_c
+```
+
+`damping_n = 20` by default: the overlay moves quickly for a cold agent (few matches) and settles as match count grows. Both agents' overlays are updated after every training game.
+
+**`DEFAULT_EXTRAS_DIM = 40`** in `agent/sample_trainer.py`. The legacy 16-d path is preserved for `dim < 40` (unit tests, old checkpoints) but all production trainers default to 40.
+
+Key files: `agent/career_features.py` (slot layout, `encode_career_context`, `classify_move_str`), `agent/sample_trainer.py` (`_update_style_overlay`, `td_lambda_match`), `server/app/agent_overlay.py` (`update_overlay`, `ACTIVE_CATEGORIES`), `agent/teammate_selection.py` (`_build_extras` routes candidate styles to opp slots [18:36]).
+
 ### LLM/NN Collaboration
 
 To prevent the LLM from "double counting" what the Neural Network (NN) already knows via its features, the architecture strictly enforces a **separation of concerns** between the two models: the NN handles *evaluation*, while the LLM handles *translation and alignment*.

@@ -228,6 +228,11 @@ function EloHome() {
           />
         </div>
 
+        {/* Human-vs-human matchmaking */}
+        <div style={{ padding: "0 16px 16px" }}>
+          <FindHumanButton />
+        </div>
+
         <div style={{ flex: 1 }} />
 
         {/* Footer */}
