@@ -28,6 +28,7 @@ from sample_trainer import (
     RaceState,
     encode_extras,
     encode_state,
+    export_onnx,
     legal_successors,
     load_checkpoint,
     save_checkpoint,
@@ -295,3 +296,80 @@ def test_career_mode_extras_use_real_encoder():
     # And the encoder is deterministic for a fixed context.
     extras2 = encode_career_context(ctx, dim=DEFAULT_EXTRAS_DIM)
     assert torch.equal(extras, extras2)
+
+
+# ---------------------------------------------------------------------------
+# Style actually affects move selection (board × style fusion)
+# ---------------------------------------------------------------------------
+
+
+def test_style_vector_changes_move_ranking():
+    """The fusion fix: style must be able to change which move looks best.
+
+    The old additive form computed sigmoid(core(board)) + sigmoid(extras(ext)),
+    adding a constant per-style term to every candidate before a monotonic
+    output — so the candidate ranking (hence the 1-ply argmax) was identical
+    for every style. Fusing before the nonlinearity lets style reorder them.
+    """
+    torch.manual_seed(0)
+    net = BackgammonNet(extras_dim=DEFAULT_EXTRAS_DIM, extras_seed=3)
+    net.eval()
+    boards = torch.randn(64, GNUBG_FEAT_DIM)
+    ext_a = torch.randn(DEFAULT_EXTRAS_DIM)
+    ext_b = torch.randn(DEFAULT_EXTRAS_DIM)
+    with torch.no_grad():
+        eq_a = net(boards, ext_a.unsqueeze(0).expand(64, -1))
+        eq_b = net(boards, ext_b.unsqueeze(0).expand(64, -1))
+    assert not torch.equal(eq_a.argsort(), eq_b.argsort()), (
+        "style vector must be able to reorder candidate equities (it could not "
+        "under the old additive fusion)"
+    )
+
+
+# ---------------------------------------------------------------------------
+# ONNX export: uniform single `features` (board ‖ style) contract
+# ---------------------------------------------------------------------------
+
+
+def test_export_onnx_single_features_input_matches_forward(tmp_path):
+    """export_onnx emits one `features` input of width board_dim+extras_dim and
+    one `equity` output, and running it reproduces the net's forward on the
+    concatenated [board ‖ style] input."""
+    import numpy as np
+    import onnxruntime as ort
+
+    torch.manual_seed(0)
+    net = BackgammonNet(extras_dim=DEFAULT_EXTRAS_DIM, extras_seed=5)
+    net.eval()
+    path = tmp_path / "m.onnx"
+    export_onnx(net, path)
+
+    sess = ort.InferenceSession(str(path))
+    inputs = sess.get_inputs()
+    assert len(inputs) == 1
+    assert inputs[0].name == "features"
+    assert inputs[0].shape[-1] == GNUBG_FEAT_DIM + DEFAULT_EXTRAS_DIM
+    assert [o.name for o in sess.get_outputs()] == ["equity"]
+
+    board = torch.randn(3, GNUBG_FEAT_DIM)
+    ext = torch.randn(3, DEFAULT_EXTRAS_DIM)
+    feats = torch.cat([board, ext], dim=-1).numpy()
+    out = sess.run(["equity"], {"features": feats})[0].reshape(-1)
+    with torch.no_grad():
+        ref = net(board, ext).numpy().reshape(-1)
+    np.testing.assert_allclose(out, ref, rtol=1e-3, atol=1e-4)
+
+
+def test_export_onnx_board_only_when_no_extras(tmp_path):
+    """A net with extras_dim == 0 exports a board-only `features` input of width
+    GNUBG_FEAT_DIM (so the browser worker can still drive it)."""
+    import onnxruntime as ort
+
+    net = BackgammonNet(extras_dim=0)
+    net.eval()
+    path = tmp_path / "m0.onnx"
+    export_onnx(net, path)
+    sess = ort.InferenceSession(str(path))
+    inputs = sess.get_inputs()
+    assert len(inputs) == 1
+    assert inputs[0].shape[-1] == GNUBG_FEAT_DIM

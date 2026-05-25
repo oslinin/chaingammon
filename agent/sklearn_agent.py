@@ -3,7 +3,7 @@
 Sklearn agents participate in the round-robin as opponents (no TD-lambda
 gradient updates). After training they are fitted on collected game data
 and exported as ONNX with the correct input/output names expected by the
-inference layer (`board` → `equity`).
+inference layer (`features` → `equity`, where `features` = board ‖ style).
 """
 from __future__ import annotations
 
@@ -19,7 +19,8 @@ if TYPE_CHECKING:
 
 SKLEARN_PATTERN = re.compile(r"\bfrom sklearn\b|\bimport sklearn\b")
 
-FEAT_DIM = 198
+# Board encoding width; the fitted feature vector is this plus the style dim.
+BOARD_DIM = 198
 
 
 def is_sklearn_code(source: str) -> bool:
@@ -32,12 +33,17 @@ class SklearnProxy:
     Before the model is fitted it returns 0.5 for every candidate (random
     play). After `update_model()` is called with a fitted estimator it
     delegates to that estimator's `predict()`.
+
+    Like the MLP, it consumes the uniform agent input — each candidate's board
+    encoding concatenated with the match's style/extras vector. `extras_dim > 0`
+    is the signal to callers (pick_move / search) that this model takes style;
+    a decision-tree ensemble then splits on board and style columns alike, so
+    style×board interaction is native.
     """
 
-    extras = None  # signals to callers: no extras head
-
-    def __init__(self) -> None:
+    def __init__(self, extras_dim: int = 0) -> None:
         self._model = None
+        self.extras_dim = extras_dim
 
     def update_model(self, model) -> None:
         self._model = model
@@ -45,6 +51,9 @@ class SklearnProxy:
     def __call__(self, feats: torch.Tensor, ext=None) -> torch.Tensor:
         if self._model is None:
             return torch.full((feats.shape[0],), 0.5)
+        # Predict on [board ‖ style], matching the rows the model was fitted on.
+        if ext is not None:
+            feats = torch.cat([feats, ext], dim=-1)
         arr = feats.detach().numpy().astype("float32")
         try:
             preds = np.clip(self._model.predict(arr).astype("float32"), 0.0, 1.0)
@@ -89,8 +98,9 @@ def fit_and_export_sklearn(
     """Fit the sklearn model from `source` on (X, y) and export to ONNX.
 
     Returns `(local_onnx_path, root_hash | None)`.
-    The exported ONNX has input name `"board"` [None, 198] and output
-    name `"equity"` [None] matching what onnx_board_state / onnx_worker expect.
+    The exported ONNX has a single input `"features"` [None, X.shape[1]] — the
+    board encoding concatenated with the style vector — and output name
+    `"equity"` [None]: the uniform agent contract the browser worker expects.
     """
     from skl2onnx import convert_sklearn
     from skl2onnx.common.data_types import FloatTensorType
@@ -98,7 +108,8 @@ def fit_and_export_sklearn(
     model = build_sklearn_model(source)
     model.fit(X, y)
 
-    initial_types = [("board", FloatTensorType([None, FEAT_DIM]))]
+    n_features = int(X.shape[1])
+    initial_types = [("features", FloatTensorType([None, n_features]))]
     onnx_model = convert_sklearn(model, initial_types=initial_types)
 
     # skl2onnx names the output "variable" — rename to "equity"

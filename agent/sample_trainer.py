@@ -117,12 +117,19 @@ class BackgammonNet(nn.Module):
     signals, tournament position, stake size — anything that should
     affect the policy in career mode but not in single-game mode).
 
+    `core` and `extras` are summed *before* the hidden nonlinearity, so
+    together they are one first layer over [board ‖ style] — each hidden unit
+    depends jointly on board and style (genuine interaction, which a sum of two
+    separate sigmoids cannot represent).
+
     Weight layout:
-      core  : Linear(GNUBG_FEAT_DIM, hidden)  — initialized from gnubg.
-      extras: Linear(extras_dim,   hidden)    — randomly initialized.
+      core  : Linear(GNUBG_FEAT_DIM, hidden)  — initialized from gnubg (the
+              board columns of the [board‖style] first layer).
+      extras: Linear(extras_dim,   hidden)    — randomly initialized (the
+              style columns of that same first layer).
       head  : Linear(hidden,       1)         — randomly initialized.
 
-    When `extras_dim == 0` or the extras input is zero, the network's
+    When `extras_dim == 0` or the extras input is None, the network's
     behaviour reduces to the gnubg-equivalent single-game head.
     """
 
@@ -136,6 +143,8 @@ class BackgammonNet(nn.Module):
         extras_seed: int | None = None,
     ) -> None:
         super().__init__()
+        self.board_dim = in_dim
+        self.extras_dim = extras_dim
         self.core = gnubg_published_core_init(in_dim, hidden, seed=core_seed)
         if extras_dim > 0:
             self.extras = nn.Linear(extras_dim, hidden)
@@ -157,9 +166,14 @@ class BackgammonNet(nn.Module):
             self.head.bias.zero_()
 
     def forward(self, board: torch.Tensor, extras: torch.Tensor | None = None) -> torch.Tensor:
-        h = torch.sigmoid(self.core(board))
+        # Fuse board + style before the nonlinearity (one Linear over
+        # [board‖style]). Summing two separate sigmoids is board-separable, so a
+        # constant per-candidate style term cancels in the 1-ply argmax and
+        # style can never change move selection.
+        pre = self.core(board)
         if self.extras is not None and extras is not None:
-            h = h + torch.sigmoid(self.extras(extras))
+            pre = pre + self.extras(extras)
+        h = torch.sigmoid(pre)
         # Equity in [0, 1] — probability the side to move wins.
         return torch.sigmoid(self.head(h)).squeeze(-1)
 
@@ -310,7 +324,7 @@ def pick_move(net: BackgammonNet, candidates: list[RaceState], extras: torch.Ten
     """
     feats = torch.stack([encode_state(c, perspective) for c in candidates])
     with torch.no_grad():
-        ext = extras.unsqueeze(0).expand(len(candidates), -1) if net.extras is not None else None
+        ext = extras.unsqueeze(0).expand(len(candidates), -1) if getattr(net, "extras_dim", 0) > 0 else None
         equities = infer_fn(feats, ext) if infer_fn is not None else net(feats, ext)
     best = int(equities.argmax().item())
     return candidates[best], equities[best:best + 1]
@@ -360,7 +374,7 @@ def _make_eval_fn(net, extras: torch.Tensor, infer_fn=None):
     """
     def _eval(feats: torch.Tensor) -> torch.Tensor:
         n = feats.shape[0]
-        ext = extras.unsqueeze(0).expand(n, -1) if getattr(net, "extras", None) is not None else None
+        ext = extras.unsqueeze(0).expand(n, -1) if getattr(net, "extras_dim", 0) > 0 else None
         if infer_fn is not None:
             return infer_fn(feats, ext)
         with torch.no_grad():
@@ -433,7 +447,7 @@ def td_lambda_match(
             # Agent's turn — selects a successor and learns from the transition.
             board_now = encode_state(state, perspective=0)
             v_now = agent(board_now.unsqueeze(0),
-                          agent_extras.unsqueeze(0)) if agent.extras is not None else \
+                          agent_extras.unsqueeze(0)) if getattr(agent, "extras_dim", 0) > 0 else \
                     agent(board_now.unsqueeze(0))
 
             if search_depth >= 2:
@@ -447,9 +461,9 @@ def td_lambda_match(
                 with torch.no_grad():
                     board_next = encode_state(chosen, perspective=0)
                     if infer_fn is not None:
-                        ext_next = agent_extras.unsqueeze(0).expand(1, -1) if agent.extras is not None else None
+                        ext_next = agent_extras.unsqueeze(0).expand(1, -1) if getattr(agent, "extras_dim", 0) > 0 else None
                         v_next = infer_fn(board_next.unsqueeze(0), ext_next).item()
-                    elif agent.extras is not None:
+                    elif getattr(agent, "extras_dim", 0) > 0:
                         v_next = agent(board_next.unsqueeze(0), agent_extras.unsqueeze(0)).item()
                     else:
                         v_next = agent(board_next.unsqueeze(0)).item()
@@ -598,6 +612,7 @@ def save_checkpoint(net: BackgammonNet, path: Path, *, match_count: int,
         "in_dim": GNUBG_FEAT_DIM,
         "hidden": DEFAULT_HIDDEN,
         "feature_encoder": feature_encoder,
+        "input_contract": "board_style" if extras_dim > 0 else "board_only",
         "style_values": _compute_style_values(net),
     }, path)
 
@@ -605,35 +620,47 @@ def save_checkpoint(net: BackgammonNet, path: Path, *, match_count: int,
 def export_onnx(net: BackgammonNet, path: Path) -> None:
     """Export a trained BackgammonNet to ONNX for browser inference.
 
-    The extras head is omitted by tracing with extras=None, producing the
-    same board→equity interface as the bundled base model. The browser
-    ONNX worker can load this file directly without any code changes.
+    Emits the uniform agent contract shared by every model type (MLP, sklearn,
+    custom): a single `features` input — the board encoding concatenated with
+    the style/extras vector — mapping to a single `equity` output. A net with no
+    extras head (extras_dim == 0) exports a board-only `features` input of width
+    GNUBG_FEAT_DIM, so the browser worker handles both by inspecting the width.
 
-    Input:  board  float32[batch, 198]
-    Output: equity float32[batch]
+    Input:  features float32[batch, board_dim + extras_dim]
+    Output: equity   float32[batch]
     """
     import torch.onnx
 
-    class _BoardOnly(torch.nn.Module):
+    board_dim = getattr(net, "board_dim", GNUBG_FEAT_DIM)
+    extras_dim = getattr(net, "extras_dim", 0)
+
+    class _Fused(torch.nn.Module):
+        """Splits the single `features` input back into (board, extras) and
+        runs the net, so the ONNX graph exposes one uniform input."""
+
         def __init__(self, inner: BackgammonNet) -> None:
             super().__init__()
             self.inner = inner
+            self.board_dim = board_dim
 
-        def forward(self, board: torch.Tensor) -> torch.Tensor:
-            return self.inner(board, extras=None)
+        def forward(self, features: torch.Tensor) -> torch.Tensor:
+            board = features[:, : self.board_dim]
+            extras = features[:, self.board_dim :] if features.shape[1] > self.board_dim else None
+            return self.inner(board, extras)
 
     path.parent.mkdir(parents=True, exist_ok=True)
-    wrapped = _BoardOnly(net)
+    wrapped = _Fused(net)
     wrapped.eval()
-    dummy = torch.zeros(1, GNUBG_FEAT_DIM)
+    dummy = torch.zeros(1, board_dim + extras_dim)
     torch.onnx.export(
         wrapped,
         (dummy,),
         str(path),
-        input_names=["board"],
+        input_names=["features"],
         output_names=["equity"],
-        dynamic_axes={"board": {0: "batch"}, "equity": {0: "batch"}},
+        dynamic_axes={"features": {0: "batch"}, "equity": {0: "batch"}},
         opset_version=11,
+        dynamo=False,
     )
 
 
@@ -738,12 +765,13 @@ def main() -> None:
                         metavar="PATH",
                         help="After training (and optionally saving the .pt "
                              "checkpoint), export the model to ONNX at PATH. "
-                             "The exported file has a single 'board' input "
-                             "[batch, 198] and a single 'equity' output "
-                             "[batch], matching the bundled base model's "
-                             "interface so the browser ONNX worker can load "
-                             "it directly. Combine with --upload-onnx-to-0g "
-                             "to push the result to 0G Storage.")
+                             "The exported file has a single 'features' input "
+                             "[batch, board_dim + extras_dim] (board encoding "
+                             "concatenated with the style vector) and a single "
+                             "'equity' output [batch]; the browser ONNX worker "
+                             "feeds board+style by inspecting the input width. "
+                             "Combine with --upload-onnx-to-0g to push the "
+                             "result to 0G Storage.")
     parser.add_argument("--upload-onnx-to-0g", action="store_true",
                         help="After --export-onnx, AES-256-GCM-encrypt the "
                              "ONNX file with a fresh key (written as "

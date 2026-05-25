@@ -101,8 +101,15 @@ export function warmupOnnx(): void {
  *
  * The caller transfers ownership of `modelBytes` — do not use the buffer
  * after calling this function.
+ *
+ * `styleVec` is the agent's 40-d style vector (career_features layout). When
+ * the model is a board+style model it is fed as the second half of
+ * `features = [board ‖ style]`; omit it and the worker uses a neutral style.
  */
-export async function loadAgentModel(modelBytes: ArrayBuffer): Promise<void> {
+export async function loadAgentModel(
+  modelBytes: ArrayBuffer,
+  styleVec?: number[],
+): Promise<void> {
   if (_worker) {
     _worker.terminate();
     _worker = null;
@@ -118,7 +125,7 @@ export async function loadAgentModel(modelBytes: ArrayBuffer): Promise<void> {
     _initResolve = resolve;
     _initReject = reject;
     // Transfer modelBytes so the worker owns the memory.
-    getWorker().postMessage({ type: "init", modelBytes }, [modelBytes]);
+    getWorker().postMessage({ type: "init", modelBytes, styleVec }, [modelBytes]);
   });
   return _initPromise;
 }
