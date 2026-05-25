@@ -1,20 +1,5 @@
 "use client";
 
-// Privy calls crypto.randomUUID() internally, which is only available in
-// secure contexts (HTTPS). Polyfill it for HTTP dev/preview environments.
-if (typeof globalThis !== "undefined" &&
-    typeof globalThis.crypto !== "undefined" &&
-    typeof (globalThis.crypto as Crypto).randomUUID !== "function") {
-  (globalThis.crypto as Crypto).randomUUID = function () {
-    const b = new Uint8Array(16);
-    globalThis.crypto.getRandomValues(b);
-    b[6] = (b[6] & 0x0f) | 0x40;
-    b[8] = (b[8] & 0x3f) | 0x80;
-    const h = Array.from(b, (x) => x.toString(16).padStart(2, "0"));
-    return `${h.slice(0,4).join("")}-${h.slice(4,6).join("")}-${h.slice(6,8).join("")}-${h.slice(8,10).join("")}-${h.slice(10).join("")}` as `${string}-${string}-${string}-${string}-${string}`;
-  };
-}
-
 // Wraps the app in PrivyProvider + Privy's WagmiProvider + react-query so
 // client components can use Privy hooks (usePrivy, useWallets) and wagmi
 // hooks (useAccount, useReadContract). PrivyProvider owns the connector
