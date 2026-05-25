@@ -342,6 +342,11 @@ export default function TrainingPage() {
   const startLocalMutation = useMutation({
     mutationFn: async (target: string = SERVER) => {
       const trainerMode = window.localStorage.getItem("trainer_mode") || "round_robin";
+      const modelCodes: Record<string, string> = {};
+      for (const id of selectedIds) {
+        const code = window.localStorage.getItem(`chaingammon:agent:${id}:model`);
+        if (code) modelCodes[String(id)] = code;
+      }
       const r = await fetch(`${target}/training/start`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -353,6 +358,7 @@ export default function TrainingPage() {
           use_0g_coaching: use0gCoaching,
           upload_to_0g: true,
           no_encrypt: true,
+          model_codes: modelCodes,
         }),
       });
       if (!r.ok) {

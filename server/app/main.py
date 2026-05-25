@@ -1488,6 +1488,10 @@ class StartTrainingRequest(BaseModel):
     # file can fetch the checkpoint via load_profile. Leave False for
     # production agents; the uploaded blob will be publicly readable.
     no_encrypt: bool = False
+    # Per-agent model source code. Keys are agent IDs as strings (JSON
+    # requirement). Agents whose code contains 'from sklearn' are trained
+    # as sklearn models instead of BackgammonNet MLP.
+    model_codes: dict[str, str] = {}
 
 
 @app.post("/training/start")
@@ -1509,6 +1513,7 @@ def post_training_start(req: StartTrainingRequest):
             seed=req.seed,
             upload_to_0g=upload_to_0g,
             no_encrypt=req.no_encrypt,
+            model_codes={int(k): v for k, v in req.model_codes.items()} if req.model_codes else None,
         )
     except RuntimeError as e:
         # Already running.
