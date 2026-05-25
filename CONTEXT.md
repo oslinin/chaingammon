@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Chaingammon is an **open protocol for portable backgammon reputation**. Every player — human or AI agent — has an ENS subname (`<name>.chaingammon.eth`) whose text records hold their ELO and links to their full match archive on 0G Storage. AI agents are ERC-7857 iNFTs with their gnubg weights encrypted on 0G Storage and hash-committed to the iNFT. Match settlement runs as a KeeperHub workflow that produces a verifiable audit trail. See `plan.md` for the build plan; `CHANGELOG.md` for the active per-release summary; `log.md` is a frozen archive of Phases 0–33.
+Chaingammon is an **open protocol for portable backgammon reputation**. Every player — human or AI agent — has an ENS subname (`<name>.chaingammon.eth`) whose text records hold their ELO and links to their full match archive on 0G Storage. AI agents are ERC-7857 iNFTs with their gnubg weights encrypted on 0G Storage and hash-committed to the iNFT. Match settlement runs as a KeeperHub workflow that produces a verifiable audit trail. See `CHANGELOG.md` for the active per-release summary.
 
 **Hackathon:** ETHGlobal Open Agents (April 24 – May 6, 2026).
 
@@ -19,8 +19,6 @@ Chaingammon is an **open protocol for portable backgammon reputation**. Every pl
 
 1. The `README.md` should be updated with the commands to run the latest code, including deployments and tests.
 2. All code files (new and updated) must be documented inline with appropriate docstrings, comments, and explanations.
-
-`log.md` is a **frozen archive** of Phases 0–33. The historical per-phase verbatim commit log is preserved there but is no longer maintained — the Claude Code superpowers plugin plus the `anthropics/claude-code-action` GitHub workflow now produce per-phase summaries automatically. Do not append new entries.
 
 ## Architecture
 
@@ -182,8 +180,6 @@ See `## Frontend Policies` below for the three rules every frontend change must 
 
 | File | Purpose |
 | --- | --- |
-| `plan.md` | Incremental phased build plan — authoritative scope |
-| `log.md` | Frozen archive of Phases 0–33 (no longer maintained) |
 | `CHANGELOG.md` | Keep-a-Changelog summary; the active per-release record |
 | `MISSION.md` | Product vision and principles |
 | `agent/gnubg_service.py` | Legacy gnubg FastAPI service — no longer used. Game engine now runs client-side via ONNX (see `frontend/lib/match_engine.ts`). |
@@ -346,8 +342,7 @@ Why: before this design, switching between Mode A (0G testnet) and Mode B (Hardh
 
 Any change touching `frontend/app/**` (component, layout, routing) MUST be verified by running `pnpm --filter frontend test:e2e` before committing. The suite (`playwright.config.ts`) spins up `next dev` automatically with `reuseExistingServer: true` so it works whether or not a dev server is already up.
 
-- **Canonical example:** `frontend/tests/dice-size.spec.ts` renders `<DiceRoll>` on a deps-free fixture page (`frontend/app/test-dice/page.tsx`) and asserts each die's bounding box ≤ 32px in both dimensions. The original 40px (`h-10 w-10`) regression is what motivated the test; an accidental upgrade back to `h-10` would fail the spec instantly.
-- **Every new visual primitive** (board overflow, dice size, header chrome) gets a similar bounding-box / DOM-shape spec. Don't trust the build + typecheck to catch visual regressions — they won't.
+- **Every new visual primitive** (board overflow, dice size, header chrome) should get a bounding-box / DOM-shape spec. Don't trust the build + typecheck to catch visual regressions — they won't.
 - **Skipping `test:e2e` on a frontend commit is a process violation** even if the build is green.
 
 Why: Tailwind class drift is invisible to TS and the build, but very visible to humans on the demo screen.
