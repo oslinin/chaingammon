@@ -1024,6 +1024,8 @@ def post_settle_audit(req: PostSettleAuditRequest):
     winner_label = ""
     loser_label = ""
     moves: list = []
+    winner_kind: str | None = None
+    loser_kind: str | None = None
     zero_hash = "0x" + "00" * 32
     if game_record_hash and game_record_hash != zero_hash:
         try:
@@ -1032,6 +1034,8 @@ def post_settle_audit(req: PostSettleAuditRequest):
             winner_label = record_data.get("winner_label") or ""
             loser_label = record_data.get("loser_label") or ""
             moves = record_data.get("moves") or []
+            winner_kind = (record_data.get("winner") or {}).get("kind")
+            loser_kind = (record_data.get("loser") or {}).get("kind")
         except (OgStorageError, json.JSONDecodeError, KeyError) as e:
             _log.warning("post-settle-audit: could not fetch game record %s: %s", game_record_hash, e)
 
@@ -1057,9 +1061,13 @@ def post_settle_audit(req: PostSettleAuditRequest):
             ens_updates.append({"side": side_name, "label": label, "error": str(e)})
 
     # Step 4 — update agent style-overlay KV for each agent side (non-fatal).
+    # Infer each side's turn from the game record's PlayerRef kind: agents are
+    # always turn 1 and humans are turn 0 in all current match configurations.
+    winner_turn_inferred: int | None = (1 if winner_kind == "agent" else 0) if winner_kind else None
+    loser_turn_inferred: int | None = (1 if loser_kind == "agent" else 0) if loser_kind else None
     overlay_updates: list[dict] = []
-    _update_agent_overlay_kv(winner_agent_id, moves=moves, overlay_updates=overlay_updates)
-    _update_agent_overlay_kv(loser_agent_id, moves=moves, overlay_updates=overlay_updates)
+    _update_agent_overlay_kv(winner_agent_id, moves=moves, overlay_updates=overlay_updates, turn=winner_turn_inferred)
+    _update_agent_overlay_kv(loser_agent_id, moves=moves, overlay_updates=overlay_updates, turn=loser_turn_inferred)
 
     return {
         "match_id": req.matchId,
