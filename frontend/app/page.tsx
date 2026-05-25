@@ -1,16 +1,31 @@
 "use client";
 
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { keccak256, toBytes } from "viem";
 import { useAccount, useReadContract } from "wagmi";
 
 import { AgentsList } from "./AgentsList";
 import { DiscoveryList } from "./DiscoveryList";
-import { FindHumanButton } from "./FindHumanButton";
 import { HomeActionChips } from "./HomeActionChips";
 import { useAppMode } from "./AppModeContext";
 import { useI18n } from "./i18n";
 import { MatchRegistryABI, useChainContracts } from "./contracts";
 import { useActiveChainId } from "./chains";
+import { NostrMatchClient, newIdentity } from "../lib/nostr";
+import { computePairing } from "../lib/matchmaker";
+import { connectPeer } from "../lib/webrtc_match";
+import { peerMatches } from "../lib/peer_connections";
+
+const STABILIZE_MS = 3_000;
+const PRESENCE_TTL_S = 35;
+const CONNECT_TIMEOUT_MS = 15_000;
+
+function hvhMatchId(pubA: string, pubB: string): string {
+  const [lo, hi] = pubA < pubB ? [pubA, pubB] : [pubB, pubA];
+  return keccak256(toBytes(lo + hi));
+}
 
 // ── Elo homepage glyphs ──────────────────────────────────────────────────────
 function DiceGlyph() {
@@ -49,27 +64,29 @@ interface ActionCardProps {
   label: string;
   sublabel: string;
   meta: string;
-  href: string;
+  href?: string;
+  onClick?: () => void;
 }
 
-function ActionCard({ variant, glyph, label, sublabel, meta, href }: ActionCardProps) {
+function ActionCard({ variant, glyph, label, sublabel, meta, href, onClick }: ActionCardProps) {
   const primary = variant === "primary";
-  return (
-    <Link
-      href={href}
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 16,
-        padding: "20px 18px",
-        borderRadius: "var(--cg-radius)",
-        background: primary ? "var(--cg-brass)" : "var(--cg-bg-2)",
-        border: primary ? "1px solid var(--cg-brass-hi)" : "1px solid var(--cg-line-2)",
-        color: primary ? "var(--cg-brass-ink)" : "var(--cg-fg-1)",
-        textDecoration: "none",
-        transition: "background 120ms ease, border-color 120ms ease",
-      }}
-    >
+  const cardStyle: React.CSSProperties = {
+    display: "flex",
+    alignItems: "center",
+    gap: 16,
+    padding: "20px 18px",
+    borderRadius: "var(--cg-radius)",
+    background: primary ? "var(--cg-brass)" : "var(--cg-bg-2)",
+    border: primary ? "1px solid var(--cg-brass-hi)" : "1px solid var(--cg-line-2)",
+    color: primary ? "var(--cg-brass-ink)" : "var(--cg-fg-1)",
+    textDecoration: "none",
+    transition: "background 120ms ease, border-color 120ms ease",
+    cursor: "pointer",
+    textAlign: "left" as const,
+    width: "100%",
+  };
+  const inner = (
+    <>
       <span style={{
         display: "inline-flex", alignItems: "center", justifyContent: "center",
         width: 44, height: 44,
@@ -106,8 +123,12 @@ function ActionCard({ variant, glyph, label, sublabel, meta, href }: ActionCardP
         color: primary ? "var(--cg-brass-ink)" : "var(--cg-fg-3)",
         flexShrink: 0,
       }}>→</span>
-    </Link>
+    </>
   );
+  if (onClick) {
+    return <button type="button" onClick={onClick} style={cardStyle}>{inner}</button>;
+  }
+  return <Link href={href!} style={cardStyle}>{inner}</Link>;
 }
 
 function EloHome() {
@@ -115,6 +136,7 @@ function EloHome() {
   const { matchRegistry } = useChainContracts();
   const chainId = useActiveChainId();
   const { setMode } = useAppMode();
+  const router = useRouter();
 
   const { data: chainEloRaw } = useReadContract({
     address: matchRegistry,
@@ -125,6 +147,89 @@ function EloHome() {
     query: { enabled: !!address, refetchInterval: 10000 },
   });
   const elo = chainEloRaw != null ? String(chainEloRaw) : undefined;
+
+  // ── Human-vs-human matchmaking (falls back to train on no match) ──────────
+  const [searching, setSearching] = useState(false);
+  const [searchStatus, setSearchStatus] = useState("");
+  const nostrRef = useRef<NostrMatchClient | null>(null);
+  const searchersRef = useRef<Map<string, { s: { pubkey: string; elo: number }; at: number }>>(new Map());
+  const connectingRef = useRef(false);
+  const cleanupRef = useRef<(() => void) | null>(null);
+
+  const stopSearching = useCallback(() => {
+    cleanupRef.current?.();
+    cleanupRef.current = null;
+    connectingRef.current = false;
+    nostrRef.current?.stopPresence();
+    nostrRef.current?.close();
+    nostrRef.current = null;
+    searchersRef.current.clear();
+    setSearching(false);
+    setSearchStatus("");
+  }, []);
+
+  const tryConnect = useCallback((nostr: NostrMatchClient, myElo: number) => {
+    if (connectingRef.current) return;
+    const now = Date.now() / 1000;
+    for (const [pk, entry] of searchersRef.current) {
+      if (now - entry.at > PRESENCE_TTL_S) searchersRef.current.delete(pk);
+    }
+    const searchers = [
+      { pubkey: nostr.pubkey, elo: myElo },
+      ...Array.from(searchersRef.current.values()).map((e) => e.s),
+    ];
+    const { partner, isOfferer } = computePairing(nostr.pubkey, searchers);
+    if (!partner) {
+      stopSearching();
+      router.push("/team-demo?opponents=4");
+      return;
+    }
+    connectingRef.current = true;
+    const mid = hvhMatchId(nostr.pubkey, partner.pubkey);
+    setSearchStatus("Connecting…");
+    const peer = connectPeer(nostr, partner.pubkey, mid, isOfferer);
+    peerMatches.set(mid, { peer, isOfferer });
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      connectingRef.current = false;
+      peer.close();
+      peerMatches.delete(mid);
+      stopSearching();
+      router.push("/team-demo?opponents=4");
+    }, CONNECT_TIMEOUT_MS);
+    peer.onState((s) => {
+      if (timedOut) return;
+      if (s === "open") {
+        clearTimeout(timer);
+        nostr.stopPresence();
+        router.push(`/play-human/${mid}`);
+      } else if (s === "failed" || s === "closed") {
+        clearTimeout(timer);
+        connectingRef.current = false;
+        peerMatches.delete(mid);
+        stopSearching();
+        router.push("/team-demo?opponents=4");
+      }
+    });
+  }, [router, stopSearching]);
+
+  const startPlay = useCallback(() => {
+    const id = newIdentity();
+    const nostr = new NostrMatchClient(id);
+    nostrRef.current = nostr;
+    const myEloNum = Number(chainEloRaw ?? 1500) || 1500;
+    nostr.startPresence({ ensLabel: "", address: address ?? "", sessionPubkey: nostr.pubkey, elo: myEloNum });
+    const unsub = nostr.subscribePresence((p, pubkey, at) => {
+      searchersRef.current.set(pubkey, { s: { pubkey, elo: p.elo ?? 1500 }, at });
+    });
+    const stabilizeTimer = setTimeout(() => tryConnect(nostr, myEloNum), STABILIZE_MS);
+    cleanupRef.current = () => { clearTimeout(stabilizeTimer); unsub(); };
+    setSearching(true);
+    setSearchStatus("Searching for a human…");
+  }, [address, chainEloRaw, tryConnect]);
+
+  useEffect(() => () => stopSearching(), [stopSearching]);
 
   return (
     <div style={{
@@ -213,10 +318,10 @@ function EloHome() {
           <ActionCard
             variant="primary"
             glyph={<CheckerGlyph />}
-            label="Play"
+            label={searching ? "Searching…" : "Play"}
             meta="RATED"
-            sublabel="Matchmake by Elo · no stake"
-            href="/match"
+            sublabel={searching ? searchStatus : "Find a human first · falls back to bot"}
+            onClick={searching ? stopSearching : startPlay}
           />
           <ActionCard
             variant="secondary"
@@ -226,11 +331,6 @@ function EloHome() {
             sublabel="Wagered match · winner takes pot"
             href="/match?stake=1"
           />
-        </div>
-
-        {/* Human-vs-human matchmaking */}
-        <div style={{ padding: "0 16px 16px" }}>
-          <FindHumanButton />
         </div>
 
         <div style={{ flex: 1 }} />
@@ -350,7 +450,6 @@ export default function Home() {
         </section>
 
         <section className="flex flex-col gap-4 cg-fade-up-3">
-          <FindHumanButton />
           <DiscoveryList playersOnly />
         </section>
 
