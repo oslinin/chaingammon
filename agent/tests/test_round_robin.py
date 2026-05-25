@@ -49,7 +49,9 @@ def _stub_td_match():
         counter["i"] += 1
         steps = 30 + counter["i"]   # distinct plies per match for sanity
         won = counter["i"] % 2      # 0/1 alternation
-        return steps, won
+        # td_lambda_match returns (steps, won, agent_states, opp_states); the
+        # stub mirrors that 4-tuple (empty state lists — no sklearn data path).
+        return steps, won, [], []
 
     return stub, calls
 

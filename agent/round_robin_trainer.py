@@ -296,8 +296,10 @@ def run_round_robin(
     sklearn_codes = sklearn_codes or {}
     sklearn_ids: set[int] = {aid for aid in agent_ids if aid in sklearn_codes}
     # Per-agent SklearnProxy (for move selection) and training data accumulator.
-    sklearn_proxies: dict[int, SklearnProxy] = {aid: SklearnProxy() for aid in sklearn_ids}
-    # sklearn_data[aid] = list of (board_features np.ndarray, outcome float)
+    sklearn_proxies: dict[int, SklearnProxy] = {
+        aid: SklearnProxy(extras_dim=extras_dim) for aid in sklearn_ids
+    }
+    # sklearn_data[aid] = list of ([board ‖ style] np.ndarray, outcome float)
     sklearn_data: dict[int, list[tuple]] = {aid: [] for aid in sklearn_ids}
 
     # Hybrid load: try AgentRegistry → 0G storage; else seed fresh.
@@ -383,9 +385,15 @@ def run_round_robin(
             if opp_id in sklearn_ids and opp_states:
                 import numpy as _np
                 sk_won = float(winner == opp_id)
+                # The sklearn agent (opp) saw `opp_extras` as its style vector
+                # this match; train on [board ‖ style] so it conditions on style
+                # exactly as at inference, where SklearnProxy concatenates the
+                # same vector. Style is constant across the match's states.
+                opp_ext_np = opp_extras.detach().cpu().numpy().astype("float32")
                 for s in opp_states:
                     try:
-                        feat = encode_state(s, perspective=0).numpy()
+                        board_feat = encode_state(s, perspective=0).numpy()
+                        feat = _np.concatenate([board_feat, opp_ext_np])
                         sklearn_data[opp_id].append((feat, sk_won))
                     except Exception:
                         pass
