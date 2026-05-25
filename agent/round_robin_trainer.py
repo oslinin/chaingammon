@@ -253,6 +253,7 @@ def run_round_robin(
     gamma: float = 1.0,
     use_0g_inference: bool = False,
     sklearn_codes: Optional[dict[int, str]] = None,
+    search_depths: Optional[dict[int, int]] = None,
 ) -> dict[int, AgentState]:
     """Run the round-robin training loop.
 
@@ -362,6 +363,9 @@ def run_round_robin(
             kwargs: dict = {"gamma": gamma, "lam": lam, "lr": lr}
             if infer_fn is not None:
                 kwargs["infer_fn"] = infer_fn
+            if search_depths:
+                kwargs["search_depth"] = search_depths.get(learner_id, 1)
+                kwargs["opp_search_depth"] = search_depths.get(opp_id, 1)
 
             # For sklearn-vs-sklearn, skip gradient updates entirely by
             # passing proxy nets to td_match — they have no parameters so
@@ -514,6 +518,11 @@ def main() -> int:
                         help="Path to a JSON file mapping agent_id (int key) "
                              "to model source code. Agents whose source contains "
                              "'from sklearn' are trained as sklearn models.")
+    parser.add_argument("--search-depths", type=str, default=None,
+                        metavar="ID:DEPTH,...",
+                        help="Per-agent search depth for expectiminimax. "
+                             "Format: comma-separated id:depth pairs, e.g. '1:2,3:1'. "
+                             "Depth 1 = greedy (default). Depth 2 = 2-ply (~21x slower).")
     args = parser.parse_args()
 
     if len(args.agent_ids) < 2:
@@ -528,6 +537,13 @@ def main() -> int:
         for _k, _v in raw_codes.items():
             if is_sklearn_code(_v):
                 sklearn_codes[int(_k)] = _v
+
+    search_depths: dict[int, int] = {}
+    if args.search_depths:
+        for part in args.search_depths.split(","):
+            if ":" in part:
+                k, v = part.strip().split(":", 1)
+                search_depths[int(k)] = int(v)
 
     # Seed torch for reproducible weight initialisation on fresh agents.
     # Do NOT seed Python's random module here — td_lambda_match draws dice
@@ -554,6 +570,7 @@ def main() -> int:
                 gamma=args.gamma,
                 use_0g_inference=args.use_0g_inference,
                 sklearn_codes=sklearn_codes or None,
+                search_depths=search_depths or None,
             )
             completed = True
         finally:

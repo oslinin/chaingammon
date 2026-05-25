@@ -352,6 +352,22 @@ def _update_style_overlay(
     return new_overlay
 
 
+def _make_eval_fn(net, extras: torch.Tensor, infer_fn=None):
+    """Return a batched evaluator: (feats: Tensor[N, 198]) -> Tensor[N].
+
+    Wraps net + extras (+ optional infer_fn override) into the signature
+    expected by search_2ply. Inference always runs under torch.no_grad().
+    """
+    def _eval(feats: torch.Tensor) -> torch.Tensor:
+        n = feats.shape[0]
+        ext = extras.unsqueeze(0).expand(n, -1) if getattr(net, "extras", None) is not None else None
+        if infer_fn is not None:
+            return infer_fn(feats, ext)
+        with torch.no_grad():
+            return net(feats, ext) if ext is not None else net(feats)
+    return _eval
+
+
 def td_lambda_match(
     agent: BackgammonNet,
     opponent: BackgammonNet,
@@ -364,6 +380,8 @@ def td_lambda_match(
     drand_round_digest: bytes | None = None,
     state_factory=None,
     infer_fn=None,
+    search_depth: int = 1,
+    opp_search_depth: int = 1,
 ) -> tuple[int, int, list, list]:
     """Play a single self-play match. `agent` learns; `opponent` is frozen.
 
@@ -382,11 +400,23 @@ def td_lambda_match(
     Defaults to `RaceState` (race-env training). Phase J.3 uses
     `lambda: FullBoardState.initial(gnubg_client)` to drive a real
     backgammon game per match.
+
+    `search_depth`: ply depth for the agent's move selection and TD bootstrap
+    target. 1 = greedy 1-ply (default). 2 = expectiminimax over all 21
+    opponent dice combos. Deeper search is ~21x more compute per agent turn.
+
+    `opp_search_depth`: same for the frozen opponent's move selection.
     """
+    from search import search_2ply
+
     state = state_factory() if state_factory is not None else RaceState()
     eligibility = {p: torch.zeros_like(p) for p in agent.parameters()}
     agent_states: list = []
     opp_states: list = []
+
+    # Build 2-ply evaluators lazily — only when depth >= 2.
+    _agent_eval_fn: object = None
+    _opp_eval_fn: object = None
 
     while not state.terminal():
         # Dice: derive from the drand round digest in production-shaped
@@ -398,7 +428,6 @@ def td_lambda_match(
             d1 = random.randint(1, 6)
             d2 = random.randint(1, 6)
         state.dice = (d1, d2)
-        cands = legal_successors(state, state.dice)
 
         if state.turn == 0:
             # Agent's turn — selects a successor and learns from the transition.
@@ -407,18 +436,25 @@ def td_lambda_match(
                           agent_extras.unsqueeze(0)) if agent.extras is not None else \
                     agent(board_now.unsqueeze(0))
 
-            chosen, _ = pick_move(agent, cands, agent_extras, perspective=0,
-                                   infer_fn=infer_fn)
+            if search_depth >= 2:
+                if _agent_eval_fn is None:
+                    _agent_eval_fn = _make_eval_fn(agent, agent_extras, infer_fn)
+                chosen, v_next = search_2ply(state, (d1, d2), _agent_eval_fn, perspective=0)
+            else:
+                cands = legal_successors(state, state.dice)
+                chosen, _ = pick_move(agent, cands, agent_extras, perspective=0,
+                                      infer_fn=infer_fn)
+                with torch.no_grad():
+                    board_next = encode_state(chosen, perspective=0)
+                    if infer_fn is not None:
+                        ext_next = agent_extras.unsqueeze(0).expand(1, -1) if agent.extras is not None else None
+                        v_next = infer_fn(board_next.unsqueeze(0), ext_next).item()
+                    elif agent.extras is not None:
+                        v_next = agent(board_next.unsqueeze(0), agent_extras.unsqueeze(0)).item()
+                    else:
+                        v_next = agent(board_next.unsqueeze(0)).item()
+
             agent_states.append(chosen)
-            with torch.no_grad():
-                board_next = encode_state(chosen, perspective=0)
-                if infer_fn is not None:
-                    ext_next = agent_extras.unsqueeze(0).expand(1, -1) if agent.extras is not None else None
-                    v_next = infer_fn(board_next.unsqueeze(0), ext_next).item()
-                elif agent.extras is not None:
-                    v_next = agent(board_next.unsqueeze(0), agent_extras.unsqueeze(0)).item()
-                else:
-                    v_next = agent(board_next.unsqueeze(0)).item()
 
             # Terminal reward is observed when the chosen state is terminal
             # for the agent's side; otherwise we bootstrap from V(s').
@@ -446,8 +482,14 @@ def td_lambda_match(
 
             state = chosen
         else:
-            # Opponent's turn — frozen network picks greedily; no learning.
-            chosen, _ = pick_move(opponent, cands, opponent_extras, perspective=1)
+            # Opponent's turn — frozen network picks; no learning.
+            if opp_search_depth >= 2:
+                if _opp_eval_fn is None:
+                    _opp_eval_fn = _make_eval_fn(opponent, opponent_extras)
+                chosen, _ = search_2ply(state, (d1, d2), _opp_eval_fn, perspective=1)
+            else:
+                cands = legal_successors(state, state.dice)
+                chosen, _ = pick_move(opponent, cands, opponent_extras, perspective=1)
             opp_states.append(chosen)
             state = chosen
 
