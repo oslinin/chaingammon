@@ -1,9 +1,11 @@
 // match/page.tsx — KeeperHub pre-game card.
 //
-// Shows the KeeperHub mode info and optional ETH stake/escrow flow.
-// On "Start Game" the user is forwarded to /team-demo?opponents=<agentId>
-// for gameplay; KeeperHub auto-settlement runs via the server after the
-// game ends regardless of which page hosts the board.
+// Shows the KeeperHub mode info and optional USDC stake/escrow flow.
+// Money games use MatchEscrowUsdc (ERC-20) instead of the legacy ETH
+// MatchEscrow. The flow has an extra approval step:
+//   1. Approve MatchEscrowUsdc to spend the stake amount.
+//   2. Human deposits USDC → agent deposits USDC from AgentVaultToken.
+//   3. Both funded → navigate to /team-demo for settlement.
 "use client";
 
 import { Suspense, useState } from "react";
@@ -12,24 +14,32 @@ import { useRouter, useSearchParams } from "next/navigation";
 import {
   useAccount,
   usePublicClient,
+  useReadContract,
 } from "wagmi";
-import { parseEther } from "viem";
+import { parseUnits } from "viem";
 import { generatePrivateKey } from "viem/accounts";
 
 import { AgentWalletPanel } from "../AgentWalletPanel";
-import { AgentVaultABI, MatchEscrowABI, useChainContracts } from "../contracts";
+import {
+  AgentVaultTokenABI,
+  ERC20ABI,
+  MatchEscrowUsdcABI,
+  useChainContracts,
+} from "../contracts";
 import { useSponsoredWrite } from "../useSponsoredWrite";
 import { useAppMode } from "../AppModeContext";
+import { useActiveChainId } from "../chains";
 import { useI18n } from "../i18n";
 
 const ZERO_ADDR = "0x0000000000000000000000000000000000000000" as `0x${string}`;
 const ZERO_BIG = BigInt(0);
+const USDC_DECIMALS = 6;
 
-function safeParseEther(value: string): bigint {
+function safeParseUsdc(value: string): bigint {
   try {
     const trimmed = value.trim();
     if (!trimmed) return ZERO_BIG;
-    return parseEther(trimmed as `${number}`);
+    return parseUnits(trimmed as `${number}`, USDC_DECIMALS);
   } catch {
     return ZERO_BIG;
   }
@@ -54,27 +64,46 @@ function MatchInner() {
   const router = useRouter();
   const agentId = Number(params.get("agentId") ?? "1");
 
-  const [stakeEth, setStakeEth] = useState("");
+  const [stakeUsdc, setStakeUsdc] = useState("");
   const [depositStatus, setDepositStatus] = useState<
-    "idle" | "human-pending" | "agent-pending" | "ready" | "error"
+    "idle" | "approving" | "human-pending" | "agent-pending" | "ready" | "error"
   >("idle");
   const [depositError, setDepositError] = useState<string | null>(null);
 
   const { t } = useI18n();
   const { address, isConnected } = useAccount();
   const publicClient = usePublicClient();
-  const { matchEscrow, agentVault } = useChainContracts();
+  const chainId = useActiveChainId();
+  const { matchEscrowUsdc, agentVaultToken, usdcToken } = useChainContracts();
   const { writeContractAsync } = useSponsoredWrite();
   const { mode } = useAppMode();
   const showStake = mode === "money" || mode === "advanced" || params.get("stake") === "1";
 
-  const stakeWei = stakeEth.trim() ? safeParseEther(stakeEth) : ZERO_BIG;
-  const isStaked = stakeWei > ZERO_BIG;
+  const stakeAmount = stakeUsdc.trim() ? safeParseUsdc(stakeUsdc) : ZERO_BIG;
+  const isStaked = stakeAmount > ZERO_BIG;
   const isDepositing =
-    depositStatus === "human-pending" || depositStatus === "agent-pending";
+    depositStatus === "approving" ||
+    depositStatus === "human-pending" ||
+    depositStatus === "agent-pending";
+
+  const noEscrow = !matchEscrowUsdc || matchEscrowUsdc === ZERO_ADDR;
+
+  // Read current USDC allowance for the escrow contract.
+  const { data: allowanceData } = useReadContract({
+    address: usdcToken,
+    abi: ERC20ABI,
+    functionName: "allowance",
+    args: address && !noEscrow ? [address, matchEscrowUsdc] : undefined,
+    chainId,
+    query: {
+      enabled: isStaked && !noEscrow && !!address,
+      refetchInterval: 5_000,
+    },
+  });
+  const currentAllowance = (allowanceData as bigint | undefined) ?? ZERO_BIG;
+  const needsApproval = isStaked && currentAllowance < stakeAmount;
 
   const onClickStart = async () => {
-    // Once both sides have deposited (or no stake), navigate to gameplay.
     if (depositStatus === "ready" || !isStaked) {
       router.push(`/team-demo?opponents=${agentId}&settle=1`);
       return;
@@ -84,40 +113,57 @@ function MatchInner() {
       setDepositStatus("error");
       return;
     }
-    if (matchEscrow === ZERO_ADDR) {
-      setDepositError(t("escrow_not_deployed"));
+    if (noEscrow) {
+      setDepositError(t("escrow_usdc_not_deployed"));
       setDepositStatus("error");
       return;
     }
     try {
       setDepositError(null);
-      setDepositStatus("human-pending");
       const newMatchId = generatePrivateKey() as `0x${string}`;
+
+      // Step 1: approve MatchEscrowUsdc to spend USDC if needed.
+      if (needsApproval) {
+        setDepositStatus("approving");
+        const approveTx = await writeContractAsync({
+          abi: ERC20ABI,
+          address: usdcToken,
+          functionName: "approve",
+          args: [matchEscrowUsdc, stakeAmount],
+        });
+        if (publicClient) {
+          await publicClient.waitForTransactionReceipt({ hash: approveTx });
+        }
+      }
+
+      // Step 2: human deposits USDC into escrow.
+      setDepositStatus("human-pending");
       const humanTxHash = await writeContractAsync({
-        abi: MatchEscrowABI,
-        address: matchEscrow,
+        abi: MatchEscrowUsdcABI,
+        address: matchEscrowUsdc,
         functionName: "deposit",
-        args: [newMatchId, stakeWei],
-        value: stakeWei,
+        args: [newMatchId, stakeAmount],
       });
       if (publicClient) {
         await publicClient.waitForTransactionReceipt({ hash: humanTxHash });
       }
+
+      // Step 3: agent deposits USDC from AgentVaultToken into same escrow.
       setDepositStatus("agent-pending");
       const agentTxHash = await writeContractAsync({
-        abi: AgentVaultABI,
-        address: agentVault,
+        abi: AgentVaultTokenABI,
+        address: agentVaultToken,
         functionName: "depositToEscrow",
-        args: [BigInt(agentId), newMatchId, stakeWei, matchEscrow],
+        args: [BigInt(agentId), newMatchId, stakeAmount, matchEscrowUsdc],
       });
       if (publicClient) {
         await publicClient.waitForTransactionReceipt({ hash: agentTxHash });
       }
+
       setDepositStatus("ready");
-      // Both sides funded — navigate immediately.
-      // Pass escrowMatchId and stakeWei so team-demo can call
-      // settleWithSessionKeysAndSplit and actually pay out the pot.
-      router.push(`/team-demo?opponents=${agentId}&settle=1&escrowMatchId=${newMatchId}&stakeWei=${stakeWei.toString()}`);
+      router.push(
+        `/team-demo?opponents=${agentId}&settle=1&escrowMatchId=${newMatchId}&stakeWei=${stakeAmount.toString()}`
+      );
     } catch (err) {
       setDepositError(err instanceof Error ? err.message : String(err));
       setDepositStatus("error");
@@ -158,31 +204,40 @@ function MatchInner() {
         {showStake && (
           <div className="w-full rounded-xl border border-zinc-200 bg-white p-6 dark:border-zinc-800 dark:bg-zinc-900">
             <label
-              htmlFor="stake-eth"
+              htmlFor="stake-usdc"
               className="mb-2 block text-sm font-medium text-zinc-700 dark:text-zinc-300"
             >
               {t("stake_per_side_label")}
             </label>
             <input
-              id="stake-eth"
+              id="stake-usdc"
               type="number"
               min="0"
-              step="0.001"
+              step="0.01"
               placeholder="0"
               disabled={isDepositing || depositStatus === "ready"}
-              value={stakeEth}
-              onChange={(e) => setStakeEth(e.target.value)}
+              value={stakeUsdc}
+              onChange={(e) => setStakeUsdc(e.target.value)}
               className="w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm font-mono dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
             />
             {isStaked && (
               <>
                 <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
-                  {t("stake_info").replace("{n}", stakeEth)}
+                  {t("stake_info").replace("{n}", stakeUsdc)}
                 </p>
                 <div className="mt-3">
-                  <AgentWalletPanel agentId={agentId} stakeWei={stakeWei} />
+                  <AgentWalletPanel
+                    agentId={agentId}
+                    stakeAmount={stakeAmount}
+                    useUsdc
+                  />
                 </div>
               </>
+            )}
+            {depositStatus === "approving" && (
+              <p className="mt-3 text-xs text-amber-600 dark:text-amber-400">
+                {t("approving_usdc")}
+              </p>
             )}
             {depositStatus === "human-pending" && (
               <p className="mt-3 text-xs text-amber-600 dark:text-amber-400">
@@ -209,11 +264,15 @@ function MatchInner() {
 
         <button
           type="button"
-          onClick={onClickStart}
+          onClick={() => void onClickStart()}
           disabled={isDepositing}
           className="w-full rounded-lg bg-indigo-600 px-6 py-3 text-base font-semibold text-white shadow hover:bg-indigo-500 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 disabled:cursor-not-allowed disabled:bg-zinc-400"
         >
-          {isDepositing ? t("staking") : `${t("start_game_vs")}${agentId}`}
+          {depositStatus === "approving"
+            ? t("approving_usdc")
+            : isDepositing
+              ? t("staking")
+              : `${t("start_game_vs")}${agentId}`}
         </button>
       </main>
     </div>
