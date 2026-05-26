@@ -83,7 +83,7 @@ from drand_dice import derive_dice
 # tournament position, stake size, etc.
 GNUBG_FEAT_DIM = 198
 DEFAULT_HIDDEN = 80
-DEFAULT_EXTRAS_DIM = 40
+DEFAULT_EXTRAS_DIM = 58
 
 
 # Distilled gnubg core weights (produced by agent/gnubg_distill.py). Every
@@ -889,9 +889,9 @@ def main() -> None:
         agent = BackgammonNet(extras_dim=args.extras_dim, extras_seed=1)
     opponent = BackgammonNet(extras_dim=args.extras_dim, extras_seed=2)
 
-    if args.career_mode and args.extras_dim < 40:
-        parser.error("--career-mode requires --extras-dim >= 40 "
-                     "(career_features.encode_career_context 40-d layout)")
+    if args.career_mode and args.extras_dim < 58:
+        parser.error("--career-mode requires --extras-dim >= 58 "
+                     "(career_features.encode_career_context 58-d layout with teammate_style)")
 
     # Career-mode samples a fresh context per match (see the loop below);
     # the placeholder path is a single deterministic projection per agent.
