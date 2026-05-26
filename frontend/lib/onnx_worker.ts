@@ -118,7 +118,13 @@ async function runEquity(board: Float32Array): Promise<number> {
 
 async function initORT(modelBytes?: ArrayBuffer): Promise<void> {
   const ort = (await import("onnxruntime-web")) as OrtNs;
-  ort.env.wasm.wasmPaths = "/js/";
+  // Derive the app base path from the worker's own URL so WASM files are found
+  // at the correct location whether deployed at / (dev) or /chaingammon (Pages).
+  // Worker URL: https://host/basepath/_next/static/chunks/...
+  const workerPathParts = new URL(self.location.href).pathname.split("/");
+  const nextIdx = workerPathParts.indexOf("_next");
+  const basePath = nextIdx > 0 ? workerPathParts.slice(0, nextIdx).join("/") : "";
+  ort.env.wasm.wasmPaths = `${basePath}/js/`;
   ort.env.wasm.numThreads = 1;
   const buf = modelBytes ?? await loadModelBytes();
   _session = await ort.InferenceSession.create(buf, { executionProviders: ["wasm"] });
