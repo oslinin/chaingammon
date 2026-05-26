@@ -85,17 +85,17 @@ export function Providers({ children }: { children: React.ReactNode }) {
   // React Strict Mode double-invocations are safe.
   useEffect(() => { warmupOnnx(); }, []);
 
-  const inner = (
+  if (!HAS_PRIVY) return (
     <QueryClientProvider client={queryClient}>
-      <AppModeProvider>
-        <ComputeBackendsProvider>
-          <I18nProvider>{children}</I18nProvider>
-        </ComputeBackendsProvider>
-      </AppModeProvider>
+      <WagmiProvider config={config}>
+        <AppModeProvider>
+          <ComputeBackendsProvider>
+            <I18nProvider>{children}</I18nProvider>
+          </ComputeBackendsProvider>
+        </AppModeProvider>
+      </WagmiProvider>
     </QueryClientProvider>
   );
-
-  if (!HAS_PRIVY) return inner;
 
   return (
     <PrivyProvider
