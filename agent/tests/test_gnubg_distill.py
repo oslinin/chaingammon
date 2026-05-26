@@ -5,8 +5,8 @@ Run with:  cd agent && uv run pytest tests/test_gnubg_distill.py -v
 Confirms gnubg-labelled data generation, that a small distilled net actually
 learns gnubg's win probability (beats the constant-mean baseline and correlates
 with the teacher), and that the trained core drops into
-sample_trainer.gnubg_published_core_init (with a clean Xavier fallback when the
-file is absent or the shape mismatches).
+sample_trainer.gnubg_published_core_init (which loads it, and raises when the
+file is absent or its shape mismatches).
 
 Data-gen / distill tests need gnubg.wd; the core-init wiring tests don't.
 """
@@ -95,20 +95,19 @@ def test_core_init_loads_distilled_weights(tmp_path, monkeypatch):
     assert torch.allclose(layer.bias, net.core.bias)
 
 
-def test_core_init_falls_back_on_shape_mismatch(tmp_path, monkeypatch):
+def test_core_init_raises_on_shape_mismatch(tmp_path, monkeypatch):
     net = _DistillNet(in_dim=198, hidden=80)
     path = save_core(net, tmp_path / "gnubg_core.pt")
     monkeypatch.setattr(sample_trainer, "GNUBG_CORE_WEIGHTS_PATH", path)
-    # Requesting a different hidden size can't use the saved (80-wide) core,
-    # so it falls back to a correctly-shaped Xavier layer (bias zeroed).
-    layer = gnubg_published_core_init(198, 64)
-    assert layer.out_features == 64
-    assert torch.all(layer.bias == 0.0)
+    # The saved core is 80-wide; a different hidden size has no matching
+    # distilled core, so it raises rather than silently going random.
+    with pytest.raises(ValueError):
+        gnubg_published_core_init(198, 64)
 
 
-def test_core_init_deterministic_xavier_when_absent(tmp_path, monkeypatch):
+def test_core_init_raises_when_absent(tmp_path, monkeypatch):
+    # No random fallback: a missing core is a hard error, so an agent is never
+    # silently trained from un-distilled weights.
     monkeypatch.setattr(sample_trainer, "GNUBG_CORE_WEIGHTS_PATH", tmp_path / "missing.pt")
-    a = gnubg_published_core_init(198, 80, seed=0xBACC)
-    b = gnubg_published_core_init(198, 80, seed=0xBACC)
-    assert torch.allclose(a.weight, b.weight)  # shared deterministic init
-    assert torch.all(a.bias == 0.0)
+    with pytest.raises(FileNotFoundError):
+        gnubg_published_core_init(198, 80)

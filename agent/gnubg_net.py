@@ -2,10 +2,10 @@
 
 GNU Backgammon (gnubg) is the open-source backgammon engine whose published
 neural-network weights this project already ships encrypted on 0G Storage
-(server/app/weights.py). Until now nothing actually *ran* those weights: the
-per-agent BackgammonNet in agent/sample_trainer.py initialised its first layer
-from a deterministic Xavier stand-in (`gnubg_published_core_init`), not from
-gnubg at all.
+(server/app/weights.py). This module is what actually *runs* those weights in
+this project: agent/gnubg_distill.py labels positions with the evaluator below
+and distils them into the shared core that the per-agent BackgammonNet in
+agent/sample_trainer.py loads via `gnubg_published_core_init`.
 
 This module is the keystone that makes "use real gnubg weights" possible. It:
 

@@ -11,15 +11,16 @@ other agent uses, runs identically in the browser (play) and on the server
 and gets n-ply lookahead for free via the existing search_depth property.
 
 Pipeline:
-  1. generate_training_data: self-play rollouts (random by default) collect
-     positions across the game; each is encoded with the SAME 198-dim encoder
-     used at inference (gnubg_encoder.encode_full_board) and labelled with
-     gnubg's P(win) for the side to move (agent/gnubg_net.py is the teacher).
+  1. generate_training_data: self-play rollouts (gnubg-guided by default, with
+     endgame seeding) collect positions across the game; each is encoded with
+     the SAME 198-dim encoder used at inference (gnubg_encoder.encode_full_board)
+     and labelled with gnubg's P(win) for the side to move (agent/gnubg_net.py
+     is the teacher).
   2. distill: supervised regression of the net onto those labels.
   3. save_core: writes the trained first layer in the shape
-     sample_trainer.gnubg_published_core_init loads, so every minted MLP starts
-     from gnubg-distilled weights instead of the Xavier stand-in — the literal
-     answer to "can the mint helper's MLP be based on gnubg weights?".
+     sample_trainer.gnubg_published_core_init loads, so every minted MLP loads
+     its core from gnubg-distilled weights — the literal answer to "can the mint
+     helper's MLP be based on gnubg weights?".
 
 The committed gnubg_net / gnubg_onnx / gnubg_search modules are the teacher and
 the offline reference/validation harness; only this distilled net is served.

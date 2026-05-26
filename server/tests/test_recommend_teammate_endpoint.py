@@ -38,7 +38,7 @@ def _torch_blob(*, extras_dim: int = 16, match_count: int = 5) -> bytes:
 
     from sample_trainer import BackgammonNet
 
-    net = BackgammonNet(extras_dim=extras_dim, core_seed=0xBACC, extras_seed=99)
+    net = BackgammonNet(extras_dim=extras_dim, extras_seed=99)
     state = {
         "model": net.state_dict(),
         "match_count": match_count,

@@ -86,39 +86,41 @@ DEFAULT_HIDDEN = 80
 DEFAULT_EXTRAS_DIM = 40
 
 
-# Distilled gnubg core weights (produced by agent/gnubg_distill.py). When this
-# file exists and matches the requested shape, gnubg_published_core_init loads
-# it so every minted MLP starts from gnubg-distilled weights; otherwise it
-# falls back to the shared deterministic Xavier init. Override with the
-# GNUBG_CORE_WEIGHTS env var.
+# Distilled gnubg core weights (produced by agent/gnubg_distill.py). Every
+# minted MLP loads its board core from this file via gnubg_published_core_init,
+# so all agents share the exact same gnubg-distilled core. Override the location
+# with the GNUBG_CORE_WEIGHTS env var.
 GNUBG_CORE_WEIGHTS_PATH = Path(
     os.environ.get("GNUBG_CORE_WEIGHTS", Path(__file__).resolve().parent / "data" / "gnubg_core.pt")
 )
 
 
-def gnubg_published_core_init(in_dim: int, hidden: int, *, seed: int = 0xBACC) -> nn.Linear:
-    """Return a Linear(in_dim, hidden) for the board columns of the first layer.
+def gnubg_published_core_init(in_dim: int, hidden: int) -> nn.Linear:
+    """Return a Linear(in_dim, hidden) for the board columns of the first layer,
+    loaded from the distilled gnubg core at GNUBG_CORE_WEIGHTS_PATH.
 
-    Loads gnubg-distilled weights from GNUBG_CORE_WEIGHTS_PATH when present and
-    shape-compatible (the production path — see agent/gnubg_distill.py). When
-    absent it deterministically Xavier-initializes from a fixed seed; what
-    matters for the rest of the pipeline is that *every agent* starts from the
-    *same* core weights, which either source captures exactly.
+    These are the gnubg-distilled weights produced by agent/gnubg_distill.py;
+    every minted agent shares them exactly, which is the invariant the training
+    pipeline relies on. There is no random fallback: a missing or
+    shape-mismatched core raises, so an agent is never silently trained from
+    un-distilled weights.
     """
+    if not GNUBG_CORE_WEIGHTS_PATH.is_file():
+        raise FileNotFoundError(
+            f"gnubg core weights not found at {GNUBG_CORE_WEIGHTS_PATH}; "
+            f"run `python agent/gnubg_distill.py` to produce it (or set GNUBG_CORE_WEIGHTS)."
+        )
+    blob = torch.load(GNUBG_CORE_WEIGHTS_PATH, weights_only=True)
+    if int(blob.get("in_dim", -1)) != in_dim or int(blob.get("hidden", -1)) != hidden:
+        raise ValueError(
+            f"gnubg core at {GNUBG_CORE_WEIGHTS_PATH} is "
+            f"{blob.get('in_dim')}x{blob.get('hidden')}, but a {in_dim}x{hidden} core was "
+            f"requested; distill one with `python agent/gnubg_distill.py --hidden {hidden}`."
+        )
     layer = nn.Linear(in_dim, hidden)
-    if GNUBG_CORE_WEIGHTS_PATH.is_file():
-        blob = torch.load(GNUBG_CORE_WEIGHTS_PATH, weights_only=True)
-        if int(blob.get("in_dim", -1)) == in_dim and int(blob.get("hidden", -1)) == hidden:
-            with torch.no_grad():
-                layer.weight.copy_(blob["weight"])
-                layer.bias.copy_(blob["bias"])
-            return layer
-    g = torch.Generator().manual_seed(seed)
     with torch.no_grad():
-        # Xavier-uniform stand-in for the published gnubg distribution.
-        bound = math.sqrt(6.0 / (in_dim + hidden))
-        layer.weight.uniform_(-bound, bound, generator=g)
-        layer.bias.zero_()
+        layer.weight.copy_(blob["weight"])
+        layer.bias.copy_(blob["bias"])
     return layer
 
 
@@ -153,13 +155,12 @@ class BackgammonNet(nn.Module):
         hidden: int = DEFAULT_HIDDEN,
         extras_dim: int = DEFAULT_EXTRAS_DIM,
         *,
-        core_seed: int = 0xBACC,
         extras_seed: int | None = None,
     ) -> None:
         super().__init__()
         self.board_dim = in_dim
         self.extras_dim = extras_dim
-        self.core = gnubg_published_core_init(in_dim, hidden, seed=core_seed)
+        self.core = gnubg_published_core_init(in_dim, hidden)
         if extras_dim > 0:
             self.extras = nn.Linear(extras_dim, hidden)
             if extras_seed is not None:
@@ -885,8 +886,8 @@ def main() -> None:
         print(f"Resumed from 0G Storage {args.init_from_0g} "
               f"(match_count={starting_match_count}).")
     else:
-        agent = BackgammonNet(extras_dim=args.extras_dim, core_seed=0xBACC, extras_seed=1)
-    opponent = BackgammonNet(extras_dim=args.extras_dim, core_seed=0xBACC, extras_seed=2)
+        agent = BackgammonNet(extras_dim=args.extras_dim, extras_seed=1)
+    opponent = BackgammonNet(extras_dim=args.extras_dim, extras_seed=2)
 
     if args.career_mode and args.extras_dim < 40:
         parser.error("--career-mode requires --extras-dim >= 40 "

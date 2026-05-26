@@ -243,7 +243,7 @@ def _main() -> int:
         print(f"# Loaded checkpoint after {match_count} matches: {args.checkpoint}")
     else:
         from sample_trainer import BackgammonNet
-        net = BackgammonNet(extras_dim=args.extras_dim, core_seed=0xBACC, extras_seed=0)
+        net = BackgammonNet(extras_dim=args.extras_dim, extras_seed=0)
         print("# WARNING: no --checkpoint supplied; using a freshly-initialized net.")
 
     rec = recommend_teammate(
