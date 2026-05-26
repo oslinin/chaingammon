@@ -11,8 +11,8 @@
     "PublicResolver": "0x8FADE66B79cC9f707aB26799354482EB93a5B7dD",
     "AgentVault": "0xeCe178F6a55cC504BEbA578a4B596125583D1f3E",
     "UsdcToken": "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238",
-    "MatchEscrowUsdc": "0x0000000000000000000000000000000000000000",
-    "AgentVaultToken": "0x0000000000000000000000000000000000000000"
+    "MatchEscrowUsdc": "0x2397fd71b535256C91ca383e496AD861ea1AFA32",
+    "AgentVaultToken": "0x1B3190D84855F00B4556F9e0CBf406eCa411407C"
   },
   "matchEscrowConstructorArgs": {
     "settler": "0xaCF222C7c19a3418246B1aa2fbC4Bd97eC4930Dc"
@@ -36,5 +36,13 @@
   "deployedBlock": 10779100,
   "agentVaultConstructorArgs": {
     "registry": "0x3Ba4260EB13138F3F167D3686fDb9Aa0887416b5"
+  },
+  "matchEscrowUsdcConstructorArgs": {
+    "token": "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238",
+    "settler": "0xaCF222C7c19a3418246B1aa2fbC4Bd97eC4930Dc"
+  },
+  "agentVaultTokenConstructorArgs": {
+    "registry": "0x3Ba4260EB13138F3F167D3686fDb9Aa0887416b5",
+    "token": "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238"
   }
 }
