@@ -86,20 +86,34 @@ DEFAULT_HIDDEN = 80
 DEFAULT_EXTRAS_DIM = 40
 
 
-def gnubg_published_core_init(in_dim: int, hidden: int, *, seed: int = 0xBACC) -> nn.Linear:
-    """Return a Linear(in_dim, hidden) layer whose weights stand in for
-    gnubg's published feedforward weights.
+# Distilled gnubg core weights (produced by agent/gnubg_distill.py). When this
+# file exists and matches the requested shape, gnubg_published_core_init loads
+# it so every minted MLP starts from gnubg-distilled weights; otherwise it
+# falls back to the shared deterministic Xavier init. Override with the
+# GNUBG_CORE_WEIGHTS env var.
+GNUBG_CORE_WEIGHTS_PATH = Path(
+    os.environ.get("GNUBG_CORE_WEIGHTS", Path(__file__).resolve().parent / "data" / "gnubg_core.pt")
+)
 
-    In production the caller would load the actual gnubg weights file
-    (`weights` / `gnubg.weights` from the gnubg source distribution),
-    convert it to a torch state_dict, and load it here. For the runnable
-    demo we deterministically initialize from a fixed seed — what
-    matters for the rest of the pipeline is that *every agent* starts
-    from the *same* core weights, which a shared deterministic init
-    captures exactly.
+
+def gnubg_published_core_init(in_dim: int, hidden: int, *, seed: int = 0xBACC) -> nn.Linear:
+    """Return a Linear(in_dim, hidden) for the board columns of the first layer.
+
+    Loads gnubg-distilled weights from GNUBG_CORE_WEIGHTS_PATH when present and
+    shape-compatible (the production path — see agent/gnubg_distill.py). When
+    absent it deterministically Xavier-initializes from a fixed seed; what
+    matters for the rest of the pipeline is that *every agent* starts from the
+    *same* core weights, which either source captures exactly.
     """
-    g = torch.Generator().manual_seed(seed)
     layer = nn.Linear(in_dim, hidden)
+    if GNUBG_CORE_WEIGHTS_PATH.is_file():
+        blob = torch.load(GNUBG_CORE_WEIGHTS_PATH, weights_only=True)
+        if int(blob.get("in_dim", -1)) == in_dim and int(blob.get("hidden", -1)) == hidden:
+            with torch.no_grad():
+                layer.weight.copy_(blob["weight"])
+                layer.bias.copy_(blob["bias"])
+            return layer
+    g = torch.Generator().manual_seed(seed)
     with torch.no_grad():
         # Xavier-uniform stand-in for the published gnubg distribution.
         bound = math.sqrt(6.0 / (in_dim + hidden))
