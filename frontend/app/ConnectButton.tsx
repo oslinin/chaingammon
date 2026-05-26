@@ -31,6 +31,7 @@ import { useState, useEffect } from "react";
 
 import { NetworkDropdown } from "./NetworkDropdown";
 import { ProfileBadge } from "./ProfileBadge";
+import { UsdcBalanceDisplay } from "./UsdcBalanceDisplay";
 import { useI18n } from "./i18n";
 
 const pillBase: React.CSSProperties = {
@@ -84,6 +85,7 @@ function ConnectButtonInner() {
         }}
       >
         <NetworkDropdown />
+        <UsdcBalanceDisplay address={address} />
         <ProfileBadge address={address} />
         <button
           type="button"
