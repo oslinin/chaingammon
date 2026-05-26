@@ -3,8 +3,8 @@
 Run with:  cd agent && uv run pytest tests/test_sample_trainer.py -v
 
 Covers the architectural promises the README makes about the trainer:
-  - Two networks instantiated with the same `core_seed` start with
-    bit-identical core weights (the "shared gnubg base" guarantee).
+  - Any two networks start with bit-identical core weights, loaded from
+    the shared distilled gnubg core (the "shared gnubg base" guarantee).
   - Different `extras_seed` values produce different extras heads (the
     "per-agent random personality" guarantee).
   - A single TD(lambda) match step actually mutates the agent's
@@ -41,12 +41,12 @@ from sample_trainer import (
 # ---------------------------------------------------------------------------
 
 
-def test_shared_core_seed_produces_identical_core_weights():
+def test_all_agents_load_identical_gnubg_core():
     """The README's "every agent starts from the same gnubg core" claim:
-    same `core_seed` MUST yield bit-identical core weights regardless
-    of extras_seed."""
-    a = BackgammonNet(core_seed=0xBACC, extras_seed=1)
-    b = BackgammonNet(core_seed=0xBACC, extras_seed=2)
+    every agent loads the same distilled core from disk, so the core weights
+    are bit-identical regardless of extras_seed."""
+    a = BackgammonNet(extras_seed=1)
+    b = BackgammonNet(extras_seed=2)
     assert torch.equal(a.core.weight, b.core.weight)
     assert torch.equal(a.core.bias, b.core.bias)
 
@@ -54,8 +54,8 @@ def test_shared_core_seed_produces_identical_core_weights():
 def test_different_extras_seeds_produce_different_extras_heads():
     """The README's "per-agent random personality" claim: different
     `extras_seed` values MUST produce different extras-head weights."""
-    a = BackgammonNet(core_seed=0xBACC, extras_seed=1)
-    b = BackgammonNet(core_seed=0xBACC, extras_seed=2)
+    a = BackgammonNet(extras_seed=1)
+    b = BackgammonNet(extras_seed=2)
     assert a.extras is not None and b.extras is not None
     assert not torch.equal(a.extras.weight, b.extras.weight), (
         "extras heads with different seeds should diverge"
@@ -118,8 +118,8 @@ def test_td_lambda_match_mutates_agent_params_but_not_opponent():
     random.seed(0)
     torch.manual_seed(0)
 
-    agent = BackgammonNet(core_seed=0xBACC, extras_seed=1)
-    opponent = BackgammonNet(core_seed=0xBACC, extras_seed=2)
+    agent = BackgammonNet(extras_seed=1)
+    opponent = BackgammonNet(extras_seed=2)
 
     agent_extras = encode_extras(DEFAULT_EXTRAS_DIM, agent_id=1, seed=42)
     opponent_extras = encode_extras(DEFAULT_EXTRAS_DIM, agent_id=2, seed=42)
@@ -207,8 +207,8 @@ def test_match_with_drand_digest_is_deterministic_in_dice():
     a_steps_list: list[int] = []
     for _ in range(2):
         torch.manual_seed(0)
-        agent = BackgammonNet(core_seed=0xBACC, extras_seed=1)
-        opponent = BackgammonNet(core_seed=0xBACC, extras_seed=2)
+        agent = BackgammonNet(extras_seed=1)
+        opponent = BackgammonNet(extras_seed=2)
         a_extras = torch.zeros(DEFAULT_EXTRAS_DIM)
         o_extras = torch.zeros(DEFAULT_EXTRAS_DIM)
         steps, *_ = td_lambda_match(

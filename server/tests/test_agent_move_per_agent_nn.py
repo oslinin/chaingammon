@@ -159,7 +159,7 @@ def test_per_agent_nn_race_model_falls_back(monkeypatch):
     _patch_chain_with_hash(monkeypatch, "0xab" + "cd" * 31)
     import agent_profile as ap
     from sample_trainer import BackgammonNet
-    net = BackgammonNet(extras_dim=16, core_seed=0xBACC, extras_seed=7)
+    net = BackgammonNet(extras_dim=16, extras_seed=7)
     race_profile = ap.ModelProfile(
         {"feature_encoder": "race", "match_count": 10, "extras_dim": 16, "in_dim": 198},
         net=net,
