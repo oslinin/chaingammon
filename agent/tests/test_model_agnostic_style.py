@@ -115,8 +115,8 @@ def test_2ply_training_updates_params_with_style():
     training (not just inference) goes through the style-carrying search path."""
     random.seed(0)
     torch.manual_seed(0)
-    agent = BackgammonNet(core_seed=0xBACC, extras_seed=1)
-    opponent = BackgammonNet(core_seed=0xBACC, extras_seed=2)
+    agent = BackgammonNet(extras_seed=1)
+    opponent = BackgammonNet(extras_seed=2)
     a_ext = torch.randn(DEFAULT_EXTRAS_DIM)
     o_ext = torch.randn(DEFAULT_EXTRAS_DIM)
     pre_core = agent.core.weight.clone()

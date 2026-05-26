@@ -26,7 +26,7 @@ from teammate_selection import (
 def _make_net(*, extras_seed: int = 1, extras_dim: int = 40) -> BackgammonNet:
     """Deterministic per-test net. The same `extras_seed` always yields
     the same extras-head weights, so equity rankings are reproducible."""
-    return BackgammonNet(extras_dim=extras_dim, core_seed=0xBACC, extras_seed=extras_seed)
+    return BackgammonNet(extras_dim=extras_dim, extras_seed=extras_seed)
 
 
 def test_distinct_styles_produce_distinct_equities():
@@ -153,7 +153,7 @@ def test_recommendation_dataclass_is_frozen():
 def test_extras_dim_propagates():
     """Caller can specify extras_dim to match the net. The function must
     round-trip without error regardless of the dim."""
-    net = BackgammonNet(extras_dim=40, core_seed=0xBACC, extras_seed=1)
+    net = BackgammonNet(extras_dim=40, extras_seed=1)
     rec = recommend_teammate(
         net,
         [(1, {"hits_blot": 0.3}), (2, {"bearoff_efficient": 0.5})],

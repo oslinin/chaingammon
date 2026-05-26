@@ -610,7 +610,7 @@ def test_get_profile_model_when_kv_has_checkpoint(fake_chain, monkeypatch):
     import torch
     from sample_trainer import BackgammonNet  # noqa: E402
 
-    net = BackgammonNet(extras_dim=16, core_seed=0xBACC, extras_seed=3)
+    net = BackgammonNet(extras_dim=16, extras_seed=3)
     buf = _io.BytesIO()
     torch.save(
         {"state_dict": net.state_dict(), "match_count": 12, "extras_dim": 16, "in_dim": 198},

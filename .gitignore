@@ -17,6 +17,9 @@ dist/
 runs/
 *.ckpt
 *.pt
+# ...except the distilled gnubg core: a versioned build input that
+# sample_trainer.gnubg_published_core_init loads to seed every minted MLP.
+!agent/data/gnubg_core.pt
 
 # Node / Next.js
 node_modules/

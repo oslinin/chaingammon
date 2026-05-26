@@ -121,7 +121,7 @@ def _build_net_and_blob(*, extras_dim: int = 16):
 
     from sample_trainer import BackgammonNet
 
-    net = BackgammonNet(extras_dim=extras_dim, core_seed=0xBACC, extras_seed=42)
+    net = BackgammonNet(extras_dim=extras_dim, extras_seed=42)
     state = {
         "state_dict": net.state_dict(),
         "match_count": 7,

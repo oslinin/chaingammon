@@ -312,7 +312,7 @@ def test_resolver_routes_to_load_or_seed_branch():
     # Build a real model checkpoint blob so load_profile sniffs it as
     # a torch checkpoint (zip magic bytes).
     import io as _io
-    net = BackgammonNet(extras_dim=16, core_seed=0xBACC, extras_seed=42)
+    net = BackgammonNet(extras_dim=16, extras_seed=42)
     blob_buf = _io.BytesIO()
     torch.save(
         {"state_dict": net.state_dict(), "match_count": 7, "extras_dim": 16, "in_dim": 198},
@@ -457,7 +457,7 @@ def test_pick_move_infer_fn_overrides_net():
     of infer_fn's output, not the local net's."""
     from sample_trainer import BackgammonNet, RaceState, pick_move
 
-    net = BackgammonNet(extras_dim=16, core_seed=0xBACC, extras_seed=1)
+    net = BackgammonNet(extras_dim=16, extras_seed=1)
     cands = [RaceState(), RaceState()]
     extras = torch.zeros(16)
 

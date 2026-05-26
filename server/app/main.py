@@ -1411,7 +1411,7 @@ def recommend_teammate_endpoint(agent_id: int, req: RecommendTeammateRequest):
            # endpoint is still usable for untrained agents. The frontend
            # surfaces requester_kind so the UI can disclose.
         from sample_trainer import BackgammonNet
-        net = BackgammonNet(extras_dim=16, core_seed=0xBACC, extras_seed=agent_id)
+        net = BackgammonNet(extras_dim=16, extras_seed=agent_id)
         net.eval()
         requester_kind = "overlay"
 
@@ -1778,8 +1778,8 @@ def _truncate_address(addr: str) -> str:
 # network. Clients discover the service via broker.inference.listService()
 # and call POST /equity for each forward pass during training.
 #
-# The net is loaded once at process startup from the agent's shared base
-# weights (core_seed 0xBACC — the "gnubg seed" used throughout the repo).
+# The net is loaded once at process startup; its core is the shared
+# gnubg-distilled base weights every agent loads (agent/data/gnubg_core.pt).
 # Per-agent extras heads are not used here; the endpoint accepts any extras
 # vector and blends it through the net as-is.
 
@@ -1797,7 +1797,7 @@ def _init_equity_net() -> None:
         if _agent_dir.exists() and str(_agent_dir) not in sys.path:
             sys.path.insert(0, str(_agent_dir))
         from sample_trainer import BackgammonNet, DEFAULT_EXTRAS_DIM
-        net = BackgammonNet(core_seed=0xBACC, extras_dim=DEFAULT_EXTRAS_DIM, extras_seed=0)
+        net = BackgammonNet(extras_dim=DEFAULT_EXTRAS_DIM, extras_seed=0)
         net.eval()
         _equity_net = net
     except Exception as _e:

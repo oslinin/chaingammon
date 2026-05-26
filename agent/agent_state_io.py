@@ -67,7 +67,6 @@ def _seed_fresh(agent_id: int, *, extras_dim: int) -> AgentState:
     Mirrors the fallback path in sample_trainer.py:562."""
     net = BackgammonNet(
         extras_dim=extras_dim,
-        core_seed=0xBACC,
         extras_seed=agent_id,
     )
     return AgentState(

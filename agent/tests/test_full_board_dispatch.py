@@ -123,7 +123,7 @@ def test_legal_successors_full_board_with_client_dispatches():
 
 
 def test_save_checkpoint_default_feature_encoder_is_race(tmp_path: Path):
-    net = BackgammonNet(extras_dim=16, core_seed=0xBACC, extras_seed=1)
+    net = BackgammonNet(extras_dim=16, extras_seed=1)
     p = tmp_path / "ckpt.pt"
     save_checkpoint(net, p, match_count=5, extras_dim=16)
     blob = torch.load(p, weights_only=True)
@@ -131,7 +131,7 @@ def test_save_checkpoint_default_feature_encoder_is_race(tmp_path: Path):
 
 
 def test_save_checkpoint_full_board_feature_encoder(tmp_path: Path):
-    net = BackgammonNet(extras_dim=16, core_seed=0xBACC, extras_seed=1)
+    net = BackgammonNet(extras_dim=16, extras_seed=1)
     p = tmp_path / "ckpt.pt"
     save_checkpoint(net, p, match_count=5, extras_dim=16,
                     feature_encoder="gnubg_full")
