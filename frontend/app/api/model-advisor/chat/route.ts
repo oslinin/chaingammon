@@ -37,6 +37,10 @@ export async function POST(req: NextRequest) {
       "\n\nIf you provide code, ensure it implements the expected contract: " +
       "`__init__(in_dim: int = 198, hidden: int = 80, extras_dim: int = 16, *, core_seed: int = 0xBACC, extras_seed: int | None = None)` " +
       "and `forward(x: torch.Tensor, extras: torch.Tensor) -> torch.Tensor`. " +
+      "\n\nFor suggested models, use code that downloads ONNX weights or PyTorch code from 0G storage blobs when applicable. " +
+      "For example, the full gnubg model translated from C to PyTorch is available in 0G blob with hash: 0x93b7... (mock). " +
+      "The Random Forest wrapper is available in 0G blob with hash: 0x1f4a... (mock). " +
+      "The full gnubg model translated from C to PyTorch should include 2-ply evaluation, gnubg weights from ONNX, and the backoff mechanism. " +
       "Return the code in a single markdown code block with `python`. " +
       "Keep answers concise.";
 
