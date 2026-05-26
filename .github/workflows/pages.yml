@@ -56,6 +56,7 @@ jobs:
           # (which has a habit of navigating away from the dapp after the
           # connect approval). Empty value -> WalletConnect connector is
           # skipped at build time and the UI degrades gracefully.
+          NEXT_PUBLIC_PRIVY_APP_ID: ${{ secrets.PRIVY_APP_ID }}
           NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID: ${{ secrets.WALLETCONNECT_PROJECT_ID }}
 
       - name: Upload Pages artifact
