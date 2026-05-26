@@ -60,14 +60,14 @@ function AutoSwitchChain() {
 // modal cannot mount. Provision a free app at https://dashboard.privy.io
 // and put the ID in `frontend/.env` (or `.env.local`).
 //
-// Privy validates the App ID format (CUID2: lowercase alphanumeric, ≥25 chars).
-// When the env var is unset or invalid we skip PrivyProvider entirely so the
-// static export prerender doesn't crash — wallet login is simply unavailable
-// in that build. Since NEXT_PUBLIC_* vars are baked in at build time, the
-// condition is identical in the prerender and the hydrated client bundle, so
-// there is no hydration mismatch.
-const PRIVY_APP_ID = process.env.NEXT_PUBLIC_PRIVY_APP_ID ?? "";
-const HAS_PRIVY = /^[a-z][a-z0-9]{24,}$/.test(PRIVY_APP_ID);
+// Privy validates the app ID format (must be exactly 25 chars). When the
+// env var is unset we fall back to a 25-char placeholder so PrivyProvider
+// still mounts in dev / CI / preview builds — the bundle renders, the
+// "Log in" button is interactable, and clicking it surfaces Privy's own
+// "invalid app ID" error message in the modal. This keeps SSR + Playwright
+// from crashing the whole page when the secret isn't wired up.
+const PRIVY_APP_ID =
+  process.env.NEXT_PUBLIC_PRIVY_APP_ID ?? "MISSING-PRIVY-APP-ID-ENV0";
 
 // WalletConnect Project ID — Privy forwards this to the WalletConnect
 // connector it constructs internally. Get a free Project ID from
@@ -85,22 +85,14 @@ export function Providers({ children }: { children: React.ReactNode }) {
   // React Strict Mode double-invocations are safe.
   useEffect(() => { warmupOnnx(); }, []);
 
-  if (!HAS_PRIVY) return (
-    <QueryClientProvider client={queryClient}>
-      <WagmiProvider config={config}>
-        <AppModeProvider>
-          <ComputeBackendsProvider>
-            <I18nProvider>{children}</I18nProvider>
-          </ComputeBackendsProvider>
-        </AppModeProvider>
-      </WagmiProvider>
-    </QueryClientProvider>
-  );
-
   return (
     <PrivyProvider
       appId={PRIVY_APP_ID}
       config={{
+        // Three login methods per requirements: email and Google (each
+        // generates a Privy embedded wallet for the user), plus the
+        // generic "wallet" entry that covers MetaMask (injected) and
+        // WalletConnect-compatible mobile wallets.
         loginMethods: ["email", "google", "wallet"],
         appearance: {
           theme: "dark",
@@ -109,8 +101,16 @@ export function Providers({ children }: { children: React.ReactNode }) {
           showWalletLoginFirst: false,
         },
         embeddedWallets: {
-          ethereum: { createOnLogin: "users-without-wallets" },
+          ethereum: {
+            // Auto-create an embedded wallet only for users who haven't
+            // linked an external wallet (e.g. email/Google login). Users
+            // who connect MetaMask use that wallet directly.
+            createOnLogin: "users-without-wallets",
+          },
         },
+        // Forward the WalletConnect Project ID so the modal can render
+        // the WalletConnect QR option. Falls back to undefined when
+        // unset — Privy then hides that option.
         walletConnectCloudProjectId: WALLETCONNECT_PROJECT_ID,
         externalWallets: {
           walletConnect: { enabled: Boolean(WALLETCONNECT_PROJECT_ID) },
