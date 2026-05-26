@@ -264,7 +264,7 @@ def test_career_mode_requires_extras_dim_at_least_16(tmp_path):
         capture_output=True, text=True, timeout=30,
     )
     assert result.returncode != 0
-    assert "extras-dim >= 40" in result.stderr
+    assert "extras-dim >= 58" in result.stderr
 
 
 def test_career_mode_extras_use_real_encoder():

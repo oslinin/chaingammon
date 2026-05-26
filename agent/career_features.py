@@ -3,7 +3,7 @@
 The trainer's `BackgammonNet` exposes an `extras` head that consumes a
 fixed-dimension vector alongside the gnubg board features.
 
-Two encoding layouts are supported, selected by the `dim` argument to
+Three encoding layouts are supported, selected by the `dim` argument to
 `encode_career_context`:
 
   dim < 40  (legacy 16-d layout):
@@ -14,13 +14,22 @@ Two encoding layouts are supported, selected by the `dim` argument to
     [14]     1.0 if is_team_match else 0.0
     [15]     1.0  bias ones-channel
 
-  dim >= 40  (new 40-d layout — self+opponent style):
+  40 <= dim < 58  (40-d layout — self+opponent, no teammate):
     [0:18]   self_style projection — 18 ACTIVE_AXES (zero when None)
     [18:36]  opponent_style projection — 18 ACTIVE_AXES
     [36]     log1p(stake_wei) / 70, clamped to [0, 1]
     [37]     tournament_position, clamped to [-1, 1]
     [38]     1.0 if is_team_match else 0.0
     [39]     1.0  bias ones-channel
+
+  dim >= 58  (58-d layout — self+opponent+teammate):
+    [0:18]   self_style projection — 18 ACTIVE_AXES (zero when None)
+    [18:36]  opponent_style projection — 18 ACTIVE_AXES
+    [36:54]  teammate_style projection — 18 ACTIVE_AXES (zero when no teammate)
+    [54]     log1p(stake_wei) / 70, clamped to [0, 1]
+    [55]     tournament_position, clamped to [-1, 1]
+    [56]     1.0 if is_team_match else 0.0
+    [57]     1.0  bias ones-channel
 
 `ACTIVE_AXES` = ALL_CATEGORIES[:18] — the 18 non-cube style categories that
 the overlay classifier tracks (excludes cube_offer_aggressive,
@@ -197,8 +206,9 @@ def encode_career_context(ctx: CareerContext, *, dim: int = _MIN_DIM) -> torch.T
 
     Raises `ValueError` if `dim < 16`.
 
-    dim < 40: legacy 16-d layout (opponent_style, teammate_style, context).
-    dim >= 40: new 40-d layout (self_style, opponent_style, context).
+    dim < 40:  legacy 16-d layout (opponent_style, teammate_style, context).
+    40 <= dim < 58: 40-d layout (self_style, opponent_style, context — no teammate).
+    dim >= 58: 58-d layout (self_style, opponent_style, teammate_style, context).
     """
     if dim < _MIN_DIM:
         raise ValueError(
@@ -207,8 +217,23 @@ def encode_career_context(ctx: CareerContext, *, dim: int = _MIN_DIM) -> torch.T
 
     feat = torch.zeros(dim)
 
-    if dim >= 40:
-        # New 40-d layout: [own_18 | opp_18 | stake | tournament | is_team | bias]
+    if dim >= 58:
+        # 58-d layout: [own_18 | opp_18 | teammate_18 | stake | tournament | is_team | bias]
+        own = _project_style_full(ctx.self_style)
+        opp = _project_style_full(ctx.opponent_style)
+        team = _project_style_full(ctx.teammate_style)
+        for i, v in enumerate(own):
+            feat[i] = v
+        for i, v in enumerate(opp):
+            feat[18 + i] = v
+        for i, v in enumerate(team):
+            feat[36 + i] = v
+        feat[54] = min(math.log1p(max(int(ctx.stake_wei), 0)) / _STAKE_LOG_DIVISOR, 1.0)
+        feat[55] = max(-1.0, min(1.0, float(ctx.tournament_position)))
+        feat[56] = 1.0 if ctx.is_team_match else 0.0
+        feat[57] = 1.0
+    elif dim >= 40:
+        # 40-d layout: [own_18 | opp_18 | stake | tournament | is_team | bias]
         own = _project_style_full(ctx.self_style)
         opp = _project_style_full(ctx.opponent_style)
         for i, v in enumerate(own):
@@ -263,7 +288,7 @@ def sample_career_context(
       is_team_match:       True iff teammate_style is not None (or forced)
     """
     has_teammate = force_team if force_team is not None else (rng.random() < 0.5)
-    teammate_style = _sample_style(rng) if has_teammate else None
+    teammate_style = _sample_style_full(rng) if has_teammate else None
     log_stake = rng.uniform(0.0, math.log1p(10**21))
     stake_wei = max(0, int(math.expm1(log_stake)))
     return CareerContext(
