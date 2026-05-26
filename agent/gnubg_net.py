@@ -890,6 +890,11 @@ class GnubgNet(nn.Module):
     def _activate(self, z: torch.Tensor) -> torch.Tensor:
         return gnubg_logistic(z) if self.faithful else torch.sigmoid(z)
 
+    def hidden_features(self, x: torch.Tensor) -> torch.Tensor:
+        """The 128-d hidden activation — gnubg's learned board representation,
+        useful as a frozen feature extractor for a per-agent style head."""
+        return self._activate(self.beta_hidden * self.hidden(x))
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         h = self._activate(self.beta_hidden * self.hidden(x))
         return self._activate(self.beta_output * self.output(h))
@@ -912,10 +917,12 @@ class GnubgEvaluator:
         self.race = GnubgNet(nets["race"], faithful=faithful)
         self.crashed = GnubgNet(nets["crashed"], faithful=faithful)
 
-    def evaluate(self, board0: Sequence[int], board1: Sequence[int]) -> tuple[list[float], float]:
+    def _select(self, board0: Sequence[int], board1: Sequence[int]):
+        """Return (position class, input tensor [1,N], net) for a position, or
+        (CLASS_OVER, None, None) when the game is over."""
         cls = classify_position(board0, board1)
         if cls == CLASS_OVER:
-            return [0.0, 0.0, 0.0, 0.0, 0.0], -1.0
+            return cls, None, None
         if cls == CLASS_CONTACT:
             feats = calculate_contact_inputs(board0, board1)
             net = self.contact
@@ -925,8 +932,26 @@ class GnubgEvaluator:
         else:
             feats = calculate_race_inputs(board0, board1)
             net = self.race
-        x = torch.tensor(feats, dtype=torch.float32).unsqueeze(0)
+        return cls, torch.tensor(feats, dtype=torch.float32).unsqueeze(0), net
+
+    def evaluate(self, board0: Sequence[int], board1: Sequence[int]) -> tuple[list[float], float]:
+        cls, x, net = self._select(board0, board1)
+        if cls == CLASS_OVER:
+            return [0.0, 0.0, 0.0, 0.0, 0.0], -1.0
         with torch.no_grad():
             out = net(x).squeeze(0).tolist()
         out = sanity_check(board0, board1, out)
         return out, equity_from_outputs(out)
+
+    def features(self, board0: Sequence[int], board1: Sequence[int]) -> tuple[torch.Tensor, float]:
+        """gnubg's 128-d hidden representation (no grad) and the cubeless
+        equity for a position. Returns a zero feature vector and equity -1.0
+        for a finished game."""
+        cls, x, net = self._select(board0, board1)
+        if cls == CLASS_OVER:
+            return torch.zeros(128), -1.0
+        with torch.no_grad():
+            h = net.hidden_features(x).squeeze(0)
+            out = net(x).squeeze(0).tolist()
+        out = sanity_check(board0, board1, out)
+        return h, equity_from_outputs(out)
