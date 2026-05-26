@@ -15,9 +15,9 @@ n-ply equity of the resulting position and takes the move that minimises it
 0-ply), plies=1 is gnubg's 1-ply, and plies=2 is gnubg's default 2-ply.
 
 The evaluator is injected as `eval_fn(board0, board1) -> float` returning the
-cubeless equity for the side on roll (board0). `gnubg_eval_fn` wraps a
-GnubgEvaluator; a GnubgValueNet (agent/gnubg_agent.py) works too via
-`lambda b0, b1: net.equity(b0, b1, extras).item()`.
+cubeless equity for the side on roll (board0); `gnubg_eval_fn` wraps a
+GnubgEvaluator. This module is the offline reference/validation harness for the
+distilled net (see agent/gnubg_distill.py), not the served inference path.
 """
 from __future__ import annotations
 
