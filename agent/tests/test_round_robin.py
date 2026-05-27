@@ -11,7 +11,7 @@ from __future__ import annotations
 import io
 import json
 import math
-from itertools import combinations
+from itertools import combinations, permutations
 from pathlib import Path
 from typing import Iterator
 
@@ -57,7 +57,7 @@ def _stub_td_match():
 
 
 def test_pair_count_matches_combinations():
-    """epochs * C(N, 2) match events must be emitted, no more no less."""
+    """epochs * P(N, 2) match events must be emitted, no more no less."""
     buf = io.StringIO()
     stub, calls = _stub_td_match()
 
@@ -71,14 +71,14 @@ def test_pair_count_matches_combinations():
 
     events = _read_events(buf)
     matches = [e for e in events if e["event"] == "match"]
-    expected = 3 * (4 * 3 // 2)  # 3 epochs × C(4,2) = 18
+    expected = 3 * 4 * 3  # 3 epochs × P(4,2) = 36
     assert len(matches) == expected
     assert len(calls) == expected
 
 
-def test_pair_set_is_canonical_combinations():
-    """Each unordered pair appears exactly once per epoch and the
-    pair set equals `itertools.combinations(agent_ids, 2)`."""
+def test_pair_set_is_canonical_permutations():
+    """Each ordered pair appears exactly once per epoch and the
+    pair set equals `itertools.permutations(agent_ids, 2)`."""
     buf = io.StringIO()
     stub, _ = _stub_td_match()
 
@@ -92,7 +92,7 @@ def test_pair_set_is_canonical_combinations():
     )
 
     events = _read_events(buf)
-    expected_pairs = sorted(tuple(p) for p in combinations(agent_ids, 2))
+    expected_pairs = sorted(tuple(p) for p in permutations(agent_ids, 2))
     for epoch in range(2):
         epoch_pairs = sorted(
             (e["agent_a"], e["agent_b"])
@@ -119,14 +119,16 @@ def test_event_order_started_loaded_epochs_match():
     kinds = [e["event"] for e in events]
     assert kinds[0] == "started"
     assert kinds[1] == "agents_loaded"
-    # First epoch: epoch_start, match, epoch_end
+    # First epoch: epoch_start, match, match (permutations of 2 agents), epoch_end
     assert kinds[2] == "epoch_start"
     assert kinds[3] == "match"
-    assert kinds[4] == "epoch_end"
+    assert kinds[4] == "match"
+    assert kinds[5] == "epoch_end"
     # Second epoch
-    assert kinds[5] == "epoch_start"
-    assert kinds[6] == "match"
-    assert kinds[7] == "epoch_end"
+    assert kinds[6] == "epoch_start"
+    assert kinds[7] == "match"
+    assert kinds[8] == "match"
+    assert kinds[9] == "epoch_end"
 
 
 def test_seed_fresh_when_no_weights_hash():
@@ -263,8 +265,8 @@ def test_status_fh_none_does_not_raise():
         td_match=stub,
         weights_hash_resolver=lambda aid: "",
     )
-    # 2 epochs × C(2,2)=1 → 2 matches expected.
-    assert len(calls) == 2
+    # 2 epochs × P(2,2)=2 → 4 matches expected.
+    assert len(calls) == 4
 
 
 def test_use_0g_inference_flag_is_recorded():
@@ -286,7 +288,7 @@ def test_use_0g_inference_flag_is_recorded():
 
 
 def test_total_games_in_started_event():
-    """`started` carries `total_games = epochs × C(N,2)` so the frontend
+    """`started` carries `total_games = epochs × P(N,2)` so the frontend
     progress bar has a denominator without re-counting."""
     buf = io.StringIO()
     stub, _ = _stub_td_match()
@@ -298,8 +300,8 @@ def test_total_games_in_started_event():
         weights_hash_resolver=lambda aid: "",
     )
     started = _read_events(buf)[0]
-    assert started["total_games"] == 4 * (5 * 4 // 2)
-    assert started["games_per_epoch"] == (5 * 4 // 2)
+    assert started["total_games"] == 4 * 5 * 4  # epochs × P(N,2) = 4×20 = 80
+    assert started["games_per_epoch"] == 5 * 4   # P(5,2) = 20
 
 
 # ─── load_or_seed integration via the resolver ─────────────────────────────
@@ -481,17 +483,19 @@ def test_pick_move_infer_fn_overrides_net():
 def test_opponent_style_fed_from_resolver():
     """Each learner conditions on its OPPONENT's resolved style, not a
     random career context: the learner's extras must carry the opponent's
-    hits_blot at the corresponding STYLE_AXES slot."""
-    from career_features import STYLE_AXES
+    hits_blot at the corresponding ACTIVE_AXES slot in opponent_style section."""
+    from career_features import ACTIVE_AXES
 
-    hb = STYLE_AXES.index("hits_blot")
+    # In the 58-d layout: [0:18]=self_style, [18:36]=opponent_style (both ACTIVE_AXES).
+    opp_style_offset = 18
+    hb = ACTIVE_AXES.index("hits_blot")
     styles = {1: {"hits_blot": 0.9}, 2: {"hits_blot": 0.2}}
 
     captured: list[tuple] = []
 
     def stub(agent, opp, agent_extras, opp_extras, *, gamma, lam, lr, **kwargs):
         captured.append((id(agent), id(opp), agent_extras.clone()))
-        return 30, 1
+        return 30, 1, [], []
 
     buf = io.StringIO()
     agents = run_round_robin(
@@ -507,8 +511,8 @@ def test_opponent_style_fed_from_resolver():
     assert captured  # at least one match ran
     for _learner_id, opp_id, extras in captured:
         opp_aid = id_to_aid[opp_id]
-        # The learner's extras encode the OPPONENT's style at slot `hb`.
-        assert extras[hb].item() == pytest.approx(styles[opp_aid]["hits_blot"])
+        # The learner's extras encode the OPPONENT's style at opp_style_offset + hb.
+        assert extras[opp_style_offset + hb].item() == pytest.approx(styles[opp_aid]["hits_blot"])
 
 
 def test_resolve_agent_style_offline_returns_empty(monkeypatch):

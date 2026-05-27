@@ -1652,14 +1652,27 @@ def list_agents():
         try:
             aid = chain.active_agent_at(i)
             hashes = chain.agent_data_hashes(aid)
+            meta_uri = ""
+            try:
+                meta_uri = chain.agent_metadata_uri(aid)
+            except Exception:
+                pass
+            try:
+                meta = json.loads(meta_uri)
+                label = meta.get("label", meta_uri)
+                summary = meta.get("summary", "")
+            except Exception:
+                label = meta_uri
+                summary = ""
             agents.append({
                 "agent_id": aid,
                 "weights_hash": hashes[1] if len(hashes) >= 2 else "",
                 "match_count": chain.agent_match_count(aid),
                 "tier": chain.agent_tier(aid),
+                "label": label,
+                "summary": summary,
             })
         except ChainError:
-            # Report that we couldn't read this specific active index.
             pass
     return agents
 
@@ -1872,6 +1885,87 @@ def post_equity(req: EquityRequest):
 
 # ─── Agent Teammate Chat ──────────────────────────────────────────────────────
 
+
+def _fetch_opponent_match_records(chain: "ChainClient", agent_id: int, limit: int = 20) -> list[dict]:
+    """Return up to `limit` parsed game-record blobs where `agent_id` participated.
+
+    Scans backwards from the most recent match (up to 200 entries) so we
+    surface the freshest data. Blob fetch failures are silently skipped.
+    """
+    import logging as _log
+    log = _log.getLogger(__name__)
+    try:
+        total = chain.match_count()
+    except Exception as e:
+        log.warning("match_count() failed: %s", e)
+        return []
+
+    records: list[dict] = []
+    zero_hash = "0x" + "00" * 32
+    for match_id in range(total - 1, max(-1, total - 200), -1):
+        if len(records) >= limit:
+            break
+        try:
+            info = chain.get_match(match_id)
+        except Exception:
+            continue
+        winner_aid = int(info.get("winnerAgentId", 0))
+        loser_aid = int(info.get("loserAgentId", 0))
+        if winner_aid != agent_id and loser_aid != agent_id:
+            continue
+        game_record_hash = info.get("gameRecordHash", "")
+        if not game_record_hash or game_record_hash == zero_hash:
+            continue
+        try:
+            blob = get_blob(game_record_hash)
+            rec = json.loads(blob)
+            rec["_match_id"] = match_id
+            rec["_winner_agent_id"] = winner_aid
+            rec["_loser_agent_id"] = loser_aid
+            records.append(rec)
+        except Exception as e:
+            log.debug("blob fetch skipped match %d: %s", match_id, e)
+
+    return records
+
+
+def _analyze_match_records(records: list[dict], agent_id: int) -> dict:
+    """Extract behavioral tendencies from a list of game records.
+
+    Counts are over all moves in each game (both sides), because the gnubg
+    move format doesn't reliably encode which side each move belongs to
+    without replaying the full board state. Stats are still meaningful as
+    game-level aggression/pressure signals.
+    """
+    if not records:
+        return {}
+
+    wins = 0
+    total_moves = 0
+    hit_moves = 0  # moves containing '*' (hit a blot)
+    bar_entries = 0  # moves from the bar
+
+    for rec in records:
+        if rec.get("_winner_agent_id") == agent_id:
+            wins += 1
+        for m in rec.get("moves", []) or []:
+            mv = (m.get("move") or "").strip()
+            if not mv:
+                continue
+            total_moves += 1
+            if "*" in mv:
+                hit_moves += 1
+            if mv.lower().startswith("bar/"):
+                bar_entries += 1
+
+    return {
+        "games_analyzed": len(records),
+        "win_rate": round(wins / len(records), 2),
+        "hit_rate": round(hit_moves / max(1, total_moves), 2),
+        "bar_entry_rate": round(bar_entries / max(1, total_moves), 2),
+    }
+
+
 _DEEP_DIVE_TRIGGERS = [
     "validate", "intuition", "deep dive", "deep-dive", "historical",
     "history", "database", "tell me more", "confirm", "sure about",
@@ -1954,6 +2048,40 @@ def post_agent_teammate_chat(req: TeammateRequest):
         except Exception:
             pass
 
+    # Opponent match history: fetch blobs and derive behavioural patterns.
+    # The LLM receives all raw move strings so it can spot patterns itself,
+    # plus pre-computed stats so it doesn't have to count manually.
+    match_history_section = ""
+    match_history_data: dict | None = None
+    if req.agent_id:
+        try:
+            _chain = ChainClient.from_env()
+            _records = _fetch_opponent_match_records(_chain, req.agent_id, limit=20)
+            if _records:
+                match_history_data = _analyze_match_records(_records, req.agent_id)
+                # Build raw move log (one game per block, moves as "dice: move")
+                raw_lines = []
+                for rec in _records:
+                    mid = rec.get("_match_id", "?")
+                    won = rec.get("_winner_agent_id") == req.agent_id
+                    raw_lines.append(f"Game {mid} ({'W' if won else 'L'}):")
+                    for m in (rec.get("moves") or [])[:30]:  # cap at 30 moves per game
+                        dice_str = "/".join(str(d) for d in (m.get("dice") or []))
+                        mv = m.get("move", "")
+                        if mv:
+                            raw_lines.append(f"  {dice_str}: {mv}")
+                    raw_lines.append("")
+                moves_dump = "\n".join(raw_lines)
+                match_history_section = (
+                    f"Opponent Match History — Agent #{req.agent_id} ({match_history_data['games_analyzed']} games):\n"
+                    f"Stats: win_rate={match_history_data['win_rate']*100:.0f}%  "
+                    f"hit_aggression={match_history_data['hit_rate']*100:.0f}%  "
+                    f"bar_pressure={match_history_data['bar_entry_rate']*100:.0f}%\n\n"
+                    f"Raw move log:\n{moves_dump}\n"
+                )
+        except Exception:
+            pass
+
     needs_deep_dive = any(
         t in (req.human_strategy or "").lower() or
         t in (req.dialogue[-1].text if req.dialogue else "").lower()
@@ -1975,6 +2103,7 @@ def post_agent_teammate_chat(req: TeammateRequest):
 
     user_msg = (
         f"{historical_section}"
+        f"{match_history_section}"
         f"{opp_section}"
         f"Candidate moves (ranked by theoretical equity):\n{candidates_section}\n\n"
         f"{strategy_section}"
@@ -2018,6 +2147,7 @@ def post_agent_teammate_chat(req: TeammateRequest):
         "recommended_move": recommended_move,
         "recommended_tag": recommended_tag,
         "deep_dive": deep_dive,
+        "match_history": match_history_data,
         "backend": "compute",
         "latency_ms": int((time.time() - t0) * 1000),
     }

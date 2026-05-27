@@ -196,7 +196,7 @@ class ModelProfile(AgentProfile):
         count = int(self._metadata.get("match_count", 0))
         if count == 0:
             return "This agent is a fresh value network — no training matches recorded yet."
-        return f"This agent is a trained value network with {count} games of experience."
+        return "This agent is a trained value network."
 
     def metrics(self) -> Mapping[str, object]:
         return {"kind": "model", **self._metadata}

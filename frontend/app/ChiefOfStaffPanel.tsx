@@ -39,11 +39,19 @@ interface TeammateMessage {
   text: string;
 }
 
+interface MatchHistory {
+  games_analyzed: number;
+  win_rate: number;
+  hit_rate: number;
+  bar_entry_rate: number;
+}
+
 interface TeammateResponse {
   reply: string;
   recommended_move: string | null;
   recommended_tag: string | null;
   deep_dive: string | null;
+  match_history: MatchHistory | null;
   backend: string;
   latency_ms: number;
 }
@@ -285,6 +293,8 @@ export function AgentTeammatePanel({
     t("quick_prime"),
   ];
 
+  const SCAN_LABEL = "Scan his records";
+
   // ── Render ─────────────────────────────────────────────────────────────
 
   return (
@@ -502,6 +512,43 @@ export function AgentTeammatePanel({
           </div>
         )}
 
+        {/* Match history analysis card */}
+        {lastResponse?.match_history && (
+          <div
+            style={{
+              borderRadius: "var(--cg-radius)",
+              border: "1px solid rgba(107,138,166,0.35)",
+              background: "rgba(107,138,166,0.08)",
+              padding: "10px 14px",
+              fontSize: 12,
+            }}
+          >
+            <p style={{ fontWeight: 600, color: "var(--cg-fg-2)", marginBottom: 8, fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase" }}>
+              Opponent record scan · {lastResponse.match_history.games_analyzed} games
+            </p>
+            <div style={{ display: "flex", gap: 16 }}>
+              <div style={{ textAlign: "center" }}>
+                <p style={{ fontSize: 18, fontWeight: 700, color: "var(--cg-fg-1)", fontFamily: "var(--cg-font-mono)" }}>
+                  {Math.round(lastResponse.match_history.win_rate * 100)}%
+                </p>
+                <p style={{ fontSize: 10, color: "var(--cg-fg-4)" }}>win rate</p>
+              </div>
+              <div style={{ textAlign: "center" }}>
+                <p style={{ fontSize: 18, fontWeight: 700, color: "var(--cg-fg-1)", fontFamily: "var(--cg-font-mono)" }}>
+                  {Math.round(lastResponse.match_history.hit_rate * 100)}%
+                </p>
+                <p style={{ fontSize: 10, color: "var(--cg-fg-4)" }}>hit aggression</p>
+              </div>
+              <div style={{ textAlign: "center" }}>
+                <p style={{ fontSize: 18, fontWeight: 700, color: "var(--cg-fg-1)", fontFamily: "var(--cg-font-mono)" }}>
+                  {Math.round(lastResponse.match_history.bar_entry_rate * 100)}%
+                </p>
+                <p style={{ fontSize: 10, color: "var(--cg-fg-4)" }}>bar pressure</p>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Conversation history */}
         {dialogue.length > 0 && (
           <div style={{ display: "flex", flexDirection: "column", gap: 8, paddingRight: 4 }}>
@@ -556,6 +603,45 @@ export function AgentTeammatePanel({
                 {action}
               </button>
             ))}
+            {opponentId != null && (
+              <button
+                type="button"
+                onClick={() => void sendStrategy(SCAN_LABEL)}
+                style={{
+                  borderRadius: "var(--cg-radius-pill)",
+                  border: "1px solid rgba(107,138,166,0.50)",
+                  background: "rgba(107,138,166,0.10)",
+                  padding: "3px 10px",
+                  fontSize: 11,
+                  color: "#6B8AA6",
+                  cursor: "pointer",
+                  transition: "border-color 120ms, background 120ms",
+                }}
+              >
+                🔍 {SCAN_LABEL}
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* Persistent scan suggestion when mid-conversation and no history loaded */}
+        {!disabled && dialogue.length > 0 && opponentId != null && !lastResponse?.match_history && (
+          <div style={{ display: "flex", justifyContent: "flex-start" }}>
+            <button
+              type="button"
+              onClick={() => void sendStrategy(SCAN_LABEL)}
+              style={{
+                borderRadius: "var(--cg-radius-pill)",
+                border: "1px solid rgba(107,138,166,0.50)",
+                background: "rgba(107,138,166,0.08)",
+                padding: "3px 10px",
+                fontSize: 11,
+                color: "#6B8AA6",
+                cursor: "pointer",
+              }}
+            >
+              🔍 {SCAN_LABEL}
+            </button>
           </div>
         )}
 
