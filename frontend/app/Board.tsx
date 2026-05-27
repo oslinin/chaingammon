@@ -933,12 +933,12 @@ export function Board({
               <stop offset="100%" stopColor={theme.felt} />
             </radialGradient>
             <radialGradient id="cg-p0" cx="38%" cy="30%" r="70%">
-              <stop offset="0%" stopColor={theme.checkerWarm.fill} stopOpacity={0.7} />
-              <stop offset="100%" stopColor={theme.checkerWarm.fill} />
+              <stop offset="0%"   stopColor={theme.checkerWarm.fill}   stopOpacity={1} />
+              <stop offset="100%" stopColor={theme.checkerWarm.stroke}  stopOpacity={1} />
             </radialGradient>
             <radialGradient id="cg-p1" cx="38%" cy="30%" r="70%">
-              <stop offset="0%" stopColor={theme.checkerCool.fill} stopOpacity={0.7} />
-              <stop offset="100%" stopColor={theme.checkerCool.fill} />
+              <stop offset="0%"   stopColor={theme.checkerCool.fill}   stopOpacity={1} />
+              <stop offset="100%" stopColor={theme.checkerCool.stroke}  stopOpacity={1} />
             </radialGradient>
             <filter id="cg-glow" x="-50%" y="-50%" width="200%" height="200%">
               <feGaussianBlur in="SourceGraphic" stdDeviation="4" result="blur" />
