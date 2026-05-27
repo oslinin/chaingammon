@@ -429,6 +429,56 @@ export default function Home() {
           </p>
         </div>
 
+        {/* Protocol strip */}
+        <section style={{ borderTop: "1px solid var(--cg-line-1)", paddingTop: 48, paddingBottom: 56 }}>
+          <div style={{
+            fontFamily: "var(--cg-font-sans)", fontSize: 11, fontWeight: 500,
+            letterSpacing: "0.22em", textTransform: "uppercase" as const,
+            color: "var(--cg-fg-3)", marginBottom: 32,
+          }}>
+            How the protocol works
+          </div>
+          <div style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
+            gap: 32,
+          }}>
+            {[
+              {
+                eb: "In your wallet",
+                h: "A portable name.",
+                p: "Every player gets an ENS subname — <name>.chaingammon.eth — whose text records hold your live ELO and a link to every match you have ever played.",
+              },
+              {
+                eb: "On-chain",
+                h: "A public registry.",
+                p: "Match results write to a smart contract on 0G Chain. Ratings update by a transparent fixed-point ELO formula. No private database, no opaque matchmaking.",
+              },
+              {
+                eb: "On 0G Storage",
+                h: "Every move, replayable.",
+                p: "Each game record — dice, moves, final position — is archived on 0G Storage. Anyone can replay the match from its on-chain hash alone.",
+              },
+            ].map((item) => (
+              <div key={item.eb} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                <div style={{
+                  fontFamily: "var(--cg-font-sans)", fontSize: 11, fontWeight: 500,
+                  letterSpacing: "0.18em", textTransform: "uppercase" as const,
+                  color: "var(--cg-brass)",
+                }}>{item.eb}</div>
+                <div style={{
+                  fontFamily: "var(--cg-font-display)", fontWeight: 400, fontSize: 28,
+                  lineHeight: 1.2, letterSpacing: "-0.015em", color: "var(--cg-fg-1)",
+                }}>{item.h}</div>
+                <p style={{
+                  fontFamily: "var(--cg-font-sans)", fontSize: 14, lineHeight: 1.6,
+                  color: "var(--cg-fg-2)", margin: 0,
+                }}>{item.p}</p>
+              </div>
+            ))}
+          </div>
+        </section>
+
         {/* Agents section */}
         <section className="flex flex-col gap-4 cg-fade-up-2">
           <div style={{ borderTop: "1px solid var(--cg-line-1)", paddingTop: 24 }}>
@@ -460,6 +510,51 @@ export default function Home() {
           {t("transactions")}
         </Link>
       </main>
+
+      {/* Footer */}
+      <footer style={{
+        borderTop: "1px solid var(--cg-line-1)",
+        padding: "32px 32px",
+        maxWidth: 768, margin: "0 auto", width: "100%",
+        display: "flex", alignItems: "center", justifyContent: "space-between",
+        gap: 32, flexWrap: "wrap" as const,
+      }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <img
+            src={`${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/chaingammon-icon-mono.svg`}
+            alt=""
+            width={24}
+            height={24}
+          />
+          <span style={{
+            fontFamily: "var(--cg-font-display)", fontStyle: "italic",
+            fontSize: 16, color: "var(--cg-fg-3)",
+          }}>
+            Your rating, etched on chain.
+          </span>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 24 }}>
+          <a
+            href="https://github.com/oslinin/chaingammon"
+            style={{ fontFamily: "var(--cg-font-sans)", fontSize: 13, color: "var(--cg-fg-2)", textDecoration: "none" }}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            GitHub
+          </a>
+          <a
+            href="https://app.ens.domains/chaingammon.eth"
+            style={{ fontFamily: "var(--cg-font-sans)", fontSize: 13, color: "var(--cg-fg-2)", textDecoration: "none" }}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            chaingammon.eth
+          </a>
+          <span style={{ fontFamily: "var(--cg-font-mono)", fontSize: 11, color: "var(--cg-fg-4)" }}>
+            v0.6 · testnet
+          </span>
+        </div>
+      </footer>
     </div>
   );
 }

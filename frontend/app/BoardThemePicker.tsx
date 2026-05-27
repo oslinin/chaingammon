@@ -9,14 +9,38 @@ interface Props {
 }
 
 export function BoardThemePicker({ value, onChange }: Props) {
+  const activeLabel = BOARD_THEMES[value]?.label ?? "";
+  const [name, era] = activeLabel.includes(" — ")
+    ? activeLabel.split(" — ", 2)
+    : [activeLabel, ""];
+
   return (
-    <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      {/* Active board label */}
+      <div style={{ display: "flex", alignItems: "baseline", gap: 8, minHeight: 18 }}>
+        <span style={{
+          fontFamily: "var(--cg-font-sans)",
+          fontSize: 13,
+          fontWeight: 600,
+          color: "var(--cg-fg-1)",
+        }}>{name}</span>
+        {era && (
+          <span style={{
+            fontFamily: "var(--cg-font-mono)",
+            fontSize: 11,
+            color: "var(--cg-fg-3)",
+          }}>{era}</span>
+        )}
+      </div>
+
+      {/* Swatch grid */}
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
         {THEME_ORDER.map((key, idx) => {
           const t = BOARD_THEMES[key];
           const active = key === value;
           return (
             <React.Fragment key={key}>
-              {idx === 11 && (
+              {idx === 13 && (
                 <span style={{ width: "100%", height: 1, background: "rgba(255,255,255,0.12)", flexShrink: 0, margin: "2px 0" }} />
               )}
             <button
@@ -97,6 +121,7 @@ export function BoardThemePicker({ value, onChange }: Props) {
             </React.Fragment>
           );
         })}
+      </div>
     </div>
   );
 }
