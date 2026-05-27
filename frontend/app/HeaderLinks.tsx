@@ -9,6 +9,19 @@ export function HeaderLinks() {
   return (
     <>
       <Link
+        href="/stages"
+        className="cg-nav-link"
+        style={{
+          fontSize: 13,
+          textDecoration: "none",
+          fontFamily: "var(--cg-font-sans)",
+          padding: "4px 8px",
+          borderRadius: "var(--cg-radius-sm)",
+        }}
+      >
+        Stages
+      </Link>
+      <Link
         href="/help"
         target="_blank"
         rel="noreferrer"
