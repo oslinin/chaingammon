@@ -237,7 +237,8 @@ export function AgentTeammatePanel({
       const opponentFeatures =
         opponentId != null ? `Agent #${opponentId} in play` : undefined;
 
-      const res = await fetch("/api/agent-teammate/chat", {
+      const SERVER = process.env.NEXT_PUBLIC_SERVER_URL ?? "http://localhost:8000";
+      const res = await fetch(`${SERVER}/agent-teammate/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -252,7 +253,7 @@ export function AgentTeammatePanel({
       });
       if (!res.ok) {
         const errorData = await res.json().catch(() => ({}));
-        throw new Error(errorData.error || `${res.status}`);
+        throw new Error(errorData.detail || errorData.error || `HTTP ${res.status}`);
       }
       const data = (await res.json()) as TeammateResponse;
 
