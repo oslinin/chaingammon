@@ -678,7 +678,7 @@ def estimate_run(
     with the carried `note`.
     """
     n = len(agent_ids)
-    games = epochs * n * (n - 1) // 2 if n >= 2 else 0
+    games = epochs * n * (n - 1) if n >= 2 else 0  # permutations: both (a,b) and (b,a) play
     total_inferences = games * MEAN_PLIES_PER_GAME
 
     if not use_0g_inference:

@@ -19,6 +19,7 @@ import pytest
 import torch
 
 from career_features import (
+    ACTIVE_AXES,
     STYLE_AXES,
     CareerContext,
     encode_career_context,
@@ -219,7 +220,7 @@ def test_sample_career_context_force_team_true():
     ctx = sample_career_context(random.Random(0), force_team=True)
     assert ctx.is_team_match is True
     assert ctx.teammate_style is not None
-    assert set(ctx.teammate_style.keys()) == set(STYLE_AXES)
+    assert set(ctx.teammate_style.keys()) == set(ACTIVE_AXES)
 
 
 def test_sample_career_context_force_team_false():

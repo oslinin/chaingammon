@@ -187,6 +187,8 @@ interface AgentRow {
   weights_hash: string;
   match_count: number;
   tier: number;
+  label: string;
+  summary: string;
 }
 
 interface AdvisorSignal {
@@ -883,6 +885,7 @@ function TeamDemoPageInner() {
       { address: agentRegistry, abi: AgentRegistryABI, functionName: "dataHashes" as const, args, chainId },
       { address: agentRegistry, abi: AgentRegistryABI, functionName: "matchCount" as const, args, chainId },
       { address: agentRegistry, abi: AgentRegistryABI, functionName: "tier" as const, args, chainId },
+      { address: agentRegistry, abi: AgentRegistryABI, functionName: "agentMetadata" as const, args, chainId },
     ];
   });
   const { data: agentDetailResults } = useReadContracts({
@@ -891,7 +894,7 @@ function TeamDemoPageInner() {
   });
 
   const agents: AgentRow[] = onChainAgentIds.map((agent_id, i) => {
-    const base = i * 3;
+    const base = i * 4;
     const hashes = agentDetailResults?.[base]?.result as
       | readonly [`0x${string}`, `0x${string}`]
       | undefined;
@@ -899,9 +902,17 @@ function TeamDemoPageInner() {
       | number
       | bigint
       | undefined;
-    const tierRaw = agentDetailResults?.[base + 2]?.result as
-      | number
-      | undefined;
+    const tierRaw = agentDetailResults?.[base + 2]?.result as number | undefined;
+    const metaRaw = (agentDetailResults?.[base + 3]?.result as string | undefined) ?? "";
+    let label = metaRaw;
+    let summary = "";
+    if (metaRaw.startsWith("{")) {
+      try {
+        const m = JSON.parse(metaRaw);
+        label = m.label ?? metaRaw;
+        summary = m.summary ?? "";
+      } catch { /* plain string */ }
+    }
     return {
       agent_id,
       weights_hash: hashes?.[1] ?? "",
@@ -910,6 +921,8 @@ function TeamDemoPageInner() {
           ? Number(matchCountRaw)
           : matchCountRaw ?? 0,
       tier: tierRaw ?? 0,
+      label,
+      summary,
     };
   });
 
@@ -1412,7 +1425,8 @@ function TeamDemoPageInner() {
                   }}
                   className="disabled:opacity-30 disabled:cursor-not-allowed"
                 >
-                  Agent #{a.agent_id}
+                  {a.label || `Agent #${a.agent_id}`}
+                  {a.summary && <span style={{ marginLeft: 4, opacity: 0.7 }}>{a.summary}</span>}
                   {isOpponent && (
                     <span style={{ marginLeft: 4, fontSize: 10, opacity: 0.6 }}>(Opp)</span>
                   )}
@@ -1451,7 +1465,8 @@ function TeamDemoPageInner() {
                   }}
                   className="disabled:opacity-30 disabled:cursor-not-allowed"
                 >
-                  Agent #{a.agent_id}
+                  {a.label || `Agent #${a.agent_id}`}
+                  {a.summary && <span style={{ marginLeft: 4, opacity: 0.7 }}>{a.summary}</span>}
                   {isTeammate && (
                     <span style={{ marginLeft: 4, fontSize: 10, opacity: 0.6 }}>(Team)</span>
                   )}

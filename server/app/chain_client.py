@@ -713,6 +713,10 @@ class ChainClient:
         contract = self._require_agent_registry()
         return int(contract.functions.matchCount(agent_id).call())
 
+    def agent_metadata_uri(self, agent_id: int) -> str:
+        contract = self._require_agent_registry()
+        return str(contract.functions.agentMetadata(agent_id).call())
+
     def agent_owner(self, agent_id: int) -> str:
         """Return the ERC-721 owner address of the agent NFT."""
         contract = self._require_agent_registry()

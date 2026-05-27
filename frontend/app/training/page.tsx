@@ -73,6 +73,8 @@ interface AgentRow {
   weights_hash: string;
   match_count: number;
   tier: number;
+  label: string;
+  summary: string;
 }
 
 // UI state machine — the 0G branch drives `phase` directly; the local
@@ -189,6 +191,7 @@ export default function TrainingPage() {
       { address: agentRegistry, abi: AgentRegistryABI, functionName: "dataHashes" as const, args, chainId },
       { address: agentRegistry, abi: AgentRegistryABI, functionName: "matchCount" as const, args, chainId },
       { address: agentRegistry, abi: AgentRegistryABI, functionName: "tier" as const, args, chainId },
+      { address: agentRegistry, abi: AgentRegistryABI, functionName: "agentMetadata" as const, args, chainId },
     ];
   });
   const { data: agentDetailResults, isLoading: agentDetailsLoading } = useReadContracts({
@@ -197,7 +200,7 @@ export default function TrainingPage() {
   });
 
   const agents: AgentRow[] = onChainAgentIds.map((agent_id, i) => {
-    const base = i * 3;
+    const base = i * 4;
     const hashes = agentDetailResults?.[base]?.result as
       | readonly [`0x${string}`, `0x${string}`]
       | undefined;
@@ -206,12 +209,24 @@ export default function TrainingPage() {
       | bigint
       | undefined;
     const tierRaw = agentDetailResults?.[base + 2]?.result as number | undefined;
+    const metaRaw = (agentDetailResults?.[base + 3]?.result as string | undefined) ?? "";
+    let label = metaRaw;
+    let summary = "";
+    if (metaRaw.startsWith("{")) {
+      try {
+        const m = JSON.parse(metaRaw);
+        label = m.label ?? metaRaw;
+        summary = m.summary ?? "";
+      } catch { /* plain string */ }
+    }
     return {
       agent_id,
       weights_hash: hashes?.[1] ?? "",
       match_count:
         typeof matchCountRaw === "bigint" ? Number(matchCountRaw) : matchCountRaw ?? 0,
       tier: tierRaw ?? 0,
+      label,
+      summary,
     };
   });
 
@@ -806,7 +821,8 @@ function AgentSelector({
                   : "border-zinc-300 bg-white text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300",
               ].join(" ")}
             >
-              <span className="font-mono">#{a.agent_id}</span>
+              <span className="font-mono">{a.label || `#${a.agent_id}`}</span>
+              {a.summary && <span className="ml-1.5 opacity-70">{a.summary}</span>}
               <span className="ml-1 text-zinc-500">({a.match_count})</span>
             </button>
           );

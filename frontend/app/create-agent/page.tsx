@@ -175,6 +175,7 @@ export default function CreateAgentPage() {
   const { writeContractAsync: writeVaultAsync } = useSponsoredWrite();
 
   const [agentLabel, setAgentLabel] = useState("");
+  const [agentSummary, setAgentSummary] = useState("");
   const [agentTier, setAgentTier] = useState<number>(0);
   const [fundingEth, setFundingEth] = useState("");
   const [modelCode, setModelCode] = useState<string>(DEFAULT_MODEL_CODE);
@@ -313,11 +314,15 @@ export default function CreateAgentPage() {
     setFundStatus("idle");
     setFundError(null);
     reset();
+    const summary = agentSummary.trim();
+    const metadataURI = summary
+      ? JSON.stringify({ label: agentLabel.trim(), summary })
+      : agentLabel.trim();
     writeContract({
       address: agentRegistry,
       abi: AGENT_REGISTRY_ABI,
       functionName: "mintAgent",
-      args: [address, agentLabel.trim(), agentTier],
+      args: [address, metadataURI, agentTier],
     });
   };
 
@@ -364,6 +369,25 @@ export default function CreateAgentPage() {
             }}
             placeholder="agent-label"
             className="h-9 rounded border border-zinc-300 bg-white px-3 font-mono text-sm text-zinc-900 placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50"
+            disabled={busy}
+          />
+        </div>
+
+        <div className="flex flex-col gap-1">
+          <label
+            htmlFor="agent-summary"
+            className="text-sm font-medium text-zinc-700 dark:text-zinc-300"
+          >
+            Summary <span className="font-normal text-zinc-400">(optional)</span>
+          </label>
+          <input
+            id="agent-summary"
+            data-testid="agent-summary-input"
+            type="text"
+            value={agentSummary}
+            onChange={(e) => setAgentSummary(e.target.value)}
+            placeholder="e.g. simple neural network, full gnubg, sklearn classifier"
+            className="h-9 rounded border border-zinc-300 bg-white px-3 text-sm text-zinc-900 placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50"
             disabled={busy}
           />
         </div>

@@ -25,12 +25,11 @@ Status JSONL events (one event per line):
     {"event":"agent_save_error", "agent_id":a, "detail":..., "ts":...}
     {"event":"done"|"aborted","ts":...}
 
-Pairing is `itertools.combinations(agent_ids, 2)` — each unordered pair
-plays once per epoch. In a single match `td_lambda_match` updates only
-the first net (the second is frozen for that match), so over multiple
-epochs every agent receives gradient updates against every other.
-With `epochs >= len(agent_ids) - 1` every agent has trained against
-every other at least once.
+Pairing is `itertools.permutations(agent_ids, 2)` — both `(a, b)` and
+`(b, a)` play each epoch so every agent gets to be the learner against
+every other. A single match updates only the first net (the second is
+frozen), so playing both orderings ensures symmetric gradient updates.
+`N * (N-1)` matches per epoch total.
 
 SIGTERM-safe: the FastAPI `/training/abort` endpoint sends SIGTERM and
 expects a final 'aborted' event so the status reader can distinguish
@@ -271,7 +270,7 @@ def run_round_robin(
         raise ValueError("epochs must be >= 1")
 
     n = len(agent_ids)
-    games_per_epoch = n * (n - 1) // 2
+    games_per_epoch = n * (n - 1)  # permutations: (a,b) and (b,a) both play
     total_games = epochs * games_per_epoch
 
     _emit(

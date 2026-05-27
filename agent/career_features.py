@@ -282,7 +282,7 @@ def sample_career_context(
     Distributions:
       self_style:          provided or uniform [-1, 1] per ACTIVE_AXES (18)
       opponent_style:      provided or uniform [-1, 1] per STYLE_AXES (6)
-      teammate_style:      same as STYLE_AXES with prob 0.5 (else None)
+      teammate_style:      uniform [-1, 1] per ACTIVE_AXES (18) with prob 0.5 (else None)
       stake_wei:           log-uniform across [0, 1e21]
       tournament_position: uniform [-1, 1]
       is_team_match:       True iff teammate_style is not None (or forced)

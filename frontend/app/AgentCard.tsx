@@ -64,6 +64,17 @@ export function AgentCard({ agentId }: AgentCardProps) {
   const metadataUri = data?.[0]?.result as string | undefined;
   const elo = data?.[1]?.result as bigint | undefined;
 
+  // Parse metadataUri: either JSON {"label","summary"} or a plain label string.
+  let parsedLabel = metadataUri ?? "";
+  let parsedSummary = "";
+  if (metadataUri?.startsWith("{")) {
+    try {
+      const m = JSON.parse(metadataUri);
+      parsedLabel = m.label ?? metadataUri;
+      parsedSummary = m.summary ?? "";
+    } catch { /* plain string fallback below */ }
+  }
+
   const walletQuery = useQuery({
     queryKey: ["agent-wallet", agentId],
     refetchInterval: 8000,
@@ -104,8 +115,8 @@ export function AgentCard({ agentId }: AgentCardProps) {
   // protocol prefix and any path slashes, then attach the parent. Fall
   // back to a plain `Agent #N` if it's missing or suspiciously long
   // (would be a real URI rather than a short label).
-  const cleanedLabel = metadataUri
-    ? metadataUri.replace(/^ipfs:\/\//, "").replace(/^[^:]+:\/\//, "").replaceAll("/", "-")
+  const cleanedLabel = parsedLabel
+    ? parsedLabel.replace(/^ipfs:\/\//, "").replace(/^[^:]+:\/\//, "").replaceAll("/", "-")
     : "";
   const label =
     cleanedLabel && cleanedLabel.length <= 60
@@ -114,13 +125,14 @@ export function AgentCard({ agentId }: AgentCardProps) {
 
   const matchQuery = useAgentMatchSummary(agentId);
 
-  const extraLines = trainedCount !== undefined
-    ? [`${trainedCount} ${t("games_trained")}`]
-    : [];
+  const extraLines: string[] = [];
+  if (parsedSummary) extraLines.push(parsedSummary);
+  if (trainedCount !== undefined) extraLines.push(`${trainedCount} ${t("games_trained")}`);
 
-  const ensName = cleanedLabel && cleanedLabel.length <= 60
-    ? `${cleanedLabel}.chaingammon.eth`
-    : null;
+  const ensName =
+    cleanedLabel && cleanedLabel.length <= 60
+      ? `${cleanedLabel}.chaingammon.eth`
+      : null;
 
   return (
     <PersonCard

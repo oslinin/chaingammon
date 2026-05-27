@@ -37,11 +37,13 @@ def _run_trainer(
     timeout: float = 60.0,
 ) -> subprocess.CompletedProcess:
     """Spawn the trainer to completion and return the CompletedProcess."""
+    # career-mode requires extras-dim >= 58; bump automatically.
+    extras_dim = "58" if (extra_args and "--career-mode" in extra_args) else "16"
     cmd = [
         sys.executable,
         str(TRAINER),
         "--matches", str(matches),
-        "--extras-dim", "16",
+        "--extras-dim", extras_dim,
         "--logdir", str(logdir),
         "--status-file", str(status_path),
     ]
