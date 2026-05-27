@@ -204,14 +204,28 @@ export async function POST(req: NextRequest) {
     const headers = await broker.inference.getRequestHeaders(providerAddress);
 
     console.log(`AT: Sending request to ${endpoint} (model: ${model})`);
-    const resp = await fetch(`${endpoint}/chat/completions`, {
+    const fetchOpts = {
       method: "POST",
       headers: { "Content-Type": "application/json", ...headers },
       body: JSON.stringify({ model, messages: llmMessages }),
-    });
+    } as const;
+    let resp = await fetch(`${endpoint}/chat/completions`, fetchOpts);
+    // Some 0G providers expose /v1/chat/completions; retry on 405.
+    if (resp.status === 405) {
+      console.log("AT: 405 on /chat/completions, retrying with /v1/chat/completions");
+      resp = await fetch(`${endpoint}/v1/chat/completions`, fetchOpts);
+    }
 
     if (!resp.ok) {
-      throw new Error(`Provider returned ${resp.status}`);
+      const errBody = await resp.text().catch(() => "");
+      const hint =
+        resp.status === 402 ? "Insufficient OG balance — top up your 0G wallet." :
+        resp.status === 403 ? "Access denied — check your 0G provider subscription." :
+        resp.status === 405 ? "Provider endpoint rejected the request method — the 0G provider may be misconfigured or temporarily down." :
+        resp.status === 429 ? "Rate limited by the 0G provider — try again in a moment." :
+        resp.status >= 500 ? "0G provider internal error — try again shortly." :
+        `Provider returned HTTP ${resp.status}`;
+      throw new Error(hint + (errBody ? ` (${errBody.slice(0, 120)})` : ""));
     }
 
     const json = await resp.json();
