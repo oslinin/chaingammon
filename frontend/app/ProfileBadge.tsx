@@ -7,22 +7,22 @@
 // surfaces a fallback suggestion (<label><3-digit suffix>) so the user
 // can claim a name without starting over.
 //
-// Phase 22+: ENS minting is server-paid — ClaimForm POSTs to the backend
-// which calls mintSubname with the deployer key. No ETH or gas required
-// from the user's wallet.
+// Phase 22+: ClaimForm calls selfMintSubname on-chain so the user never
+// needs a backend server. Privy's useSponsoredWrite covers gas for
+// embedded-wallet (email/Google) users; MetaMask/WalletConnect users
+// pay their own gas as usual.
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useReadContract } from "wagmi";
+import { useReadContract, useWaitForTransactionReceipt } from "wagmi";
 
 import { useChaingammonName } from "./useChaingammonName";
 import { useChaingammonProfile, useSyncEnsProfile } from "./useChaingammonProfile";
 import { useActiveChainId } from "./chains";
-import { MatchRegistryABI, useChainContracts } from "./contracts";
+import { MatchRegistryABI, PlayerSubnameRegistrarABI, useChainContracts } from "./contracts";
 import { recordTransaction } from "./transactions";
 import { useI18n } from "./i18n";
-
-const SERVER = process.env.NEXT_PUBLIC_SERVER_URL ?? "http://localhost:8000";
+import { useSponsoredWrite } from "./useSponsoredWrite";
 
 function shorten(addr: string) {
   return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
@@ -46,52 +46,72 @@ function randomSuffix(): string {
 }
 
 
-export function ClaimForm({ address }: { address: `0x${string}` }) {
+export function ClaimForm() {
   const { t } = useI18n();
   const [claimInput, setClaimInput] = useState("");
   const [suggestion, setSuggestion] = useState<string | null>(null);
-  const [claiming, setClaiming] = useState(false);
   const [claimError, setClaimError] = useState<string | null>(null);
+  const [txHash, setTxHash] = useState<`0x${string}` | undefined>();
   const submittedLabelRef = useRef<string>("");
+
+  const chainId = useActiveChainId();
+  const { playerSubnameRegistrar } = useChainContracts();
+  const { writeContractAsync, isPending } = useSponsoredWrite();
+
+  const { isLoading: isConfirming, isSuccess: isConfirmed } = useWaitForTransactionReceipt({
+    hash: txHash,
+    chainId,
+    query: { enabled: !!txHash },
+  });
+
+  const claiming = isPending || isConfirming;
+
+  // Reload once the subname transaction is confirmed on-chain so
+  // useChaingammonName re-scans and finds the new SubnameMinted event.
+  useEffect(() => {
+    if (!isConfirmed || !txHash) return;
+    recordTransaction({
+      type: "ens_subname",
+      description: `ENS subname registered: ${submittedLabelRef.current}.chaingammon.eth`,
+    });
+    window.location.reload();
+  }, [isConfirmed, txHash]);
 
   const submit = async (labelToUse?: string) => {
     const trimmed = (labelToUse ?? claimInput).trim();
     if (!trimmed || !isValidLabel(trimmed)) return;
     submittedLabelRef.current = trimmed;
-    setClaiming(true);
     setClaimError(null);
     setSuggestion(null);
+    setTxHash(undefined);
     try {
-      const res = await fetch(`${SERVER}/subname/mint`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ label: trimmed, owner: address }),
+      const hash = await writeContractAsync({
+        address: playerSubnameRegistrar,
+        abi: PlayerSubnameRegistrarABI,
+        functionName: "selfMintSubname",
+        args: [trimmed],
+        chainId,
       });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({ detail: res.statusText })) as { detail?: string };
-        const msg = body.detail ?? res.statusText;
-        if (msg.toLowerCase().includes("already") || msg.toLowerCase().includes("exists")) {
-          setSuggestion(`${trimmed}${randomSuffix()}`);
-          setClaimError(`"${trimmed}" is already taken.`);
-        } else {
-          setClaimError(msg);
-        }
-        return;
-      }
-      recordTransaction({
-        type: "ens_subname",
-        description: `ENS subname registered: ${trimmed}.chaingammon.eth`,
-      });
-      window.location.reload();
+      setTxHash(hash);
     } catch (e) {
-      setClaimError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setClaiming(false);
+      const msg = e instanceof Error ? e.message : String(e);
+      if (
+        msg.toLowerCase().includes("already") ||
+        msg.toLowerCase().includes("exists") ||
+        msg.toLowerCase().includes("revert") ||
+        msg.toLowerCase().includes("taken")
+      ) {
+        setSuggestion(`${trimmed}${randomSuffix()}`);
+        setClaimError(`"${trimmed}" is already taken.`);
+      } else {
+        setClaimError(msg);
+      }
     }
   };
 
   const validationError = claimInput ? labelValidationMessage(claimInput, t) : null;
-  const canSubmit = !claiming && isValidLabel(claimInput);
+  const registrarReady = playerSubnameRegistrar !== "0x0000000000000000000000000000000000000000";
+  const canSubmit = !claiming && isValidLabel(claimInput) && registrarReady;
 
   return (
     <div data-testid="profile-badge" style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
@@ -150,12 +170,20 @@ export function ClaimForm({ address }: { address: `0x${string}` }) {
         </button>
       </div>
 
-      {validationError ? (
+      {!registrarReady ? (
+        <span style={{ fontSize: 11, color: "var(--cg-warn)", textAlign: "right", maxWidth: 240 }}>
+          Switch to Sepolia to claim a name
+        </span>
+      ) : validationError ? (
         <span
           data-testid="ens-validation-error"
           style={{ fontSize: 11, color: "var(--cg-warn)", textAlign: "right", maxWidth: 240 }}
         >
           {validationError}
+        </span>
+      ) : txHash && isConfirming ? (
+        <span style={{ fontSize: 11, color: "var(--cg-fg-3)", textAlign: "right" }}>
+          Confirming…
         </span>
       ) : null}
 
@@ -313,5 +341,5 @@ export function ProfileBadge({ address }: { address: `0x${string}` }) {
     );
   }
 
-  return <ClaimForm address={address} />;
+  return <ClaimForm />;
 }
