@@ -58,6 +58,11 @@ jobs:
           # skipped at build time and the UI degrades gracefully.
           NEXT_PUBLIC_PRIVY_APP_ID: ${{ secrets.PRIVY_APP_ID }}
           NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID: ${{ secrets.WALLETCONNECT_PROJECT_ID }}
+          # Backend server URL for training/agent endpoints. ENS subname
+          # registration uses selfMintSubname on-chain (no server needed).
+          # Set SERVER_URL secret to a deployed backend if training features
+          # should be accessible from the GitHub Pages deployment.
+          NEXT_PUBLIC_SERVER_URL: ${{ secrets.SERVER_URL }}
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
