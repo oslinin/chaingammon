@@ -93,7 +93,7 @@ export interface BoardTheme {
 
 export const BOARD_THEMES: Record<string, BoardTheme> = {
   walnut: {
-    label: "Walnut Classic",
+    label: "Walnut — Georgian England c.1750",
     frameStart:  "#6B3F1F",
     frameEnd:    "#4A2814",
     frameInner:  "#3A2014",
@@ -110,7 +110,7 @@ export const BOARD_THEMES: Record<string, BoardTheme> = {
     checkerCool: { fill: "#F5EBDC", stroke: "#A8967A" },
   },
   emerald: {
-    label: "Emerald Hall",
+    label: "Emerald — Victorian Club c.1870",
     frameStart:  "#3D2818",
     frameEnd:    "#261509",
     frameInner:  "#1B0E04",
@@ -127,7 +127,7 @@ export const BOARD_THEMES: Record<string, BoardTheme> = {
     checkerCool: { fill: "#1A1A1E", stroke: "#000000" },
   },
   slate: {
-    label: "Slate Tournament",
+    label: "Slate — Club Tournament c.1980",
     frameStart:  "#2A2D33",
     frameEnd:    "#15171B",
     frameInner:  "#0B0D11",
@@ -144,7 +144,7 @@ export const BOARD_THEMES: Record<string, BoardTheme> = {
     checkerCool: { fill: "#1E2026", stroke: "#000000" },
   },
   onyx: {
-    label: "Onyx & Brass",
+    label: "Onyx & Brass — Contemporary",
     frameStart:  "#1A1208",
     frameEnd:    "#0B0805",
     frameInner:  "#000000",
@@ -161,7 +161,7 @@ export const BOARD_THEMES: Record<string, BoardTheme> = {
     checkerCool: { fill: "#F5EBDC", stroke: "#7A6E5C" },
   },
   linen: {
-    label: "Linen Studio",
+    label: "Linen — Contemporary",
     frameStart:  "#D8C3A3",
     frameEnd:    "#B59770",
     frameInner:  "#8A6D4A",
@@ -286,7 +286,7 @@ export const BOARD_THEMES: Record<string, BoardTheme> = {
   // the relevant crop.
 
   board_steampunk: {
-    label: "English — Dark Mahogany",
+    label: "Dark Mahogany — British Empire c.1890",
     backgroundImageUrl: "/boards/new/board4/board.jpeg",
     backgroundImageCrop: { srcX: 0, srcY: 0, srcW: 830, srcH: 500, totalSrcW: 830, totalSrcH: 500 },
     checkerImages: {
@@ -362,7 +362,7 @@ export const BOARD_THEMES: Record<string, BoardTheme> = {
     checkerCool: { fill: "#F5F0E8", stroke: "#C8B89A" },
   },
   board_tokyo: {
-    label: "Tokyo — Walnut Edition",
+    label: "Tokyo — Contemporary Japan",
     backgroundImageUrl: "/boards/new/board7/board.jpeg",
     backgroundImageCrop: { srcX: 0, srcY: 0, srcW: 1024, srcH: 655, totalSrcW: 1024, totalSrcH: 655 },
     checkerImages: {
@@ -379,7 +379,7 @@ export const BOARD_THEMES: Record<string, BoardTheme> = {
     checkerCool: { fill: "#2A1808", stroke: "#000000" },
   },
   board_cyber2: {
-    label: "Cyber — Neural Grid",
+    label: "Cyber — Digital Age c.2020",
     backgroundImageUrl: "/boards/new/board6/board.png",
     backgroundImageCrop: { srcX: 0, srcY: 0, srcW: 737, srcH: 463, totalSrcW: 737, totalSrcH: 463 },
     checkerImages: {
@@ -396,10 +396,160 @@ export const BOARD_THEMES: Record<string, BoardTheme> = {
     checkerWarm: { fill: "#CC44FF", stroke: "#8800CC" },
     checkerCool: { fill: "#00AAFF", stroke: "#0066CC" },
   },
+
+  // ── Design-system flat-color themes (from ui_kits/app/Boards-mobile.html) ──
+
+  indigo: {
+    label: "Indigo · Saffron — Mughal India c.1650",
+    frameStart:  "#050A18",
+    frameEnd:    "#050A18",
+    frameInner:  "#050A18",
+    felt:        "#1F3A6B",
+    feltAccent:  "#1A3060",
+    pointDark:   "#0A1428",
+    pointLight:  "#E8B85A",
+    pointStroke: "rgba(0,0,0,0.25)",
+    bar:         "#5A2A18",
+    barEdge:     "#050A18",
+    rail:        "#5A2A18",
+    railText:    "#E8B85A",
+    checkerWarm: { fill: "#F0E5D0", stroke: "#050A18" },
+    checkerCool: { fill: "#C4423A", stroke: "#050A18" },
+  },
+
+  coffee: {
+    label: "Coffee House — Ottoman Empire c.1700",
+    frameStart:  "#1A0E08",
+    frameEnd:    "#1A0E08",
+    frameInner:  "#1A0E08",
+    felt:        "#C4A275",
+    feltAccent:  "#B8966A",
+    pointDark:   "#2A1208",
+    pointLight:  "#F5E8C8",
+    pointStroke: "rgba(0,0,0,0.2)",
+    bar:         "#1A0E08",
+    barEdge:     "#1A0E08",
+    rail:        "#1A0E08",
+    railText:    "#F5E8C8",
+    checkerWarm: { fill: "#4A2A18", stroke: "#1A0E08" },
+    checkerCool: { fill: "#C4423A", stroke: "#1A0E08" },
+  },
+
+  // ── Design-system six boards (from ui_kits/app/Boards-six-themes.html) ────
+
+  persian: {
+    label: "Persian Carpet — Safavid c.1600",
+    frameStart:  "#5A1F18",
+    frameEnd:    "#3A1208",
+    frameInner:  "#3A1208",
+    felt:        "#0E5560",
+    feltAccent:  "#0A4A54",
+    pointDark:   "#3FA8B0",
+    pointLight:  "#C4423A",
+    pointStroke: "rgba(0,0,0,0.2)",
+    bar:         "#3A1208",
+    barEdge:     "#5A1F18",
+    rail:        "#3A1208",
+    railText:    "#E8DCB4",
+    checkerWarm: { fill: "#3FA8B0", stroke: "#1A0E08" },
+    checkerCool: { fill: "#C4423A", stroke: "#1A0E08" },
+  },
+
+  marble: {
+    label: "Marble — Roman Classical c.200",
+    frameStart:  "#B8902E",
+    frameEnd:    "#8A6820",
+    frameInner:  "#8A6820",
+    felt:        "#EDE6D8",
+    feltAccent:  "#E4DBD0",
+    pointDark:   "#7A1F18",
+    pointLight:  "#C4A56A",
+    pointStroke: "rgba(0,0,0,0.18)",
+    bar:         "#B8902E",
+    barEdge:     "#8A6820",
+    rail:        "#B8902E",
+    railText:    "#5A4020",
+    checkerWarm: { fill: "#D4B370", stroke: "#5A4020" },
+    checkerCool: { fill: "#F0E5D0", stroke: "#5A4020" },
+  },
+
+  lacquer: {
+    label: "Lacquer — Tang Dynasty c.700",
+    frameStart:  "#0A0A0A",
+    frameEnd:    "#0A0A0A",
+    frameInner:  "#0A0A0A",
+    felt:        "#15110E",
+    feltAccent:  "#1A1510",
+    pointDark:   "#E8E1CF",
+    pointLight:  "#1F1A14",
+    pointStroke: "rgba(232,225,207,0.2)",
+    bar:         "#0A0A0A",
+    barEdge:     "#0A0A0A",
+    rail:        "#0A0A0A",
+    railText:    "#C9BEA8",
+    checkerWarm: { fill: "#3A8F5A", stroke: "#0A0A0A" },
+    checkerCool: { fill: "#E8E1CF", stroke: "#0A0A0A" },
+  },
+
+  tavern: {
+    label: "Tavern — Medieval Europe c.1350",
+    frameStart:  "#3A2A1C",
+    frameEnd:    "#2A1C10",
+    frameInner:  "#2A1C10",
+    felt:        "#6B4A30",
+    feltAccent:  "#5E3F28",
+    pointDark:   "#C4A075",
+    pointLight:  "#2A1A10",
+    pointStroke: "rgba(0,0,0,0.2)",
+    bar:         "#2A1A10",
+    barEdge:     "#3A2A1C",
+    rail:        "#2A1A10",
+    railText:    "#E8D4A8",
+    checkerWarm: { fill: "#E8D4A8", stroke: "#1A0E08" },
+    checkerCool: { fill: "#3A2010", stroke: "#1A0E08" },
+  },
+
+  parlour: {
+    label: "Parlour — Victorian Era c.1880",
+    frameStart:  "#4A2A18",
+    frameEnd:    "#2A1208",
+    frameInner:  "#2A1208",
+    felt:        "#A87848",
+    feltAccent:  "#9A6B40",
+    pointDark:   "#7A1F18",
+    pointLight:  "#1A0E08",
+    pointStroke: "rgba(0,0,0,0.2)",
+    bar:         "#2A1208",
+    barEdge:     "#4A2A18",
+    rail:        "#2A1208",
+    railText:    "#E8B040",
+    checkerWarm: { fill: "#E8B040", stroke: "#2A1208" },
+    checkerCool: { fill: "#1A0E08", stroke: "#4A2A18" },
+  },
+
+  neon: {
+    label: "Neon — Arcade Era c.1985",
+    frameStart:  "#050608",
+    frameEnd:    "#050608",
+    frameInner:  "#050608",
+    felt:        "#0E1014",
+    feltAccent:  "#0A0C10",
+    pointDark:   "#1A4F2A",
+    pointLight:  "#4F1A1F",
+    pointStroke: "rgba(61,214,114,0.3)",
+    bar:         "#050608",
+    barEdge:     "#050608",
+    rail:        "#050608",
+    railText:    "#3DD672",
+    checkerWarm: { fill: "#3DD672", stroke: "#050608" },
+    checkerCool: { fill: "#E63B4A", stroke: "#050608" },
+  },
 };
 
 export const THEME_ORDER = [
-  "walnut", "emerald", "slate", "onyx", "linen",
+  "walnut", "emerald", "slate", "indigo", "coffee",
+  "persian", "marble", "lacquer", "tavern", "parlour", "neon",
+  "onyx", "linen",
   "nard", "tabula", "east_asian", "english", "manhattan", "neural_net",
   "board_celtic", "board_medieval", "board_steampunk", "board_darkwood", "board_tokyo", "board_cyber2",
 ] as const;
