@@ -158,9 +158,42 @@ def get_game_record(root_hash: str):
 # ---------------------------------------------------------------------------
 
 
-# POST /subname/mint removed: humans call PlayerSubnameRegistrar.selfMintSubname
-# directly from their wallet (ProfileBadge.tsx). Agent subnames are minted
-# atomically inside AgentRegistry.mintAgent — no server key needed for either.
+class SubnameMintRequest(BaseModel):
+    label: str
+    owner: str  # the player's wallet address
+
+
+@app.post("/subname/mint")
+async def mint_subname(req: SubnameMintRequest):
+    """Server-pays ENS subname minting for walletless / gas-free users.
+
+    Calls PlayerSubnameRegistrar.mintSubname using the deployer key so the
+    user never needs ETH. Idempotent: returns the existing node if the label
+    is already minted.
+    """
+    try:
+        ens = EnsClient.from_env()
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"ENS client unavailable: {exc}") from exc
+
+    label = req.label.strip().lower()
+    if not label or not label.replace("-", "").replace("_", "").isalnum():
+        raise HTTPException(status_code=400, detail="Invalid label")
+
+    try:
+        tx_hash = ens.mint_subname(label, req.owner)
+        node = ens.subname_node(label)
+        return {"node": node, "txHash": tx_hash, "label": label}
+    except EnsError as exc:
+        err = str(exc)
+        # Already minted is fine — return the node so the frontend can proceed.
+        if "already" in err.lower() or "exists" in err.lower() or "revert" in err.lower():
+            try:
+                node = ens.subname_node(label)
+                return {"node": node, "txHash": None, "label": label}
+            except Exception:
+                pass
+        raise HTTPException(status_code=400, detail=err) from exc
 
 
 class FinalizeRequest(BaseModel):

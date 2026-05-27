@@ -7,32 +7,22 @@
 // surfaces a fallback suggestion (<label><3-digit suffix>) so the user
 // can claim a name without starting over.
 //
-// Phase 22: ENS minting decentralised — ClaimForm now calls
-// `selfMintSubname` directly on the PlayerSubnameRegistrar contract via
-// wagmi's `useWriteContract`. No central API server is involved. Requires
-// the contract to be redeployed with `selfMintSubname` (added in Phase 22).
+// Phase 22+: ENS minting is server-paid — ClaimForm POSTs to the backend
+// which calls mintSubname with the deployer key. No ETH or gas required
+// from the user's wallet.
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useReadContract, useWaitForTransactionReceipt } from "wagmi";
+import { useReadContract } from "wagmi";
 
 import { useChaingammonName } from "./useChaingammonName";
 import { useChaingammonProfile, useSyncEnsProfile } from "./useChaingammonProfile";
-import { useSponsoredWrite } from "./useSponsoredWrite";
 import { useActiveChainId } from "./chains";
 import { MatchRegistryABI, useChainContracts } from "./contracts";
 import { recordTransaction } from "./transactions";
 import { useI18n } from "./i18n";
 
-const SELF_MINT_ABI = [
-  {
-    type: "function",
-    name: "selfMintSubname",
-    inputs: [{ name: "label", type: "string", internalType: "string" }],
-    outputs: [{ name: "node", type: "bytes32", internalType: "bytes32" }],
-    stateMutability: "nonpayable",
-  },
-] as const;
+const SERVER = process.env.NEXT_PUBLIC_SERVER_URL ?? "http://localhost:8000";
 
 function shorten(addr: string) {
   return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
@@ -55,73 +45,49 @@ function randomSuffix(): string {
   return String(Math.floor(Math.random() * 900) + 100);
 }
 
-function isSubnameAlreadyTaken(error: Error | null): boolean {
-  if (!error) return false;
-  const msg = error.message;
-  return (
-    msg.includes("SubnameAlreadyExists") ||
-    msg.toLowerCase().includes("subnamealreadyexists") ||
-    msg.toLowerCase().includes("already taken")
-  );
-}
 
-export function ClaimForm({ address: _address }: { address: `0x${string}` }) {
+export function ClaimForm({ address }: { address: `0x${string}` }) {
   const { t } = useI18n();
   const [claimInput, setClaimInput] = useState("");
   const [suggestion, setSuggestion] = useState<string | null>(null);
+  const [claiming, setClaiming] = useState(false);
+  const [claimError, setClaimError] = useState<string | null>(null);
   const submittedLabelRef = useRef<string>("");
 
-  const { playerSubnameRegistrar } = useChainContracts();
-
-  const {
-    writeContract,
-    data: txHash,
-    error: writeError,
-    isPending: signing,
-    reset: resetWrite,
-  } = useSponsoredWrite();
-
-  const { isLoading: confirming, isSuccess } = useWaitForTransactionReceipt({ hash: txHash });
-
-  useEffect(() => {
-    if (isSuccess) {
-      recordTransaction({
-        type: "ens_subname",
-        description: `ENS subname registered: ${submittedLabelRef.current}.chaingammon.eth`,
-      });
-      window.location.reload();
-    }
-  }, [isSuccess]);
-
-  useEffect(() => {
-    if (writeError && isSubnameAlreadyTaken(writeError)) {
-      setSuggestion(`${claimInput}${randomSuffix()}`);
-    } else {
-      setSuggestion(null);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [writeError]);
-
-  const claiming = signing || confirming;
-
-  const claimError = writeError
-    ? isSubnameAlreadyTaken(writeError)
-      ? `"${claimInput}" is already taken.`
-      : writeError.message.split("\n")[0]
-    : null;
-
-  const submit = (labelToUse?: string) => {
+  const submit = async (labelToUse?: string) => {
     const trimmed = (labelToUse ?? claimInput).trim();
     if (!trimmed || !isValidLabel(trimmed)) return;
     submittedLabelRef.current = trimmed;
-    resetWrite();
+    setClaiming(true);
+    setClaimError(null);
     setSuggestion(null);
-    writeContract({
-      address: playerSubnameRegistrar,
-      abi: SELF_MINT_ABI,
-      functionName: "selfMintSubname",
-      args: [trimmed],
-    });
+    try {
+      const res = await fetch(`${SERVER}/subname/mint`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ label: trimmed, owner: address }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({ detail: res.statusText })) as { detail?: string };
+        const msg = body.detail ?? res.statusText;
+        if (msg.toLowerCase().includes("already") || msg.toLowerCase().includes("exists")) {
+          setSuggestion(`${trimmed}${randomSuffix()}`);
+          setClaimError(`"${trimmed}" is already taken.`);
+        } else {
+          setClaimError(msg);
+        }
+        return;
+      }
+      recordTransaction({
+        type: "ens_subname",
+        description: `ENS subname registered: ${trimmed}.chaingammon.eth`,
+      });
+      window.location.reload();
+    } catch (e) {
+      setClaimError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setClaiming(false);
+    }
   };
 
   const validationError = claimInput ? labelValidationMessage(claimInput, t) : null;
@@ -135,10 +101,10 @@ export function ClaimForm({ address: _address }: { address: `0x${string}` }) {
           value={claimInput}
           onChange={(e) => {
             setClaimInput(e.target.value.toLowerCase());
-            resetWrite();
+            setClaimError(null);
             setSuggestion(null);
           }}
-          onKeyDown={(e) => { if (e.key === "Enter") submit(); }}
+          onKeyDown={(e) => { if (e.key === "Enter") void submit(); }}
           placeholder="your-name"
           disabled={claiming}
           autoFocus
@@ -164,7 +130,7 @@ export function ClaimForm({ address: _address }: { address: `0x${string}` }) {
         <button
           data-testid="ens-claim-button"
           type="button"
-          onClick={() => submit()}
+          onClick={() => void submit()}
           disabled={!canSubmit}
           style={{
             height: 32,
@@ -180,7 +146,7 @@ export function ClaimForm({ address: _address }: { address: `0x${string}` }) {
             fontFamily: "var(--cg-font-sans)",
           }}
         >
-          {signing ? t("signing") : confirming ? t("confirming") : t("claim")}
+          {claiming ? "…" : t("claim")}
         </button>
       </div>
 
@@ -202,7 +168,7 @@ export function ClaimForm({ address: _address }: { address: `0x${string}` }) {
             <button
               data-testid="ens-suggestion-button"
               type="button"
-              onClick={() => { setClaimInput(suggestion); submit(suggestion); }}
+              onClick={() => { setClaimInput(suggestion); void submit(suggestion); }}
               style={{ fontSize: 11, color: "var(--cg-brass)", background: "none", border: "none", cursor: "pointer", textDecoration: "underline" }}
             >
               Try &ldquo;{suggestion}.chaingammon.eth&rdquo; instead
