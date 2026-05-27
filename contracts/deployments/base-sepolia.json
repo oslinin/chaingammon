@@ -1,0 +1,16 @@
+{
+  "network": "base-sepolia",
+  "chainId": 84532,
+  "deployer": "0x0000000000000000000000000000000000000000",
+  "_note": "Placeholder — run `pnpm contracts:deploy:base-sepolia` with DEPLOYER_PRIVATE_KEY set to populate real addresses.",
+  "contracts": {
+    "MatchRegistry": "0x0000000000000000000000000000000000000000",
+    "AgentRegistry": "0x0000000000000000000000000000000000000000",
+    "PlayerSubnameRegistrar": "0x0000000000000000000000000000000000000000",
+    "MatchEscrow": "0x0000000000000000000000000000000000000000",
+    "MockNameWrapper": "0x0000000000000000000000000000000000000000",
+    "MockResolver": "0x0000000000000000000000000000000000000000"
+  },
+  "deployedAt": null,
+  "deployedBlock": 0
+}

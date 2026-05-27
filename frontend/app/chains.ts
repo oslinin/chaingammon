@@ -21,6 +21,10 @@ import { defineChain } from "viem";
 import { useChainId } from "wagmi";
 
 import sepoliaDeployment from "../../contracts/deployments/sepolia.json";
+import baseSepoliaDeployment from "../../contracts/deployments/base-sepolia.json";
+import avalancheFujiDeployment from "../../contracts/deployments/avalanche-fuji.json";
+import polygonAmoyDeployment from "../../contracts/deployments/polygon-amoy.json";
+import optimismSepoliaDeployment from "../../contracts/deployments/optimism-sepolia.json";
 
 interface ChainDef {
   name: string;
@@ -38,6 +42,41 @@ const CHAIN_DEFS: Record<number, ChainDef> = {
       process.env.NEXT_PUBLIC_SEPOLIA_RPC_URL ??
       "https://ethereum-sepolia.publicnode.com",
     explorerUrl: "https://sepolia.etherscan.io",
+    testnet: true,
+  },
+  84532: {
+    name: "Base Sepolia",
+    nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+    rpcUrl:
+      process.env.NEXT_PUBLIC_BASE_SEPOLIA_RPC_URL ?? "https://sepolia.base.org",
+    explorerUrl: "https://sepolia.basescan.org",
+    testnet: true,
+  },
+  43113: {
+    name: "Avalanche Fuji",
+    nativeCurrency: { name: "Avalanche", symbol: "AVAX", decimals: 18 },
+    rpcUrl:
+      process.env.NEXT_PUBLIC_AVALANCHE_FUJI_RPC_URL ??
+      "https://api.avax-test.network/ext/bc/C/rpc",
+    explorerUrl: "https://testnet.snowtrace.io",
+    testnet: true,
+  },
+  80002: {
+    name: "Polygon Amoy",
+    nativeCurrency: { name: "MATIC", symbol: "MATIC", decimals: 18 },
+    rpcUrl:
+      process.env.NEXT_PUBLIC_POLYGON_AMOY_RPC_URL ??
+      "https://rpc-amoy.polygon.technology",
+    explorerUrl: "https://amoy.polygonscan.com",
+    testnet: true,
+  },
+  11155420: {
+    name: "Optimism Sepolia",
+    nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+    rpcUrl:
+      process.env.NEXT_PUBLIC_OPTIMISM_SEPOLIA_RPC_URL ??
+      "https://sepolia.optimism.io",
+    explorerUrl: "https://sepolia-optimistic.etherscan.io",
     testnet: true,
   },
 };
@@ -89,9 +128,22 @@ export function useEnsInfra(): EnsInfra | undefined {
   return ENS_INFRA_BY_CHAIN[chainId];
 }
 
+// Stub deployment records (zero-address deployer) are excluded from the live
+// registry until `pnpm contracts:deploy:<network>` overwrites them with real
+// addresses. This lets us track all target chains in the repo without
+// breaking the frontend build or surfacing non-functional chains in the UI.
+const ZERO = "0x0000000000000000000000000000000000000000";
+function isDeployed(dep: DeploymentRecord): boolean {
+  return dep.contracts.MatchRegistry !== ZERO;
+}
+
 const ALL_DEPLOYMENTS: DeploymentRecord[] = [
   sepoliaDeployment as DeploymentRecord,
-];
+  baseSepoliaDeployment as DeploymentRecord,
+  avalancheFujiDeployment as DeploymentRecord,
+  polygonAmoyDeployment as DeploymentRecord,
+  optimismSepoliaDeployment as DeploymentRecord,
+].filter(isDeployed);
 
 export interface ChainEntry {
   chain: Chain;
@@ -188,8 +240,8 @@ export function useActiveChainId(): number {
   return useChainId();
 }
 
-// Sepolia is the only chain exposed in the network dropdown.
+// Returns all chains for which a real deployment exists (non-placeholder).
+// Shown in the network dropdown — grows automatically as each testnet is deployed.
 export function useSelectableChains(): ChainEntry[] {
-  const entry = CHAIN_REGISTRY[11155111];
-  return entry ? [entry] : [];
+  return Object.values(CHAIN_REGISTRY);
 }
