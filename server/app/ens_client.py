@@ -43,6 +43,7 @@ _PLAYER_SUBNAME_REGISTRAR_ABI = [
         "inputs": [
             {"name": "label", "type": "string"},
             {"name": "subnameOwner_", "type": "address"},
+            {"name": "inftId", "type": "uint256"},
         ],
         "outputs": [{"name": "node", "type": "bytes32"}],
     },
@@ -191,6 +192,7 @@ class EnsClient:
         tx = self.registrar.functions.mintSubname(
             label,
             Web3.to_checksum_address(subname_owner),
+            0,  # inftId: 0 for human registrations
         ).build_transaction(
             {
                 "from": self.account.address,
