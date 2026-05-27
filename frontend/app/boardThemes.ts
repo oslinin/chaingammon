@@ -570,8 +570,9 @@ export function saveTheme(key: BoardThemeKey) {
 const PREFER_3D_KEY = "chaingammon.prefer3d";
 
 export function loadPrefer3d(): boolean {
-  if (typeof window === "undefined") return false;
-  return localStorage.getItem(PREFER_3D_KEY) === "true";
+  if (typeof window === "undefined") return true;
+  const stored = localStorage.getItem(PREFER_3D_KEY);
+  return stored === null ? true : stored === "true";
 }
 
 export function savePrefer3d(v: boolean) {
