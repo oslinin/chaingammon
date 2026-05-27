@@ -1868,3 +1868,156 @@ def post_equity(req: EquityRequest):
         return {"equity": equity, "model": "backgammon-net-v1"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ─── Agent Teammate Chat ──────────────────────────────────────────────────────
+
+_DEEP_DIVE_TRIGGERS = [
+    "validate", "intuition", "deep dive", "deep-dive", "historical",
+    "history", "database", "tell me more", "confirm", "sure about",
+    "are you sure", "second opinion", "check", "bait",
+]
+
+_TEAMMATE_SYSTEM = (
+    "You are an elite backgammon Agent Teammate. Your human partner will suggest a strategy or state an intuition. "
+    "Inspired by DeepMind's cooperative agent research and the 'Claude Code' philosophy that human-AI teams outperform either alone, "
+    "your job is to provide the data-driven validation for the human's intuition. "
+    "\n\nYour Protocol:\n"
+    "1. Check the Opponent Profile (JSON) to see if historical data supports the human's strategy.\n"
+    "2. Look at the Top 5 Moves list from the engine.\n"
+    "3. Find the move that best executes the human's strategy.\n"
+    "4. Respond concisely, confirming the data, stating the equity cost of deviating from the #1 engine move, "
+    "and asking for final confirmation.\n\n"
+    "Example tone: 'Your intuition is supported by the data: he hits exposed blots 88% of the time. "
+    "We can play 8/3 to leave a bait blot. It costs 0.05 in theoretical equity against a perfect bot, "
+    "but against him, it's highly profitable. Lock it in?'"
+)
+
+
+class TeammateCandidate(BaseModel):
+    move: str
+    equity: float
+    tag: Optional[str] = None
+    tag_reason: Optional[str] = None
+
+
+class TeammateMessage(BaseModel):
+    role: str
+    text: str
+
+
+class TeammateRequest(BaseModel):
+    tagged_candidates: Optional[List[TeammateCandidate]] = None
+    human_strategy: Optional[str] = None
+    dialogue: Optional[List[TeammateMessage]] = None
+    opponent_features: Optional[str] = None
+    agent_id: Optional[int] = None
+
+
+@app.post("/agent-teammate/chat")
+def post_agent_teammate_chat(req: TeammateRequest):
+    """Run an Agent Teammate chat turn via 0G Compute.
+
+    Mirrors the (non-functional) Next.js API route — static export cannot
+    run server-side code, so this endpoint lives here instead.
+    """
+    import time
+    t0 = time.time()
+
+    # Build candidates section
+    if req.tagged_candidates:
+        candidates_section = "\n".join(
+            f"  {i+1}. [{c.tag or 'Safe'}] {c.move}  "
+            f"(eq {'+' if c.equity >= 0 else ''}{c.equity:.3f}) — {c.tag_reason or ''}"
+            for i, c in enumerate(req.tagged_candidates[:5])
+        )
+    else:
+        candidates_section = "(no legal moves on this roll)"
+
+    # Opponent profile
+    historical_section = ""
+    stats = None
+    if req.agent_id:
+        try:
+            import urllib.request
+            server_url = os.environ.get("NEXT_PUBLIC_SERVER_URL", "http://localhost:8000").rstrip("/")
+            with urllib.request.urlopen(f"{server_url}/agents/{req.agent_id}/profile", timeout=5) as r:
+                profile = json.loads(r.read())
+            v = profile.get("values", {})
+            stats = {
+                "hit_rate_on_exposed_blots": 0.5 + v.get("hits_blot", 0) * 0.4,
+                "blitz_success_rate": 0.4 + v.get("phase_blitz", 0) * 0.3,
+                "prime_building_tendency": 0.5 + v.get("phase_prime_building", 0) * 0.4,
+                "risk_tolerance": 0.5 + v.get("risk_hit_exposure", 0) * 0.4,
+            }
+            historical_section = f"Opponent Historical Profile (Real Data):\n{json.dumps(stats, indent=2)}\n\n"
+        except Exception:
+            pass
+
+    needs_deep_dive = any(
+        t in (req.human_strategy or "").lower() or
+        t in (req.dialogue[-1].text if req.dialogue else "").lower()
+        for t in _DEEP_DIVE_TRIGGERS
+    )
+
+    history_section = ""
+    if req.dialogue:
+        history_section = "Recent conversation:\n" + "\n".join(
+            f"{m.role}: {m.text}" for m in req.dialogue[-6:]
+        ) + "\n\n"
+
+    opp_section = f"Opponent summary: {req.opponent_features}\n" if req.opponent_features else ""
+    strategy_section = (
+        f'Human partner\'s suggestion/intuition: "{req.human_strategy}"\n\n'
+        if req.human_strategy and req.human_strategy.strip()
+        else "Human has not stated a strategy yet.\n\n"
+    )
+
+    user_msg = (
+        f"{historical_section}"
+        f"{opp_section}"
+        f"Candidate moves (ranked by theoretical equity):\n{candidates_section}\n\n"
+        f"{strategy_section}"
+        f"{history_section}"
+        "Your response (concise, data-driven, ends with a call to action):"
+    )
+
+    try:
+        from coach_compute_client import chat as og_chat, OgComputeError
+        result = og_chat(
+            messages=[{"role": "user", "content": user_msg}],
+            system=_TEAMMATE_SYSTEM,
+            timeout=120.0,
+        )
+        reply = result.content
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"0G Compute error: {e}")
+
+    # Extract recommended move from reply
+    recommended_move = None
+    recommended_tag = None
+    if req.tagged_candidates:
+        for c in req.tagged_candidates:
+            if c.move in reply:
+                recommended_move = c.move
+                recommended_tag = c.tag
+                break
+        if not recommended_move:
+            recommended_move = req.tagged_candidates[0].move
+            recommended_tag = req.tagged_candidates[0].tag
+
+    deep_dive = None
+    if needs_deep_dive and stats:
+        deep_dive = (
+            f"Analysis of Agent #{req.agent_id}: "
+            f"historical hit rate is {stats['hit_rate_on_exposed_blots']*100:.0f}%."
+        )
+
+    return {
+        "reply": reply.strip(),
+        "recommended_move": recommended_move,
+        "recommended_tag": recommended_tag,
+        "deep_dive": deep_dive,
+        "backend": "compute",
+        "latency_ms": int((time.time() - t0) * 1000),
+    }
