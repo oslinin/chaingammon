@@ -309,13 +309,14 @@ def run_team_challenge_loop(
             stake = team_policies[proposer_ti].size_bet(
                 chosen_score, bankrolls[proposer_ti], min_stake, max_stake_fraction
             )
+            if stake == 0:
+                stake = min_stake
 
-            if stake > 0:
-                _emit(status_fh, "challenge_proposed",
-                      proposer_team=proposer_ti, target_team=target_ti,
-                      stake_wei=stake, score=chosen_score)
-                proposals.append((proposer_ti, target_ti, stake, log_prob, chosen_score))
-                proposed_count += 1
+            _emit(status_fh, "challenge_proposed",
+                  proposer_team=proposer_ti, target_team=target_ti,
+                  stake_wei=stake, score=chosen_score)
+            proposals.append((proposer_ti, target_ti, stake, log_prob, chosen_score))
+            proposed_count += 1
 
         # RESPOND + PLAY + UPDATE
         for proposer_ti, target_ti, stake, log_prob, chosen_score in proposals:
