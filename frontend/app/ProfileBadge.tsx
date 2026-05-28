@@ -14,7 +14,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useReadContract, useWaitForTransactionReceipt } from "wagmi";
+import { useAccount, useReadContract, useWaitForTransactionReceipt } from "wagmi";
 
 import { useChaingammonName } from "./useChaingammonName";
 import { useChaingammonProfile, useSyncEnsProfile } from "./useChaingammonProfile";
@@ -56,7 +56,35 @@ export function ClaimForm() {
 
   const chainId = useActiveChainId();
   const { playerSubnameRegistrar } = useChainContracts();
-  const { writeContractAsync, isPending } = useSponsoredWrite();
+  const { writeContractAsync, isPending, sponsored } = useSponsoredWrite();
+  const { address } = useAccount();
+
+  // Server-pays mint — used for Privy embedded wallets (Google/email logins)
+  // which have no gas. The deployer key on the server signs and pays.
+  const [serverMinting, setServerMinting] = useState(false);
+  const submitViaServer = async (label: string) => {
+    if (!address) throw new Error("No wallet connected");
+    setServerMinting(true);
+    try {
+      const SERVER = process.env.NEXT_PUBLIC_SERVER_URL ?? "http://localhost:8000";
+      const res = await fetch(`${SERVER}/subname/mint`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ label, owner: address }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.detail || `HTTP ${res.status}`);
+      }
+      recordTransaction({
+        type: "ens_subname",
+        description: `ENS subname registered: ${label}.chaingammon.eth`,
+      });
+      window.location.reload();
+    } finally {
+      setServerMinting(false);
+    }
+  };
 
   const { isLoading: isConfirming, isSuccess: isConfirmed } = useWaitForTransactionReceipt({
     hash: txHash,
@@ -64,7 +92,7 @@ export function ClaimForm() {
     query: { enabled: !!txHash },
   });
 
-  const claiming = isPending || isConfirming;
+  const claiming = isPending || isConfirming || serverMinting;
 
   // Reload once the subname transaction is confirmed on-chain so
   // useChaingammonName re-scans and finds the new SubnameMinted event.
@@ -85,6 +113,12 @@ export function ClaimForm() {
     setSuggestion(null);
     setTxHash(undefined);
     try {
+      // Privy embedded wallets (Google/email) have no gas — route through the
+      // server-pays endpoint so the deployer key covers the transaction.
+      if (sponsored) {
+        await submitViaServer(trimmed);
+        return;
+      }
       const hash = await writeContractAsync({
         address: playerSubnameRegistrar,
         abi: PlayerSubnameRegistrarABI,
