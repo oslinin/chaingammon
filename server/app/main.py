@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime, timezone
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -181,7 +182,12 @@ async def mint_subname(req: SubnameMintRequest):
         raise HTTPException(status_code=400, detail="Invalid label")
 
     try:
-        tx_hash = ens.mint_subname(label, req.owner)
+        # Run the blocking web3 calls in a thread pool and skip waiting for
+        # the receipt — the tx is broadcast immediately and Sepolia confirms
+        # in ~15 s. The frontend reloads on success and doesn't need
+        # confirmation; waiting would hold the HTTP connection open long
+        # enough for the mobile browser / proxy to return 408.
+        tx_hash = await asyncio.to_thread(ens.mint_subname, label, req.owner, wait=False)
         node = ens.subname_node(label)
         return {"node": node, "txHash": tx_hash, "label": label}
     except EnsError as exc:
