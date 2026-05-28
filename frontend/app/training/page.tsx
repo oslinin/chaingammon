@@ -1,13 +1,15 @@
-// Round-robin training page.
+// Training page.
 //
 // Layout (top to bottom):
-//   1. Title + subtitle
+//   1. Title + subtitle (dynamic — reflects selected trainer)
 //   2. Compute-backends summary
-//   3. Agent selector (checkbox list of all on-chain agents)
-//   4. Logarithmic epoch slider with snap-tick marks
-//   5. Cost estimate row (visible when Inference=0G)
-//   6. Play / Abort buttons
-//   7. Status panel: progress bar + per-agent stats
+//   3. Trainer selector (Sample | Round Robin | Challenge | Team) + description + TensorBoard scalars
+//   4. Mode banner (local / 0G)
+//   5. Agent selector (checkbox list of all on-chain agents)
+//   6. Logarithmic epoch slider with snap-tick marks
+//   7. Cost estimate row (visible when Inference=0G)
+//   8. Play / Abort buttons
+//   9. Status panel: progress bar + per-agent stats
 //
 // Two backends, chosen via the global Compute pill (Training = local | 0G):
 //   local → POST {NEXT_PUBLIC_SERVER_URL}/training/start, poll /training/status,
@@ -31,6 +33,74 @@ import {
 } from "../../lib/og_training";
 
 const SERVER = process.env.NEXT_PUBLIC_SERVER_URL ?? "http://localhost:8000";
+
+// ─── Trainer mode metadata ───────────────────────────────────────────────────
+
+const TRAINER_OPTIONS = [
+  {
+    id: "sample" as const,
+    label: "Sample Trainer",
+    minAgents: 1,
+    maxAgents: 1,
+    description:
+      "Single-agent TD(λ) self-play. The agent trains against a frozen snapshot of itself, improving via eligibility traces. Minimal setup — select exactly 1 agent.",
+    tbScalars: [
+      "train/rolling_win_rate   — rolling win rate over the last 50 matches",
+      "eval/win_rate_vs_frozen  — periodic eval win rate vs frozen opponent",
+      "eval/final_win_rate      — final win rate at run end",
+    ],
+  },
+  {
+    id: "round_robin" as const,
+    label: "Round Robin",
+    minAgents: 2,
+    maxAgents: Infinity,
+    description:
+      "Every pair of agents plays both orderings each epoch — N×(N−1) games per epoch. Symmetric TD(λ) updates: each agent is the learner against every other once.",
+    tbScalars: [
+      "win_rate/agent_<id>  — fraction of epoch games won, per agent",
+    ],
+  },
+  {
+    id: "challenge" as const,
+    label: "Challenge Trainer",
+    minAgents: 2,
+    maxAgents: Infinity,
+    description:
+      "Agents hold bankrolls and propose challenges. ChallengePolicy (REINFORCE) accepts/rejects via Kelly criterion. Only accepted matches play — struggling agents get challenged less.",
+    tbScalars: [
+      "match/plies                  — game length in plies",
+      "win/agent_<id>               — 1.0 on each win",
+      "bankroll/agent_<id>          — bankroll after each match",
+      "market/accept_rate           — fraction of challenges accepted",
+      "market/avg_stake_wei         — mean stake per accepted match",
+      "market/proposed              — challenges proposed this epoch",
+      "market/accepted              — challenges accepted this epoch",
+      "weights/core_l2_agent_<id>   — L2 norm of core weights",
+      "weights/extras_l2_agent_<id> — L2 norm of extras head (if present)",
+    ],
+  },
+  {
+    id: "team_challenge" as const,
+    label: "Team",
+    minAgents: 4,
+    maxAgents: Infinity,
+    description:
+      "2-vs-2 team play with ensemble move selection. Agents pair in order; the captain proposes challenges via Kelly criterion. Both team members get independent TD(λ) updates. Requires ≥ 4 agents (even count).",
+    tbScalars: [
+      "match/plies                  — game length in plies",
+      "win/team_<idx>               — 1.0 on each team win",
+      "market/accept_rate           — fraction of challenges accepted",
+      "market/avg_stake_wei         — mean stake per accepted match",
+      "market/proposed              — challenges proposed this epoch",
+      "market/accepted              — challenges accepted this epoch",
+      "weights/core_l2_agent_<id>   — L2 norm of core weights",
+      "weights/extras_l2_agent_<id> — L2 norm of extras head (if present)",
+    ],
+  },
+] as const;
+
+type TrainerModeId = (typeof TRAINER_OPTIONS)[number]["id"];
 
 // Logarithmic slider helpers. Slider position p ∈ [0, 100] maps to
 // epochs ∈ [1, MAX] via 10**(p/100 * log10(MAX)). Round to a snap
@@ -234,11 +304,31 @@ export default function TrainingPage() {
   const agentsError = agentCountError;
   const agentsLoaded = !agentsLoading && !agentsError;
 
+  // Trainer mode — persisted in localStorage so refreshes remember the choice.
+  const [trainerMode, setTrainerMode] = useState<TrainerModeId>("round_robin");
+  useEffect(() => {
+    const saved = window.localStorage.getItem("trainer_mode") as TrainerModeId | null;
+    if (saved && TRAINER_OPTIONS.some((t) => t.id === saved)) {
+      setTrainerMode(saved);
+    }
+  }, []);
+  const handleTrainerModeChange = (mode: TrainerModeId) => {
+    setTrainerMode(mode);
+    window.localStorage.setItem("trainer_mode", mode);
+    // When switching to sample, trim selection to 1 agent.
+    if (mode === "sample" && selectedIds.length > 1) {
+      setSelectedIds([selectedIds[0]]);
+    }
+  };
+  const selectedTrainer =
+    TRAINER_OPTIONS.find((t) => t.id === trainerMode) ?? TRAINER_OPTIONS[1];
+
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
-  // First time we load, pre-select all.
+  // First time we load, pre-select all (capped at 1 for sample mode).
   useEffect(() => {
     if (agentsLoaded && agents.length > 0 && selectedIds.length === 0) {
-      setSelectedIds(agents.map((a) => a.agent_id));
+      const all = agents.map((a) => a.agent_id);
+      setSelectedIds(trainerMode === "sample" ? all.slice(0, 1) : all);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agentsLoaded, agents.length]);
@@ -250,9 +340,9 @@ export default function TrainingPage() {
     [sliderPos, use0gInference]
   );
 
-  // Games per epoch (UI affordance — also computed server-side).
+  // Games per epoch (UI affordance — only meaningful for round_robin).
   const n = selectedIds.length;
-  const gamesPerEpoch = (n * (n - 1)) / 2;
+  const gamesPerEpoch = trainerMode === "round_robin" ? n * (n - 1) : 0;
 
   // Client-side cost estimate (used by both branches when no server estimate
   // is available — matches the arithmetic the FastAPI /training/estimate
@@ -356,7 +446,6 @@ export default function TrainingPage() {
 
   const startLocalMutation = useMutation({
     mutationFn: async (target: string = SERVER) => {
-      const trainerMode = window.localStorage.getItem("trainer_mode") || "round_robin";
       const modelCodes: Record<string, string> = {};
       for (const id of selectedIds) {
         const code = window.localStorage.getItem(`chaingammon:agent:${id}:model`);
@@ -537,23 +626,23 @@ export default function TrainingPage() {
     (training.phase === "loading_weights" || training.phase === "running");
   const isRunning = localIsRunning || ogIsRunning;
 
-  const canPlay =
-    selectedIds.length >= 2 &&
-    !isRunning &&
-    !startLocalMutation.isPending;
+  const agentsOk =
+    selectedIds.length >= selectedTrainer.minAgents &&
+    selectedIds.length <= selectedTrainer.maxAgents &&
+    (trainerMode !== "team_challenge" || selectedIds.length % 2 === 0);
+
+  const canPlay = agentsOk && !isRunning && !startLocalMutation.isPending;
   const canAbort = localIsRunning && !abortLocalMutation.isPending;
 
   return (
     <main className="flex flex-1 flex-col gap-6 p-6">
       <header className="flex flex-col gap-1">
         <h1 className="text-2xl font-bold text-zinc-900 dark:text-zinc-50">
-          Round-robin training
+          {selectedTrainer.label}
         </h1>
         <p className="text-sm text-zinc-600 dark:text-zinc-400">
-          Multi-agent self-play with TD-λ updates. Each epoch plays{" "}
-          <code className="font-mono">C(N, 2)</code> games across the selected
-          agents. Training runs on the chaingammon server — 0G Compute
-          training is not yet available for non-LLM workloads.
+          TD-λ agent training. Training runs on the chaingammon server — 0G
+          Compute training is not yet available for non-LLM workloads.
         </p>
       </header>
 
@@ -562,6 +651,8 @@ export default function TrainingPage() {
         inference={backends.inference}
         training={trainingMode}
       />
+
+      <TrainerSelector value={trainerMode} onChange={handleTrainerModeChange} />
 
       {trainingMode === "local" ? (
         <div className="rounded-md border border-zinc-300 bg-zinc-50 px-3 py-2 text-xs text-zinc-700 dark:border-zinc-700/50 dark:bg-zinc-900/30 dark:text-zinc-300">
@@ -586,6 +677,7 @@ export default function TrainingPage() {
         error={agentsError ?? null}
         selectedIds={selectedIds}
         onChange={setSelectedIds}
+        trainerMode={trainerMode}
         gamesPerEpoch={gamesPerEpoch}
       />
 
@@ -593,6 +685,7 @@ export default function TrainingPage() {
         sliderPos={sliderPos}
         epochs={epochs}
         use0g={use0gInference}
+        trainerMode={trainerMode}
         selectedIds={selectedIds}
         gamesPerEpoch={gamesPerEpoch}
         onSliderChange={setSliderPos}
@@ -767,12 +860,64 @@ function Chip({
   );
 }
 
+function TrainerSelector({
+  value,
+  onChange,
+}: {
+  value: TrainerModeId;
+  onChange: (mode: TrainerModeId) => void;
+}) {
+  const opt = TRAINER_OPTIONS.find((t) => t.id === value) ?? TRAINER_OPTIONS[1];
+  return (
+    <section className="flex flex-col gap-3">
+      <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">
+        Trainer
+      </h2>
+      <div className="flex flex-wrap gap-2">
+        {TRAINER_OPTIONS.map((t) => {
+          const active = t.id === value;
+          return (
+            <button
+              key={t.id}
+              type="button"
+              onClick={() => onChange(t.id)}
+              className={[
+                "rounded-md border px-3 py-1.5 text-xs font-semibold transition-colors",
+                active
+                  ? "border-amber-500 bg-amber-50 text-amber-900 dark:border-amber-500 dark:bg-amber-950/60 dark:text-amber-100"
+                  : "border-zinc-300 bg-white text-zinc-600 hover:border-zinc-400 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400 dark:hover:border-zinc-500",
+              ].join(" ")}
+            >
+              {t.label}
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-800 dark:bg-zinc-900/50">
+        <p className="mb-3 text-xs text-zinc-600 dark:text-zinc-400">
+          {opt.description}
+        </p>
+        <details className="group">
+          <summary className="cursor-pointer select-none text-[10px] font-mono uppercase tracking-wide text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300">
+            TensorBoard scalars
+          </summary>
+          <pre className="mt-2 overflow-x-auto rounded border border-zinc-200 bg-white p-2 font-mono text-[10px] leading-relaxed text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400">
+            {opt.tbScalars.join("\n")}
+          </pre>
+        </details>
+      </div>
+    </section>
+  );
+}
+
 function AgentSelector({
   agents,
   loading,
   error,
   selectedIds,
   onChange,
+  trainerMode,
   gamesPerEpoch,
 }: {
   agents: AgentRow[] | undefined;
@@ -780,6 +925,7 @@ function AgentSelector({
   error: unknown;
   selectedIds: number[];
   onChange: (ids: number[]) => void;
+  trainerMode: TrainerModeId;
   gamesPerEpoch: number;
 }) {
   if (loading)
@@ -794,6 +940,11 @@ function AgentSelector({
     return <p className="text-sm text-zinc-500">No agents on chain.</p>;
 
   const toggle = (id: number) => {
+    if (trainerMode === "sample") {
+      // Sample trainer: always exactly 1 agent — clicking selects that agent.
+      onChange([id]);
+      return;
+    }
     if (selectedIds.includes(id)) {
       onChange(selectedIds.filter((x) => x !== id));
     } else {
@@ -801,10 +952,19 @@ function AgentSelector({
     }
   };
 
+  const agentCountLabel = () => {
+    if (trainerMode === "sample") return "1 agent";
+    if (trainerMode === "round_robin")
+      return `${selectedIds.length} selected, ${gamesPerEpoch} games/epoch`;
+    if (trainerMode === "team_challenge")
+      return `${selectedIds.length} selected (${selectedIds.length / 2} teams)`;
+    return `${selectedIds.length} selected`;
+  };
+
   return (
     <section className="flex flex-col gap-2">
       <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">
-        Agents — {selectedIds.length} selected, {gamesPerEpoch} games per epoch
+        Agents — {agentCountLabel()}
       </h2>
       <div className="flex flex-wrap gap-2">
         {agents.map((a) => {
@@ -836,6 +996,7 @@ function EpochSlider({
   sliderPos,
   epochs,
   use0g,
+  trainerMode,
   selectedIds,
   gamesPerEpoch,
   onSliderChange,
@@ -844,22 +1005,29 @@ function EpochSlider({
   sliderPos: number;
   epochs: number;
   use0g: boolean;
+  trainerMode: TrainerModeId;
   selectedIds: number[];
   gamesPerEpoch: number;
   onSliderChange: (p: number) => void;
   onEpochInputChange: (e: number) => void;
 }) {
   const snaps = snapPoints(use0g);
+  const epochLabel = trainerMode === "sample" ? "Matches" : "Epochs";
 
   return (
     <section className="flex flex-col gap-2">
       <div className="flex flex-col gap-1">
         <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">
-          Epochs — {epochs.toLocaleString()}
+          {epochLabel} — {epochs.toLocaleString()}
         </h2>
-        {selectedIds.length >= 2 && (
+        {trainerMode === "round_robin" && selectedIds.length >= 2 && (
           <p className="text-[10px] text-zinc-400 font-mono">
-            Total training games: {epochs.toLocaleString()} epochs × {gamesPerEpoch} matches/epoch = {(epochs * gamesPerEpoch).toLocaleString()} games
+            Total games: {epochs.toLocaleString()} epochs × {gamesPerEpoch} games/epoch = {(epochs * gamesPerEpoch).toLocaleString()}
+          </p>
+        )}
+        {trainerMode === "sample" && (
+          <p className="text-[10px] text-zinc-400 font-mono">
+            {epochs.toLocaleString()} self-play matches against a frozen snapshot
           </p>
         )}
       </div>
@@ -872,7 +1040,7 @@ function EpochSlider({
           value={sliderPos}
           onChange={(e) => onSliderChange(Number(e.target.value))}
           className="flex-1"
-          aria-label="Epoch slider (logarithmic)"
+          aria-label={`${epochLabel} slider (logarithmic)`}
         />
         <input
           type="number"

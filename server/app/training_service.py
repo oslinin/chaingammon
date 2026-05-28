@@ -44,6 +44,7 @@ _AGENT_DIR = _REPO_ROOT / "agent"
 _TRAINER = _AGENT_DIR / "round_robin_trainer.py"
 _CHALLENGE_TRAINER = _AGENT_DIR / "challenge_trainer.py"
 _TEAM_CHALLENGE_TRAINER = _AGENT_DIR / "team_challenge_trainer.py"
+_SAMPLE_TRAINER = _AGENT_DIR / "sample_trainer.py"
 
 
 # Used by /training/estimate when use_0g_inference is true. Calibrated
@@ -140,7 +141,10 @@ def start_job(
 
     if epochs < 1:
         raise ValueError("epochs must be >= 1")
-    if trainer_mode == "team_challenge":
+    if trainer_mode == "sample":
+        if len(agent_ids) < 1:
+            raise ValueError("sample trainer requires at least 1 agent_id")
+    elif trainer_mode == "team_challenge":
         if len(agent_ids) < 4 or len(agent_ids) % 2 != 0:
             raise ValueError("team_challenge trainer requires an even number of agent_ids >= 4")
     elif len(agent_ids) < 2:
@@ -168,35 +172,60 @@ def start_job(
     # are available without requiring uv in the subprocess's PATH.
     _agent_python = _AGENT_DIR / ".venv" / "bin" / "python"
     _trainer_exe = str(_agent_python) if _agent_python.exists() else sys.executable
-    if trainer_mode == "team_challenge":
-        target_trainer = _TEAM_CHALLENGE_TRAINER
-    elif trainer_mode == "challenge":
-        target_trainer = _CHALLENGE_TRAINER
+    if trainer_mode == "sample":
+        # sample_trainer.py has a different CLI from the multi-agent trainers:
+        #   --matches (not --epochs), no --agent-ids, --save-checkpoint (not --checkpoint-dir).
+        # One agent at a time; the agent_id is used only to name the checkpoint file.
+        agent_id_for_sample = agent_ids[0]
+        cmd = [
+            _trainer_exe,
+            str(_SAMPLE_TRAINER),
+            "--matches", str(epochs),
+            "--status-file", str(status_file),
+            "--extras-dim", str(extras_dim),
+            "--seed", str(seed),
+        ]
+        if checkpoint_dir is None and upload_to_0g:
+            checkpoint_dir = Path(
+                tempfile.mkdtemp(prefix="chaingammon-training-checkpoints-")
+            )
+        if checkpoint_dir is not None:
+            cmd.extend(["--save-checkpoint",
+                        str(checkpoint_dir / f"agent_{agent_id_for_sample}.pt")])
+        if upload_to_0g:
+            cmd.append("--upload-to-0g")
+        if no_encrypt:
+            cmd.append("--no-encrypt")
     else:
-        target_trainer = _TRAINER
-    cmd = [
-        _trainer_exe,
-        str(target_trainer),
-        "--agent-ids", ",".join(str(a) for a in agent_ids),
-        "--epochs", str(epochs),
-        "--status-file", str(status_file),
-        "--extras-dim", str(extras_dim),
-        "--seed", str(seed),
-    ]
-    # When the caller wants 0G uploads but didn't pin a checkpoint dir,
-    # auto-create one in tmp. The trainer skips its end-of-run save block
-    # entirely if --checkpoint-dir is missing, so without this default
-    # `upload_to_0g=True` would silently no-op (Phase 66 root cause).
-    if checkpoint_dir is None and upload_to_0g:
-        checkpoint_dir = Path(
-            tempfile.mkdtemp(prefix="chaingammon-training-checkpoints-")
-        )
-    if checkpoint_dir is not None:
-        cmd.extend(["--checkpoint-dir", str(checkpoint_dir)])
-    if upload_to_0g:
-        cmd.append("--upload-to-0g")
-    if no_encrypt:
-        cmd.append("--no-encrypt")
+        if trainer_mode == "team_challenge":
+            target_trainer = _TEAM_CHALLENGE_TRAINER
+        elif trainer_mode == "challenge":
+            target_trainer = _CHALLENGE_TRAINER
+        else:
+            target_trainer = _TRAINER
+        cmd = [
+            _trainer_exe,
+            str(target_trainer),
+            "--agent-ids", ",".join(str(a) for a in agent_ids),
+            "--epochs", str(epochs),
+            "--status-file", str(status_file),
+            "--extras-dim", str(extras_dim),
+            "--seed", str(seed),
+        ]
+        # When the caller wants 0G uploads but didn't pin a checkpoint dir,
+        # auto-create one in tmp. The trainer skips its end-of-run save block
+        # entirely if --checkpoint-dir is missing, so without this default
+        # `upload_to_0g=True` would silently no-op (Phase 66 root cause).
+        if checkpoint_dir is None and upload_to_0g:
+            checkpoint_dir = Path(
+                tempfile.mkdtemp(prefix="chaingammon-training-checkpoints-")
+            )
+        if checkpoint_dir is not None:
+            cmd.extend(["--checkpoint-dir", str(checkpoint_dir)])
+        if upload_to_0g:
+            cmd.append("--upload-to-0g")
+        if no_encrypt:
+            cmd.append("--no-encrypt")
     if use_0g_inference:
         cmd.append("--use-0g-inference")
 
@@ -590,8 +619,21 @@ def _aggregate(events: list[dict], *, job: Optional[TrainingJob],
                 "error": e.get("error"),
             })
 
+    # Normalize sample_trainer events — it emits {total:N} instead of
+    # {total_games:N, epochs:N, agent_ids:[...]}. Detected by the presence
+    # of "total" without "total_games".
+    if started is not None and "total_games" not in started and "total" in started:
+        _total = int(started.get("total", 0))
+        _ids = [job.agent_ids[0]] if job and job.agent_ids else []
+        started = {**started, "total_games": _total, "epochs": _total, "agent_ids": _ids}
+
     per_agent: dict[int, dict] = {}
     for m in matches:
+        # sample_trainer match events lack agent_a/agent_b; skip per-agent stats.
+        a_raw = m.get("agent_a")
+        b_raw = m.get("agent_b")
+        if a_raw is None or b_raw is None:
+            continue
         for side in ("agent_a", "agent_b"):
             aid = int(m[side])
             d = per_agent.setdefault(aid, {"games": 0, "wins": 0, "losses": 0})
