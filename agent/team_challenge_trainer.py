@@ -8,6 +8,30 @@ updated via REINFORCE on team win/loss.
 
 Teams are formed in order from agent_ids: [(ids[0], ids[1]), (ids[2], ids[3]), ...].
 At least 4 agent_ids (2 teams) are required.
+
+Usage (CLI):
+
+    cd agent && uv run python team_challenge_trainer.py \\
+        --agent-ids 1,2,3,4 --epochs 20 \\
+        --status-file /tmp/run.jsonl \\
+        --checkpoint-dir /tmp/ckpt --upload-to-0g
+
+    # With TensorBoard (optional):
+    cd agent && uv run python team_challenge_trainer.py \\
+        --agent-ids 1,2,3,4 --epochs 50 \\
+        --logdir /tmp/tb_team
+    # In another terminal:
+    cd agent && uv run tensorboard --logdir /tmp/tb_team
+
+TensorBoard scalars written per epoch (when --logdir is set):
+    match/plies               — game length in plies
+    win/team_<idx>            — 1.0 on each team win
+    market/accept_rate        — fraction of challenges accepted
+    market/avg_stake_wei      — mean stake per accepted match
+    market/proposed           — challenges proposed in this epoch
+    market/accepted           — challenges accepted in this epoch
+    weights/core_l2_agent_<id>   — L2 norm of core network weights
+    weights/extras_l2_agent_<id> — L2 norm of extras head (if present)
 """
 
 from __future__ import annotations

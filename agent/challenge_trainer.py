@@ -1,8 +1,38 @@
 """challenge_trainer.py — multi-agent marketplace training with TD-λ and REINFORCE.
 
-Agents propose challenges, accept or reject incoming ones based on Kelly
-criterion and expected value (via score_opponent), and play out the accepted
-matches. Win/Loss updates bankrolls and drives policy updates via REINFORCE.
+Agents start with a bankroll and propose challenges to each other. Each agent
+uses its ChallengePolicy (trained via REINFORCE) to accept or reject incoming
+challenges based on Kelly criterion and expected value. Accepted matches are
+played out with TD-λ updates; win/loss outcomes update bankrolls and the
+policy gradient.
+
+Unlike round_robin_trainer (all pairs play every epoch), only accepted
+challenges run — agents that sandbag or run dry will be challenged less.
+
+Usage (CLI):
+
+    cd agent && uv run python challenge_trainer.py \\
+        --agent-ids 1,2,3,4 --epochs 20 \\
+        --status-file /tmp/run.jsonl \\
+        --checkpoint-dir /tmp/ckpt --upload-to-0g
+
+    # With TensorBoard (optional):
+    cd agent && uv run python challenge_trainer.py \\
+        --agent-ids 1,2,3,4 --epochs 50 \\
+        --logdir /tmp/tb_challenge
+    # In another terminal:
+    cd agent && uv run tensorboard --logdir /tmp/tb_challenge
+
+TensorBoard scalars written per epoch (when --logdir is set):
+    match/plies               — game length in plies
+    win/agent_<id>            — 1.0 on each win
+    bankroll/agent_<id>       — current bankroll
+    market/accept_rate        — fraction of challenges accepted
+    market/avg_stake_wei      — mean stake per accepted match
+    market/proposed           — challenges proposed in this epoch
+    market/accepted           — challenges accepted in this epoch
+    weights/core_l2_agent_<id>   — L2 norm of core network weights
+    weights/extras_l2_agent_<id> — L2 norm of extras head (if present)
 """
 
 from __future__ import annotations
