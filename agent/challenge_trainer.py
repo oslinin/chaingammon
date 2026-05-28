@@ -211,15 +211,16 @@ def run_challenge_loop(
             target = candidates[action_idx.item()]
             chosen_score = scores_tensor[action_idx].item()
 
-            # Sizing bet
+            # Sizing bet. Kelly returns 0 when win_prob ≤ 0.5 (break-even),
+            # but we still propose at min_stake to force early exploration so
+            # REINFORCE has signal to learn from.
             stake = policies[proposer].size_bet(chosen_score, bankrolls[proposer], min_stake, max_stake_fraction)
+            if stake == 0:
+                stake = min_stake
 
-            if stake > 0:
-                # Recalculate score with actual stake to get the accurate EV?
-                # Not strictly necessary for REINFORCE log_prob, but accurate for reporting.
-                _emit(status_fh, "challenge_proposed", proposer=proposer, target=target, stake_wei=stake, score=chosen_score)
-                proposals.append((proposer, target, stake, log_prob, chosen_score))
-                proposed_count += 1
+            _emit(status_fh, "challenge_proposed", proposer=proposer, target=target, stake_wei=stake, score=chosen_score)
+            proposals.append((proposer, target, stake, log_prob, chosen_score))
+            proposed_count += 1
 
         # 2. RESPOND phase & 3. PLAY phase & 4. UPDATE
         for proposer, target, stake, log_prob, chosen_score in proposals:
