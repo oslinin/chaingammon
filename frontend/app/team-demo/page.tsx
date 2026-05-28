@@ -825,6 +825,21 @@ function TeamDemoPageInner() {
   const [panelSize, setPanelSize] = useState<{ w: number; h: number } | null>(null);
   const resizeState = useRef<{ startX: number; startY: number; origW: number; origH: number } | null>(null);
 
+  // Mobile-landscape overlay state: the advisor panel is hidden by default
+  // on phone-sized landscape viewports (the board needs the full screen) and
+  // is shown as a fixed overlay when the user taps the floating toggle. We
+  // listen for orientation/width changes and auto-close the overlay when the
+  // device leaves landscape-mobile so the panel doesn't stay forced-open on
+  // desktop or portrait.
+  const [showPanelInLandscape, setShowPanelInLandscape] = useState(false);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const mq = window.matchMedia("(orientation: landscape) and (max-width: 1023.98px)");
+    const onChange = () => { if (!mq.matches) setShowPanelInLandscape(false); };
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
+  }, []);
+
   const onResizeStart = (e: React.PointerEvent<HTMLDivElement>) => {
     e.preventDefault();
     e.stopPropagation();
@@ -1516,12 +1531,12 @@ function TeamDemoPageInner() {
   // ── Game screen ───────────────────────────────────────────────────────────
 
   return (
-    <main className="mx-auto flex w-full max-w-5xl flex-1 flex-col gap-6 p-6 landscape:max-lg:flex-row lg:flex-row">
+    <main className="mx-auto flex w-full max-w-5xl flex-1 flex-col gap-6 p-6 landscape:max-lg:gap-0 landscape:max-lg:p-0 lg:flex-row">
       <div className="flex flex-1 flex-col gap-6">
         {/* Match header */}
         <header
           style={{ borderBottom: "1px solid var(--cg-line-2)", paddingBottom: 16 }}
-          className="flex items-center justify-between"
+          className="flex items-center justify-between landscape:max-lg:hidden"
         >
           <h1
             style={{
@@ -1622,8 +1637,12 @@ function TeamDemoPageInner() {
         )}
 
         {game && (
-          <div className="flex flex-col gap-6">
+          <div className="flex flex-col gap-6 landscape:max-lg:relative landscape:max-lg:gap-0 landscape:max-lg:h-[100dvh]">
 
+            {/* Board: in landscape mobile, cap width by viewport height so the
+                fixed 716x440 aspect ratio fits within the viewport instead of
+                overflowing vertically. */}
+            <div className="landscape:max-lg:mx-auto landscape:max-lg:flex landscape:max-lg:h-full landscape:max-lg:w-full landscape:max-lg:max-w-[calc(100dvh*716/440)] landscape:max-lg:items-center">
             <Board
               board={currentBoard}
               bar={currentBar}
@@ -1652,6 +1671,13 @@ function TeamDemoPageInner() {
               selectedPoint={selectedSource}
               playerAvatarUrls={gameCoins ?? undefined}
             />
+            </div>
+
+            {/* Post-board controls. In portrait/desktop, `contents` makes this
+                wrapper layout-transparent — children flow under the outer
+                gap-6 stack. In landscape mobile, the wrapper becomes a flex
+                container floating in the bottom-right corner above the board. */}
+            <div className="contents landscape:max-lg:absolute landscape:max-lg:right-2 landscape:max-lg:bottom-2 landscape:max-lg:z-10 landscape:max-lg:flex landscape:max-lg:max-w-[60vw] landscape:max-lg:flex-col landscape:max-lg:items-end landscape:max-lg:gap-2 landscape:max-lg:rounded-md landscape:max-lg:bg-black/55 landscape:max-lg:p-2 landscape:max-lg:backdrop-blur-sm">
 
             {game.dice && (
               <div className="flex items-center gap-3">
@@ -1803,6 +1829,7 @@ function TeamDemoPageInner() {
                 ) : null}
               </div>
             )}
+            </div>
           </div>
         )}
       </div>
@@ -1824,20 +1851,48 @@ function TeamDemoPageInner() {
       />
       <CubeTransactionOverlay isOpen={cubeProcessing} message="Processing cube action…" />
 
-      {/* Advisor panel — floatable and resizable */}
+      {/* Landscape-mobile advisor toggle. The toggle only appears on phone-
+          sized landscape viewports (display:flex inside landscape:max-lg, hidden
+          otherwise) so it doesn't clutter the desktop layout. Tapping it
+          flips the panel between hidden and a full-viewport fixed overlay. */}
+      <button
+        type="button"
+        data-testid="advisor-toggle-landscape"
+        onClick={() => setShowPanelInLandscape((v) => !v)}
+        aria-label={showPanelInLandscape ? "Hide advisor" : "Show advisor"}
+        className="hidden landscape:max-lg:flex fixed bottom-2 left-2 z-50 h-10 w-10 items-center justify-center rounded-full"
+        style={{
+          background: "var(--cg-brass)",
+          color: "var(--cg-brass-ink)",
+          border: "none",
+          boxShadow: "var(--cg-shadow-2)",
+          cursor: "pointer",
+          fontSize: 18,
+          fontWeight: 700,
+          lineHeight: 1,
+        }}
+      >
+        {showPanelInLandscape ? "×" : "☰"}
+      </button>
+
+      {/* Advisor panel — floatable and resizable. In landscape mobile, the
+          panel is hidden by default and becomes a fixed full-viewport overlay
+          when `showPanelInLandscape` is true (toggled by the button above). */}
       <div
         ref={panelRef}
         style={{
-          ...(panelPos
-            ? { position: "fixed", left: panelPos.x, top: panelPos.y, zIndex: 50, width: panelSize?.w ?? 320, height: panelSize?.h ?? 560 }
-            : { width: panelSize?.w, height: panelSize?.h ?? 560 }),
+          ...(showPanelInLandscape
+            ? { position: "fixed" as const, inset: 8, zIndex: 60, width: "auto", height: "auto" }
+            : panelPos
+              ? { position: "fixed" as const, left: panelPos.x, top: panelPos.y, zIndex: 50, width: panelSize?.w ?? 320, height: panelSize?.h ?? 560 }
+              : { width: panelSize?.w, height: panelSize?.h ?? 560 }),
           ...card,
           display: "flex",
           flexDirection: "column",
           overflow: "hidden",
-          ...(panelPos ? { boxShadow: "var(--cg-shadow-2)" } : {}),
+          ...(panelPos || showPanelInLandscape ? { boxShadow: "var(--cg-shadow-2)" } : {}),
         }}
-        className="w-full landscape:max-lg:w-56 lg:w-80"
+        className={`w-full lg:w-80 ${showPanelInLandscape ? "" : "landscape:max-lg:hidden"}`}
       >
         {/* Drag handle */}
         <div

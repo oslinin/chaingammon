@@ -1,17 +1,13 @@
 // board-landscape.spec.ts
 //
-// Verifies that the team-demo game layout flips to a horizontal (board left,
-// advisor panel right) arrangement when the device is in landscape orientation
-// — even on phone-sized viewports below the desktop `lg` breakpoint.
+// Verifies the team-demo game layout in mobile landscape: the board fills the
+// screen (header hidden, padding removed) and the advisor panel is hidden by
+// default but reachable via a floating toggle that opens it as a fixed
+// overlay. Portrait stays stacked.
 //
-// The mechanism under test is pure CSS: Tailwind's `landscape:max-lg:flex-row`
-// modifier stacked on the main page wrapper in app/team-demo/page.tsx. No JS
-// orientation hook is involved.
-//
-// Layout matrix being pinned:
-//   - landscape + viewport < 1024px  → flex-direction: row     (new behavior)
-//   - portrait  + viewport < 1024px  → flex-direction: column  (existing)
-//   - landscape + viewport ≥ 1024px  → flex-direction: row     (existing lg)
+// Mechanism: pure CSS via Tailwind's `landscape:max-lg:` variant, plus one
+// piece of React state (`showPanelInLandscape`) to flip the panel between
+// hidden and fixed-overlay when the toggle is tapped.
 //
 // Like game-flow.spec.ts we use `?opponents=1` so the page skips the agent-
 // picker setup screen and renders the game `<main>` immediately. The agents
@@ -34,18 +30,30 @@ test.describe("game layout — phone landscape", () => {
   const { defaultBrowserType: _1, ...iphoneLandscape } = devices["iPhone 12 landscape"];
   test.use(iphoneLandscape);
 
-  test("board and advisor panel sit side-by-side", async ({ page }) => {
+  test("board takes the whole screen; advisor panel is a toggleable overlay", async ({ page }) => {
     await mockAgentList(page);
     await page.goto("/team-demo?opponents=1");
 
-    // Wait for the game screen to render (header is unique to it).
-    await expect(
-      page.locator("h1", { hasText: "Off-chain game" })
-    ).toBeVisible({ timeout: 10_000 });
+    // The header is hidden in landscape, so wait on the landscape-only toggle.
+    const toggle = page.getByTestId("advisor-toggle-landscape");
+    await expect(toggle).toBeVisible({ timeout: 10_000 });
 
-    // The game-screen <main> is the only one carrying `max-w-5xl`.
-    const main = page.locator("main.max-w-5xl");
-    await expect(main).toHaveCSS("flex-direction", "row");
+    // Page header is hidden — gives the board the full viewport height.
+    await expect(page.locator("header")).not.toBeVisible();
+
+    // Advisor panel is hidden by default. The panel is the element wrapping
+    // the AgentTeammatePanel; its drag handle has `title="Drag to move panel"`.
+    const panel = page.locator("[title='Drag to move panel']").locator("..");
+    await expect(panel).toBeHidden();
+
+    // Tapping the toggle reveals the panel as a fixed overlay.
+    await toggle.click();
+    await expect(panel).toBeVisible();
+    await expect(panel).toHaveCSS("position", "fixed");
+
+    // Tapping again hides it.
+    await toggle.click();
+    await expect(panel).toBeHidden();
   });
 });
 
