@@ -81,10 +81,15 @@ export default function RootLayout({
         <Providers>
           <SettingsModal />
           <div className="flex flex-1">
-            {/* pb-16 reserves space for the fixed mobile bottom nav */}
-            <div className="flex flex-1 flex-col min-w-0 pb-16 md:pb-0">
+            {/* pb-16 reserves space for the fixed mobile bottom nav. The
+                landscape-mobile override drops the reserve when MobileNav
+                is also hidden (see MobileNav.tsx) so the game can use
+                every pixel of the viewport. */}
+            <div className="flex flex-1 flex-col min-w-0 pb-16 md:pb-0 landscape:max-lg:pb-0">
               {/* Global top navbar: brand on the left, compute backends
-                  + wallet connect (ELO, matches played) on the right. */}
+                  + wallet connect (ELO, matches played) on the right.
+                  Hidden in landscape-mobile so the team-demo board can
+                  fill the viewport. */}
               <header
                 style={{
                   background: "rgba(21,17,14,0.88)",
@@ -95,7 +100,7 @@ export default function RootLayout({
                   top: 0,
                   zIndex: 40,
                 }}
-                className="flex items-center justify-between gap-4 px-4 md:px-6 py-3"
+                className="flex items-center justify-between gap-4 px-4 md:px-6 py-3 landscape:max-lg:hidden"
               >
                 <Link
                   href="/"

@@ -34,12 +34,20 @@ test.describe("game layout — phone landscape", () => {
     await mockAgentList(page);
     await page.goto("/team-demo?opponents=1");
 
-    // The header is hidden in landscape, so wait on the landscape-only toggle.
+    // Headers hidden in landscape, so wait on the landscape-only advisor toggle.
     const toggle = page.getByTestId("advisor-toggle-landscape");
     await expect(toggle).toBeVisible({ timeout: 10_000 });
 
-    // Page header is hidden — gives the board the full viewport height.
-    await expect(page.locator("header")).not.toBeVisible();
+    // Global layout header (Chain·Gammon brand bar) and MobileNav bottom bar
+    // are both hidden so the board can fill the viewport. Scope to the global
+    // header via the sticky-positioned <header> in app/layout.tsx; the
+    // team-demo page header is scoped via main header.
+    await expect(page.locator("body > div header").first()).toBeHidden();
+    await expect(page.locator("main header")).toBeHidden();
+    await expect(page.getByTestId("mobile-nav")).toBeHidden();
+
+    // Fullscreen toggle is also rendered alongside the advisor toggle.
+    await expect(page.getByTestId("fullscreen-toggle-landscape")).toBeVisible();
 
     // Advisor panel is hidden by default. The panel is the element wrapping
     // the AgentTeammatePanel; its drag handle has `title="Drag to move panel"`.
