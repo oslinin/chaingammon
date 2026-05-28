@@ -178,13 +178,16 @@ class EnsClient:
 
     # --- writes ------------------------------------------------------------
 
-    def mint_subname(self, label: str, subname_owner: str) -> str:
+    def mint_subname(self, label: str, subname_owner: str, *, wait: bool = True) -> str:
         """Mint `<label>.<parent>` to `subname_owner`. Returns the tx hash.
 
         Owner-only on the registrar; the server signs. Phase 11 itself
         doesn't auto-mint — Phase 12 (frontend) drives the mint flow,
         but the method lives here so a single client covers all
         registrar writes.
+
+        Pass wait=False to return the tx hash immediately after broadcast
+        without blocking for on-chain confirmation (saves ~15 s round-trip).
         """
         if not label:
             raise EnsError("empty label")
@@ -201,7 +204,7 @@ class EnsClient:
                 "gas": 200_000,
             }
         )
-        return self._send(tx, op="mintSubname")
+        return self._send(tx, op="mintSubname", wait=wait)
 
     def set_text(self, *, node: str, key: str, value: str) -> str:
         """Push a single text record. Returns the tx hash."""
@@ -221,12 +224,13 @@ class EnsClient:
 
     # --- internal ----------------------------------------------------------
 
-    def _send(self, tx: dict, *, op: str) -> str:
+    def _send(self, tx: dict, *, op: str, wait: bool = True) -> str:
         signed = self.account.sign_transaction(tx)
         tx_hash = self.w3.eth.send_raw_transaction(signed.raw_transaction)
-        receipt: TxReceipt = self.w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
-        if receipt.status != 1:
-            raise EnsError(f"{op} tx reverted: {tx_hash.hex()}")
+        if wait:
+            receipt: TxReceipt = self.w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
+            if receipt.status != 1:
+                raise EnsError(f"{op} tx reverted: {tx_hash.hex()}")
         tx_hash_hex = tx_hash.hex()
         if not tx_hash_hex.startswith("0x"):
             tx_hash_hex = "0x" + tx_hash_hex
