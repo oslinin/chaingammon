@@ -1,5 +1,9 @@
 "use client";
 
+// Prepend base path so asset URLs resolve correctly on GitHub Pages
+// (where the app is served under /chaingammon/ rather than /).
+const BP = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
+
 import calBoardSteampunk from "../lib/calibration/board_steampunk.json";
 import calBoardCeltic    from "../lib/calibration/board_celtic.json";
 import calBoardMedieval  from "../lib/calibration/board_medieval.json";
@@ -287,11 +291,11 @@ export const BOARD_THEMES: Record<string, BoardTheme> = {
 
   board_steampunk: {
     label: "Dark Mahogany — British Empire c.1890",
-    backgroundImageUrl: "/boards/new/board4/board.jpeg",
+    backgroundImageUrl: `${BP}/boards/new/board4/board.jpeg`,
     backgroundImageCrop: { srcX: 0, srcY: 0, srcW: 830, srcH: 500, totalSrcW: 830, totalSrcH: 500 },
     checkerImages: {
-      warm: { url: "/boards/new/board4/light_checker.png", srcX: 208, srcY: 0, srcW: 832, srcH: 832, totalW: 1248, totalH: 832 },
-      cool: { url: "/boards/new/board4/dark_checker.png",  srcX: 208, srcY: 0, srcW: 832, srcH: 832, totalW: 1248, totalH: 832 },
+      warm: { url: `${BP}/boards/new/board4/light_checker.png`, srcX: 208, srcY: 0, srcW: 832, srcH: 832, totalW: 1248, totalH: 832 },
+      cool: { url: `${BP}/boards/new/board4/dark_checker.png`,  srcX: 208, srcY: 0, srcW: 832, srcH: 832, totalW: 1248, totalH: 832 },
     },
     checkerSpots: calBoardSteampunk,
     avatarSpots: { p0: { cx: 0.043, cy: 0.12 }, p1: { cx: 0.957, cy: 0.12 }, r: 0.052 },
@@ -305,11 +309,11 @@ export const BOARD_THEMES: Record<string, BoardTheme> = {
 
   board_celtic: {
     label: "Persian — The Nard Era",
-    backgroundImageUrl: "/boards/new/board1/board.jpeg",
+    backgroundImageUrl: `${BP}/boards/new/board1/board.jpeg`,
     backgroundImageCrop: { srcX: 0, srcY: 0, srcW: 1024, srcH: 595, totalSrcW: 1024, totalSrcH: 595 },
     checkerImages: {
-      warm: { url: "/boards/new/board1/checkers.png", srcX: 0,   srcY: 256, srcW: 512, srcH: 512, totalW: 1024, totalH: 1024 },
-      cool: { url: "/boards/new/board1/checkers.png", srcX: 512, srcY: 256, srcW: 512, srcH: 512, totalW: 1024, totalH: 1024 },
+      warm: { url: `${BP}/boards/new/board1/checkers.png`, srcX: 0,   srcY: 256, srcW: 512, srcH: 512, totalW: 1024, totalH: 1024 },
+      cool: { url: `${BP}/boards/new/board1/checkers.png`, srcX: 512, srcY: 256, srcW: 512, srcH: 512, totalW: 1024, totalH: 1024 },
     },
     checkerSpots: calBoardCeltic,
     avatarSpots: {
@@ -329,11 +333,11 @@ export const BOARD_THEMES: Record<string, BoardTheme> = {
   },
   board_medieval: {
     label: "Roman — Imperial Court",
-    backgroundImageUrl: "/boards/new/board2/board.jpeg",
+    backgroundImageUrl: `${BP}/boards/new/board2/board.jpeg`,
     backgroundImageCrop: { srcX: 0, srcY: 0, srcW: 1024, srcH: 559, totalSrcW: 1024, totalSrcH: 559 },
     checkerImages: {
-      warm: { url: "/boards/new/board2/light_checker.png", srcX: 0, srcY: 0, srcW: 1024, srcH: 1024, totalW: 1024, totalH: 1024 },
-      cool: { url: "/boards/new/board2/dark_checker.png",  srcX: 0, srcY: 0, srcW: 1024, srcH: 1024, totalW: 1024, totalH: 1024 },
+      warm: { url: `${BP}/boards/new/board2/light_checker.png`, srcX: 0, srcY: 0, srcW: 1024, srcH: 1024, totalW: 1024, totalH: 1024 },
+      cool: { url: `${BP}/boards/new/board2/dark_checker.png`,  srcX: 0, srcY: 0, srcW: 1024, srcH: 1024, totalW: 1024, totalH: 1024 },
     },
     checkerSpots: calBoardMedieval,
     avatarSpots: { p0: { cx: 0.043, cy: 0.12 }, p1: { cx: 0.957, cy: 0.12 }, r: 0.052 },
@@ -346,11 +350,11 @@ export const BOARD_THEMES: Record<string, BoardTheme> = {
   },
   board_darkwood: {
     label: "Manhattan — 1920s Art Deco",
-    backgroundImageUrl: "/boards/new/board5/board.jpeg",
+    backgroundImageUrl: `${BP}/boards/new/board5/board.jpeg`,
     backgroundImageCrop: { srcX: 0, srcY: 0, srcW: 1024, srcH: 559, totalSrcW: 1024, totalSrcH: 559 },
     checkerImages: {
-      warm: { url: "/boards/new/board5/light_checker.png", srcX: 208, srcY: 0, srcW: 832, srcH: 832, totalW: 1248, totalH: 832 },
-      cool: { url: "/boards/new/board5/dark_checker.png",  srcX: 208, srcY: 0, srcW: 832, srcH: 832, totalW: 1248, totalH: 832 },
+      warm: { url: `${BP}/boards/new/board5/light_checker.png`, srcX: 208, srcY: 0, srcW: 832, srcH: 832, totalW: 1248, totalH: 832 },
+      cool: { url: `${BP}/boards/new/board5/dark_checker.png`,  srcX: 208, srcY: 0, srcW: 832, srcH: 832, totalW: 1248, totalH: 832 },
     },
     checkerSpots: calBoardDarkwood,
     avatarSpots: { p0: { cx: 0.043, cy: 0.12 }, p1: { cx: 0.957, cy: 0.12 }, r: 0.052 },
@@ -363,11 +367,11 @@ export const BOARD_THEMES: Record<string, BoardTheme> = {
   },
   board_tokyo: {
     label: "Tokyo — Contemporary Japan",
-    backgroundImageUrl: "/boards/new/board7/board.jpeg",
+    backgroundImageUrl: `${BP}/boards/new/board7/board.jpeg`,
     backgroundImageCrop: { srcX: 0, srcY: 0, srcW: 1024, srcH: 655, totalSrcW: 1024, totalSrcH: 655 },
     checkerImages: {
-      warm: { url: "/boards/new/board7/light_checker.jpeg", srcX: 193, srcY: 11, srcW: 640, srcH: 640, totalW: 1024, totalH: 655 },
-      cool: { url: "/boards/new/board7/dark_checker.jpeg",  srcX: 193, srcY: 11, srcW: 640, srcH: 640, totalW: 1024, totalH: 655 },
+      warm: { url: `${BP}/boards/new/board7/light_checker.jpeg`, srcX: 193, srcY: 11, srcW: 640, srcH: 640, totalW: 1024, totalH: 655 },
+      cool: { url: `${BP}/boards/new/board7/dark_checker.jpeg`,  srcX: 193, srcY: 11, srcW: 640, srcH: 640, totalW: 1024, totalH: 655 },
     },
     checkerSpots: calBoardTokyo,
     avatarSpots: { p0: { cx: 0.043, cy: 0.12 }, p1: { cx: 0.957, cy: 0.12 }, r: 0.052 },
@@ -380,11 +384,11 @@ export const BOARD_THEMES: Record<string, BoardTheme> = {
   },
   board_cyber2: {
     label: "Cyber — Digital Age c.2020",
-    backgroundImageUrl: "/boards/new/board6/board.png",
+    backgroundImageUrl: `${BP}/boards/new/board6/board.png`,
     backgroundImageCrop: { srcX: 0, srcY: 0, srcW: 737, srcH: 463, totalSrcW: 737, totalSrcH: 463 },
     checkerImages: {
-      warm: { url: "/boards/new/board6/light_checker.png", srcX: 288, srcY: 0,    srcW: 768,  srcH: 768,  totalW: 1344, totalH: 768  },
-      cool: { url: "/boards/new/board6/dark_checker.png",  srcX: 0,   srcY: 0,    srcW: 1024, srcH: 1024, totalW: 1024, totalH: 1024 },
+      warm: { url: `${BP}/boards/new/board6/light_checker.png`, srcX: 288, srcY: 0,    srcW: 768,  srcH: 768,  totalW: 1344, totalH: 768  },
+      cool: { url: `${BP}/boards/new/board6/dark_checker.png`,  srcX: 0,   srcY: 0,    srcW: 1024, srcH: 1024, totalW: 1024, totalH: 1024 },
     },
     checkerSpots: calBoardCyber2,
     // No avatarSpots: the neon board's point wedges reach the corners, leaving
@@ -581,12 +585,12 @@ export function savePrefer3d(v: boolean) {
 
 /** URLs for the 6 historical coin portrait avatars. */
 export const COIN_POOL = [
-  '/boards/new/coins/coin1_avatar.png',
-  '/boards/new/coins/coin2_avatar.png',
-  '/boards/new/coins/coin3_avatar.png',
-  '/boards/new/coins/coin4_avatar.png',
-  '/boards/new/coins/coin5_avatar.png',
-  '/boards/new/coins/coin6_avatar.png',
+  `${BP}/boards/new/coins/coin1_avatar.png`,
+  `${BP}/boards/new/coins/coin2_avatar.png`,
+  `${BP}/boards/new/coins/coin3_avatar.png`,
+  `${BP}/boards/new/coins/coin4_avatar.png`,
+  `${BP}/boards/new/coins/coin5_avatar.png`,
+  `${BP}/boards/new/coins/coin6_avatar.png`,
 ] as const;
 
 /**
