@@ -1,10 +1,14 @@
 """round_robin_trainer.py — multi-agent round-robin self-play with TD-λ.
 
-Spawns one BackgammonNet per agent_id (loaded from 0G storage if a
-prior checkpoint exists, else seeded fresh per agent_id), plays every
-unordered pair (a, b) once per epoch — `C(N, 2)` games per epoch —
-and emits JSONL status events the FastAPI `/training/status` endpoint
-reads.
+Spawns one BackgammonNet per agent_id (loaded from 0G storage if a prior
+checkpoint exists, else seeded fresh per agent_id), plays every ordered pair
+(a, b) and (b, a) per epoch — `N*(N-1)` games per epoch — and emits JSONL
+status events the FastAPI `/training/status` endpoint reads.
+
+Pairing is `itertools.permutations(agent_ids, 2)`: both orderings play so
+every agent is the TD learner against every other once per epoch. A single
+match updates only the first (learner) net; playing both orderings ensures
+symmetric gradient updates.
 
 Usage (CLI):
 
@@ -12,6 +16,16 @@ Usage (CLI):
         --agent-ids 1,2,3,4 --epochs 10 \\
         --status-file /tmp/run.jsonl \\
         --checkpoint-dir /tmp/ckpt --upload-to-0g
+
+    # With TensorBoard (optional — tensorboard must be installed):
+    cd agent && uv run python round_robin_trainer.py \\
+        --agent-ids 1,2,3,4 --epochs 50 \\
+        --logdir /tmp/tb_rr
+    # In another terminal:
+    cd agent && uv run tensorboard --logdir /tmp/tb_rr
+
+TensorBoard scalars written per epoch (when --logdir is set):
+    win_rate/agent_<id>   — fraction of that agent's epoch games won
 
 Status JSONL events (one event per line):
 
@@ -24,12 +38,6 @@ Status JSONL events (one event per line):
     {"event":"agent_saved",      "agent_id":a, "path":..., "root_hash":..., "ts":...}
     {"event":"agent_save_error", "agent_id":a, "detail":..., "ts":...}
     {"event":"done"|"aborted","ts":...}
-
-Pairing is `itertools.permutations(agent_ids, 2)` — both `(a, b)` and
-`(b, a)` play each epoch so every agent gets to be the learner against
-every other. A single match updates only the first net (the second is
-frozen), so playing both orderings ensures symmetric gradient updates.
-`N * (N-1)` matches per epoch total.
 
 SIGTERM-safe: the FastAPI `/training/abort` endpoint sends SIGTERM and
 expects a final 'aborted' event so the status reader can distinguish
@@ -51,6 +59,12 @@ from pathlib import Path
 from typing import Callable, Optional, TextIO
 
 import torch
+
+try:
+    from torch.utils.tensorboard import SummaryWriter as _SummaryWriter
+    _TB_AVAILABLE = True
+except ImportError:
+    _TB_AVAILABLE = False
 
 # Load server/.env into os.environ before any module reads RPC_URL etc.
 # Needed because this script is spawned as a subprocess and must know
@@ -253,6 +267,7 @@ def run_round_robin(
     use_0g_inference: bool = False,
     sklearn_codes: Optional[dict[int, str]] = None,
     search_depths: Optional[dict[int, int]] = None,
+    logdir: Optional[str] = None,
 ) -> dict[int, AgentState]:
     """Run the round-robin training loop.
 
@@ -273,12 +288,15 @@ def run_round_robin(
     games_per_epoch = n * (n - 1)  # permutations: (a,b) and (b,a) both play
     total_games = epochs * games_per_epoch
 
+    writer = _SummaryWriter(logdir) if (logdir and _TB_AVAILABLE) else None
+
     _emit(
         status_fh, "started",
         agent_ids=agent_ids, epochs=epochs,
         games_per_epoch=games_per_epoch,
         total_games=total_games,
         use_0g_inference=bool(use_0g_inference),
+        logdir=logdir or "",
     )
 
     # Phase I: when use_0g_inference is set, probe the eval bridge once
@@ -322,6 +340,8 @@ def run_round_robin(
 
     for epoch in range(epochs):
         _emit(status_fh, "epoch_start", epoch=epoch, total=epochs)
+        _epoch_wins: dict[int, int] = {aid: 0 for aid in agent_ids}
+        _epoch_played: dict[int, int] = {aid: 0 for aid in agent_ids}
         # Use permutations so (a, b) and (b, a) both play — every agent
         # learns against every other once per epoch.
         for a_id, b_id in itertools.permutations(agent_ids, 2):
@@ -377,6 +397,9 @@ def run_round_robin(
                 **kwargs,
             )
             winner = learner_id if won else opp_id
+            _epoch_played[a_id] = _epoch_played.get(a_id, 0) + 1
+            _epoch_played[b_id] = _epoch_played.get(b_id, 0) + 1
+            _epoch_wins[winner] = _epoch_wins.get(winner, 0) + 1
 
             # Collect training data for sklearn agents from their states.
             # opp_states are the positions chosen by opp_net (= sklearn agent
@@ -404,6 +427,12 @@ def run_round_robin(
             )
 
         _emit(status_fh, "epoch_end", epoch=epoch)
+
+        if writer:
+            for aid in agent_ids:
+                g = _epoch_played.get(aid, 0)
+                w = _epoch_wins.get(aid, 0)
+                writer.add_scalar(f"win_rate/agent_{aid}", w / g if g else 0.0, epoch)
 
         # After each epoch re-fit sklearn models so they improve over time.
         for sk_id, data in sklearn_data.items():
@@ -479,6 +508,9 @@ def run_round_robin(
                     agent_id=sk_id, detail=str(exc),
                 )
 
+    if writer:
+        writer.close()
+
     return agents
 
 
@@ -530,6 +562,10 @@ def main() -> int:
                         help="Per-agent search depth for expectiminimax. "
                              "Format: comma-separated id:depth pairs, e.g. '1:2,3:1'. "
                              "Depth 1 = greedy (default). Depth 2 = 2-ply (~21x slower).")
+    parser.add_argument("--logdir", type=str, default=None,
+                        help="Directory for TensorBoard event files (optional). "
+                             "Writes win_rate/agent_<id> scalar per epoch. "
+                             "Run `uv run tensorboard --logdir <logdir>` to view.")
     args = parser.parse_args()
 
     if len(args.agent_ids) < 2:
@@ -578,6 +614,7 @@ def main() -> int:
                 use_0g_inference=args.use_0g_inference,
                 sklearn_codes=sklearn_codes or None,
                 search_depths=search_depths or None,
+                logdir=args.logdir,
             )
             completed = True
         finally:
