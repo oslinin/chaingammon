@@ -95,7 +95,7 @@ export default function RootLayout({
                   top: 0,
                   zIndex: 40,
                 }}
-                className="flex items-center justify-between gap-4 px-4 md:px-6 py-3"
+                className="flex items-center justify-between gap-4 px-4 md:px-6 py-3 landscape:max-lg:hidden"
               >
                 <Link
                   href="/"

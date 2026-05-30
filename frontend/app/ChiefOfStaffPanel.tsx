@@ -21,18 +21,14 @@
 
 import { useEffect, useRef, useState } from "react";
 import { evaluateMoves, evaluateMovesWithAgent } from "../lib/onnx_eval";
-import { generateLegalMoves } from "../lib/rules_engine";
 import { tagCandidates } from "../lib/move_tagger";
+import { TagBadge } from "../lib/move_tags";
+import type { TaggedCandidate } from "../lib/useTaggedCandidates";
 import { useI18n } from "./i18n";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
-export interface TaggedCandidate {
-  move: string;
-  equity: number;
-  tag: "Safe" | "Aggressive" | "Priming" | "Anchor" | "Blitz";
-  tag_reason: string;
-}
+export type { TaggedCandidate };
 
 interface TeammateMessage {
   role: "human" | "agent";
@@ -72,39 +68,14 @@ interface Props {
   noLLM?: boolean;
   /** Agent IDs of loaded team members whose evaluations appear as advisor signals. */
   teammateIds?: number[];
-}
-
-// ── Tag colour palette — mapped to CG semantic tokens ─────────────────────
-// One accent color per tag; all use CG-approved values from the design system.
-
-const TAG_COLORS: Record<string, { bg: string; text: string; border: string }> = {
-  Safe:       { bg: "rgba(125,155,74,0.12)",  text: "#7D9B4A", border: "rgba(125,155,74,0.35)" },
-  Aggressive: { bg: "rgba(208,138,60,0.12)",  text: "#D08A3C", border: "rgba(208,138,60,0.35)" },
-  Priming:    { bg: "rgba(232,192,126,0.12)",  text: "#F4D49A", border: "rgba(232,192,126,0.35)" },
-  Anchor:     { bg: "rgba(107,138,166,0.12)", text: "#6B8AA6", border: "rgba(107,138,166,0.35)" },
-  Blitz:      { bg: "rgba(192,74,59,0.12)",   text: "#C04A3B", border: "rgba(192,74,59,0.35)" },
-};
-
-function TagBadge({ tag }: { tag: string }) {
-  const c = TAG_COLORS[tag] ?? TAG_COLORS.Safe;
-  return (
-    <span
-      style={{
-        display: "inline-block",
-        borderRadius: "var(--cg-radius-sm)",
-        padding: "1px 6px",
-        fontSize: 9,
-        fontWeight: 600,
-        letterSpacing: "0.1em",
-        textTransform: "uppercase",
-        background: c.bg,
-        color: c.text,
-        border: `1px solid ${c.border}`,
-      }}
-    >
-      {tag}
-    </span>
-  );
+  /**
+   * When provided, the panel skips its own ONNX evaluation and renders these
+   * candidates directly — used by the team-demo page so the panel + the
+   * landscape MoveCycler share a single evaluator run (see
+   * lib/useTaggedCandidates.ts). Omit on the standalone test fixture.
+   */
+  candidates?: TaggedCandidate[];
+  candidatesLoading?: boolean;
 }
 
 // ── Main component ─────────────────────────────────────────────────────────
@@ -123,11 +94,15 @@ export function AgentTeammatePanel({
   disabled = false,
   noLLM = false,
   teammateIds = [],
+  candidates: controlledCandidates,
+  candidatesLoading: controlledLoading,
 }: Props) {
   const { t } = useI18n();
-  const [taggedCandidates, setTaggedCandidates] = useState<TaggedCandidate[]>([]);
-  const [loadingCandidates, setLoadingCandidates] = useState(false);
-  const [candidatesRanked, setCandidatesRanked] = useState(false);
+  const controlled = controlledCandidates !== undefined;
+  const [localCandidates, setLocalCandidates] = useState<TaggedCandidate[]>([]);
+  const [localLoading, setLocalLoading] = useState(false);
+  const taggedCandidates = controlled ? controlledCandidates! : localCandidates;
+  const loadingCandidates = controlled ? !!controlledLoading : localLoading;
   const [advisorSignals, setAdvisorSignals] = useState<{ agentId: number; move: string; equity: number }[]>([]);
 
   const [dialogue, setDialogue] = useState<TeammateMessage[]>([]);
@@ -139,15 +114,19 @@ export function AgentTeammatePanel({
   const inputRef = useRef<HTMLInputElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
-  // ── Step 1: Evaluate candidates with ONNX BackgammonNet ──────────────
+  // ── Step 1: Evaluate candidates with the gnubg ONNX net ─────────────
+  // Skipped entirely when the parent controls the candidates list (the
+  // team-demo page does this so panel + landscape MoveCycler share one run).
+  // ONNX is warmed up at app startup; there is no legal-moves fallback —
+  // if evaluation fails we log and leave the list empty.
 
   useEffect(() => {
+    if (controlled) return;
     if (disabled || !dice || !board) return;
-    setTaggedCandidates([]);
-    setCandidatesRanked(false);
+    setLocalCandidates([]);
     setLastResponse(null);
     setDialogue([]);
-    setLoadingCandidates(true);
+    setLocalLoading(true);
 
     const gameBoard = {
       points: board,
@@ -161,28 +140,20 @@ export function AgentTeammatePanel({
         const candidates = await evaluateMoves(gameBoard, turn, dice);
         if (cancelled) return;
         const tagged = tagCandidates(candidates, board, 10) as TaggedCandidate[];
-        setTaggedCandidates(tagged);
-        setCandidatesRanked(true);
-      } catch {
+        setLocalCandidates(tagged);
+      } catch (err) {
         if (cancelled) return;
-        try {
-          const moves = generateLegalMoves(gameBoard, turn, dice);
-          const unranked = moves.map((m, i) => ({ move: m, equity: -i * 0.0001 }));
-          const tagged = tagCandidates(unranked, board, 10) as TaggedCandidate[];
-          setTaggedCandidates(tagged);
-          setCandidatesRanked(false);
-        } catch {
-          // rules engine also unavailable — panel stays empty
-        }
+        console.error("AgentTeammatePanel: evaluateMoves failed", err);
+        setLocalCandidates([]);
       } finally {
-        if (!cancelled) setLoadingCandidates(false);
+        if (!cancelled) setLocalLoading(false);
       }
     })();
     return () => {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [disabled, positionId, matchId, dice?.[0], dice?.[1]]);
+  }, [controlled, disabled, positionId, matchId, dice?.[0], dice?.[1]]);
 
   // ── Teammate advisor signals ──────────────────────────────────────────
   useEffect(() => {
@@ -369,13 +340,12 @@ export function AgentTeammatePanel({
                   color: "var(--cg-fg-4)",
                 }}
               >
-                {candidatesRanked ? t("top_moves") : t("legal_moves")}
+                {t("top_moves")}
               </p>
               <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
                 {taggedCandidates.map((c, i) => {
                   const isRecommended = lastResponse?.recommended_move === c.move;
-                  const col = TAG_COLORS[c.tag] ?? TAG_COLORS.Safe;
-                  return (
+                      return (
                     <button
                       key={i}
                       type="button"
@@ -405,12 +375,10 @@ export function AgentTeammatePanel({
                     >
                       <TagBadge tag={c.tag} />
                       <span>{c.move}</span>
-                      {candidatesRanked && (
-                        <span style={{ fontSize: 10, color: "var(--cg-fg-3)" }}>
-                          {c.equity >= 0 ? "+" : ""}
-                          {c.equity.toFixed(3)}
-                        </span>
-                      )}
+                      <span style={{ fontSize: 10, color: "var(--cg-fg-3)" }}>
+                        {c.equity >= 0 ? "+" : ""}
+                        {c.equity.toFixed(3)}
+                      </span>
                       {isRecommended && (
                         <span style={{ fontSize: 10, fontWeight: 600, color: "var(--cg-brass-hi)" }}>
                           ✓
