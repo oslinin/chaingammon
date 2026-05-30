@@ -54,6 +54,10 @@ import { loadAgentModel, createAgentEvaluator, destroyAgentEvaluator } from "../
 import { loadAgentOnnxBytes } from "../../lib/agent_model_loader";
 import { encodeStyleVector } from "../../lib/career_features";
 import { type Board as GameBoard } from "../../lib/rules_engine";
+import { useTaggedCandidates } from "../../lib/useTaggedCandidates";
+import { pipCount } from "../../lib/pip";
+import { MoveCycler } from "../MoveCycler";
+import { PlayerStatusCard } from "../PlayerStatusCard";
 import { useI18n } from "../i18n";
 
 const ZERO_HASH =
@@ -1340,6 +1344,52 @@ function TeamDemoPageInner() {
     stagedMoves.length === 0 &&
     (game?.cubeOwner === -1 || game?.cubeOwner === 0);
 
+  // Single ONNX run shared by the advisor panel + the landscape MoveCycler.
+  // Evaluates the start-of-turn position (game.board), not the staged
+  // display board, so candidates stay stable across partial-move staging.
+  const advisorDisabled = !isHumanTurn || !!game?.game_over;
+  const { candidates: taggedCandidates, loading: candidatesLoading } = useTaggedCandidates({
+    board: game?.board,
+    bar: game?.bar as [number, number] | undefined,
+    off: game?.off as [number, number] | undefined,
+    turn: game?.turn as 0 | 1 | undefined,
+    dice: game?.dice ?? null,
+    positionId: game?.position_id ?? "",
+    disabled: advisorDisabled,
+  });
+
+  // Landscape-cycler index, scoped to the current ply via positionId so it
+  // naturally resets on every new turn without a setState-in-effect.
+  const [cyclerState, setCyclerState] = useState<{ positionId: string; idx: number }>({
+    positionId: "",
+    idx: 0,
+  });
+  const cycleIdx =
+    cyclerState.positionId === (game?.position_id ?? "") ? cyclerState.idx : 0;
+  const setCycleIdx = (next: number) =>
+    setCyclerState({ positionId: game?.position_id ?? "", idx: next });
+
+  // Ghost preview from the cycler — derived, not synced via effect. The
+  // user's transient panel-hover (hoveredMove) takes precedence so hovering
+  // a chip in the open advisor overrides the cycler's current selection.
+  const cyclerActive =
+    !advisorDisabled &&
+    stagedMoves.length === 0 &&
+    selectedSource === null &&
+    taggedCandidates.length > 0;
+  const cyclerPreview = cyclerActive
+    ? taggedCandidates[Math.min(cycleIdx, taggedCandidates.length - 1)]?.move ?? null
+    : null;
+  const ghostForBoard = hoveredMove ?? cyclerPreview;
+
+  const confirmCycledMove = (move: string) => {
+    setHoveredMove(null);
+    setStagedMoves([]);
+    setDisplayBoardState(null);
+    setSelectedSource(null);
+    void doMoveWithNotation(move);
+  };
+
   const previewMove = (notation: string) => {
     if (!game) return;
     setMoveInput(notation);
@@ -1558,6 +1608,33 @@ function TeamDemoPageInner() {
           </h1>
         </header>
 
+        {/* Felt-and-brass player status cards above the board. Hidden in
+            landscape-mobile (the board fills the viewport there; on-roll
+            state is already visible via the cycler + dice). */}
+        {game && (
+          <div className="flex gap-3 landscape:max-lg:hidden">
+            <PlayerStatusCard
+              side={0}
+              name="You"
+              pip={pipCount(currentBoard, currentBar, 0)}
+              off={currentOff[0]}
+              onRoll={game.turn === 0 && !game.game_over}
+            />
+            <PlayerStatusCard
+              side={1}
+              name={
+                primaryOpponentId
+                  ? `Agent #${primaryOpponentId}`
+                  : `Agents [${opponentIds.join(",")}]`
+              }
+              elo={opponentElo}
+              pip={pipCount(currentBoard, currentBar, 1)}
+              off={currentOff[1]}
+              onRoll={game.turn === 1 && !game.game_over}
+            />
+          </div>
+        )}
+
         {settleOnChain && address && !walletOnSupportedChain && (
           <WrongNetworkBanner
             walletChainName={walletChain?.name}
@@ -1648,7 +1725,7 @@ function TeamDemoPageInner() {
               bar={currentBar}
               off={currentOff}
               turn={game.turn}
-              ghostMove={hoveredMove}
+              ghostMove={ghostForBoard}
               themeKey={boardTheme}
               prefer3d={prefer3d}
               cubeValue={game.cubeValue ?? 1}
@@ -1875,6 +1952,21 @@ function TeamDemoPageInner() {
         {showPanelInLandscape ? "×" : "☰"}
       </button>
 
+      {/* Landscape-mobile move cycler: arrows step through gnubg-ranked
+          full-turn plays previewed on the board as ghost checkers, ✓ commits.
+          Hides while a partial move is staged (manual tap flow owns the
+          board then) and while the full advisor overlay is open. */}
+      {game && game.dice && !game.game_over && isHumanTurn
+        && stagedMoves.length === 0 && taggedCandidates.length > 0 && !showPanelInLandscape && (
+        <MoveCycler
+          candidates={taggedCandidates}
+          index={Math.min(cycleIdx, taggedCandidates.length - 1)}
+          onIndexChange={setCycleIdx}
+          onConfirm={confirmCycledMove}
+          disabled={loading}
+        />
+      )}
+
       {/* Advisor panel — floatable and resizable. In landscape mobile, the
           panel is hidden by default and becomes a fixed full-viewport overlay
           when `showPanelInLandscape` is true (toggled by the button above). */}
@@ -1939,6 +2031,8 @@ function TeamDemoPageInner() {
               onMoveHover={setHoveredMove}
               noLLM={teammateIds.length === 0}
               teammateIds={loadedTeammateIds}
+              candidates={taggedCandidates}
+              candidatesLoading={candidatesLoading}
             />
           )}
         </div>

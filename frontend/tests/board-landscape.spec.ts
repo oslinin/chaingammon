@@ -55,13 +55,60 @@ test.describe("game layout — phone landscape", () => {
     await toggle.click();
     await expect(panel).toBeHidden();
   });
+
+  test("move cycler previews gnubg-ranked turns and commits on confirm", async ({ page }) => {
+    await mockAgentList(page);
+    await page.goto("/team-demo?opponents=1");
+
+    // Wait for the game to render (advisor toggle is the landscape canary).
+    await expect(page.getByTestId("advisor-toggle-landscape")).toBeVisible({ timeout: 10_000 });
+
+    // The cycler needs the ONNX evaluator to have produced candidates for the
+    // first ply. The model ships in /public/backgammon_net.onnx and is
+    // warmed up at app startup, so this is the expected path.
+    const cycler = page.getByTestId("move-cycler-landscape");
+    await expect(cycler).toBeVisible({ timeout: 30_000 });
+
+    const prev = page.getByTestId("move-cycler-prev");
+    const next = page.getByTestId("move-cycler-next");
+    const confirm = page.getByTestId("move-cycler-confirm");
+    const label = page.getByTestId("move-cycler-label");
+    await expect(prev).toBeVisible();
+    await expect(next).toBeVisible();
+    await expect(confirm).toBeVisible();
+
+    // Label shape: <TagBadge> <equity> <i/total>[ · best]
+    await expect(label).toContainText(/(Safe|Aggressive|Priming|Anchor|Blitz)/);
+    await expect(label).toContainText("/");
+    await expect(label).toContainText(/[+-]?\d\.\d{3}/);
+    await expect(label).toContainText("best");
+
+    // Cycling to the next candidate updates the label.
+    const firstText = await label.innerText();
+    await next.click();
+    await expect(label).not.toHaveText(firstText, { timeout: 5_000 });
+
+    // Opening the advisor overlay hides the cycler; closing restores it.
+    const toggle = page.getByTestId("advisor-toggle-landscape");
+    await toggle.click();
+    await expect(cycler).toBeHidden();
+    await toggle.click();
+    await expect(cycler).toBeVisible();
+
+    // ✓ commits the previewed turn → human ply ends → cycler hides
+    // (either the agent is now on roll, advisorDisabled flips true, or the
+    // page is transiently in a loading state). Either way, cycler should
+    // disappear within a few seconds.
+    await confirm.click();
+    await expect(cycler).toBeHidden({ timeout: 15_000 });
+  });
 });
 
 test.describe("game layout — phone portrait", () => {
   const { defaultBrowserType: _2, ...iphone } = devices["iPhone 12"];
   test.use(iphone);
 
-  test("layout stays stacked", async ({ page }) => {
+  test("layout stays stacked and shows player status cards", async ({ page }) => {
     await mockAgentList(page);
     await page.goto("/team-demo?opponents=1");
 
@@ -71,5 +118,11 @@ test.describe("game layout — phone portrait", () => {
 
     const main = page.locator("main.max-w-5xl");
     await expect(main).toHaveCSS("flex-direction", "column");
+
+    // Player status cards render above the board in portrait + desktop.
+    await expect(page.getByTestId("player-card-0")).toBeVisible();
+    await expect(page.getByTestId("player-card-1")).toBeVisible();
+    await expect(page.getByTestId("player-card-0")).toContainText("You");
+    await expect(page.getByTestId("player-card-1")).toContainText("Agent #1");
   });
 });
