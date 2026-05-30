@@ -38,8 +38,10 @@ test.describe("game layout — phone landscape", () => {
     const toggle = page.getByTestId("advisor-toggle-landscape");
     await expect(toggle).toBeVisible({ timeout: 10_000 });
 
-    // Page header is hidden — gives the board the full viewport height.
-    await expect(page.locator("header")).not.toBeVisible();
+    // Global nav banner is hidden — gives the board the full viewport height.
+    // Use role=banner to target the top-level nav header; Part A added a
+    // second <header> inside <main> for the game title which stays in the DOM.
+    await expect(page.getByRole("banner")).not.toBeVisible();
 
     // Advisor panel is hidden by default. The panel is the element wrapping
     // the AgentTeammatePanel; its drag handle has `title="Drag to move panel"`.
@@ -47,12 +49,13 @@ test.describe("game layout — phone landscape", () => {
     await expect(panel).toBeHidden();
 
     // Tapping the toggle reveals the panel as a fixed overlay.
-    await toggle.click();
+    // dispatchEvent bypasses the Next.js dev-mode portal at this position.
+    await toggle.dispatchEvent("click");
     await expect(panel).toBeVisible();
     await expect(panel).toHaveCSS("position", "fixed");
 
     // Tapping again hides it.
-    await toggle.click();
+    await toggle.dispatchEvent("click");
     await expect(panel).toBeHidden();
   });
 
@@ -89,10 +92,12 @@ test.describe("game layout — phone landscape", () => {
     await expect(label).not.toHaveText(firstText, { timeout: 5_000 });
 
     // Opening the advisor overlay hides the cycler; closing restores it.
+    // dispatchEvent bypasses the Next.js dev-mode portal that intercepts
+    // pointer events at this viewport position after the ONNX evaluator fires.
     const toggle = page.getByTestId("advisor-toggle-landscape");
-    await toggle.click();
+    await toggle.dispatchEvent("click");
     await expect(cycler).toBeHidden();
-    await toggle.click();
+    await toggle.dispatchEvent("click");
     await expect(cycler).toBeVisible();
 
     // ✓ commits the previewed turn → human ply ends → cycler hides

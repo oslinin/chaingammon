@@ -254,11 +254,11 @@ const eyebrow: React.CSSProperties = {
   fontFamily: "var(--cg-font-sans)",
 };
 
-const card: React.CSSProperties = {
-  background: "var(--cg-bg-2)",
-  border: "1px solid var(--cg-line-2)",
+const feltCard: React.CSSProperties = {
+  background: "var(--cg-bg-felt)",
+  border: "1px solid var(--cg-line-3)",
   borderRadius: "var(--cg-radius)",
-  boxShadow: "var(--cg-shadow-1)",
+  boxShadow: "var(--cg-shadow-2)",
 };
 
 // Banner shown when the wallet is on a chain we don't deploy to (e.g.
@@ -1719,7 +1719,16 @@ function TeamDemoPageInner() {
             {/* Board: in landscape mobile, cap width by viewport height so the
                 fixed 716x440 aspect ratio fits within the viewport instead of
                 overflowing vertically. */}
-            <div className="landscape:max-lg:mx-auto landscape:max-lg:flex landscape:max-lg:h-full landscape:max-lg:w-full landscape:max-lg:max-w-[calc(100dvh*716/440)] landscape:max-lg:items-center">
+            <div className="relative landscape:max-lg:mx-auto landscape:max-lg:flex landscape:max-lg:h-full landscape:max-lg:w-full landscape:max-lg:max-w-[calc(100dvh*716/440)] landscape:max-lg:items-center">
+              {/* Felt radial vignette — darkens edges behind the board on all sizes */}
+              <div
+                aria-hidden
+                className="pointer-events-none absolute inset-0 z-10"
+                style={{
+                  background: "radial-gradient(ellipse 120% 105% at 50% 50%, transparent 45%, var(--cg-bg-0) 92%)",
+                  borderRadius: "var(--cg-radius)",
+                }}
+              />
             <Board
               board={currentBoard}
               bar={currentBar}
@@ -1754,7 +1763,16 @@ function TeamDemoPageInner() {
                 wrapper layout-transparent — children flow under the outer
                 gap-6 stack. In landscape mobile, the wrapper becomes a flex
                 container floating in the bottom-right corner above the board. */}
-            <div className="contents landscape:max-lg:absolute landscape:max-lg:right-2 landscape:max-lg:bottom-2 landscape:max-lg:z-10 landscape:max-lg:flex landscape:max-lg:max-w-[60vw] landscape:max-lg:flex-col landscape:max-lg:items-end landscape:max-lg:gap-2 landscape:max-lg:rounded-md landscape:max-lg:bg-black/55 landscape:max-lg:p-2 landscape:max-lg:backdrop-blur-sm">
+            <div
+              className="flex flex-col gap-2 landscape:max-lg:absolute landscape:max-lg:right-2 landscape:max-lg:bottom-2 landscape:max-lg:z-10 landscape:max-lg:max-w-[60vw] landscape:max-lg:items-end cg-controls-panel"
+              style={{
+                padding: 10,
+                background: "var(--cg-bg-felt)",
+                border: "1px solid var(--cg-line-2)",
+                borderRadius: "var(--cg-radius)",
+                boxShadow: "var(--cg-shadow-1)",
+              }}
+            >
 
             {game.dice && (
               <div className="flex items-center gap-3">
@@ -1782,6 +1800,7 @@ function TeamDemoPageInner() {
                 {stagedMoves.length > 0 && (
                   <button
                     onClick={() => void doMoveWithNotation(stagedMoves.join(" "))}
+                    className="cg-btn-primary"
                     style={{
                       background: "var(--cg-brass)",
                       color: "var(--cg-brass-ink)",
@@ -1819,6 +1838,7 @@ function TeamDemoPageInner() {
                   <button
                     type="button"
                     onClick={handleCubeClick}
+                    className="cg-btn-secondary"
                     style={{
                       border: "1px solid var(--cg-brass)",
                       borderRadius: "var(--cg-radius-sm)",
@@ -1827,7 +1847,6 @@ function TeamDemoPageInner() {
                       color: "var(--cg-brass)",
                       background: "rgba(201,155,92,0.10)",
                       cursor: "pointer",
-                      transition: "background 120ms",
                       fontWeight: 600,
                     }}
                   >
@@ -1838,6 +1857,7 @@ function TeamDemoPageInner() {
                   type="button"
                   onClick={() => setFastForward(true)}
                   disabled={loading || fastForward}
+                  className="cg-btn-secondary disabled:opacity-50"
                   style={{
                     border: "1px solid var(--cg-line-2)",
                     borderRadius: "var(--cg-radius-sm)",
@@ -1846,9 +1866,7 @@ function TeamDemoPageInner() {
                     color: "var(--cg-fg-2)",
                     background: "var(--cg-bg-2)",
                     cursor: "pointer",
-                    transition: "background 120ms",
                   }}
-                  className="disabled:opacity-50"
                 >
                   {fastForward ? t("fast_forwarding") : t("fast_forward")}
                 </button>
@@ -1856,6 +1874,7 @@ function TeamDemoPageInner() {
                   type="button"
                   onClick={doForfeit}
                   disabled={loading || fastForward}
+                  className="cg-btn-danger disabled:opacity-50"
                   style={{
                     border: "1px solid var(--cg-danger)",
                     borderRadius: "var(--cg-radius-sm)",
@@ -1864,10 +1883,8 @@ function TeamDemoPageInner() {
                     color: "var(--cg-danger)",
                     background: "transparent",
                     cursor: "pointer",
-                    transition: "background 120ms",
                     opacity: 0.85,
                   }}
-                  className="disabled:opacity-50"
                 >
                   {t("resign")}
                 </button>
@@ -1875,7 +1892,7 @@ function TeamDemoPageInner() {
             )}
 
             {game.game_over && (
-              <div style={{ ...card, padding: 16 }}>
+              <div style={{ paddingTop: 4 }}>
                 <p
                   style={{
                     fontSize: 18,
@@ -1978,13 +1995,11 @@ function TeamDemoPageInner() {
             : panelPos
               ? { position: "fixed" as const, left: panelPos.x, top: panelPos.y, zIndex: 50, width: panelSize?.w ?? 320, height: panelSize?.h ?? 560 }
               : { width: panelSize?.w, height: panelSize?.h ?? 560 }),
-          ...card,
-          display: "flex",
-          flexDirection: "column",
+          ...feltCard,
           overflow: "hidden",
           ...(panelPos || showPanelInLandscape ? { boxShadow: "var(--cg-shadow-2)" } : {}),
         }}
-        className={`w-full lg:w-80 ${showPanelInLandscape ? "" : "landscape:max-lg:hidden"}`}
+        className={`flex flex-col w-full lg:w-80 ${showPanelInLandscape ? "" : "landscape:max-lg:hidden"}`}
       >
         {/* Drag handle */}
         <div
@@ -1997,8 +2012,8 @@ function TeamDemoPageInner() {
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            background: "var(--cg-bg-3)",
-            borderBottom: "1px solid var(--cg-line-1)",
+            background: "var(--cg-bg-felt-pt)",
+            borderBottom: "1px solid var(--cg-line-2)",
             cursor: "grab",
             userSelect: "none",
           }}
