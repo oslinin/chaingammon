@@ -54,6 +54,10 @@ import { loadAgentModel, createAgentEvaluator, destroyAgentEvaluator } from "../
 import { loadAgentOnnxBytes } from "../../lib/agent_model_loader";
 import { encodeStyleVector } from "../../lib/career_features";
 import { type Board as GameBoard } from "../../lib/rules_engine";
+import { useTaggedCandidates } from "../../lib/useTaggedCandidates";
+import { pipCount } from "../../lib/pip";
+import { MoveCycler } from "../MoveCycler";
+import { PlayerStatusCard } from "../PlayerStatusCard";
 import { useI18n } from "../i18n";
 
 const ZERO_HASH =
@@ -250,11 +254,11 @@ const eyebrow: React.CSSProperties = {
   fontFamily: "var(--cg-font-sans)",
 };
 
-const card: React.CSSProperties = {
-  background: "var(--cg-bg-2)",
-  border: "1px solid var(--cg-line-2)",
+const feltCard: React.CSSProperties = {
+  background: "var(--cg-bg-felt)",
+  border: "1px solid var(--cg-line-3)",
   borderRadius: "var(--cg-radius)",
-  boxShadow: "var(--cg-shadow-1)",
+  boxShadow: "var(--cg-shadow-2)",
 };
 
 // Banner shown when the wallet is on a chain we don't deploy to (e.g.
@@ -1340,6 +1344,52 @@ function TeamDemoPageInner() {
     stagedMoves.length === 0 &&
     (game?.cubeOwner === -1 || game?.cubeOwner === 0);
 
+  // Single ONNX run shared by the advisor panel + the landscape MoveCycler.
+  // Evaluates the start-of-turn position (game.board), not the staged
+  // display board, so candidates stay stable across partial-move staging.
+  const advisorDisabled = !isHumanTurn || !!game?.game_over;
+  const { candidates: taggedCandidates, loading: candidatesLoading } = useTaggedCandidates({
+    board: game?.board,
+    bar: game?.bar as [number, number] | undefined,
+    off: game?.off as [number, number] | undefined,
+    turn: game?.turn as 0 | 1 | undefined,
+    dice: game?.dice ?? null,
+    positionId: game?.position_id ?? "",
+    disabled: advisorDisabled,
+  });
+
+  // Landscape-cycler index, scoped to the current ply via positionId so it
+  // naturally resets on every new turn without a setState-in-effect.
+  const [cyclerState, setCyclerState] = useState<{ positionId: string; idx: number }>({
+    positionId: "",
+    idx: 0,
+  });
+  const cycleIdx =
+    cyclerState.positionId === (game?.position_id ?? "") ? cyclerState.idx : 0;
+  const setCycleIdx = (next: number) =>
+    setCyclerState({ positionId: game?.position_id ?? "", idx: next });
+
+  // Ghost preview from the cycler — derived, not synced via effect. The
+  // user's transient panel-hover (hoveredMove) takes precedence so hovering
+  // a chip in the open advisor overrides the cycler's current selection.
+  const cyclerActive =
+    !advisorDisabled &&
+    stagedMoves.length === 0 &&
+    selectedSource === null &&
+    taggedCandidates.length > 0;
+  const cyclerPreview = cyclerActive
+    ? taggedCandidates[Math.min(cycleIdx, taggedCandidates.length - 1)]?.move ?? null
+    : null;
+  const ghostForBoard = hoveredMove ?? cyclerPreview;
+
+  const confirmCycledMove = (move: string) => {
+    setHoveredMove(null);
+    setStagedMoves([]);
+    setDisplayBoardState(null);
+    setSelectedSource(null);
+    void doMoveWithNotation(move);
+  };
+
   const previewMove = (notation: string) => {
     if (!game) return;
     setMoveInput(notation);
@@ -1558,6 +1608,33 @@ function TeamDemoPageInner() {
           </h1>
         </header>
 
+        {/* Felt-and-brass player status cards above the board. Hidden in
+            landscape-mobile (the board fills the viewport there; on-roll
+            state is already visible via the cycler + dice). */}
+        {game && (
+          <div className="flex gap-3 landscape:max-lg:hidden">
+            <PlayerStatusCard
+              side={0}
+              name="You"
+              pip={pipCount(currentBoard, currentBar, 0)}
+              off={currentOff[0]}
+              onRoll={game.turn === 0 && !game.game_over}
+            />
+            <PlayerStatusCard
+              side={1}
+              name={
+                primaryOpponentId
+                  ? `Agent #${primaryOpponentId}`
+                  : `Agents [${opponentIds.join(",")}]`
+              }
+              elo={opponentElo}
+              pip={pipCount(currentBoard, currentBar, 1)}
+              off={currentOff[1]}
+              onRoll={game.turn === 1 && !game.game_over}
+            />
+          </div>
+        )}
+
         {settleOnChain && address && !walletOnSupportedChain && (
           <WrongNetworkBanner
             walletChainName={walletChain?.name}
@@ -1642,13 +1719,22 @@ function TeamDemoPageInner() {
             {/* Board: in landscape mobile, cap width by viewport height so the
                 fixed 716x440 aspect ratio fits within the viewport instead of
                 overflowing vertically. */}
-            <div className="landscape:max-lg:mx-auto landscape:max-lg:flex landscape:max-lg:h-full landscape:max-lg:w-full landscape:max-lg:max-w-[calc(100dvh*716/440)] landscape:max-lg:items-center">
+            <div className="relative landscape:max-lg:mx-auto landscape:max-lg:flex landscape:max-lg:h-full landscape:max-lg:w-full landscape:max-lg:max-w-[calc(100dvh*716/440)] landscape:max-lg:items-center">
+              {/* Felt radial vignette — darkens edges behind the board on all sizes */}
+              <div
+                aria-hidden
+                className="pointer-events-none absolute inset-0 z-10"
+                style={{
+                  background: "radial-gradient(ellipse 120% 105% at 50% 50%, transparent 45%, var(--cg-bg-0) 92%)",
+                  borderRadius: "var(--cg-radius)",
+                }}
+              />
             <Board
               board={currentBoard}
               bar={currentBar}
               off={currentOff}
               turn={game.turn}
-              ghostMove={hoveredMove}
+              ghostMove={ghostForBoard}
               themeKey={boardTheme}
               prefer3d={prefer3d}
               cubeValue={game.cubeValue ?? 1}
@@ -1677,7 +1763,16 @@ function TeamDemoPageInner() {
                 wrapper layout-transparent — children flow under the outer
                 gap-6 stack. In landscape mobile, the wrapper becomes a flex
                 container floating in the bottom-right corner above the board. */}
-            <div className="contents landscape:max-lg:absolute landscape:max-lg:right-2 landscape:max-lg:bottom-2 landscape:max-lg:z-10 landscape:max-lg:flex landscape:max-lg:max-w-[60vw] landscape:max-lg:flex-col landscape:max-lg:items-end landscape:max-lg:gap-2 landscape:max-lg:rounded-md landscape:max-lg:bg-black/55 landscape:max-lg:p-2 landscape:max-lg:backdrop-blur-sm">
+            <div
+              className="flex flex-col gap-2 landscape:max-lg:absolute landscape:max-lg:right-2 landscape:max-lg:bottom-2 landscape:max-lg:z-10 landscape:max-lg:max-w-[60vw] landscape:max-lg:items-end cg-controls-panel"
+              style={{
+                padding: 10,
+                background: "var(--cg-bg-felt)",
+                border: "1px solid var(--cg-line-2)",
+                borderRadius: "var(--cg-radius)",
+                boxShadow: "var(--cg-shadow-1)",
+              }}
+            >
 
             {game.dice && (
               <div className="flex items-center gap-3">
@@ -1705,6 +1800,7 @@ function TeamDemoPageInner() {
                 {stagedMoves.length > 0 && (
                   <button
                     onClick={() => void doMoveWithNotation(stagedMoves.join(" "))}
+                    className="cg-btn-primary"
                     style={{
                       background: "var(--cg-brass)",
                       color: "var(--cg-brass-ink)",
@@ -1742,6 +1838,7 @@ function TeamDemoPageInner() {
                   <button
                     type="button"
                     onClick={handleCubeClick}
+                    className="cg-btn-secondary"
                     style={{
                       border: "1px solid var(--cg-brass)",
                       borderRadius: "var(--cg-radius-sm)",
@@ -1750,7 +1847,6 @@ function TeamDemoPageInner() {
                       color: "var(--cg-brass)",
                       background: "rgba(201,155,92,0.10)",
                       cursor: "pointer",
-                      transition: "background 120ms",
                       fontWeight: 600,
                     }}
                   >
@@ -1761,6 +1857,7 @@ function TeamDemoPageInner() {
                   type="button"
                   onClick={() => setFastForward(true)}
                   disabled={loading || fastForward}
+                  className="cg-btn-secondary disabled:opacity-50"
                   style={{
                     border: "1px solid var(--cg-line-2)",
                     borderRadius: "var(--cg-radius-sm)",
@@ -1769,9 +1866,7 @@ function TeamDemoPageInner() {
                     color: "var(--cg-fg-2)",
                     background: "var(--cg-bg-2)",
                     cursor: "pointer",
-                    transition: "background 120ms",
                   }}
-                  className="disabled:opacity-50"
                 >
                   {fastForward ? t("fast_forwarding") : t("fast_forward")}
                 </button>
@@ -1779,6 +1874,7 @@ function TeamDemoPageInner() {
                   type="button"
                   onClick={doForfeit}
                   disabled={loading || fastForward}
+                  className="cg-btn-danger disabled:opacity-50"
                   style={{
                     border: "1px solid var(--cg-danger)",
                     borderRadius: "var(--cg-radius-sm)",
@@ -1787,10 +1883,8 @@ function TeamDemoPageInner() {
                     color: "var(--cg-danger)",
                     background: "transparent",
                     cursor: "pointer",
-                    transition: "background 120ms",
                     opacity: 0.85,
                   }}
-                  className="disabled:opacity-50"
                 >
                   {t("resign")}
                 </button>
@@ -1798,7 +1892,7 @@ function TeamDemoPageInner() {
             )}
 
             {game.game_over && (
-              <div style={{ ...card, padding: 16 }}>
+              <div style={{ paddingTop: 4 }}>
                 <p
                   style={{
                     fontSize: 18,
@@ -1875,6 +1969,21 @@ function TeamDemoPageInner() {
         {showPanelInLandscape ? "×" : "☰"}
       </button>
 
+      {/* Landscape-mobile move cycler: arrows step through gnubg-ranked
+          full-turn plays previewed on the board as ghost checkers, ✓ commits.
+          Hides while a partial move is staged (manual tap flow owns the
+          board then) and while the full advisor overlay is open. */}
+      {game && game.dice && !game.game_over && isHumanTurn
+        && stagedMoves.length === 0 && taggedCandidates.length > 0 && !showPanelInLandscape && (
+        <MoveCycler
+          candidates={taggedCandidates}
+          index={Math.min(cycleIdx, taggedCandidates.length - 1)}
+          onIndexChange={setCycleIdx}
+          onConfirm={confirmCycledMove}
+          disabled={loading}
+        />
+      )}
+
       {/* Advisor panel — floatable and resizable. In landscape mobile, the
           panel is hidden by default and becomes a fixed full-viewport overlay
           when `showPanelInLandscape` is true (toggled by the button above). */}
@@ -1886,13 +1995,11 @@ function TeamDemoPageInner() {
             : panelPos
               ? { position: "fixed" as const, left: panelPos.x, top: panelPos.y, zIndex: 50, width: panelSize?.w ?? 320, height: panelSize?.h ?? 560 }
               : { width: panelSize?.w, height: panelSize?.h ?? 560 }),
-          ...card,
-          display: "flex",
-          flexDirection: "column",
+          ...feltCard,
           overflow: "hidden",
           ...(panelPos || showPanelInLandscape ? { boxShadow: "var(--cg-shadow-2)" } : {}),
         }}
-        className={`w-full lg:w-80 ${showPanelInLandscape ? "" : "landscape:max-lg:hidden"}`}
+        className={`flex flex-col w-full lg:w-80 ${showPanelInLandscape ? "" : "landscape:max-lg:hidden"}`}
       >
         {/* Drag handle */}
         <div
@@ -1905,8 +2012,8 @@ function TeamDemoPageInner() {
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            background: "var(--cg-bg-3)",
-            borderBottom: "1px solid var(--cg-line-1)",
+            background: "var(--cg-bg-felt-pt)",
+            borderBottom: "1px solid var(--cg-line-2)",
             cursor: "grab",
             userSelect: "none",
           }}
@@ -1939,6 +2046,8 @@ function TeamDemoPageInner() {
               onMoveHover={setHoveredMove}
               noLLM={teammateIds.length === 0}
               teammateIds={loadedTeammateIds}
+              candidates={taggedCandidates}
+              candidatesLoading={candidatesLoading}
             />
           )}
         </div>

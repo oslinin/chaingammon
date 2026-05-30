@@ -311,3 +311,33 @@ body {
 }
 .cg-btn-primary:hover:not(:disabled) { filter: brightness(1.08); }
 .cg-btn-primary:active:not(:disabled) { filter: brightness(0.93); transform: translateY(1px); }
+
+/* ── Landscape-mobile felt controls panel ──────────────────────────────────── */
+@media (orientation: landscape) and (max-width: 1023.98px) {
+  .cg-controls-panel {
+    background: var(--cg-bg-felt) !important;
+    border: 1px solid var(--cg-line-2) !important;
+    box-shadow: var(--cg-shadow-2) !important;
+    backdrop-filter: none !important;
+  }
+}
+
+/* ── Secondary / danger button transitions ──────────────────────────────────── */
+.cg-btn-secondary {
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease, transform 100ms ease;
+}
+.cg-btn-secondary:hover:not(:disabled) {
+  background: var(--cg-bg-3) !important;
+  border-color: var(--cg-line-3) !important;
+  color: var(--cg-fg-1) !important;
+}
+.cg-btn-secondary:active:not(:disabled) { transform: translateY(1px); }
+
+.cg-btn-danger {
+  transition: background 120ms ease, opacity 120ms ease, transform 100ms ease;
+}
+.cg-btn-danger:hover:not(:disabled) {
+  opacity: 1 !important;
+  background: rgba(192,74,59,0.12) !important;
+}
+.cg-btn-danger:active:not(:disabled) { transform: translateY(1px); }
