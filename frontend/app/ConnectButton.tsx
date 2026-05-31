@@ -71,6 +71,16 @@ function ConnectButtonInner() {
   const { t } = useI18n();
   const { ready, authenticated, login, logout } = usePrivy();
   const { address, isConnected } = useAccount();
+  // Show a MetaMask dapp deep-link when no injected wallet is present (i.e.
+  // on a regular mobile browser). Privy's own MetaMask button uses a
+  // WalletConnect URI that is undefined until the session initialises,
+  // producing metamask.app.link/undefined. The dapp-scheme link is simpler:
+  // it opens MetaMask Mobile's in-app browser pointed at the current URL.
+  const [noInjectedWallet, setNoInjectedWallet] = useState(false);
+  useEffect(() => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any, react-hooks/set-state-in-effect
+    setNoInjectedWallet(!(window as any).ethereum);
+  }, []);
 
   // Connected: Privy authenticated AND wagmi has promoted the active wallet.
   if (authenticated && isConnected && address) {
@@ -122,16 +132,29 @@ function ConnectButtonInner() {
 
   // Not authenticated → "Log in". Shown regardless of `ready`; the handler
   // is a no-op until Privy finishes initialising.
+  // On mobile without an injected wallet, also show a dapp deep link so the
+  // user can open MetaMask Mobile's in-app browser pointed at the current URL.
   return (
-    <button
-      type="button"
-      data-testid="login-button"
-      onClick={() => { if (ready) login(); }}
-      style={primaryBtn}
-      className="cg-btn-primary"
-    >
-      {t("log_in")}
-    </button>
+    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+      {noInjectedWallet && (
+        <a
+          data-testid="open-in-metamask"
+          href={`https://metamask.app.link/dapp/${window.location.hostname}${window.location.pathname}${window.location.search}`}
+          style={{ ...secondaryBtn, textDecoration: "none" }}
+        >
+          {t("open_in_metamask")}
+        </a>
+      )}
+      <button
+        type="button"
+        data-testid="login-button"
+        onClick={() => { if (ready) login(); }}
+        style={primaryBtn}
+        className="cg-btn-primary"
+      >
+        {t("log_in")}
+      </button>
+    </div>
   );
 }
 
