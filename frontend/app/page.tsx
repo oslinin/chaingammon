@@ -203,7 +203,7 @@ function EloHome() {
       if (s === "open") {
         clearTimeout(timer);
         nostr.stopPresence();
-        router.push(`/play-human/${mid}`);
+        router.push(`/play-human?id=${mid}`);
       } else if (s === "failed" || s === "closed") {
         clearTimeout(timer);
         connectingRef.current = false;
