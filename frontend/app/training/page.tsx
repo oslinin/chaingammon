@@ -1014,6 +1014,16 @@ function EpochSlider({
   const snaps = snapPoints(use0g);
   const epochLabel = trainerMode === "sample" ? "Matches" : "Epochs";
 
+  const n = selectedIds.length;
+  let suggestedEpochs = 1000;
+  if (trainerMode === "round_robin") {
+    suggestedEpochs = Math.max(10, Math.round(1000 / (2 * Math.max(1, n - 1))));
+  } else if (trainerMode === "challenge") {
+    suggestedEpochs = Math.max(50, Math.round(1000 / Math.max(1, n)));
+  } else if (trainerMode === "team_challenge") {
+    suggestedEpochs = Math.max(50, Math.round(1000 / Math.max(1, n / 2)));
+  }
+
   return (
     <section className="flex flex-col gap-2">
       <div className="flex flex-col gap-1">
@@ -1030,6 +1040,9 @@ function EpochSlider({
             {epochs.toLocaleString()} self-play matches against a frozen snapshot
           </p>
         )}
+        <p className="text-[11px] text-zinc-500 italic mt-1">
+          💡 Tip: For meaningful improvement, consider training for around {suggestedEpochs.toLocaleString()} {epochLabel.toLowerCase()} (~1,000 matches per agent).
+        </p>
       </div>
       <div className="flex items-center gap-3">
         <input
