@@ -182,31 +182,36 @@ function rollAt(turnIndex: number): [number, number] {
 //   b) the merged-handler behaviour that the fix relies on
 
 test.describe("PeerConnection.onMessage setter contract", () => {
-  test("last registration wins — earlier handlers are replaced", () => {
-    // Reproduce the exact pre-fix pattern: three onMessage calls.
+  test("last registration wins — earlier handlers are replaced (demonstrates both pre-fix bugs)", () => {
+    // Bug 1: auth-listener effect ran last and overwrote hello-listener.
+    // Bug 2: mount effect re-ran whenever handleMsg changed (e.g. when
+    //   sessionAccount was set after hello was sent) and overwrote the
+    //   merged handler that was registered by the hello-listener effect.
+    // Both bugs result in hello messages being silently dropped.
     let activeCb: ((m: unknown) => void) | null = null;
     const mockOnMessage = (cb: (m: unknown) => void) => { activeCb = cb; };
     const emit = (msg: unknown) => activeCb?.(msg);
 
     const received: string[] = [];
 
-    // Effect 1 (mount): game messages
+    // Effect 1 (mount): game messages only — ran first
     mockOnMessage((raw) => { received.push("mount:" + (raw as {type:string}).type); });
-    // Effect 2 (hello): hello + game messages
+    // Effect 2 (hello): merged handler — replaced mount
     mockOnMessage((raw) => { received.push("hello:" + (raw as {type:string}).type); });
-    // Effect 3 (auth): auth only — this was last and overwrote effect 2
+    // Effect 3 (auth): auth only — replaced hello (pre-fix bug 1)
     mockOnMessage((raw) => {
       const msg = raw as {type:string};
       if (msg.type === "auth") received.push("auth:" + msg.type);
-      // hello intentionally NOT handled here (simulating the pre-fix bug)
     });
+    // Bug 2: mount re-ran after sessionAccount changed, overwrote merged
+    mockOnMessage((raw) => { received.push("mount2:" + (raw as {type:string}).type); });
 
-    emit({ type: "hello" });  // only the auth handler runs → nothing pushed
+    emit({ type: "hello" });
     emit({ type: "auth" });
-    emit({ type: "roll" });   // not handled by auth handler → nothing pushed
+    emit({ type: "roll" });
 
-    // Only "auth:auth" was recorded — hello and roll were silently dropped
-    expect(received).toEqual(["auth:auth"]);
+    // Only mount2's handler runs; hello drops silently, auth drops silently
+    expect(received).toEqual(["mount2:hello", "mount2:auth", "mount2:roll"]);
   });
 
   test("merged handler processes every message type in one registration", () => {

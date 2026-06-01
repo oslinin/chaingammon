@@ -624,17 +624,29 @@ function HumanMatchInner() {
     sendMsg({ type: "drop" });
   }, [game, sendMsg]);
 
+  // ── Always-fresh handleMsg ref ────────────────────────────────────────
+  // peer.onMessage is a setter (last caller wins).  The mount effect used
+  // to call peer.onMessage AND depend on handleMsg, so every time
+  // handleMsg changed (e.g. when sessionAccount was set right after hello
+  // was sent) the mount effect re-ran and overwrote the merged handler
+  // registered by the hello-listener effect below.
+  // Solution: keep a ref that always points to the latest handleMsg and
+  // register peer.onMessage exactly once inside the hello-listener effect.
+  const handleMsgRef = useRef(handleMsg);
+  useEffect(() => { handleMsgRef.current = handleMsg; }, [handleMsg]);
+
   // ── Mount: get peer connection ─────────────────────────────────────────
   useEffect(() => {
     const entry = peerMatches.get(matchId);
     if (!entry) return;
     const peer: PeerConnection = entry.peer;
     peerRef.current = peer;
-    peer.onMessage((raw) => void handleMsg(raw));
+    // Do NOT call peer.onMessage here — the hello-listener effect below
+    // owns the single onMessage registration.
     return () => {
       peerRef.current = null;
     };
-  }, [matchId, handleMsg]);
+  }, [matchId]);
 
   // ── Phase 1: send hello when channel is open ──────────────────────────
   const helloSentRef = useRef(false);
@@ -740,7 +752,7 @@ function HumanMatchInner() {
         return;
       }
 
-      void handleMsg(raw);
+      void handleMsgRef.current(raw);
     });
 
     return () => { origHandler; };
