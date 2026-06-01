@@ -37,7 +37,7 @@ import {
   acceptDouble,
   dropDouble,
 } from "../../lib/match_engine";
-import { type Board as GameBoard } from "../../lib/rules_engine";
+import { type Board as GameBoard, generateLegalMoves } from "../../lib/rules_engine";
 import { deriveDice, fetchDrandRound } from "../../lib/drand_dice";
 import { peerMatches } from "../../lib/peer_connections";
 import type { PeerConnection } from "../../lib/webrtc_match";
@@ -151,6 +151,12 @@ function HumanMatchInner() {
   });
   const myNonce = nonceData?.[0]?.result as bigint | undefined;
   const oppNonce = nonceData?.[1]?.result as bigint | undefined;
+
+  // ── testMode: set window.__HVH_TEST_MODE before page loads to bypass auth
+  // and enable auto-play.  Used by Playwright E2E tests only.
+  const testMode =
+    typeof window !== "undefined" &&
+    !!(window as Window & { __HVH_TEST_MODE?: boolean }).__HVH_TEST_MODE;
 
   // ── Game state ─────────────────────────────────────────────────────────
   type Phase =
@@ -823,11 +829,13 @@ function HumanMatchInner() {
   // above (all peer.onMessage calls must be in one place — it's a setter).
   const oppAuthRef = useRef(false);
 
-  // ── Start game once both auth sigs are in ─────────────────────────────
+  // ── Start game once both auth sigs are in (or immediately in testMode) ──
   const gameStartedRef = useRef(false);
   useEffect(() => {
     if (gameStartedRef.current) return;
-    if (!myAuthSig || !oppAuthSig || mySideRef.current === null) return;
+    // testMode skips wallet auth so the test never needs to sign anything.
+    if (!testMode && (!myAuthSig || !oppAuthSig)) return;
+    if (mySideRef.current === null) return;
 
     gameStartedRef.current = true;
     setPhase("playing");
@@ -842,7 +850,24 @@ function HumanMatchInner() {
     } else {
       waitingForRollRef.current = true;
     }
-  }, [myAuthSig, oppAuthSig, rollMyDice]);
+  }, [myAuthSig, oppAuthSig, rollMyDice, testMode]);
+
+  // ── testMode: auto-commit first legal move on each turn ───────────────
+  // Drives both sides to game-over without UI clicks so Playwright tests
+  // can verify the full game loop end-to-end.
+  useEffect(() => {
+    if (!testMode || phase !== "playing" || !game || game.game_over) return;
+    if (game.turn !== mySideRef.current || !game.dice) return;
+
+    const board: GameBoard = { points: game.board, bar: game.bar, off: game.off };
+    const moves = generateLegalMoves(board, mySideRef.current, game.dice).filter(
+      (m) => m.trim(),
+    );
+    if (moves.length === 0) return; // bar-dance: rollMyDice already auto-skips
+
+    const t = setTimeout(() => void commitMove(moves[0], game), 50);
+    return () => clearTimeout(t);
+  }, [testMode, game, phase, commitMove]);
 
   // ── Post-game: auto-sign and exchange result sigs ─────────────────────
   useEffect(() => {

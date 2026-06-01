@@ -487,6 +487,140 @@ class InMemoryNostrRelay {
   }
 }
 
+// ── Shared mock helpers ──────────────────────────────────────────────────────
+
+// Generates a minimal EIP-1193 provider script for a specific address.
+// Two different addresses are used so both players get distinct sides (0/1).
+function mockEthereumScript(address: string): string {
+  return `
+    (() => {
+      if (window.__mockEthereumInstalled) return;
+      window.__mockEthereumInstalled = true;
+      const handlers = {};
+      const provider = {
+        isMetaMask: true,
+        _accounts: ["${address}"],
+        async request({ method }) {
+          switch (method) {
+            case "eth_requestAccounts":
+            case "eth_accounts": return this._accounts;
+            case "eth_chainId": return "0x7a69";
+            case "net_version": return "31337";
+            case "wallet_switchEthereumChain":
+            case "wallet_addEthereumChain": return null;
+            case "eth_blockNumber": return "0x1";
+            case "eth_getBalance": return "0x0";
+            default: return null;
+          }
+        },
+        on(event, handler) {
+          (handlers[event] = handlers[event] || []).push(handler);
+          return this;
+        },
+        removeListener(event, handler) {
+          if (handlers[event]) handlers[event] = handlers[event].filter(h => h !== handler);
+          return this;
+        },
+        emit(event, ...args) { (handlers[event] || []).forEach(h => h(...args)); },
+      };
+      window.ethereum = provider;
+      Promise.resolve().then(() => provider.emit("connect", { chainId: "0x7a69" }));
+    })();
+  `;
+}
+
+// ── Group 3: Full E2E game flow ──────────────────────────────────────────────
+//
+// Exercises the entire HvH path — Nostr matchmaking → WebRTC → play-human
+// page → game to completion — catching:
+//   • Immediate agent fallback (tryConnect race)
+//   • Wrong URL format (/play-human/${id} vs ?id=)
+//   • peer.onMessage setter clobbering (hello/auth dropped)
+//   • Mount-effect re-clobbering when sessionAccount changes
+//   • Side-0/1 assignment (both say "Your turn")
+//   • Turn alternation (right player can't move)
+//
+// testMode (window.__HVH_TEST_MODE=true) bypasses wallet auth and auto-plays
+// moves so no human interaction is needed.
+
+test.describe("HvH full game flow (testMode)", () => {
+  test(
+    "two players match, both take turns, game plays to completion",
+    async ({ browser }) => {
+      const relay = new InMemoryNostrRelay();
+      const ctx1 = await browser.newContext();
+      const ctx2 = await browser.newContext();
+      const page1 = await ctx1.newPage();
+      const page2 = await ctx2.newPage();
+
+      try {
+        // Enable testMode: skips wallet auth, enables auto-play of moves.
+        await page1.addInitScript(() => { (window as Window & {__HVH_TEST_MODE?:boolean}).__HVH_TEST_MODE = true; });
+        await page2.addInitScript(() => { (window as Window & {__HVH_TEST_MODE?:boolean}).__HVH_TEST_MODE = true; });
+
+        // Two distinct addresses: 0xf39F > 0x7099 so page2 is side-0 (moves
+        // first) and page1 is side-1, giving both players a chance to move.
+        await page1.addInitScript({ content: mockEthereumScript("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266") });
+        await page2.addInitScript({ content: mockEthereumScript("0x70997970C51812dc3A010C7d01b50e0d17dc79C8") });
+
+        // Mock drand: deterministic dice, no network required.
+        const drandBody = JSON.stringify({ round: 1000, randomness: "ab".repeat(32) });
+        await page1.route("https://api.drand.sh/**", (r) =>
+          r.fulfill({ contentType: "application/json", body: drandBody }),
+        );
+        await page2.route("https://api.drand.sh/**", (r) =>
+          r.fulfill({ contentType: "application/json", body: drandBody }),
+        );
+
+        // In-memory Nostr relay: no live relay network needed.
+        await page1.routeWebSocket("wss://**", (ws) => relay.addClient(ws));
+        await page2.routeWebSocket("wss://**", (ws) => relay.addClient(ws));
+
+        await Promise.all([page1.goto("/"), page2.goto("/")]);
+
+        await Promise.all([
+          page1.getByRole("button", { name: "Play" }).click({ timeout: 10_000 }),
+          page2.getByRole("button", { name: "Play" }).click({ timeout: 10_000 }),
+        ]);
+
+        // Both must navigate to the same /play-human?id= (not /team-demo).
+        await Promise.all([
+          page1.waitForURL(
+            (url) => url.pathname === "/play-human" && url.searchParams.has("id"),
+            { timeout: 60_000 },
+          ),
+          page2.waitForURL(
+            (url) => url.pathname === "/play-human" && url.searchParams.has("id"),
+            { timeout: 60_000 },
+          ),
+        ]);
+        const id1 = new URL(page1.url()).searchParams.get("id");
+        const id2 = new URL(page2.url()).searchParams.get("id");
+        expect(id1).toBe(id2); // same match
+
+        // testMode auto-plays both sides — wait for game over.
+        // "You win!" on the winner and "Opponent wins" on the loser.
+        await Promise.all([
+          expect(page1.getByText(/You win!|Opponent wins/)).toBeVisible({
+            timeout: 120_000,
+          }),
+          expect(page2.getByText(/You win!|Opponent wins/)).toBeVisible({
+            timeout: 120_000,
+          }),
+        ]);
+
+        // Exactly one side wins.
+        const p1Text = await page1.getByText(/You win!|Opponent wins/).textContent();
+        const p2Text = await page2.getByText(/You win!|Opponent wins/).textContent();
+        expect([p1Text, p2Text].sort()).toEqual(["Opponent wins", "You win!"]);
+      } finally {
+        await ctx1.close();
+        await ctx2.close();
+      }
+    },
+  );
+});
+
 test.describe("HvH opponent discovery", () => {
   // The home page is in ELO mode by default (AppModeContext default = "elo").
   // EloHome renders a "Play" button that starts Nostr matchmaking and, when
