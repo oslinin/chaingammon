@@ -23,6 +23,7 @@ import { MatchRegistryABI, PlayerSubnameRegistrarABI, useChainContracts } from "
 import { recordTransaction } from "./transactions";
 import { useI18n } from "./i18n";
 import { useSponsoredWrite } from "./useSponsoredWrite";
+import { usePrivy } from "@privy-io/react-auth";
 
 function shorten(addr: string) {
   return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
@@ -53,6 +54,26 @@ export function ClaimForm() {
   const [claimError, setClaimError] = useState<string | null>(null);
   const [txHash, setTxHash] = useState<`0x${string}` | undefined>();
   const submittedLabelRef = useRef<string>("");
+  const hasPrefilledRef = useRef<boolean>(false);
+  const { user } = usePrivy();
+
+  // Prefill claim input with the user's email if available
+  useEffect(() => {
+    if (user?.email?.address && !claimInput && !submittedLabelRef.current && !hasPrefilledRef.current) {
+      let emailPrefix = user.email.address.split("@")[0];
+      // ENS names must be lowercase and contain only a-z0-9-
+      let sanitized = emailPrefix.toLowerCase().replace(/[^a-z0-9-]/g, "");
+      // Remove trailing hyphens
+      while(sanitized.endsWith("-")) sanitized = sanitized.slice(0, -1);
+      // Remove leading hyphens
+      while(sanitized.startsWith("-")) sanitized = sanitized.slice(1);
+
+      if (sanitized) {
+        setClaimInput(sanitized);
+        hasPrefilledRef.current = true;
+      }
+    }
+  }, [user?.email?.address, claimInput, submittedLabelRef]);
 
   const chainId = useActiveChainId();
   const { playerSubnameRegistrar } = useChainContracts();
