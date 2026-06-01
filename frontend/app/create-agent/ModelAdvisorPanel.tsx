@@ -14,6 +14,7 @@ interface Props {
 }
 
 const QUICK_ACTIONS = [
+  "Suggest the full gnubg model (2-ply, Backoff)",
   "Suggest a Random Forest model",
   "Suggest a Genetic Algorithm model",
   "What are the tradeoffs of Random Forest?",
