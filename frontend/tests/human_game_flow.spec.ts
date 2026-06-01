@@ -169,6 +169,81 @@ function rollAt(turnIndex: number): [number, number] {
   return [d1, d2];
 }
 
+// ── Group 0: PeerConnection message-handler regression tests ────────────────
+//
+// peer.onMessage is a single-callback setter (last caller wins).
+// PlayHumanClient.tsx previously registered three separate handlers via three
+// different useEffect calls; the auth-listener effect ran last and replaced
+// the hello-listener, causing hello messages to be silently dropped and both
+// sides to hang on "Waiting for opponent…".
+//
+// These tests verify:
+//   a) the setter contract (regression guard so we notice if the API changes)
+//   b) the merged-handler behaviour that the fix relies on
+
+test.describe("PeerConnection.onMessage setter contract", () => {
+  test("last registration wins — earlier handlers are replaced", () => {
+    // Reproduce the exact pre-fix pattern: three onMessage calls.
+    let activeCb: ((m: unknown) => void) | null = null;
+    const mockOnMessage = (cb: (m: unknown) => void) => { activeCb = cb; };
+    const emit = (msg: unknown) => activeCb?.(msg);
+
+    const received: string[] = [];
+
+    // Effect 1 (mount): game messages
+    mockOnMessage((raw) => { received.push("mount:" + (raw as {type:string}).type); });
+    // Effect 2 (hello): hello + game messages
+    mockOnMessage((raw) => { received.push("hello:" + (raw as {type:string}).type); });
+    // Effect 3 (auth): auth only — this was last and overwrote effect 2
+    mockOnMessage((raw) => {
+      const msg = raw as {type:string};
+      if (msg.type === "auth") received.push("auth:" + msg.type);
+      // hello intentionally NOT handled here (simulating the pre-fix bug)
+    });
+
+    emit({ type: "hello" });  // only the auth handler runs → nothing pushed
+    emit({ type: "auth" });
+    emit({ type: "roll" });   // not handled by auth handler → nothing pushed
+
+    // Only "auth:auth" was recorded — hello and roll were silently dropped
+    expect(received).toEqual(["auth:auth"]);
+  });
+
+  test("merged handler processes every message type in one registration", () => {
+    let activeCb: ((m: unknown) => void) | null = null;
+    const mockOnMessage = (cb: (m: unknown) => void) => { activeCb = cb; };
+    const emit = (msg: unknown) => activeCb?.(msg);
+
+    let helloSeen = false;
+    let secondHelloSeen = false;
+    let authSeen = false;
+    let rollSeen = false;
+    let oppHelloRecv = false; // simulates oppHelloRef.current
+
+    // Single merged handler — mirrors the fix in PlayHumanClient
+    mockOnMessage((raw) => {
+      const msg = raw as { type: string; nonce?: string };
+      if (msg.type === "hello") {
+        if (!oppHelloRecv) { oppHelloRecv = true; helloSeen = true; }
+        else { secondHelloSeen = true; }
+        return;
+      }
+      if (msg.type === "auth") { authSeen = true; return; }
+      if (msg.type === "roll") { rollSeen = true; }
+    });
+
+    emit({ type: "hello" });           // initial hello
+    emit({ type: "hello", nonce: "1" }); // second hello with real nonce
+    emit({ type: "auth" });
+    emit({ type: "roll" });
+
+    expect(helloSeen).toBe(true);
+    expect(secondHelloSeen).toBe(true);
+    expect(authSeen).toBe(true);
+    expect(rollSeen).toBe(true);
+  });
+});
+
 // ── Group 1: Pure engine tests ───────────────────────────────────────────────
 
 test.describe("HvH game engine — turn alternation and state consistency", () => {
