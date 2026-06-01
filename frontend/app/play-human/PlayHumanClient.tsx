@@ -9,7 +9,7 @@
 
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import {
   encodeAbiParameters,
   keccak256,
@@ -19,14 +19,14 @@ import {
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { useAccount, useReadContracts, useSignMessage } from "wagmi";
 
-import { Board } from "../../Board";
-import { DiceRoll } from "../../DiceRoll";
-import { loadTheme, pickGameCoins } from "../../boardThemes";
-import { useActiveChainId } from "../../chains";
-import { MatchRegistryABI, useChainContracts } from "../../contracts";
-import { useChaingammonName } from "../../useChaingammonName";
-import { useChaingammonProfile } from "../../useChaingammonProfile";
-import { useSponsoredWrite } from "../../useSponsoredWrite";
+import { Board } from "../Board";
+import { DiceRoll } from "../DiceRoll";
+import { loadTheme, pickGameCoins } from "../boardThemes";
+import { useActiveChainId } from "../chains";
+import { MatchRegistryABI, useChainContracts } from "../contracts";
+import { useChaingammonName } from "../useChaingammonName";
+import { useChaingammonProfile } from "../useChaingammonProfile";
+import { useSponsoredWrite } from "../useSponsoredWrite";
 import {
   type MatchState,
   newMatch,
@@ -36,11 +36,11 @@ import {
   offerDouble,
   acceptDouble,
   dropDouble,
-} from "../../../lib/match_engine";
-import { type Board as GameBoard } from "../../../lib/rules_engine";
-import { deriveDice, fetchDrandRound } from "../../../lib/drand_dice";
-import { peerMatches } from "../../../lib/peer_connections";
-import type { PeerConnection } from "../../../lib/webrtc_match";
+} from "../../lib/match_engine";
+import { type Board as GameBoard } from "../../lib/rules_engine";
+import { deriveDice, fetchDrandRound } from "../../lib/drand_dice";
+import { peerMatches } from "../../lib/peer_connections";
+import type { PeerConnection } from "../../lib/webrtc_match";
 
 // ── Wire message types ─────────────────────────────────────────────────────
 
@@ -110,8 +110,8 @@ function forceGameOver(state: MatchState, winner: 0 | 1): MatchState {
 // ── Inner component ───────────────────────────────────────────────────────
 
 function HumanMatchInner() {
-  const params = useParams<{ matchId: string }>();
-  const matchId = params.matchId;
+  const searchParams = useSearchParams();
+  const matchId = searchParams.get("id") ?? "";
 
   const { address } = useAccount();
   const chainId = useActiveChainId();
