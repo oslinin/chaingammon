@@ -1,6 +1,6 @@
 // play-human/[matchId]/page.tsx — H-vs-H board surface.
 //
-// Retrieves the live WebRTC PeerConnection stored by FindHumanButton,
+// Retrieves the live WebRTC PeerConnection stored by EloHome (page.tsx),
 // runs a two-phase hello handshake to agree on player sides + exchange
 // session-key auth sigs, then plays through the match using drand-derived
 // dice and relaying moves over the data channel. On game end, both session

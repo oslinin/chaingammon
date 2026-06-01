@@ -5,7 +5,7 @@
 //   wss://relay.damus.io, wss://nos.lol, wss://relay.primal.net, wss://relay.nostr.band
 //
 // Two browser contexts search for each other, pair, and navigate to the same
-// /play-human/{matchId} URL. WebRTC runs over loopback ICE (both contexts
+// /play-human?id=<matchId> URL. WebRTC runs over loopback ICE (both contexts
 // share the same Chromium process on the same machine), so NAT traversal is
 // not exercised — but relay reachability, NIP-01 message flow, and the full
 // pairing → WebRTC handshake → navigation path all run against real
@@ -47,35 +47,35 @@ test.describe("human-vs-human live relay smoke test", () => {
 
       try {
         // Navigate both players. No wallet connected → ELO defaults to 1500,
-        // ENS label/address are empty. FindHumanButton still renders because
-        // AppModeContext defaults to "elo".
+        // ENS label/address are empty. AppModeContext defaults to "elo" so
+        // EloHome renders with the "Play" ActionCard after hydration.
         await Promise.all([
           page1.goto(BASE_URL),
           page2.goto(BASE_URL),
         ]);
 
-        // Both click "Play a human".
+        // EloHome's "Play" button is the only <button> on the page (Train and
+        // Play($) are <Link> elements). Both must click before STABILIZE_MS
+        // (3 s) fires — EloHome has no retry loop and falls back to the agent
+        // team-demo immediately if no partner is seen at the 3 s mark.
+        const playBtn = (p: typeof page1) =>
+          p.getByRole("button", { name: /find a human/i });
         await Promise.all([
-          page1.getByRole("button", { name: "Play a human" }).click({ timeout: 15_000 }),
-          page2.getByRole("button", { name: "Play a human" }).click({ timeout: 15_000 }),
+          playBtn(page1).waitFor({ timeout: 15_000 }),
+          playBtn(page2).waitFor({ timeout: 15_000 }),
+        ]);
+        await Promise.all([playBtn(page1).click(), playBtn(page2).click()]);
+
+        // Wait for both players to land on /play-human?id=<matchId>.
+        // Budget: up to 60 s for real relay latency + STABILIZE_MS.
+        await Promise.all([
+          page1.waitForURL(`${BASE_URL}**/play-human**`, { timeout: 60_000 }),
+          page2.waitForURL(`${BASE_URL}**/play-human**`, { timeout: 60_000 }),
         ]);
 
-        // Searching state visible on both sides.
-        await expect(page1.getByRole("button", { name: "Stop searching" })).toBeVisible({ timeout: 5_000 });
-        await expect(page2.getByRole("button", { name: "Stop searching" })).toBeVisible({ timeout: 5_000 });
-
-        // Wait for both players to land on /play-human/{matchId}.
-        // Budget: up to 90 s for real relay latency + STABILIZE_MS + repair loop.
-        await Promise.all([
-          page1.waitForURL(`${BASE_URL}/play-human/**`, { timeout: 90_000 }),
-          page2.waitForURL(`${BASE_URL}/play-human/**`, { timeout: 90_000 }),
-        ]);
-
-        // Both must have navigated to the SAME matchId.
-        const url1 = new URL(page1.url());
-        const url2 = new URL(page2.url());
-        const matchId1 = url1.pathname.split("/").pop();
-        const matchId2 = url2.pathname.split("/").pop();
+        // Both must have navigated to the SAME matchId in the ?id= query param.
+        const matchId1 = new URL(page1.url()).searchParams.get("id") ?? "";
+        const matchId2 = new URL(page2.url()).searchParams.get("id") ?? "";
 
         expect(matchId1).toMatch(/^0x[0-9a-f]{64}$/i);
         expect(matchId1).toBe(matchId2);
