@@ -23,7 +23,7 @@ const PRESENCE_TTL_S = 35;
 const PRESENCE_INTERVAL_MS = 5_000;  // re-publish often; ephemeral events not stored by relays
 const CONNECT_TIMEOUT_MS = 15_000;
 const REPAIR_MS = 5_000;    // retry pairing interval
-const GIVE_UP_MS = 90_000;  // fall back to agent after this long without a match
+const GIVE_UP_MS = 120_000; // fall back to agent after 2 minutes without a match
 
 function hvhMatchId(pubA: string, pubB: string): string {
   const [lo, hi] = pubA < pubB ? [pubA, pubB] : [pubB, pubA];
