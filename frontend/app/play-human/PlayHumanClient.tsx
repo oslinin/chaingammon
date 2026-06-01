@@ -7,7 +7,7 @@
 // keys auto-sign the result and either player submits settleHumanVsHuman.
 "use client";
 
-import { Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState, useMemo } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import {
@@ -37,7 +37,7 @@ import {
   acceptDouble,
   dropDouble,
 } from "../../lib/match_engine";
-import { type Board as GameBoard } from "../../lib/rules_engine";
+import { type Board as GameBoard, getMaxLegalMoves } from "../../lib/rules_engine";
 import { deriveDice, fetchDrandRound } from "../../lib/drand_dice";
 import { peerMatches } from "../../lib/peer_connections";
 import type { PeerConnection } from "../../lib/webrtc_match";
@@ -412,6 +412,12 @@ function HumanMatchInner() {
   );
 
   // ── Board interaction (my turn only) ──────────────────────────────────
+  const maxLegalMoves = useMemo(() => {
+    if (!game || !game.dice || game.turn !== mySideRef.current) return 0;
+    const rulesBoard = { points: game.board, bar: game.bar, off: game.off } as GameBoard;
+    return getMaxLegalMoves(rulesBoard, game.turn, game.dice as [number, number]);
+  }, [game]);
+
   const diceCount = game?.dice
     ? game.dice[0] === game.dice[1] ? 4 : 2
     : 0;
@@ -433,13 +439,16 @@ function HumanMatchInner() {
       setDisplayBoard(newDisplay);
       setSelectedSource(null);
 
-      if (newStaged.length >= diceCount) {
+      // Auto-submit if we hit the maximum legal moves possible for this board state.
+      // (This safely handles situations where the player is blocked and can only
+      // make < diceCount moves).
+      if (newStaged.length >= maxLegalMoves) {
         void commitMove(newStaged.join(" "), game);
         setStagedMoves([]);
         setDisplayBoard(null);
       }
     },
-    [game, stagedMoves, displayBoard, diceCount, commitMove],
+    [game, stagedMoves, displayBoard, maxLegalMoves, commitMove],
   );
 
   const handlePointClick = useCallback(
@@ -1032,7 +1041,7 @@ function HumanMatchInner() {
       {/* Staged moves counter */}
       {stagedMoves.length > 0 && (
         <p style={{ fontSize: 12, color: "var(--cg-fg-3)", fontFamily: "var(--cg-font-sans)" }}>
-          {stagedMoves.length}/{diceCount} moves staged
+          {stagedMoves.length}/{maxLegalMoves} moves staged
         </p>
       )}
 
