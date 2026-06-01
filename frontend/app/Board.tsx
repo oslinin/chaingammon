@@ -24,6 +24,7 @@ interface BoardProps {
   onCubeClick?: () => void; // called when the human clicks the cube to offer a double
   playerAvatarUrls?: { warm: string; cool: string };
   prefer3d?: boolean;
+  isMyTurn?: boolean;       // overrides default behavior (turn === 0 = you) for HvH
 }
 
 const FRAME = 20;
@@ -72,6 +73,7 @@ export function Board({
   onCubeClick,
   playerAvatarUrls,
   prefer3d = false,
+  isMyTurn,
 }: BoardProps) {
   const theme = BOARD_THEMES[themeKey] ?? BOARD_THEMES.walnut;
   // Image-based themes own the board look entirely — skip the SVG-painted
@@ -178,8 +180,9 @@ export function Board({
     return new Set<number | "off">(getFirstMoveDests(rulesBoard, 0, dice, hoveredSource));
   }, [hoveredSource, dice, board, bar, off, turn]);
 
-  const turnLabel = turn === 0 ? "Your turn" : `${opponentName ?? "Agent"}'s turn`;
-  const turnColor = turn === 0 ? "var(--cg-player-warm)" : "var(--cg-player-cool)";
+  const effIsMyTurn = isMyTurn !== undefined ? isMyTurn : turn === 0;
+  const turnLabel = effIsMyTurn ? "Your turn" : `${opponentName ?? "Agent"}'s turn`;
+  const turnColor = effIsMyTurn ? "var(--cg-player-warm)" : "var(--cg-player-cool)";
 
   const getColXOffset = (col: number, rightHalf: boolean) => {
     const baseX = rightHalf ? R_QUAD_X : L_QUAD_X;

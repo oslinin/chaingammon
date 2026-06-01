@@ -565,6 +565,24 @@ export function hasLegalMoves(
 }
 
 /**
+ * Returns the maximum number of move segments (checkers moved) a player is legally
+ * required (and able) to make for a given board state and dice roll.
+ */
+export function getMaxLegalMoves(
+  board: Board,
+  side: number,
+  dice: [number, number]
+): number {
+  const legalMoves = generateLegalMoves(board, side, dice);
+  if (legalMoves.length === 0) return 0;
+  // All valid moves returned by generateLegalMoves have the same number of steps (Rule 1).
+  // E.g. if the max possible is 3 out of 4, all returned sequences will have 3 steps.
+  // Parse the first move string to count its segments.
+  const firstMove = parseMove(legalMoves[0], side);
+  return firstMove.length;
+}
+
+/**
  * Returns the unique first-step destinations reachable by a checker at `from`
  * given the current dice, restricted to fully-legal move sequences.
  */
