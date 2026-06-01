@@ -28,7 +28,10 @@ export function MobileNav() {
     <nav
       data-testid="mobile-nav"
       aria-label="Mobile navigation"
-      className="md:hidden"
+      // The `!hidden` variant forces display:none in landscape-mobile to
+      // override the inline `display: flex` below, so the bottom nav doesn't
+      // eat board height when the device is rotated.
+      className="md:hidden landscape:max-lg:!hidden"
       style={{
         position: "fixed",
         bottom: 0,

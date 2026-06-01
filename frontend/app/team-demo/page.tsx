@@ -844,6 +844,27 @@ function TeamDemoPageInner() {
     return () => mq.removeEventListener("change", onChange);
   }, []);
 
+  // Browser-fullscreen state. requestFullscreen requires a user gesture so
+  // we cannot auto-trigger it on orientationchange; instead the landscape
+  // toggle button below calls it. iOS Safari does not implement
+  // requestFullscreen on non-video elements — the call rejects and the
+  // button becomes a no-op there, which is the best we can do.
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const onChange = () => setIsFullscreen(Boolean(document.fullscreenElement));
+    document.addEventListener("fullscreenchange", onChange);
+    return () => document.removeEventListener("fullscreenchange", onChange);
+  }, []);
+  const toggleFullscreen = async () => {
+    try {
+      if (document.fullscreenElement) await document.exitFullscreen();
+      else await document.documentElement.requestFullscreen();
+    } catch {
+      // Fullscreen denied or unsupported (e.g. iOS Safari). No-op.
+    }
+  };
+
   const onResizeStart = (e: React.PointerEvent<HTMLDivElement>) => {
     e.preventDefault();
     e.stopPropagation();
@@ -1968,6 +1989,28 @@ function TeamDemoPageInner() {
         }}
       >
         {showPanelInLandscape ? "×" : "☰"}
+      </button>
+
+      {/* Browser-fullscreen toggle. Sits to the right of the advisor toggle
+          (left-14 = 56px = 8px gap from the 40px advisor button at left-2).
+          Visible only in landscape-mobile. */}
+      <button
+        type="button"
+        data-testid="fullscreen-toggle-landscape"
+        onClick={() => { void toggleFullscreen(); }}
+        aria-label={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
+        className="hidden landscape:max-lg:flex fixed bottom-2 left-14 z-50 h-10 w-10 items-center justify-center rounded-full"
+        style={{
+          background: "var(--cg-bg-2)",
+          color: "var(--cg-fg-1)",
+          border: "1px solid var(--cg-line-2)",
+          boxShadow: "var(--cg-shadow-2)",
+          cursor: "pointer",
+          fontSize: 16,
+          lineHeight: 1,
+        }}
+      >
+        {isFullscreen ? "⊟" : "⛶"}
       </button>
 
       {/* Landscape-mobile move cycler: arrows step through gnubg-ranked
