@@ -1,16 +1,16 @@
-// human_vs_human.spec.ts — E2E test for the Nostr + WebRTC matchmaking flow.
+// human_vs_human.spec.ts — E2E tests for the Nostr + WebRTC matchmaking flow.
 //
-// Spins up two browser contexts ("player A" and "player B"), intercepts all
-// Nostr relay WebSocket connections with an in-memory relay implemented here,
-// and verifies that both players pair and navigate to the same
-// /play-human/{matchId} URL after clicking "Play a human".
+// The real user path goes through EloHome (page.tsx), not FindHumanButton.
+// EloHome's "Play" ActionCard starts Nostr presence, waits STABILIZE_MS (3 s),
+// runs ONE pairing attempt, then either:
+//   - found partner → WebRTC → navigate to /play-human?id=<matchId>
+//   - no partner    → immediately navigate to /team-demo?opponents=4 (agent fallback)
 //
-// No live Nostr relay or internet access is required.
-// WebRTC runs natively between the two browser contexts (same Chromium process,
-// loopback ICE candidates, so no STUN server is needed either).
+// All Nostr relay connections are intercepted with an in-memory relay so no
+// live internet access is required.  WebRTC runs natively between two browser
+// contexts in the same Chromium process over loopback ICE candidates.
 //
-// Timing budget: STABILIZE_MS (3 s) + WebRTC handshake (~3–5 s) + buffer.
-// Total timeout per waitForURL: 30 s.
+// Timing budget: STABILIZE_MS (3 s) + WebRTC handshake (~1 s) + buffer = 15 s.
 
 import { test, expect, type WebSocketRoute } from "@playwright/test";
 
@@ -22,9 +22,8 @@ import { test, expect, type WebSocketRoute } from "@playwright/test";
 //   EVENT → acknowledge OK, broadcast to matching subscriptions
 //   CLOSE → remove subscription
 //
-// Event IDs are deduplicated so the duplicate publications that nostr-tools
-// SimplePool sends to multiple relay connections don't fire duplicate messages
-// to subscribers.
+// Event IDs are deduplicated so duplicate publications from nostr-tools
+// SimplePool don't fire duplicate messages to subscribers.
 
 type NostrFilter = {
   kinds?: number[];
@@ -115,11 +114,23 @@ class InMemoryNostrRelay {
   }
 }
 
+// ── Helper: find EloHome "Play" button ────────────────────────────────────
+//
+// EloHome renders after hydration (AppModeContext defaults to "elo").
+// The "Play" ActionCard is the only <button> on the page — Train and
+// Play ($) use <Link href=...> which renders as <a>, not <button>.
+// Its accessible name includes "Find a human first" (the sublabel),
+// which uniquely identifies it and stops matching once searching starts
+// (the sublabel then shows the live search status instead).
+function playButton(page: import("@playwright/test").Page) {
+  return page.getByRole("button", { name: /find a human/i });
+}
+
 // ── Tests ──────────────────────────────────────────────────────────────────
 
-test.describe("human-vs-human matchmaking", () => {
+test.describe("human-vs-human matchmaking (EloHome flow)", () => {
   test(
-    "two players pair via Nostr and land on the same play-human match",
+    "two players pair via Nostr and navigate to the same play-human URL",
     async ({ browser }) => {
       const relay = new InMemoryNostrRelay();
 
@@ -129,53 +140,45 @@ test.describe("human-vs-human matchmaking", () => {
       const page2 = await ctx2.newPage();
 
       try {
-        // Intercept ALL wss:// connections on both pages and route them
-        // through the in-memory relay so no live Nostr network is needed.
         await page1.routeWebSocket("wss://**", (ws) => relay.addClient(ws));
         await page2.routeWebSocket("wss://**", (ws) => relay.addClient(ws));
 
-        // Load the home page on both contexts.
-        // AppModeContext defaults to "elo" so FindHumanButton renders without
-        // any extra setup. wallet address defaults to "" which is fine.
         await Promise.all([page1.goto("/"), page2.goto("/")]);
 
-        // Both players click the button.
+        // Both must click before STABILIZE_MS (3 s) fires on either side.
+        // EloHome has no retry loop: if no partner is seen at the 3 s mark it
+        // navigates straight to the agent fallback (/team-demo?opponents=4).
+        // Starting both simultaneously with Promise.all ensures both are
+        // publishing presence before any pairing attempt runs.
         await Promise.all([
-          page1
-            .getByRole("button", { name: "Play a human" })
-            .click({ timeout: 10_000 }),
-          page2
-            .getByRole("button", { name: "Play a human" })
-            .click({ timeout: 10_000 }),
+          playButton(page1).waitFor({ timeout: 10_000 }),
+          playButton(page2).waitFor({ timeout: 10_000 }),
+        ]);
+        await Promise.all([
+          playButton(page1).click(),
+          playButton(page2).click(),
         ]);
 
-        // UI should flip to "Stop searching" on both sides.
-        await expect(
-          page1.getByRole("button", { name: "Stop searching" }),
-        ).toBeVisible({ timeout: 5_000 });
-        await expect(
-          page2.getByRole("button", { name: "Stop searching" }),
-        ).toBeVisible({ timeout: 5_000 });
-
-        // Timing budget:
-        //   startPresence re-publishes every 15 s. If one player's initial
-        //   publish races ahead of the other's subscription setup, they won't
-        //   see each other until the 15 s re-publish (~t=20 s for pairing,
-        //   ~t=25 s for navigation). Allow 60 s to cover the worst-case path.
-        //
-        //   Note: the URL uses a query param (?id=0x…), not a path segment,
-        //   so the pattern must not require a trailing slash.
+        // After STABILIZE_MS + WebRTC handshake both players navigate to
+        // /play-human?id=<matchId>.  The matchId MUST be in the ?id= query
+        // param — the [matchId] dynamic route was removed in favour of a
+        // static /play-human page that reads searchParams on the client.
         await Promise.all([
-          page1.waitForURL("**/play-human**", { timeout: 60_000 }),
-          page2.waitForURL("**/play-human**", { timeout: 60_000 }),
+          page1.waitForURL("**/play-human**", { timeout: 15_000 }),
+          page2.waitForURL("**/play-human**", { timeout: 15_000 }),
         ]);
 
-        // matchId is keccak256(sorted(pubkeyA + pubkeyB)) — deterministic and
-        // identical on both sides. It lives in the ?id= query param.
+        // Regression: previously page.tsx used /play-human/<matchId> (old
+        // path-segment format).  That route no longer exists in the static
+        // export so GitHub Pages returned 404 and peerMatches was never found.
         const matchId1 = new URL(page1.url()).searchParams.get("id") ?? "";
         const matchId2 = new URL(page2.url()).searchParams.get("id") ?? "";
-        expect(matchId1).toMatch(/^0x[0-9a-f]{64}$/i);
-        expect(matchId1).toBe(matchId2);
+        expect(matchId1, "matchId must be in ?id= query param").toMatch(
+          /^0x[0-9a-f]{64}$/i,
+        );
+        expect(matchId1, "both players must share the same matchId").toBe(
+          matchId2,
+        );
       } finally {
         await ctx1.close();
         await ctx2.close();
@@ -184,12 +187,12 @@ test.describe("human-vs-human matchmaking", () => {
   );
 
   test(
-    "play-human page has an active peer connection for both players (not an agent game)",
+    "play-human page shows game UI — not a 404 or agent-game fallback",
     async ({ browser }) => {
-      // Regression: after matching, peerMatches must contain the connection
-      // for the matchId in the URL. If it doesn't, the page shows
-      // "No active connection for this match" and the user falls back to an
-      // agent game. This test catches that failure path.
+      // Regression: peerMatches (module-level Map) must survive the client-side
+      // navigation from the home page to /play-human.  If it doesn't, the page
+      // shows "No active connection for this match" and the user ends up playing
+      // an agent instead.
       const relay = new InMemoryNostrRelay();
 
       const ctx1 = await browser.newContext();
@@ -203,35 +206,32 @@ test.describe("human-vs-human matchmaking", () => {
 
         await Promise.all([page1.goto("/"), page2.goto("/")]);
         await Promise.all([
-          page1
-            .getByRole("button", { name: "Play a human" })
-            .click({ timeout: 10_000 }),
-          page2
-            .getByRole("button", { name: "Play a human" })
-            .click({ timeout: 10_000 }),
+          playButton(page1).waitFor({ timeout: 10_000 }),
+          playButton(page2).waitFor({ timeout: 10_000 }),
+        ]);
+        await Promise.all([
+          playButton(page1).click(),
+          playButton(page2).click(),
         ]);
 
         await Promise.all([
-          page1.waitForURL("**/play-human**", { timeout: 60_000 }),
-          page2.waitForURL("**/play-human**", { timeout: 60_000 }),
+          page1.waitForURL("**/play-human**", { timeout: 15_000 }),
+          page2.waitForURL("**/play-human**", { timeout: 15_000 }),
         ]);
 
-        // Both players must land on the same matchId.
-        const matchId1 = new URL(page1.url()).searchParams.get("id") ?? "";
-        const matchId2 = new URL(page2.url()).searchParams.get("id") ?? "";
-        expect(matchId1).toMatch(/^0x[0-9a-f]{64}$/i);
-        expect(matchId1).toBe(matchId2);
-
-        // The peer connection must be alive in peerMatches — the page shows
-        // "Waiting for opponent" rather than the "no connection" error screen.
-        // If the bug regresses, the error text appears instead.
+        // Must NOT show the "No active connection" error (peerMatches miss).
         await expect(
           page1.getByText(/no active connection for this match/i),
-        ).not.toBeVisible({ timeout: 5_000 });
+        ).not.toBeVisible({ timeout: 3_000 });
         await expect(
           page2.getByText(/no active connection for this match/i),
-        ).not.toBeVisible({ timeout: 5_000 });
+        ).not.toBeVisible({ timeout: 3_000 });
 
+        // Must NOT have fallen back to the agent team-demo page.
+        expect(page1.url()).not.toContain("team-demo");
+        expect(page2.url()).not.toContain("team-demo");
+
+        // Must show the human-game connecting state.
         await expect(
           page1.getByText(/waiting for opponent/i),
         ).toBeVisible({ timeout: 5_000 });
@@ -245,32 +245,27 @@ test.describe("human-vs-human matchmaking", () => {
     },
   );
 
-  test("single player sees 'no one else searching' status", async ({
-    browser,
-  }) => {
-    const relay = new InMemoryNostrRelay();
-    const ctx = await browser.newContext();
-    const page = await ctx.newPage();
+  test(
+    "solo player falls back to agent team-demo after stabilize timeout",
+    async ({ browser }) => {
+      // EloHome has no retry loop. A lone player navigates to team-demo
+      // (not a stale "searching" state) after STABILIZE_MS with no peer.
+      const relay = new InMemoryNostrRelay();
+      const ctx = await browser.newContext();
+      const page = await ctx.newPage();
 
-    try {
-      await page.routeWebSocket("wss://**", (ws) => relay.addClient(ws));
-      await page.goto("/");
-      await page
-        .getByRole("button", { name: "Play a human" })
-        .click({ timeout: 10_000 });
+      try {
+        await page.routeWebSocket("wss://**", (ws) => relay.addClient(ws));
+        await page.goto("/");
+        await playButton(page).waitFor({ timeout: 10_000 });
+        await playButton(page).click();
 
-      // After STABILIZE_MS with no peer the component shows the "no one" message.
-      await expect(
-        page.getByText(/no one else searching/i),
-      ).toBeVisible({ timeout: 8_000 });
-
-      // Stop searching — button flips back.
-      await page.getByRole("button", { name: "Stop searching" }).click();
-      await expect(
-        page.getByRole("button", { name: "Play a human" }),
-      ).toBeVisible({ timeout: 3_000 });
-    } finally {
-      await ctx.close();
-    }
-  });
+        // After 3 s with no peer, EloHome calls router.push("/team-demo?opponents=4").
+        await page.waitForURL("**/team-demo**", { timeout: 8_000 });
+        expect(new URL(page.url()).searchParams.get("opponents")).toBe("4");
+      } finally {
+        await ctx.close();
+      }
+    },
+  );
 });
