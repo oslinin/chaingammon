@@ -16,7 +16,22 @@
 
 import type { NostrMatchClient, SignalMsg } from "./nostr";
 
-const ICE_SERVERS: RTCIceServer[] = [{ urls: "stun:stun.l.google.com:19302" }];
+// STUN resolves reflexive candidates for cone NAT.
+// TURN relays traffic when direct ICE fails (symmetric NAT, enterprise firewall).
+// OpenRelay is a public free-tier TURN service; replace with a private TURN
+// deployment for production to avoid shared-credential abuse.
+const ICE_SERVERS: RTCIceServer[] = [
+  { urls: "stun:stun.l.google.com:19302" },
+  {
+    urls: [
+      "turn:openrelay.metered.ca:80",
+      "turn:openrelay.metered.ca:443",
+      "turn:openrelay.metered.ca:443?transport=tcp",
+    ],
+    username: "openrelayproject",
+    credential: "openrelayproject",
+  },
+];
 
 export type ConnState = "connecting" | "open" | "closed" | "failed";
 
