@@ -124,6 +124,7 @@ function HumanMatchInner() {
 
   // ── Nonces from chain ──────────────────────────────────────────────────
   const [oppAddress, setOppAddress] = useState<`0x${string}` | null>(null);
+  const { label: oppLiveLabel } = useChaingammonName(oppAddress ?? undefined);
 
   const nonceCalls =
     address && oppAddress && matchRegistry
@@ -397,7 +398,7 @@ function HumanMatchInner() {
 
         if (next.game_over) {
           // Settlement handled by effect below.
-        } else {
+        } else if (next.turn !== mySideRef.current) {
           // Now it's the opponent's turn.
           waitingForRollRef.current = true;
         }
@@ -527,10 +528,13 @@ function HumanMatchInner() {
           setGame(next);
           waitingForMoveRef.current = false;
 
-          if (!next.game_over) {
+          if (!next.game_over && next.turn === mySideVal) {
             // My turn — roll.
             waitingForRollRef.current = false;
             await rollMyDice(next);
+          } else if (!next.game_over && next.turn !== mySideVal) {
+             // Opponent rolled a partial move and hasn't finished their turn yet.
+             // Or they skipped. We wait for their next roll/move.
           }
         } catch {/* ignore */}
       }
@@ -882,8 +886,9 @@ function HumanMatchInner() {
     stagedMoves.length === 0 &&
     (game?.cubeOwner === -1 || game?.cubeOwner === mySideRef.current);
 
-  const oppName = oppInfo?.ensLabel
-    ? `${oppInfo.ensLabel}.chaingammon.eth`
+  const oppLabel = oppLiveLabel || oppInfo?.ensLabel;
+  const oppName = oppLabel
+    ? `${oppLabel}.chaingammon.eth`
     : oppAddress
     ? `${oppAddress.slice(0, 8)}…`
     : "Opponent";
@@ -958,6 +963,7 @@ function HumanMatchInner() {
           bar={currentBar}
           off={currentOff}
           turn={game?.turn ?? 0}
+          isMyTurn={isMyTurn}
           opponentName={oppName}
           themeKey={themeKey}
           cubeValue={game?.cubeValue ?? 1}
