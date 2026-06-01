@@ -20,9 +20,10 @@ import { peerMatches } from "../lib/peer_connections";
 
 const STABILIZE_MS = 3_000;
 const PRESENCE_TTL_S = 35;
+const PRESENCE_INTERVAL_MS = 5_000;  // re-publish often; ephemeral events not stored by relays
 const CONNECT_TIMEOUT_MS = 15_000;
 const REPAIR_MS = 5_000;    // retry pairing interval
-const GIVE_UP_MS = 30_000;  // fall back to agent after this long without a match
+const GIVE_UP_MS = 90_000;  // fall back to agent after this long without a match
 
 function hvhMatchId(pubA: string, pubB: string): string {
   const [lo, hi] = pubA < pubB ? [pubA, pubB] : [pubB, pubA];
@@ -228,7 +229,7 @@ function EloHome() {
     const nostr = new NostrMatchClient(id);
     nostrRef.current = nostr;
     const myEloNum = Number(chainEloRaw ?? 1500) || 1500;
-    nostr.startPresence({ ensLabel: "", address: address ?? "", sessionPubkey: nostr.pubkey, elo: myEloNum });
+    nostr.startPresence({ ensLabel: "", address: address ?? "", sessionPubkey: nostr.pubkey, elo: myEloNum }, PRESENCE_INTERVAL_MS);
     const unsub = nostr.subscribePresence((p, pubkey, at) => {
       searchersRef.current.set(pubkey, { s: { pubkey, elo: p.elo ?? 1500 }, at });
     });
