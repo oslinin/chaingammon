@@ -162,19 +162,82 @@ test.describe("human-vs-human matchmaking", () => {
         //   publish races ahead of the other's subscription setup, they won't
         //   see each other until the 15 s re-publish (~t=20 s for pairing,
         //   ~t=25 s for navigation). Allow 60 s to cover the worst-case path.
+        //
+        //   Note: the URL uses a query param (?id=0x…), not a path segment,
+        //   so the pattern must not require a trailing slash.
         await Promise.all([
-          page1.waitForURL("**/play-human/**", { timeout: 60_000 }),
-          page2.waitForURL("**/play-human/**", { timeout: 60_000 }),
+          page1.waitForURL("**/play-human**", { timeout: 60_000 }),
+          page2.waitForURL("**/play-human**", { timeout: 60_000 }),
         ]);
 
         // matchId is keccak256(sorted(pubkeyA + pubkeyB)) — deterministic and
-        // identical on both sides.
-        const segments1 = new URL(page1.url()).pathname.split("/").filter(Boolean);
-        const segments2 = new URL(page2.url()).pathname.split("/").filter(Boolean);
-        const matchId1 = segments1[segments1.length - 1];
-        const matchId2 = segments2[segments2.length - 1];
+        // identical on both sides. It lives in the ?id= query param.
+        const matchId1 = new URL(page1.url()).searchParams.get("id") ?? "";
+        const matchId2 = new URL(page2.url()).searchParams.get("id") ?? "";
         expect(matchId1).toMatch(/^0x[0-9a-f]{64}$/i);
         expect(matchId1).toBe(matchId2);
+      } finally {
+        await ctx1.close();
+        await ctx2.close();
+      }
+    },
+  );
+
+  test(
+    "play-human page has an active peer connection for both players (not an agent game)",
+    async ({ browser }) => {
+      // Regression: after matching, peerMatches must contain the connection
+      // for the matchId in the URL. If it doesn't, the page shows
+      // "No active connection for this match" and the user falls back to an
+      // agent game. This test catches that failure path.
+      const relay = new InMemoryNostrRelay();
+
+      const ctx1 = await browser.newContext();
+      const ctx2 = await browser.newContext();
+      const page1 = await ctx1.newPage();
+      const page2 = await ctx2.newPage();
+
+      try {
+        await page1.routeWebSocket("wss://**", (ws) => relay.addClient(ws));
+        await page2.routeWebSocket("wss://**", (ws) => relay.addClient(ws));
+
+        await Promise.all([page1.goto("/"), page2.goto("/")]);
+        await Promise.all([
+          page1
+            .getByRole("button", { name: "Play a human" })
+            .click({ timeout: 10_000 }),
+          page2
+            .getByRole("button", { name: "Play a human" })
+            .click({ timeout: 10_000 }),
+        ]);
+
+        await Promise.all([
+          page1.waitForURL("**/play-human**", { timeout: 60_000 }),
+          page2.waitForURL("**/play-human**", { timeout: 60_000 }),
+        ]);
+
+        // Both players must land on the same matchId.
+        const matchId1 = new URL(page1.url()).searchParams.get("id") ?? "";
+        const matchId2 = new URL(page2.url()).searchParams.get("id") ?? "";
+        expect(matchId1).toMatch(/^0x[0-9a-f]{64}$/i);
+        expect(matchId1).toBe(matchId2);
+
+        // The peer connection must be alive in peerMatches — the page shows
+        // "Waiting for opponent" rather than the "no connection" error screen.
+        // If the bug regresses, the error text appears instead.
+        await expect(
+          page1.getByText(/no active connection for this match/i),
+        ).not.toBeVisible({ timeout: 5_000 });
+        await expect(
+          page2.getByText(/no active connection for this match/i),
+        ).not.toBeVisible({ timeout: 5_000 });
+
+        await expect(
+          page1.getByText(/waiting for opponent/i),
+        ).toBeVisible({ timeout: 5_000 });
+        await expect(
+          page2.getByText(/waiting for opponent/i),
+        ).toBeVisible({ timeout: 5_000 });
       } finally {
         await ctx1.close();
         await ctx2.close();
