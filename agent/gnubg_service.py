@@ -20,6 +20,7 @@ gnubg_service.py — local FastAPI agent process: gnubg move evaluation.
 """
 
 from __future__ import annotations
+import os
 import re
 import subprocess
 from typing import Optional
@@ -34,12 +35,12 @@ app = FastAPI(title="Chaingammon gnubg Agent")
 
 # The browser at http://localhost:3000 calls these endpoints from a
 # different origin than this service (port 8001), so without CORS the
-# preflight OPTIONS returns 405 and the browser refuses the POST. Open
-# CORS in dev — production deployments should restrict `allow_origins`
-# to the deployed frontend host.
+# preflight OPTIONS returns 405 and the browser refuses the POST.
+# Restricted to the deployed frontend host via ALLOWED_ORIGINS.
+allowed_origins = [o.strip() for o in os.getenv("ALLOWED_ORIGINS", "http://localhost:3000").split(",")]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=allowed_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
