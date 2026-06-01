@@ -23,10 +23,10 @@ export type ConnState = "connecting" | "open" | "closed" | "failed";
 export interface PeerConnection {
   /** Send a JSON-serializable game message to the peer. */
   send: (msg: unknown) => void;
-  /** Register the handler for inbound game messages (parsed JSON). */
-  onMessage: (cb: (msg: unknown) => void) => void;
-  /** Register the connection-state handler. */
-  onState: (cb: (s: ConnState) => void) => void;
+  /** Add an inbound message listener. Returns a cleanup function to remove it. */
+  onMessage: (cb: (msg: unknown) => void) => () => void;
+  /** Add a connection-state listener. Returns a cleanup function to remove it. */
+  onState: (cb: (s: ConnState) => void) => () => void;
   /** Tear down the data channel, peer connection, and Nostr subscription. */
   close: () => void;
 }
@@ -44,13 +44,13 @@ export function connectPeer(
   const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
 
   let channel: RTCDataChannel | null = null;
-  let messageCb: ((m: unknown) => void) | null = null;
-  let stateCb: ((s: ConnState) => void) | null = null;
+  const messageCbs = new Set<(m: unknown) => void>();
+  const stateCbs = new Set<(s: ConnState) => void>();
   let remoteSet = false;
   // ICE can arrive before the remote description is applied — buffer until then.
   const pendingCandidates: RTCIceCandidateInit[] = [];
 
-  const emit = (s: ConnState) => stateCb?.(s);
+  const emit = (s: ConnState) => stateCbs.forEach((cb) => cb(s));
 
   const wireChannel = (ch: RTCDataChannel) => {
     channel = ch;
@@ -58,7 +58,8 @@ export function connectPeer(
     ch.onclose = () => emit("closed");
     ch.onmessage = (e) => {
       try {
-        messageCb?.(JSON.parse(e.data));
+        const parsed = JSON.parse(e.data) as unknown;
+        messageCbs.forEach((cb) => cb(parsed));
       } catch {
         /* non-JSON frame — ignore */
       }
@@ -130,10 +131,12 @@ export function connectPeer(
       if (channel?.readyState === "open") channel.send(JSON.stringify(msg));
     },
     onMessage: (cb) => {
-      messageCb = cb;
+      messageCbs.add(cb);
+      return () => messageCbs.delete(cb);
     },
     onState: (cb) => {
-      stateCb = cb;
+      stateCbs.add(cb);
+      return () => stateCbs.delete(cb);
     },
     close: () => {
       unsub();

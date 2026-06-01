@@ -630,8 +630,9 @@ function HumanMatchInner() {
     if (!entry) return;
     const peer: PeerConnection = entry.peer;
     peerRef.current = peer;
-    peer.onMessage((raw) => void handleMsg(raw));
+    const cleanupMsg = peer.onMessage((raw) => void handleMsg(raw));
     return () => {
+      cleanupMsg();
       peerRef.current = null;
     };
   }, [matchId, handleMsg]);
@@ -644,7 +645,7 @@ function HumanMatchInner() {
     if (!entry) return;
 
     // Listen for state open to send hello.
-    entry.peer.onState((s) => {
+    const cleanupState = entry.peer.onState((s) => {
       if (s === "open" && !helloSentRef.current && address) {
         helloSentRef.current = true;
         const pk = generatePrivateKey();
@@ -681,6 +682,8 @@ function HumanMatchInner() {
       };
       entry.peer.send(hello);
     }
+
+    return () => cleanupState();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [matchId, address, phase]);
 
@@ -688,9 +691,6 @@ function HumanMatchInner() {
   const oppHelloRef = useRef<HelloMsg | null>(null);
   useEffect(() => {
     if (!address) return;
-
-    const origHandler = peerRef.current ? undefined : null;
-    // Overlay a hello-specific handler (the main handleMsg ignores hello).
     const peerEntry = peerMatches.get(matchId);
     if (!peerEntry) return;
 
@@ -715,13 +715,10 @@ function HumanMatchInner() {
       mySideRef.current = side;
     };
 
-    peerEntry.peer.onMessage((raw) => {
-      helloListener(raw);
-      // Also call the game message handler.
-      void handleMsg(raw);
-    });
-
-    return () => { origHandler; };
+    // handleMsg is registered separately in the mount effect — only add
+    // the hello-specific listener here so game messages are never dropped.
+    const cleanupMsg = peerEntry.peer.onMessage(helloListener);
+    return () => cleanupMsg();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [matchId, address]);
 
@@ -805,7 +802,8 @@ function HumanMatchInner() {
       setOppAuthSig((msg as AuthMsg).authSig as `0x${string}`);
     };
 
-    peerEntry.peer.onMessage(authListener);
+    const cleanupMsg = peerEntry.peer.onMessage(authListener);
+    return () => cleanupMsg();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [matchId]);
 
