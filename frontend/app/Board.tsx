@@ -2,6 +2,7 @@
 
 import React, { useRef, useState, PointerEvent } from "react";
 import { BOARD_THEMES, type BoardThemeKey, type CheckerImageSpec } from "./boardThemes";
+import { getFirstMoveDests, Board as RulesBoard } from "../lib/rules_engine";
 
 interface BoardProps {
   board: number[];          // length 24; board[i] = checkers on point (i+1). Positive = player 0, negative = player 1
@@ -14,6 +15,7 @@ interface BoardProps {
   onOffClick?: () => void;
   selectedPoint?: number | null;  // 1-24 = board point, 25 = bar
   ghostMove?: string | null;      // A move string to preview on hover, e.g. "24/18 13/7"
+  dice?: [number, number] | null;
   onDragStart?: (point: number) => void;
   onDrop?: (point: number) => void;
   themeKey?: BoardThemeKey;
@@ -61,6 +63,7 @@ export function Board({
   onOffClick,
   selectedPoint,
   ghostMove,
+  dice,
   onDragStart,
   onDrop,
   themeKey = "walnut",
@@ -117,6 +120,7 @@ export function Board({
   const containerRef = useRef<HTMLDivElement>(null);
   const [dragState, setDragState] = useState<DragState>(null);
   const [pendingDrop, setPendingDrop] = useState<number | "off" | null>(null);
+  const [hoveredSource, setHoveredSource] = useState<number | "bar" | null>(null);
 
   // When a drop requires selecting the source point first, we must wait for
   // `selectedPoint` to update before triggering the destination click.
@@ -163,6 +167,16 @@ export function Board({
     if (!ghostArrivals[seg.to]) ghostArrivals[seg.to] = [];
     ghostArrivals[seg.to].push(seg.segIndex);
   });
+
+  const legalLandingSet = React.useMemo(() => {
+    if (hoveredSource === null || turn !== 0 || !dice) return new Set<number | "off">();
+    const rulesBoard: RulesBoard = {
+      points: board,
+      bar: [bar[0] ?? 0, bar[1] ?? 0] as [number, number],
+      off: [off[0] ?? 0, off[1] ?? 0] as [number, number],
+    };
+    return new Set<number | "off">(getFirstMoveDests(rulesBoard, 0, dice, hoveredSource));
+  }, [hoveredSource, dice, board, bar, off, turn]);
 
   const turnLabel = turn === 0 ? "Your turn" : `${opponentName ?? "Agent"}'s turn`;
   const turnColor = turn === 0 ? "var(--cg-player-warm)" : "var(--cg-player-cool)";
@@ -259,6 +273,7 @@ export function Board({
     svgRef.current?.setPointerCapture(e.pointerId);
     const { x, y } = clientToSvg(e.clientX, e.clientY);
     setDragState({ fromPoint: point, isP0, svgX: x, svgY: y });
+    setHoveredSource(null);
     if (onDragStart && typeof point === "number") onDragStart(point);
   };
 
@@ -565,8 +580,23 @@ export function Board({
           onPointerDown={(e) => {
             if (count > 0 && turn === 0) handlePointerDown(e, point, true);
           }}
+          onMouseEnter={() => { if (turn === 0 && count > 0) setHoveredSource(point); }}
+          onMouseLeave={() => setHoveredSource(null)}
           style={{ touchAction: "none" }}
         />
+
+        {/* Legal Landing Indicator */}
+        {legalLandingSet.has(point) && (
+          <circle
+            cx={checkerCx}
+            cy={tipY}
+            r={6}
+            fill="rgba(255,255,255,0.85)"
+            stroke="rgba(0,0,0,0.15)"
+            strokeWidth={1}
+            pointerEvents="none"
+          />
+        )}
 
         {/* Checkers */}
         <g pointerEvents="none">
@@ -686,6 +716,8 @@ export function Board({
           onPointerDown={(e) => {
             if (p0Bar > 0 && turn === 0) handlePointerDown(e, "bar", true);
           }}
+          onMouseEnter={() => { if (turn === 0 && p0Bar > 0) setHoveredSource("bar"); }}
+          onMouseLeave={() => setHoveredSource(null)}
           style={{ touchAction: "none" }}
         />
 
@@ -802,6 +834,18 @@ export function Board({
             width={BEAR_W}
             height={INNER_H}
             fill="rgba(0,0,0,0.15)"
+          />
+        )}
+        {/* P0 Bear-off Landing Indicator */}
+        {legalLandingSet.has("off") && (
+          <circle
+            cx={rightOffCx}
+            cy={FRAME + 15}
+            r={6}
+            fill="rgba(255,255,255,0.85)"
+            stroke="rgba(0,0,0,0.15)"
+            strokeWidth={1}
+            pointerEvents="none"
           />
         )}
         {/* P0 Off Mini Checkers */}
