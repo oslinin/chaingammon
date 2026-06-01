@@ -21,6 +21,8 @@ import { peerMatches } from "../lib/peer_connections";
 const STABILIZE_MS = 3_000;
 const PRESENCE_TTL_S = 35;
 const CONNECT_TIMEOUT_MS = 15_000;
+const REPAIR_MS = 5_000;    // retry pairing interval
+const GIVE_UP_MS = 30_000;  // fall back to agent after this long without a match
 
 function hvhMatchId(pubA: string, pubB: string): string {
   const [lo, hi] = pubA < pubB ? [pubA, pubB] : [pubB, pubA];
@@ -180,8 +182,14 @@ function EloHome() {
     ];
     const { partner, isOfferer } = computePairing(nostr.pubkey, searchers);
     if (!partner) {
-      stopSearching();
-      router.push("/team-demo?opponents=4");
+      // No partner yet — update status and let the repair timer retry.
+      // Do NOT fall back to agent here: Nostr presence events may not have
+      // propagated yet when this fires (race with STABILIZE_MS).
+      setSearchStatus(
+        searchersRef.current.size === 0
+          ? "Searching…"
+          : `${searchersRef.current.size} also searching`,
+      );
       return;
     }
     connectingRef.current = true;
@@ -195,24 +203,25 @@ function EloHome() {
       connectingRef.current = false;
       peer.close();
       peerMatches.delete(mid);
-      stopSearching();
-      router.push("/team-demo?opponents=4");
+      setSearchStatus("Timed out, retrying…");
+      // repair timer will retry
     }, CONNECT_TIMEOUT_MS);
     peer.onState((s) => {
       if (timedOut) return;
       if (s === "open") {
         clearTimeout(timer);
         nostr.stopPresence();
-        router.push(`/play-human/${mid}`);
+        // Use query-param form (?id=) — path segments cause 404 on static hosts.
+        router.push(`/play-human?id=${mid}`);
       } else if (s === "failed" || s === "closed") {
         clearTimeout(timer);
         connectingRef.current = false;
         peerMatches.delete(mid);
-        stopSearching();
-        router.push("/team-demo?opponents=4");
+        setSearchStatus("Retry…");
+        // repair timer will retry
       }
     });
-  }, [router, stopSearching]);
+  }, [router]);
 
   const startPlay = useCallback(() => {
     const id = newIdentity();
@@ -223,11 +232,26 @@ function EloHome() {
     const unsub = nostr.subscribePresence((p, pubkey, at) => {
       searchersRef.current.set(pubkey, { s: { pubkey, elo: p.elo ?? 1500 }, at });
     });
+    // First attempt after presence has had time to stabilize.
     const stabilizeTimer = setTimeout(() => tryConnect(nostr, myEloNum), STABILIZE_MS);
-    cleanupRef.current = () => { clearTimeout(stabilizeTimer); unsub(); };
+    // Retry every REPAIR_MS so late-arriving peers are picked up.
+    const repairTimer = setInterval(() => {
+      if (!connectingRef.current) tryConnect(nostr, myEloNum);
+    }, REPAIR_MS);
+    // Give up and fall back to agent after GIVE_UP_MS of searching.
+    const giveUpTimer = setTimeout(() => {
+      stopSearching();
+      router.push("/team-demo?opponents=4");
+    }, STABILIZE_MS + GIVE_UP_MS);
+    cleanupRef.current = () => {
+      clearTimeout(stabilizeTimer);
+      clearInterval(repairTimer);
+      clearTimeout(giveUpTimer);
+      unsub();
+    };
     setSearching(true);
     setSearchStatus("Searching for a human…");
-  }, [address, chainEloRaw, tryConnect]);
+  }, [address, chainEloRaw, tryConnect, stopSearching, router]);
 
   useEffect(() => () => stopSearching(), [stopSearching]);
 

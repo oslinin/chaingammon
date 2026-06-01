@@ -135,26 +135,23 @@ test.describe("human-vs-human matchmaking", () => {
         await page2.routeWebSocket("wss://**", (ws) => relay.addClient(ws));
 
         // Load the home page on both contexts.
-        // AppModeContext defaults to "elo" so FindHumanButton renders without
-        // any extra setup. wallet address defaults to "" which is fine.
+        // AppModeContext defaults to "elo" → EloHome renders, which has
+        // a "Play" button that starts Nostr matchmaking.
         await Promise.all([page1.goto("/"), page2.goto("/")]);
 
         // Both players click the button.
         await Promise.all([
-          page1
-            .getByRole("button", { name: "Play a human" })
-            .click({ timeout: 10_000 }),
-          page2
-            .getByRole("button", { name: "Play a human" })
-            .click({ timeout: 10_000 }),
+          page1.getByRole("button", { name: "Play" }).click({ timeout: 10_000 }),
+          page2.getByRole("button", { name: "Play" }).click({ timeout: 10_000 }),
         ]);
 
-        // UI should flip to "Stop searching" on both sides.
+        // UI should flip to "Searching…" on both sides (the button label
+        // changes; clicking it again would stop the search).
         await expect(
-          page1.getByRole("button", { name: "Stop searching" }),
+          page1.getByRole("button", { name: "Searching…" }),
         ).toBeVisible({ timeout: 5_000 });
         await expect(
-          page2.getByRole("button", { name: "Stop searching" }),
+          page2.getByRole("button", { name: "Searching…" }),
         ).toBeVisible({ timeout: 5_000 });
 
         // Timing budget:
@@ -162,17 +159,26 @@ test.describe("human-vs-human matchmaking", () => {
         //   publish races ahead of the other's subscription setup, they won't
         //   see each other until the 15 s re-publish (~t=20 s for pairing,
         //   ~t=25 s for navigation). Allow 60 s to cover the worst-case path.
+        //
+        // matchId moved from path segment to query param (?id=) in commit
+        // 09501b1 to fix 404s on GitHub Pages.  The predicate form of
+        // waitForURL handles query strings correctly; the glob `**/play-human/**`
+        // does not.
         await Promise.all([
-          page1.waitForURL("**/play-human/**", { timeout: 60_000 }),
-          page2.waitForURL("**/play-human/**", { timeout: 60_000 }),
+          page1.waitForURL(
+            (url) => url.pathname === "/play-human" && url.searchParams.has("id"),
+            { timeout: 60_000 },
+          ),
+          page2.waitForURL(
+            (url) => url.pathname === "/play-human" && url.searchParams.has("id"),
+            { timeout: 60_000 },
+          ),
         ]);
 
         // matchId is keccak256(sorted(pubkeyA + pubkeyB)) — deterministic and
         // identical on both sides.
-        const segments1 = new URL(page1.url()).pathname.split("/").filter(Boolean);
-        const segments2 = new URL(page2.url()).pathname.split("/").filter(Boolean);
-        const matchId1 = segments1[segments1.length - 1];
-        const matchId2 = segments2[segments2.length - 1];
+        const matchId1 = new URL(page1.url()).searchParams.get("id");
+        const matchId2 = new URL(page2.url()).searchParams.get("id");
         expect(matchId1).toMatch(/^0x[0-9a-f]{64}$/i);
         expect(matchId1).toBe(matchId2);
       } finally {
@@ -182,9 +188,12 @@ test.describe("human-vs-human matchmaking", () => {
     },
   );
 
-  test("single player sees 'no one else searching' status", async ({
+  test("single player stays in searching state rather than immediately falling back to agent", async ({
     browser,
   }) => {
+    // Regression: previously tryConnect navigated to /team-demo on the very
+    // first attempt even when no partner had arrived yet (Nostr race).
+    // Now it must show a "Searching…" status and only fall back after GIVE_UP_MS.
     const relay = new InMemoryNostrRelay();
     const ctx = await browser.newContext();
     const page = await ctx.newPage();
@@ -192,19 +201,19 @@ test.describe("human-vs-human matchmaking", () => {
     try {
       await page.routeWebSocket("wss://**", (ws) => relay.addClient(ws));
       await page.goto("/");
-      await page
-        .getByRole("button", { name: "Play a human" })
-        .click({ timeout: 10_000 });
+      await page.getByRole("button", { name: "Play" }).click({ timeout: 10_000 });
 
-      // After STABILIZE_MS with no peer the component shows the "no one" message.
+      // After STABILIZE_MS the button label changes to "Searching…" while
+      // tryConnect waits for a partner — no navigation yet.
       await expect(
-        page.getByText(/no one else searching/i),
+        page.getByRole("button", { name: "Searching…" }),
       ).toBeVisible({ timeout: 8_000 });
+      expect(new URL(page.url()).pathname).toBe("/");
 
-      // Stop searching — button flips back.
-      await page.getByRole("button", { name: "Stop searching" }).click();
+      // Clicking "Searching…" stops the search and restores the "Play" button.
+      await page.getByRole("button", { name: "Searching…" }).click();
       await expect(
-        page.getByRole("button", { name: "Play a human" }),
+        page.getByRole("button", { name: "Play" }),
       ).toBeVisible({ timeout: 3_000 });
     } finally {
       await ctx.close();
