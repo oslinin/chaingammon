@@ -716,6 +716,9 @@ function HumanMatchInner() {
       const msg = raw as WireMsg;
       if (msg.type !== "hello") return;
       if (oppHelloRef.current) return; // already got it
+      // Guard: address must be non-empty.  Without it, BigInt(undefined)
+      // throws and mySide is never set, leaving both sides as side 0.
+      if (!address || !msg.address) return;
       oppHelloRef.current = msg;
       setOppAddress(msg.address as `0x${string}`);
       setOppInfo({
@@ -726,9 +729,8 @@ function HumanMatchInner() {
         sessionKey: msg.sessionKey,
       });
 
-      // Determine sides: lower address = side 0 (warm).
-      const amILower = BigInt(address) < BigInt(msg.address);
-      const side: 0 | 1 = amILower ? 0 : 1;
+      // Determine sides: lower address = side 0 (moves first).
+      const side: 0 | 1 = BigInt(address) < BigInt(msg.address) ? 0 : 1;
       setMySide(side);
       mySideRef.current = side;
     };
