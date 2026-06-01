@@ -49,5 +49,6 @@ server/data/
 .~lock.*#
 
 docs/video/
+docs/boards/
 
 .claude/worktrees
