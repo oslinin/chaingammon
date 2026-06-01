@@ -715,9 +715,31 @@ function HumanMatchInner() {
       mySideRef.current = side;
     };
 
+    // Single onMessage registration: hello + auth + game messages.
+    // peer.onMessage is a setter (last caller wins), so all handling must
+    // live here.  A separate auth effect previously overwrote this handler,
+    // silently dropping hello messages and leaving both sides stuck on
+    // "Waiting for opponent…".
     peerEntry.peer.onMessage((raw) => {
-      helloListener(raw);
-      // Also call the game message handler.
+      const msg = raw as WireMsg;
+
+      if (msg.type === "hello") {
+        if (!oppHelloRef.current) {
+          helloListener(raw);           // initial hello → sets sides + oppInfo
+        } else {
+          setOppInfo((prev) =>          // second hello → update nonce
+            prev ? { ...prev, nonce: (msg as HelloMsg).nonce } : prev,
+          );
+        }
+        return;
+      }
+
+      if (msg.type === "auth" && !oppAuthRef.current) {
+        oppAuthRef.current = true;
+        setOppAuthSig((msg as AuthMsg).authSig as `0x${string}`);
+        return;
+      }
+
       void handleMsg(raw);
     });
 
@@ -785,29 +807,9 @@ function HumanMatchInner() {
   }, [address, oppAddress, sessionAccount, myNonce, matchRegistry, chainId]);
 
   // ── Handle auth from opponent ──────────────────────────────────────────
+  // Auth messages are handled inside the hello-listener's onMessage callback
+  // above (all peer.onMessage calls must be in one place — it's a setter).
   const oppAuthRef = useRef(false);
-  useEffect(() => {
-    if (oppAuthRef.current) return;
-    const peerEntry = peerMatches.get(matchId);
-    if (!peerEntry) return;
-
-    const authListener = (raw: unknown) => {
-      const msg = raw as WireMsg;
-      if (msg.type === "hello" && oppHelloRef.current) {
-        // Update opp nonce from second hello.
-        setOppInfo((prev) =>
-          prev ? { ...prev, nonce: (msg as HelloMsg).nonce } : prev,
-        );
-      }
-      if (msg.type !== "auth") return;
-      if (oppAuthRef.current) return;
-      oppAuthRef.current = true;
-      setOppAuthSig((msg as AuthMsg).authSig as `0x${string}`);
-    };
-
-    peerEntry.peer.onMessage(authListener);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [matchId]);
 
   // ── Start game once both auth sigs are in ─────────────────────────────
   const gameStartedRef = useRef(false);
