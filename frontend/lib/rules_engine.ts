@@ -563,3 +563,29 @@ export function hasLegalMoves(
 ): boolean {
   return generateLegalMoves(board, side, dice).length > 0;
 }
+
+/**
+ * Returns the unique first-step destinations reachable by a checker at `from`
+ * given the current dice, restricted to fully-legal move sequences.
+ */
+export function getFirstMoveDests(
+  board: Board,
+  side: number,
+  dice: [number, number],
+  from: number | "bar",
+): Array<number | "off"> {
+  const legalMoves = generateLegalMoves(board, side, dice);
+  const barSrc = side === 0 ? BAR_SRC : BAR_SRC_P1;
+  const offDst = side === 0 ? OFF_DST : OFF_DST_P1;
+  const srcNum = from === "bar" ? barSrc : (from as number);
+
+  const dests = new Set<number | "off">();
+  for (const moveStr of legalMoves) {
+    const pieces = parseMove(moveStr, side);
+    if (pieces.length > 0 && pieces[0].src === srcNum) {
+      const dst = pieces[0].dst;
+      dests.add(dst === offDst ? "off" : dst);
+    }
+  }
+  return Array.from(dests);
+}

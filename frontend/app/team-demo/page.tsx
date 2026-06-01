@@ -1755,6 +1755,7 @@ function TeamDemoPageInner() {
               onBarClick={isHumanTurn && currentBar[0] > 0 ? () => setSelectedSource(25) : undefined}
               onOffClick={isHumanTurn && selectedSource !== null ? () => stageMove(selectedSource === 25 ? "bar" : selectedSource, "off") : undefined}
               selectedPoint={selectedSource}
+              dice={isHumanTurn ? game.dice : null}
               playerAvatarUrls={gameCoins ?? undefined}
             />
             </div>
