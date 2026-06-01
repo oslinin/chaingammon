@@ -116,13 +116,38 @@ import torch
 from torch import nn
 
 
+import os
+import json
+import urllib.request
+
 def gnubg_published_core_init(in_dim, hidden, *, seed=0xBACC):
-    """Stand-in for gnubg's published feedforward weights. Production
-    swaps this for the actual gnubg weights file; the deterministic
-    Xavier-uniform init below gives every agent the same prior so the
-    extras head is what distinguishes them after training."""
-    g = torch.Generator().manual_seed(seed)
+    """Downloads the actual gnubg published feedforward weights from 0G Storage
+    via the configured indexer HTTP gateway and loads them into the PyTorch network.
+    Falls back to deterministic Xavier-uniform init if 0G is unreachable."""
     layer = nn.Linear(in_dim, hidden)
+    try:
+        # In production this hash is fetched from the AgentRegistry contract's baseWeightsHash
+        # We use the env var as a stand in for when 0G blobs are populated.
+        root_hash = os.environ.get("GNUBG_WEIGHTS_ROOT_HASH")
+        indexer_url = os.environ.get("OG_STORAGE_INDEXER", "http://localhost:8000")
+        if root_hash:
+            # Fetch the blob using the 0G storage indexer URL
+            url = f"{indexer_url}/blob/{root_hash}"
+            with urllib.request.urlopen(url) as response:
+                blob = response.read()
+            import io
+            buf = io.BytesIO(blob)
+
+            # Assuming the blob is a standard torch checkpoint dict for the core weights
+            state = torch.load(buf, map_location="cpu")
+            if "weight" in state and "bias" in state:
+                layer.load_state_dict(state)
+                return layer
+    except Exception:
+        pass
+
+    # Fallback to the original initialization
+    g = torch.Generator().manual_seed(seed)
     with torch.no_grad():
         bound = math.sqrt(6.0 / (in_dim + hidden))
         layer.weight.uniform_(-bound, bound, generator=g)
