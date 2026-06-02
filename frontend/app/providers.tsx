@@ -72,7 +72,7 @@ const PRIVY_APP_ID =
 // WalletConnect Project ID — Privy forwards this to the WalletConnect
 // connector it constructs internally. Get a free Project ID from
 // https://cloud.walletconnect.com. Without it, the WalletConnect option
-// in the Privy modal is disabled (email/Google/MetaMask still work).
+// in the Privy modal is disabled (email/Google still work).
 const WALLETCONNECT_PROJECT_ID = process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID;
 
 export function Providers({ children }: { children: React.ReactNode }) {
@@ -97,7 +97,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
         appearance: {
           theme: "dark",
           accentColor: "#C99B5C",
-          walletList: ["metamask", "wallet_connect"],
+          walletList: ["wallet_connect"],
           showWalletLoginFirst: false,
         },
         embeddedWallets: {
