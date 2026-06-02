@@ -26,7 +26,7 @@
 // click handler guards on `ready` so a click before init is a safe no-op.
 
 import { usePrivy } from "@privy-io/react-auth";
-import { useAccount } from "wagmi";
+import { useAccount, useConnect } from "wagmi";
 import { useState, useEffect } from "react";
 
 import { NetworkDropdown } from "./NetworkDropdown";
@@ -71,6 +71,8 @@ function ConnectButtonInner() {
   const { t } = useI18n();
   const { ready, authenticated, login, logout } = usePrivy();
   const { address, isConnected } = useAccount();
+  const { connect, connectors } = useConnect();
+
 
   // Connected: Privy authenticated AND wagmi has promoted the active wallet.
   if (authenticated && isConnected && address) {
@@ -122,16 +124,27 @@ function ConnectButtonInner() {
 
   // Not authenticated → "Log in". Shown regardless of `ready`; the handler
   // is a no-op until Privy finishes initialising.
+  const injectedConnector = connectors.find(c => c.id === 'injected');
+
   return (
-    <button
-      type="button"
-      data-testid="login-button"
-      onClick={() => { if (ready) login(); }}
-      style={primaryBtn}
-      className="cg-btn-primary"
-    >
-      {t("log_in")}
-    </button>
+    <div style={{ display: 'flex', gap: '8px' }}>
+      <button
+        type="button"
+        data-testid="login-button"
+        onClick={() => { if (ready) login(); }}
+        style={primaryBtn}
+        className="cg-btn-primary"
+      >
+        {t("log_in")}
+      </button>
+      <button
+        type="button"
+        onClick={() => { if (injectedConnector) connect({ connector: injectedConnector }); }}
+        style={{ ...primaryBtn, background: 'rgba(255, 255, 255, 0.1)', color: 'var(--cg-fg-1)', border: '1px solid var(--cg-line-1)', boxShadow: 'none' }}
+      >
+        MetaMask (Basic)
+      </button>
+    </div>
   );
 }
 
@@ -140,9 +153,17 @@ export function ConnectButton() {
   useEffect(() => { setMounted(true); }, []);
   if (!mounted) {
     return (
-      <button type="button" style={primaryBtn} className="cg-btn-primary">
-        Log in
-      </button>
+      <div style={{ display: 'flex', gap: '8px' }}>
+        <button type="button" style={primaryBtn} className="cg-btn-primary">
+          Log in
+        </button>
+        <button
+          type="button"
+          style={{ ...primaryBtn, background: 'rgba(255, 255, 255, 0.1)', color: 'var(--cg-fg-1)', border: '1px solid var(--cg-line-1)', boxShadow: 'none' }}
+        >
+          MetaMask (Basic)
+        </button>
+      </div>
     );
   }
   return <ConnectButtonInner />;

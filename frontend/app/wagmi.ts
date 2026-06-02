@@ -13,6 +13,7 @@
 import { http } from "viem";
 import { createStorage, noopStorage } from "wagmi";
 import { createConfig } from "@privy-io/wagmi";
+import { injected } from "wagmi/connectors";
 
 import { ALL_CHAINS, CHAIN_REGISTRY } from "./chains";
 
@@ -30,6 +31,7 @@ const storage = createStorage({
 export const config = createConfig({
   chains: ALL_CHAINS,
   transports,
+  connectors: [injected()],
   ssr: true,
   storage,
 });
