@@ -72,7 +72,10 @@ function ConnectButtonInner() {
   const { ready, authenticated, login, logout } = usePrivy();
   const { address, isConnected } = useAccount();
   const { connect, connectors } = useConnect();
-
+  // Lazy-initialized once at mount (ConnectButton guards this component
+  // behind a mounted check, so window/navigator are always available here).
+  const [isMobile] = useState(() => /Android|iPhone|iPad|iPod/i.test(navigator.userAgent));
+  const [hasInjected] = useState(() => "ethereum" in window);
 
   // Connected: Privy authenticated AND wagmi has promoted the active wallet.
   if (authenticated && isConnected && address) {
@@ -124,10 +127,15 @@ function ConnectButtonInner() {
 
   // Not authenticated → "Log in". Shown regardless of `ready`; the handler
   // is a no-op until Privy finishes initialising.
-  const injectedConnector = connectors.find(c => c.id === 'injected');
+  const injectedConnector = connectors.find(c => c.id === "injected");
+  // Chrome Android and Firefox mobile don't inject window.ethereum. On those
+  // browsers, show a universal link that opens the page inside MetaMask
+  // Mobile's built-in browser where window.ethereum IS provided natively —
+  // the simplest mobile MetaMask path (no WalletConnect, no QR scan).
+  const showDeepLink = isMobile && !hasInjected;
 
   return (
-    <div style={{ display: 'flex', gap: '8px' }}>
+    <div style={{ display: "flex", gap: "8px" }}>
       <button
         type="button"
         data-testid="login-button"
@@ -137,13 +145,24 @@ function ConnectButtonInner() {
       >
         {t("log_in")}
       </button>
-      <button
-        type="button"
-        onClick={() => { if (injectedConnector) connect({ connector: injectedConnector }); }}
-        style={{ ...primaryBtn, background: 'rgba(255, 255, 255, 0.1)', color: 'var(--cg-fg-1)', border: '1px solid var(--cg-line-1)', boxShadow: 'none' }}
-      >
-        MetaMask (Basic)
-      </button>
+      {showDeepLink ? (
+        <a
+          href={`https://metamask.app.link/dapp/${window.location.host}${window.location.pathname}${window.location.search}`}
+          data-testid="open-in-metamask"
+          style={{ ...pillBase, background: "#F6851B", color: "#fff", border: "1px solid rgba(0,0,0,0.2)", textDecoration: "none" }}
+        >
+          Open in MetaMask
+        </a>
+      ) : (
+        <button
+          type="button"
+          data-testid="metamask-basic"
+          onClick={() => { if (injectedConnector) connect({ connector: injectedConnector }); }}
+          style={{ ...primaryBtn, background: "rgba(255, 255, 255, 0.1)", color: "var(--cg-fg-1)", border: "1px solid var(--cg-line-1)", boxShadow: "none" }}
+        >
+          MetaMask (Basic)
+        </button>
+      )}
     </div>
   );
 }
@@ -159,7 +178,8 @@ export function ConnectButton() {
         </button>
         <button
           type="button"
-          style={{ ...primaryBtn, background: 'rgba(255, 255, 255, 0.1)', color: 'var(--cg-fg-1)', border: '1px solid var(--cg-line-1)', boxShadow: 'none' }}
+          data-testid="metamask-basic"
+          style={{ ...primaryBtn, background: "rgba(255, 255, 255, 0.1)", color: "var(--cg-fg-1)", border: "1px solid var(--cg-line-1)", boxShadow: "none" }}
         >
           MetaMask (Basic)
         </button>
