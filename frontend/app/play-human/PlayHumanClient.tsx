@@ -835,6 +835,7 @@ function HumanMatchInner() {
           type: "hello",
           address,
           ensLabel: label ?? null,
+          ensName: myEnsName,
           elo: Number(elo ?? "1500") || 1500,
           nonce: myNonce.toString(),
           sessionKey: sessionAccount.address,
