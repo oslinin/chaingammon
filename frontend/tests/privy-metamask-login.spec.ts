@@ -338,7 +338,7 @@ test.describe("MetaMask mobile - Chrome Android UA (no window.ethereum)", () => 
     const link = page.getByTestId("open-in-metamask");
     await expect(link).toBeVisible({ timeout: 10_000 });
     const href = await link.getAttribute("href");
-    expect(href).toContain("metamask.app.link/dapp/");
+    expect(href).toContain("metamask://dapp/");
     expect(href).toContain("localhost:3000");
   });
 
@@ -384,7 +384,7 @@ test.describe("MetaMask mobile - Firefox Android UA (no window.ethereum)", () =>
     const link = page.getByTestId("open-in-metamask");
     await expect(link).toBeVisible({ timeout: 10_000 });
     const href = await link.getAttribute("href");
-    expect(href).toContain("metamask.app.link/dapp/");
+    expect(href).toContain("metamask://dapp/");
     expect(href).toContain("localhost:3000");
   });
 });
