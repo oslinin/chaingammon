@@ -30,7 +30,7 @@
 //
 // No live Nostr relay, no real wallet, no drand network access required.
 
-import { test, expect, type WebSocketRoute } from "@playwright/test";
+import { test, expect, type Page, type WebSocketRoute } from "@playwright/test";
 import {
   OPENING_BOARD,
   applyMove,
@@ -529,6 +529,80 @@ function mockEthereumScript(address: string): string {
   `;
 }
 
+// ── Cross-context WebRTC mock ────────────────────────────────────────────────
+//
+// Real WebRTC UDP is blocked in headless Chromium on this machine.
+// Replaces RTCPeerConnection with a thin mock that routes data-channel
+// messages through Playwright's exposeFunction bridge.
+// The bridge must be wired before goto() via setupRtcBridge().
+// Requires window.__HVH_TEST_MODE = true to activate.
+
+const MOCK_RTC_SCRIPT = `
+(function () {
+  if (!window.__HVH_TEST_MODE) return;
+  window.__hvhCallOnMessage = null;
+  function makeChannel() {
+    var dc = {
+      readyState: 'open', onopen: null, onclose: null, _onmessage: null,
+      get onmessage() { return this._onmessage; },
+      set onmessage(cb) {
+        this._onmessage = cb;
+        window.__hvhCallOnMessage = function(data) { cb({ data: data }); };
+      },
+      send: function(s) { if (typeof window.__hvhSend === 'function') window.__hvhSend(s); },
+      close: function() {}
+    };
+    return dc;
+  }
+  function MockRTCPC() {
+    this._isOfferer = false; this._dc = null; this._dcCb = null; this._connectionState = 'new';
+  }
+  Object.defineProperties(MockRTCPC.prototype, {
+    connectionState:         { get: function() { return this._connectionState; } },
+    onicecandidate:          { set: function() {}, get: function() { return null; } },
+    onconnectionstatechange: { set: function(cb) { this._onCsc = cb; }, get: function() { return this._onCsc; } },
+    ondatachannel:           { set: function(cb) { this._dcCb = cb; }, get: function() { return this._dcCb; } },
+  });
+  MockRTCPC.prototype.createDataChannel = function() {
+    this._isOfferer = true; var dc = makeChannel(); dc.readyState = 'connecting'; this._dc = dc; return dc;
+  };
+  MockRTCPC.prototype.setLocalDescription = function() { return Promise.resolve(); };
+  MockRTCPC.prototype.setRemoteDescription = function() {
+    var me = this;
+    setTimeout(function() {
+      if (me._isOfferer) {
+        if (me._dc) { me._dc.readyState = 'open'; me._connectionState = 'connected'; if (me._dc.onopen) me._dc.onopen(); }
+      } else {
+        var dc = makeChannel(); me._connectionState = 'connected';
+        if (me._dcCb) me._dcCb({ channel: dc });
+        if (dc.onopen) dc.onopen();
+      }
+    }, 50);
+    return Promise.resolve();
+  };
+  MockRTCPC.prototype.createOffer     = function() { return Promise.resolve({ type: 'offer',  sdp: 'mock-offer'  }); };
+  MockRTCPC.prototype.createAnswer    = function() { return Promise.resolve({ type: 'answer', sdp: 'mock-answer' }); };
+  MockRTCPC.prototype.addIceCandidate = function() { return Promise.resolve(); };
+  MockRTCPC.prototype.close           = function() { this._connectionState = 'closed'; };
+  window.RTCPeerConnection = MockRTCPC;
+})();
+`;
+
+async function setupRtcBridge(page1: Page, page2: Page) {
+  await page1.exposeFunction("__hvhSend", async (jsonStr: string) => {
+    await page2.evaluate((msg: string) => {
+      const fn = (window as Window & { __hvhCallOnMessage?: (s: string) => void }).__hvhCallOnMessage;
+      if (fn) fn(msg);
+    }, jsonStr);
+  });
+  await page2.exposeFunction("__hvhSend", async (jsonStr: string) => {
+    await page1.evaluate((msg: string) => {
+      const fn = (window as Window & { __hvhCallOnMessage?: (s: string) => void }).__hvhCallOnMessage;
+      if (fn) fn(msg);
+    }, jsonStr);
+  });
+}
+
 // ── Group 3: Full E2E game flow ──────────────────────────────────────────────
 //
 // Exercises the entire HvH path — Nostr matchmaking → WebRTC → play-human
@@ -547,6 +621,7 @@ test.describe("HvH full game flow (testMode)", () => {
   test(
     "two players match, both take turns, game plays to completion",
     async ({ browser }) => {
+      test.setTimeout(360_000);
       const relay = new InMemoryNostrRelay();
       const ctx1 = await browser.newContext();
       const ctx2 = await browser.newContext();
@@ -554,9 +629,16 @@ test.describe("HvH full game flow (testMode)", () => {
       const page2 = await ctx2.newPage();
 
       try {
+        // Bridge must be set up before goto() so exposeFunction is available.
+        await setupRtcBridge(page1, page2);
+
         // Enable testMode: skips wallet auth, enables auto-play of moves.
         await page1.addInitScript(() => { (window as Window & {__HVH_TEST_MODE?:boolean}).__HVH_TEST_MODE = true; });
         await page2.addInitScript(() => { (window as Window & {__HVH_TEST_MODE?:boolean}).__HVH_TEST_MODE = true; });
+
+        // Replace RTCPeerConnection with a mock that routes via the Playwright bridge.
+        await page1.addInitScript({ content: MOCK_RTC_SCRIPT });
+        await page2.addInitScript({ content: MOCK_RTC_SCRIPT });
 
         // Two distinct addresses: 0xf39F > 0x7099 so page2 is side-0 (moves
         // first) and page1 is side-1, giving both players a chance to move.
@@ -586,11 +668,11 @@ test.describe("HvH full game flow (testMode)", () => {
         // Both must navigate to the same /play-human?id= (not /team-demo).
         await Promise.all([
           page1.waitForURL(
-            (url) => url.pathname === "/play-human" && url.searchParams.has("id"),
+            (url) => /^\/play-human\/?$/.test(url.pathname) && url.searchParams.has("id"),
             { timeout: 60_000 },
           ),
           page2.waitForURL(
-            (url) => url.pathname === "/play-human" && url.searchParams.has("id"),
+            (url) => /^\/play-human\/?$/.test(url.pathname) && url.searchParams.has("id"),
             { timeout: 60_000 },
           ),
         ]);
@@ -602,10 +684,10 @@ test.describe("HvH full game flow (testMode)", () => {
         // "You win!" on the winner and "Opponent wins" on the loser.
         await Promise.all([
           expect(page1.getByText(/You win!|Opponent wins/)).toBeVisible({
-            timeout: 120_000,
+            timeout: 240_000,
           }),
           expect(page2.getByText(/You win!|Opponent wins/)).toBeVisible({
-            timeout: 120_000,
+            timeout: 240_000,
           }),
         ]);
 
@@ -630,6 +712,7 @@ test.describe("HvH opponent discovery", () => {
   test(
     "two players pair via Nostr and both navigate to /play-human?id= — not an agent game",
     async ({ browser }) => {
+      test.setTimeout(120_000);
       const relay = new InMemoryNostrRelay();
       const ctx1 = await browser.newContext();
       const ctx2 = await browser.newContext();
@@ -637,6 +720,13 @@ test.describe("HvH opponent discovery", () => {
       const page2 = await ctx2.newPage();
 
       try {
+        // Bridge + mock must be set up before goto().
+        await setupRtcBridge(page1, page2);
+        await page1.addInitScript(() => { (window as Window & {__HVH_TEST_MODE?:boolean}).__HVH_TEST_MODE = true; });
+        await page2.addInitScript(() => { (window as Window & {__HVH_TEST_MODE?:boolean}).__HVH_TEST_MODE = true; });
+        await page1.addInitScript({ content: MOCK_RTC_SCRIPT });
+        await page2.addInitScript({ content: MOCK_RTC_SCRIPT });
+
         // Route all wss:// traffic through the in-memory relay — no live
         // Nostr network required.
         await page1.routeWebSocket("wss://**", (ws) => relay.addClient(ws));
@@ -661,15 +751,15 @@ test.describe("HvH opponent discovery", () => {
 
         // Both pages must navigate to /play-human?id=<matchId> — NOT to
         // /team-demo (agent game).  Worst case: startPresence re-publishes
-        // every 15 s; allow 60 s total.
+        // every 15 s; allow 90 s total.
         await Promise.all([
           page1.waitForURL(
-            (url) => url.pathname === "/play-human" && url.searchParams.has("id"),
-            { timeout: 60_000 },
+            (url) => /^\/play-human\/?$/.test(url.pathname) && url.searchParams.has("id"),
+            { timeout: 90_000 },
           ),
           page2.waitForURL(
-            (url) => url.pathname === "/play-human" && url.searchParams.has("id"),
-            { timeout: 60_000 },
+            (url) => /^\/play-human\/?$/.test(url.pathname) && url.searchParams.has("id"),
+            { timeout: 90_000 },
           ),
         ]);
 

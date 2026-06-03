@@ -26,6 +26,7 @@ import { useActiveChainId } from "../chains";
 import { MatchRegistryABI, useChainContracts } from "../contracts";
 import { useChaingammonName } from "../useChaingammonName";
 import { useChaingammonProfile } from "../useChaingammonProfile";
+import { useEnsName } from "../useEnsName";
 import { useSponsoredWrite } from "../useSponsoredWrite";
 import {
   type MatchState,
@@ -48,6 +49,7 @@ type HelloMsg = {
   type: "hello";
   address: string;
   ensLabel: string | null;
+  ensName: string | null;
   elo: number;
   nonce: string;       // BigInt serialized as decimal string
   sessionKey: string;  // session key address (0x...)
@@ -113,7 +115,22 @@ function HumanMatchInner() {
   const searchParams = useSearchParams();
   const matchId = searchParams.get("id") ?? "";
 
-  const { address } = useAccount();
+  // ── testMode: declared early so it can be used by address derivation below.
+  const testMode =
+    typeof window !== "undefined" &&
+    !!(window as Window & { __HVH_TEST_MODE?: boolean }).__HVH_TEST_MODE;
+
+  const { address: wagmiAddress } = useAccount();
+  // In testMode Privy auth is skipped, so wagmi has no connected account.
+  // Fall back to window.ethereum's first account (set by the test's mock wallet)
+  // so that hello messages and side-assignment work without a real login.
+  const testModeAddress =
+    testMode && typeof window !== "undefined"
+      ? ((window as Window & { ethereum?: { _accounts?: string[] } }).ethereum
+          ?._accounts?.[0] as `0x${string}` | undefined)
+      : undefined;
+  const address = wagmiAddress ?? testModeAddress;
+
   const chainId = useActiveChainId();
   const { matchRegistry } = useChainContracts();
   const { signMessageAsync } = useSignMessage();
@@ -124,6 +141,9 @@ function HumanMatchInner() {
 
   // ── Nonces from chain ──────────────────────────────────────────────────
   const [oppAddress, setOppAddress] = useState<`0x${string}` | null>(null);
+
+  const { name: myEnsName } = useEnsName(address);
+  const { name: oppEnsName } = useEnsName(oppAddress ?? undefined);
 
   const nonceCalls =
     address && oppAddress && matchRegistry
@@ -152,12 +172,6 @@ function HumanMatchInner() {
   const myNonce = nonceData?.[0]?.result as bigint | undefined;
   const oppNonce = nonceData?.[1]?.result as bigint | undefined;
 
-  // ── testMode: set window.__HVH_TEST_MODE before page loads to bypass auth
-  // and enable auto-play.  Used by Playwright E2E tests only.
-  const testMode =
-    typeof window !== "undefined" &&
-    !!(window as Window & { __HVH_TEST_MODE?: boolean }).__HVH_TEST_MODE;
-
   // ── Game state ─────────────────────────────────────────────────────────
   type Phase =
     | "connecting"     // waiting for hello from opponent
@@ -174,7 +188,7 @@ function HumanMatchInner() {
   const [game, setGame] = useState<MatchState | null>(null);
   const [mySide, setMySide] = useState<0 | 1 | null>(null);
   const [oppInfo, setOppInfo] = useState<{
-    address: string; ensLabel: string | null; elo: number;
+    address: string; ensLabel: string | null; ensName: string | null; elo: number;
     nonce: string; sessionKey: string;
   } | null>(null);
 
@@ -202,6 +216,7 @@ function HumanMatchInner() {
 
   // ── Refs for async callbacks ───────────────────────────────────────────
   const gameRef = useRef<MatchState | null>(null);
+  const msgBufferRef = useRef<WireMsg[]>([]);
   const mySideRef = useRef<0 | 1 | null>(null);
   const turnIndexRef = useRef(0);
   const waitingForRollRef = useRef(false);
@@ -504,6 +519,17 @@ function HumanMatchInner() {
   const handleMsg = useCallback(
     async (raw: unknown) => {
       const msg = raw as WireMsg;
+
+      // Buffer game messages if game isn't ready yet.
+      const isGameMsg = msg.type === "roll" || msg.type === "move" || msg.type === "double" ||
+                        msg.type === "accept" || msg.type === "drop" || msg.type === "resign" ||
+                        msg.type === "skip" || msg.type === "result-sig";
+
+      if (isGameMsg && !gameRef.current) {
+        msgBufferRef.current.push(msg);
+        return;
+      }
+
       const currentGame = gameRef.current;
       const mySideVal = mySideRef.current;
 
@@ -672,6 +698,7 @@ function HumanMatchInner() {
           type: "hello",
           address,
           ensLabel: label ?? null,
+          ensName: myEnsName,
           elo: Number(elo ?? "1500") || 1500,
           nonce: "0",     // placeholder — real nonce sent in auth phase
           sessionKey: acct.address,
@@ -693,6 +720,7 @@ function HumanMatchInner() {
         type: "hello",
         address,
         ensLabel: label ?? null,
+        ensName: myEnsName,
         elo: Number(elo ?? "1500") || 1500,
         nonce: "0",
         sessionKey: acct.address,
@@ -702,55 +730,51 @@ function HumanMatchInner() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [matchId, address, phase]);
 
+  const addressRef = useRef(address);
+  useEffect(() => { addressRef.current = address; }, [address]);
+
   // ── Handle hello from opponent: set oppAddress, determine sides ────────
   const oppHelloRef = useRef<HelloMsg | null>(null);
-  useEffect(() => {
-    if (!address) return;
+  const bufferedHelloRef = useRef<HelloMsg | null>(null);
 
-    const origHandler = peerRef.current ? undefined : null;
-    // Overlay a hello-specific handler (the main handleMsg ignores hello).
+  useEffect(() => {
     const peerEntry = peerMatches.get(matchId);
     if (!peerEntry) return;
 
-    const helloListener = (raw: unknown) => {
-      const msg = raw as WireMsg;
-      if (msg.type !== "hello") return;
-      if (oppHelloRef.current) return; // already got it
-      // Guard: address must be non-empty.  Without it, BigInt(undefined)
-      // throws and mySide is never set, leaving both sides as side 0.
-      if (!address || !msg.address) return;
+    const processHello = (msg: HelloMsg) => {
+      if (oppHelloRef.current) return;
+      const currentAddr = addressRef.current;
+      if (!currentAddr || !msg.address) {
+        bufferedHelloRef.current = msg;
+        return;
+      }
       oppHelloRef.current = msg;
+      bufferedHelloRef.current = null;
       setOppAddress(msg.address as `0x${string}`);
       setOppInfo({
         address: msg.address,
         ensLabel: msg.ensLabel,
+        ensName: msg.ensName,
         elo: msg.elo,
         nonce: msg.nonce,
         sessionKey: msg.sessionKey,
       });
 
-      // Determine sides: lower address = side 0 (moves first).
-      const side: 0 | 1 = BigInt(address) < BigInt(msg.address) ? 0 : 1;
+      const side: 0 | 1 = BigInt(currentAddr) < BigInt(msg.address) ? 0 : 1;
       setMySide(side);
       mySideRef.current = side;
     };
 
-    // Single onMessage registration: hello + auth + game messages.
-    // peer.onMessage is a setter (last caller wins), so all handling must
-    // live here.  A separate auth effect previously overwrote this handler,
-    // silently dropping hello messages and leaving both sides stuck on
-    // "Waiting for opponent…".
+    // If address just became available and we have a buffered hello, process it now.
+    if (address && bufferedHelloRef.current) {
+      processHello(bufferedHelloRef.current);
+    }
+
     peerEntry.peer.onMessage((raw) => {
       const msg = raw as WireMsg;
 
       if (msg.type === "hello") {
-        if (!oppHelloRef.current) {
-          helloListener(raw);           // initial hello → sets sides + oppInfo
-        } else {
-          setOppInfo((prev) =>          // second hello → update nonce
-            prev ? { ...prev, nonce: (msg as HelloMsg).nonce } : prev,
-          );
-        }
+        processHello(msg as HelloMsg);
         return;
       }
 
@@ -762,15 +786,13 @@ function HumanMatchInner() {
 
       void handleMsgRef.current(raw);
     });
-
-    return () => { origHandler; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [matchId, address]);
 
   // ── Phase 2: sign auth once we know opponent's address and nonce ───────
   const authSignedRef = useRef(false);
   useEffect(() => {
-    if (authSignedRef.current) return;
+    if (testMode || authSignedRef.current) return;
     if (!address || !oppAddress || !sessionAccount || myNonce === undefined) return;
     if (!matchRegistry || matchRegistry === "0x0000000000000000000000000000000000000000") return;
 
@@ -846,13 +868,25 @@ function HumanMatchInner() {
     gameRef.current = initial;
     setGame(initial);
 
+    // Flush any game messages that arrived during the handshake.
+    const buffered = msgBufferRef.current.splice(0);
+    void (async () => {
+      for (const m of buffered) {
+        await handleMsg(m);
+      }
+    })();
+
     // Side 0 moves first.
     if (mySideRef.current === 0) {
       void rollMyDice(initial);
     } else {
       waitingForRollRef.current = true;
     }
-  }, [myAuthSig, oppAuthSig, rollMyDice, testMode]);
+  // mySide is included so the effect re-runs when the hello handshake sets it.
+  // Without this, the effect fires on mount (mySideRef.current === null → returns)
+  // and never fires again because mySideRef is a ref, not a dep.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [myAuthSig, oppAuthSig, rollMyDice, testMode, mySide]);
 
   // ── testMode: auto-commit first legal move on each turn ───────────────
   // Drives both sides to game-over without UI clicks so Playwright tests
@@ -865,9 +899,23 @@ function HumanMatchInner() {
     const moves = generateLegalMoves(board, mySideRef.current, game.dice).filter(
       (m) => m.trim(),
     );
-    if (moves.length === 0) return; // bar-dance: rollMyDice already auto-skips
+    if (moves.length === 0) return;
 
-    const t = setTimeout(() => void commitMove(moves[0], game), 50);
+    // Pre-validate each move with applyMoveToState before committing —
+    // generateLegalMoves has a known edge case where it returns a move that
+    // isLegal then rejects; commitMove swallows the error silently and the
+    // game would stall. Try each candidate in order until one is accepted.
+    const t = setTimeout(() => {
+      for (const move of moves) {
+        try {
+          applyMoveToState(game, move); // throws if illegal
+          void commitMove(move, game);
+          break;
+        } catch {
+          // invalid — try the next candidate
+        }
+      }
+    }, 50);
     return () => clearTimeout(t);
   }, [testMode, game, phase, commitMove]);
 
@@ -1001,6 +1049,7 @@ function HumanMatchInner() {
           bar={currentBar}
           off={currentOff}
           turn={game?.turn ?? 0}
+          mySide={mySideRef.current ?? 0}
           opponentName={oppName}
           themeKey={themeKey}
           cubeValue={game?.cubeValue ?? 1}

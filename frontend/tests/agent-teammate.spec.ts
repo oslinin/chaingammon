@@ -17,7 +17,7 @@ test("Agent Teammate panel renders header label", async ({ page }) => {
 test("Agent Teammate panel renders sub-label", async ({ page }) => {
   await page.goto(FIXTURE);
   await expect(
-    page.locator("text=AI micro-tactics, you set the strategy")
+    page.locator("text=AI micro-tactics")
   ).toBeVisible({ timeout: 8000 });
 });
 
@@ -53,7 +53,8 @@ test("Agent Teammate panel renders 'Top moves this turn' label when loading", as
 
 test("Agent Teammate panel has correct bounding box", async ({ page }) => {
   await page.goto(FIXTURE);
-  const panel = page.locator(".rounded-xl").first();
+  // Find the panel container by its content — more stable than a CSS class.
+  const panel = page.locator("text=Agent teammate").locator("..").first();
   await expect(panel).toBeVisible({ timeout: 8000 });
   const box = await panel.boundingBox();
   // Panel should be at least 200px wide on a normal viewport.

@@ -134,7 +134,7 @@ export function isLegal(
     if (pipIdx === -1 && piece.dst === offDst && allInHome(simPoints, simBar, side)) {
       const hasHigher = side === 0
         ? simPoints.slice(piece.src).some((c) => c > 0)
-        : simPoints.slice(piece.src).some((c) => c < 0);
+        : simPoints.slice(0, piece.src - 1).some((c) => c < 0);
       if (!hasHigher) {
         const overshotDie = available.filter((d) => d > pip).sort((a, b) => a - b)[0];
         if (overshotDie !== undefined) {

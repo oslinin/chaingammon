@@ -12,7 +12,7 @@
 // Timing budget: STABILIZE_MS (3 s) + WebRTC handshake (~3–5 s) + buffer.
 // Total timeout per waitForURL: 30 s.
 
-import { test, expect, type WebSocketRoute } from "@playwright/test";
+import { test, expect, type Page, type WebSocketRoute } from "@playwright/test";
 
 // ── Minimal in-memory Nostr relay ──────────────────────────────────────────
 //
@@ -115,12 +115,85 @@ class InMemoryNostrRelay {
   }
 }
 
+// ── Cross-context WebRTC mock ─────────────────────────────────────────────
+//
+// Native WebRTC UDP is blocked in headless Chromium on this machine.
+// Replaces RTCPeerConnection with a mock that routes data-channel messages
+// through Playwright's exposeFunction bridge.
+
+const MOCK_RTC_SCRIPT = `
+(function () {
+  if (!window.__HVH_TEST_MODE) return;
+  window.__hvhCallOnMessage = null;
+  function makeChannel() {
+    var dc = {
+      readyState: 'open', onopen: null, onclose: null, _onmessage: null,
+      get onmessage() { return this._onmessage; },
+      set onmessage(cb) {
+        this._onmessage = cb;
+        window.__hvhCallOnMessage = function(data) { cb({ data: data }); };
+      },
+      send: function(s) { if (typeof window.__hvhSend === 'function') window.__hvhSend(s); },
+      close: function() {}
+    };
+    return dc;
+  }
+  function MockRTCPC() {
+    this._isOfferer = false; this._dc = null; this._dcCb = null; this._connectionState = 'new';
+  }
+  Object.defineProperties(MockRTCPC.prototype, {
+    connectionState:         { get: function() { return this._connectionState; } },
+    onicecandidate:          { set: function() {}, get: function() { return null; } },
+    onconnectionstatechange: { set: function(cb) { this._onCsc = cb; }, get: function() { return this._onCsc; } },
+    ondatachannel:           { set: function(cb) { this._dcCb = cb; }, get: function() { return this._dcCb; } },
+  });
+  MockRTCPC.prototype.createDataChannel = function() {
+    this._isOfferer = true; var dc = makeChannel(); dc.readyState = 'connecting'; this._dc = dc; return dc;
+  };
+  MockRTCPC.prototype.setLocalDescription = function() { return Promise.resolve(); };
+  MockRTCPC.prototype.setRemoteDescription = function() {
+    var me = this;
+    setTimeout(function() {
+      if (me._isOfferer) {
+        if (me._dc) { me._dc.readyState = 'open'; me._connectionState = 'connected'; if (me._dc.onopen) me._dc.onopen(); }
+      } else {
+        var dc = makeChannel(); me._connectionState = 'connected';
+        if (me._dcCb) me._dcCb({ channel: dc });
+        if (dc.onopen) dc.onopen();
+      }
+    }, 50);
+    return Promise.resolve();
+  };
+  MockRTCPC.prototype.createOffer     = function() { return Promise.resolve({ type: 'offer',  sdp: 'mock-offer'  }); };
+  MockRTCPC.prototype.createAnswer    = function() { return Promise.resolve({ type: 'answer', sdp: 'mock-answer' }); };
+  MockRTCPC.prototype.addIceCandidate = function() { return Promise.resolve(); };
+  MockRTCPC.prototype.close           = function() { this._connectionState = 'closed'; };
+  window.RTCPeerConnection = MockRTCPC;
+})();
+`;
+
+async function setupRtcBridge(page1: Page, page2: Page) {
+  await page1.exposeFunction("__hvhSend", async (jsonStr: string) => {
+    await page2.evaluate((msg: string) => {
+      const fn = (window as Window & { __hvhCallOnMessage?: (s: string) => void }).__hvhCallOnMessage;
+      if (fn) fn(msg);
+    }, jsonStr);
+  });
+  await page2.exposeFunction("__hvhSend", async (jsonStr: string) => {
+    await page1.evaluate((msg: string) => {
+      const fn = (window as Window & { __hvhCallOnMessage?: (s: string) => void }).__hvhCallOnMessage;
+      if (fn) fn(msg);
+    }, jsonStr);
+  });
+}
+
 // ── Tests ──────────────────────────────────────────────────────────────────
 
 test.describe("human-vs-human matchmaking", () => {
   test(
     "two players pair via Nostr and land on the same play-human match",
     async ({ browser }) => {
+      test.setTimeout(90_000);
       const relay = new InMemoryNostrRelay();
 
       const ctx1 = await browser.newContext();
@@ -129,6 +202,13 @@ test.describe("human-vs-human matchmaking", () => {
       const page2 = await ctx2.newPage();
 
       try {
+        // Bridge + mock must be set up before goto() so exposeFunction is ready.
+        await setupRtcBridge(page1, page2);
+        await page1.addInitScript(() => { (window as Window & {__HVH_TEST_MODE?:boolean}).__HVH_TEST_MODE = true; });
+        await page2.addInitScript(() => { (window as Window & {__HVH_TEST_MODE?:boolean}).__HVH_TEST_MODE = true; });
+        await page1.addInitScript({ content: MOCK_RTC_SCRIPT });
+        await page2.addInitScript({ content: MOCK_RTC_SCRIPT });
+
         // Intercept ALL wss:// connections on both pages and route them
         // through the in-memory relay so no live Nostr network is needed.
         await page1.routeWebSocket("wss://**", (ws) => relay.addClient(ws));
@@ -166,11 +246,11 @@ test.describe("human-vs-human matchmaking", () => {
         // does not.
         await Promise.all([
           page1.waitForURL(
-            (url) => url.pathname === "/play-human" && url.searchParams.has("id"),
+            (url) => /^\/play-human\/?$/.test(url.pathname) && url.searchParams.has("id"),
             { timeout: 60_000 },
           ),
           page2.waitForURL(
-            (url) => url.pathname === "/play-human" && url.searchParams.has("id"),
+            (url) => /^\/play-human\/?$/.test(url.pathname) && url.searchParams.has("id"),
             { timeout: 60_000 },
           ),
         ]);

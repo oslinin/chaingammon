@@ -9,6 +9,7 @@ interface BoardProps {
   bar: number[];            // [p0_bar, p1_bar]
   off: number[];            // [p0_off, p1_off]
   turn: number;             // 0 = human, 1 = agent
+  mySide?: number;          // 0 or 1 (default 0). Which side is "You"
   opponentName?: string;
   onPointClick?: (point: number) => void;
   onBarClick?: () => void;
@@ -57,6 +58,7 @@ export function Board({
   bar,
   off,
   turn,
+  mySide = 0,
   opponentName,
   onPointClick,
   onBarClick,
@@ -169,16 +171,16 @@ export function Board({
   });
 
   const legalLandingSet = React.useMemo(() => {
-    if (hoveredSource === null || turn !== 0 || !dice) return new Set<number | "off">();
+    if (hoveredSource === null || turn !== mySide || !dice) return new Set<number | "off">();
     const rulesBoard: RulesBoard = {
       points: board,
       bar: [bar[0] ?? 0, bar[1] ?? 0] as [number, number],
       off: [off[0] ?? 0, off[1] ?? 0] as [number, number],
     };
-    return new Set<number | "off">(getFirstMoveDests(rulesBoard, 0, dice, hoveredSource));
-  }, [hoveredSource, dice, board, bar, off, turn]);
+    return new Set<number | "off">(getFirstMoveDests(rulesBoard, mySide, dice, hoveredSource));
+  }, [hoveredSource, dice, board, bar, off, turn, mySide]);
 
-  const turnLabel = turn === 0 ? "Your turn" : `${opponentName ?? "Agent"}'s turn`;
+  const turnLabel = turn === mySide ? "Your turn" : `${opponentName ?? "Agent"}'s turn`;
   const turnColor = turn === 0 ? "var(--cg-player-warm)" : "var(--cg-player-cool)";
 
   const getColXOffset = (col: number, rightHalf: boolean) => {
@@ -269,7 +271,8 @@ export function Board({
   };
 
   const handlePointerDown = (e: PointerEvent<SVGGElement>, point: number | "bar", isP0: boolean) => {
-    if (turn !== 0 || !isP0) return;
+    const isMyCheckers = mySide === 0 ? isP0 : !isP0;
+    if (turn !== mySide || !isMyCheckers) return;
     svgRef.current?.setPointerCapture(e.pointerId);
     const { x, y } = clientToSvg(e.clientX, e.clientY);
     setDragState({ fromPoint: point, isP0, svgX: x, svgY: y });
@@ -578,9 +581,13 @@ export function Board({
           cursor={onPointClick ? "pointer" : "default"}
           onClick={() => onPointClick && onPointClick(point)}
           onPointerDown={(e) => {
-            if (count > 0 && turn === 0) handlePointerDown(e, point, true);
+            const isOwn = mySide === 0 ? count > 0 : count < 0;
+            if (isOwn && turn === mySide) handlePointerDown(e, point, count > 0);
           }}
-          onMouseEnter={() => { if (turn === 0 && count > 0) setHoveredSource(point); }}
+          onMouseEnter={() => {
+            const isOwn = mySide === 0 ? count > 0 : count < 0;
+            if (turn === mySide && isOwn) setHoveredSource(point);
+          }}
           onMouseLeave={() => setHoveredSource(null)}
           style={{ touchAction: "none" }}
         />
@@ -714,9 +721,9 @@ export function Board({
           cursor={onBarClick ? "pointer" : "default"}
           onClick={() => onBarClick && onBarClick()}
           onPointerDown={(e) => {
-            if (p0Bar > 0 && turn === 0) handlePointerDown(e, "bar", true);
+            if (bar[mySide] > 0 && turn === mySide) handlePointerDown(e, "bar", mySide === 0);
           }}
-          onMouseEnter={() => { if (turn === 0 && p0Bar > 0) setHoveredSource("bar"); }}
+          onMouseEnter={() => { if (turn === mySide && bar[mySide] > 0) setHoveredSource("bar"); }}
           onMouseLeave={() => setHoveredSource(null)}
           style={{ touchAction: "none" }}
         />

@@ -60,6 +60,7 @@ export function connectPeer(
 
   let channel: RTCDataChannel | null = null;
   let messageCb: ((m: unknown) => void) | null = null;
+  const messageBuffer: unknown[] = [];
   let stateCb: ((s: ConnState) => void) | null = null;
   let remoteSet = false;
   // ICE can arrive before the remote description is applied — buffer until then.
@@ -73,7 +74,12 @@ export function connectPeer(
     ch.onclose = () => emit("closed");
     ch.onmessage = (e) => {
       try {
-        messageCb?.(JSON.parse(e.data));
+        const msg = JSON.parse(e.data);
+        if (messageCb) {
+          messageCb(msg);
+        } else {
+          messageBuffer.push(msg);
+        }
       } catch {
         /* non-JSON frame — ignore */
       }
@@ -146,6 +152,10 @@ export function connectPeer(
     },
     onMessage: (cb) => {
       messageCb = cb;
+      if (messageBuffer.length > 0) {
+        const buffered = messageBuffer.splice(0);
+        for (const m of buffered) cb(m);
+      }
     },
     onState: (cb) => {
       stateCb = cb;
