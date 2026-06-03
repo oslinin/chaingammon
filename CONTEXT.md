@@ -307,9 +307,13 @@ Approval is **per-commit, not per-workflow**. A previously approved flow does no
 
 ### Branching workflow
 
-One branch per PR. When the session scaffold assigns a branch (e.g. `claude/epic-ride-XXXXX`), use it for the first PR. If the owner merges that PR mid-session and asks for follow-up work, **create a new branch** off `master` rather than reusing the merged one. A merged branch is done — continuing to push to it after merge causes diverged history and forces a rebase before the next PR can be opened cleanly.
+One branch per PR, always — regardless of whether a previous PR has been merged yet. Each distinct change (feature, fix, docs update) gets its own branch and its own PR. Never add an unrelated commit to a branch that already has commits, even if that branch has not been merged yet.
 
-Naming for follow-up branches: append a counter (`claude/epic-ride-XXXXX-2`, `-3`, etc.) or use a short descriptor (`claude/epic-ride-XXXXX-fix-login`). Never push follow-up work to `master` directly.
+When the session scaffold assigns a branch (e.g. `claude/epic-ride-XXXXX`), use it for the first PR only. Every subsequent piece of work — even in the same session, even before the first PR is merged — gets a new branch off `master`.
+
+A merged branch is done. Do not push to it again after merge.
+
+Naming: append a counter (`claude/epic-ride-XXXXX-2`, `-3`, etc.) or a short descriptor. Never push directly to `master`.
 
 ## Test-Driven Development
 
