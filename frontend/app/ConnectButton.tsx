@@ -26,7 +26,7 @@
 // click handler guards on `ready` so a click before init is a safe no-op.
 
 import { usePrivy } from "@privy-io/react-auth";
-import { useAccount, useConnect } from "wagmi";
+import { useAccount } from "wagmi";
 import { useState, useEffect } from "react";
 
 import { NetworkDropdown } from "./NetworkDropdown";
@@ -71,7 +71,6 @@ function ConnectButtonInner() {
   const { t } = useI18n();
   const { ready, authenticated, login, logout } = usePrivy();
   const { address, isConnected } = useAccount();
-  const { connect, connectors } = useConnect();
   // Lazy-initialized once at mount (ConnectButton guards this component
   // behind a mounted check, so window/navigator are always available here).
   const [isMobile] = useState(() => /Android|iPhone|iPad|iPod/i.test(navigator.userAgent));
@@ -127,11 +126,10 @@ function ConnectButtonInner() {
 
   // Not authenticated → "Log in". Shown regardless of `ready`; the handler
   // is a no-op until Privy finishes initialising.
-  const injectedConnector = connectors.find(c => c.id === "injected");
-  // Chrome Android and Firefox mobile don't inject window.ethereum. On those
-  // browsers, show a universal link that opens the page inside MetaMask
-  // Mobile's built-in browser where window.ethereum IS provided natively —
-  // the simplest mobile MetaMask path (no WalletConnect, no QR scan).
+  //
+  // On mobile without window.ethereum, also show a deep link that opens the
+  // page inside MetaMask Mobile's browser, which injects window.ethereum
+  // natively so the user can log in through the Privy modal from there.
   const showDeepLink = isMobile && !hasInjected;
 
   return (
@@ -145,7 +143,7 @@ function ConnectButtonInner() {
       >
         {t("log_in")}
       </button>
-      {showDeepLink ? (
+      {showDeepLink && (
         <a
           href={`https://metamask.app.link/dapp/${window.location.host}${window.location.pathname}${window.location.search}`}
           data-testid="open-in-metamask"
@@ -153,15 +151,6 @@ function ConnectButtonInner() {
         >
           Open in MetaMask
         </a>
-      ) : (
-        <button
-          type="button"
-          data-testid="metamask-basic"
-          onClick={() => { if (injectedConnector) connect({ connector: injectedConnector }); }}
-          style={{ ...primaryBtn, background: "rgba(255, 255, 255, 0.1)", color: "var(--cg-fg-1)", border: "1px solid var(--cg-line-1)", boxShadow: "none" }}
-        >
-          MetaMask (Basic)
-        </button>
       )}
     </div>
   );
@@ -172,18 +161,9 @@ export function ConnectButton() {
   useEffect(() => { setMounted(true); }, []);
   if (!mounted) {
     return (
-      <div style={{ display: 'flex', gap: '8px' }}>
-        <button type="button" style={primaryBtn} className="cg-btn-primary">
-          Log in
-        </button>
-        <button
-          type="button"
-          data-testid="metamask-basic"
-          style={{ ...primaryBtn, background: "rgba(255, 255, 255, 0.1)", color: "var(--cg-fg-1)", border: "1px solid var(--cg-line-1)", boxShadow: "none" }}
-        >
-          MetaMask (Basic)
-        </button>
-      </div>
+      <button type="button" style={primaryBtn} className="cg-btn-primary">
+        Log in
+      </button>
     );
   }
   return <ConnectButtonInner />;
