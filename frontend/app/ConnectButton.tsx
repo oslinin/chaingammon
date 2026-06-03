@@ -145,7 +145,7 @@ function ConnectButtonInner() {
       </button>
       {showDeepLink && (
         <a
-          href={`https://metamask.app.link/dapp/${window.location.host}${window.location.pathname}${window.location.search}`}
+          href={`metamask://dapp/${window.location.host}${window.location.pathname}${window.location.search}`}
           data-testid="open-in-metamask"
           style={{ ...pillBase, background: "#F6851B", color: "#fff", border: "1px solid rgba(0,0,0,0.2)", textDecoration: "none" }}
         >
