@@ -146,7 +146,7 @@ function HumanMatchInner() {
   const { name: oppEnsName } = useEnsName(oppAddress ?? undefined);
 
   const nonceCalls =
-    address && oppAddress && matchRegistry
+    !testMode && address && oppAddress && matchRegistry
       ? [
           {
             address: matchRegistry,
