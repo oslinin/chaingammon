@@ -97,7 +97,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
         appearance: {
           theme: "dark",
           accentColor: "#C99B5C",
-          walletList: ["wallet_connect"],
+          walletList: ["metamask", "wallet_connect"],
           showWalletLoginFirst: false,
         },
         embeddedWallets: {
