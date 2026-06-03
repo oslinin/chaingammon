@@ -3,24 +3,11 @@
  *
  * Login / onboarding tests across browsers and platforms:
  *   - Desktop Chrome (chromium project) + Desktop Firefox (firefox project)
- *   - Mobile Chrome / Mobile Firefox emulation via test.use()
- *   - Auth methods: email, Google OAuth, MetaMask
+ *   - Auth methods: email, Google OAuth, MetaMask via Privy modal
  *
- * MetaMask mobile strategy
- * ──────────────────────────────────────────────────────────────────────────
- * Chrome Android and Firefox mobile do not inject window.ethereum.
- * When no injected wallet is detected on a mobile user-agent, the app shows:
- *
- *   <a href="https://metamask.app.link/dapp/<host><pathname>">Open in MetaMask</a>
- *
- * Tapping it opens the current page inside MetaMask Mobile's built-in browser,
- * where window.ethereum IS injected natively. The user then clicks
- * "MetaMask (Basic)" and connects directly — no WalletConnect project ID,
- * no QR scan, works on both Chrome Android and Firefox mobile.
- *
- * When window.ethereum IS present on mobile (i.e. the user is already inside
- * MetaMask Mobile's browser) the regular "MetaMask (Basic)" injected flow
- * is shown instead of the deep link.
+ * MetaMask on mobile: use Log in → Continue with a wallet → WalletConnect,
+ * then scan the QR with MetaMask Mobile. Works on any browser without deep
+ * links or in-app browser redirects.
  *
  * Run:
  *   pnpm test:e2e tests/privy-metamask-login.spec.ts --project=chromium
@@ -31,14 +18,6 @@ import { test, expect, type Page } from "@playwright/test";
 
 const MOCK_ADDRESS = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
 const MOCK_CHAIN_ID = "0x7a69";
-
-// Mobile user-agent strings for emulation.
-// Our isMobile detection reads navigator.userAgent, so setting these via
-// test.use({ userAgent }) is sufficient — no isMobile:true required.
-const MOBILE_CHROME_UA =
-  "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Mobile Safari/537.36";
-const MOBILE_FIREFOX_UA =
-  "Mozilla/5.0 (Android 13; Mobile; rv:109.0) Gecko/109.0 Firefox/118.0";
 
 // ── Mock Ethereum provider ─────────────────────────────────────────────────────
 
@@ -307,116 +286,5 @@ test.describe("MetaMask desktop (window.ethereum)", () => {
     await page.goto("/stages/");
     await page.waitForLoadState("networkidle");
     await waitForConnected(page);
-  });
-});
-
-// ── 5. MetaMask mobile — Chrome Android UA (no injected wallet) ───────────────
-//
-// Simulates Chrome on Android: navigator.userAgent matches the mobile regex
-// but window.ethereum is absent.  The app should show the deep link.
-
-test.describe("MetaMask mobile - Chrome Android UA (no window.ethereum)", () => {
-  test.setTimeout(60_000);
-  test.use({
-    viewport: { width: 393, height: 851 },
-    userAgent: MOBILE_CHROME_UA,
-    hasTouch: true,
-  });
-
-  test.beforeEach(async ({ page }) => {
-    // No injectMockEthereum — simulates Chrome Android without MetaMask
-    await setupPage(page);
-  });
-
-  test("shows Open in MetaMask link on mobile without ethereum", async ({ page }) => {
-    await waitForLoggedOut(page);
-    await expect(page.getByTestId("open-in-metamask")).toBeVisible({ timeout: 10_000 });
-  });
-
-  test("Open in MetaMask href points to metamask.app.link/dapp/", async ({ page }) => {
-    await waitForLoggedOut(page);
-    const link = page.getByTestId("open-in-metamask");
-    await expect(link).toBeVisible({ timeout: 10_000 });
-    const href = await link.getAttribute("href");
-    expect(href).toContain("metamask.app.link/dapp/");
-    expect(href).toContain("localhost:3000");
-  });
-
-  test("Privy modal still shows email and Google options on mobile", async ({ page }) => {
-    await waitForLoggedOut(page);
-    await openPrivyModal(page);
-    const dialog = page.locator('[role="dialog"]').first();
-    await expect(dialog.getByText(/google/i).first()).toBeVisible({ timeout: 10_000 });
-    await expect(
-      dialog
-        .locator('input[type="email"], input[placeholder*="email" i]')
-        .or(dialog.getByText(/continue with email/i))
-        .first(),
-    ).toBeVisible({ timeout: 10_000 });
-  });
-});
-
-// ── 6. MetaMask mobile — Firefox Android UA (no injected wallet) ──────────────
-//
-// Simulates Firefox on Android: navigator.userAgent matches mobile regex,
-// no window.ethereum. Same deep-link should appear.
-
-test.describe("MetaMask mobile - Firefox Android UA (no window.ethereum)", () => {
-  test.setTimeout(60_000);
-  test.use({
-    viewport: { width: 393, height: 851 },
-    userAgent: MOBILE_FIREFOX_UA,
-    // hasTouch intentionally omitted — Firefox mobile support may vary
-  });
-
-  test.beforeEach(async ({ page }) => {
-    await setupPage(page);
-  });
-
-  test("shows Open in MetaMask link on mobile without ethereum (Firefox)", async ({ page }) => {
-    await waitForLoggedOut(page);
-    await expect(page.getByTestId("open-in-metamask")).toBeVisible({ timeout: 10_000 });
-    await expect(page.getByTestId("login-button")).toBeVisible({ timeout: 10_000 });
-  });
-
-  test("Open in MetaMask href points to metamask.app.link/dapp/", async ({ page }) => {
-    await waitForLoggedOut(page);
-    const link = page.getByTestId("open-in-metamask");
-    await expect(link).toBeVisible({ timeout: 10_000 });
-    const href = await link.getAttribute("href");
-    expect(href).toContain("metamask.app.link/dapp/");
-    expect(href).toContain("localhost:3000");
-  });
-});
-
-// ── 7. MetaMask mobile — in MetaMask's in-app browser ─────────────────────────
-//
-// Simulates being inside MetaMask Mobile's built-in browser: mobile UA but
-// window.ethereum IS present (MetaMask injects it).  The deep link should
-// be hidden (no need to redirect to MetaMask — already inside it).
-
-test.describe("MetaMask mobile in-app browser (window.ethereum injected on mobile)", () => {
-  test.setTimeout(120_000);
-  test.use({
-    viewport: { width: 393, height: 851 },
-    userAgent: MOBILE_CHROME_UA,
-    hasTouch: true,
-  });
-
-  test.beforeEach(async ({ page }) => {
-    // MetaMask Mobile's browser injects window.ethereum — simulate it.
-    await injectMockEthereum(page);
-    await setupPage(page);
-  });
-
-  test("deep link absent when ethereum is injected on mobile", async ({ page }) => {
-    await waitForLoggedOut(page);
-    await expect(page.getByTestId("login-button")).toBeVisible({ timeout: 10_000 });
-    await expect(page.getByTestId("open-in-metamask")).not.toBeVisible();
-  });
-
-  test("connects via injected MetaMask when in MetaMask Mobile browser", async ({ page }) => {
-    await loginViaMetaMask(page);
-    await expect(page.getByRole("button", { name: "Disconnect" })).toBeVisible();
   });
 });
