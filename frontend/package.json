@@ -35,7 +35,11 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.59.1",
+    "@synthetixio/ethereum-wallet-mock": "0.0.14",
     "@synthetixio/synpress": "^4.1.2",
+    "@synthetixio/synpress-cache": "0.0.14",
+    "@synthetixio/synpress-core": "0.0.14",
+    "@synthetixio/synpress-metamask": "0.0.14",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",

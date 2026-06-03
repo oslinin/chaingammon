@@ -6,12 +6,21 @@ export default defineConfig({
   retries: 1,
   use: {
     baseURL: "http://localhost:3000",
-    browserName: "chromium",
   },
   projects: [
     {
       name: "chromium",
-      use: { ...devices["Desktop Chrome"] },
+      use: {
+        ...devices["Desktop Chrome"],
+        browserName: "chromium",
+      },
+    },
+    {
+      name: "firefox",
+      use: {
+        ...devices["Desktop Firefox"],
+        browserName: "firefox",
+      },
     },
   ],
   webServer: {
