@@ -276,11 +276,6 @@ test.describe("MetaMask desktop (window.ethereum)", () => {
     await setupPage(page);
   });
 
-  test("MetaMask Basic button is visible on desktop", async ({ page }) => {
-    await waitForLoggedOut(page);
-    await expect(page.getByTestId("metamask-basic")).toBeVisible();
-  });
-
   test("Open in MetaMask deep link is absent on desktop", async ({ page }) => {
     await waitForLoggedOut(page);
     await expect(page.getByTestId("open-in-metamask")).not.toBeVisible();
@@ -318,8 +313,7 @@ test.describe("MetaMask desktop (window.ethereum)", () => {
 // ── 5. MetaMask mobile — Chrome Android UA (no injected wallet) ───────────────
 //
 // Simulates Chrome on Android: navigator.userAgent matches the mobile regex
-// but window.ethereum is absent.  The app should show the deep link instead
-// of the "MetaMask (Basic)" injected-connector button.
+// but window.ethereum is absent.  The app should show the deep link.
 
 test.describe("MetaMask mobile - Chrome Android UA (no window.ethereum)", () => {
   test.setTimeout(60_000);
@@ -334,10 +328,9 @@ test.describe("MetaMask mobile - Chrome Android UA (no window.ethereum)", () => 
     await setupPage(page);
   });
 
-  test("shows Open in MetaMask link instead of MetaMask Basic", async ({ page }) => {
+  test("shows Open in MetaMask link on mobile without ethereum", async ({ page }) => {
     await waitForLoggedOut(page);
     await expect(page.getByTestId("open-in-metamask")).toBeVisible({ timeout: 10_000 });
-    await expect(page.getByTestId("metamask-basic")).not.toBeVisible();
   });
 
   test("Open in MetaMask href points to metamask.app.link/dapp/", async ({ page }) => {
@@ -366,8 +359,7 @@ test.describe("MetaMask mobile - Chrome Android UA (no window.ethereum)", () => 
 // ── 6. MetaMask mobile — Firefox Android UA (no injected wallet) ──────────────
 //
 // Simulates Firefox on Android: navigator.userAgent matches mobile regex,
-// no window.ethereum (Firefox doesn't have MetaMask extension on Android).
-// Same deep-link fallback should appear.
+// no window.ethereum. Same deep-link should appear.
 
 test.describe("MetaMask mobile - Firefox Android UA (no window.ethereum)", () => {
   test.setTimeout(60_000);
@@ -381,10 +373,10 @@ test.describe("MetaMask mobile - Firefox Android UA (no window.ethereum)", () =>
     await setupPage(page);
   });
 
-  test("shows Open in MetaMask link instead of MetaMask Basic", async ({ page }) => {
+  test("shows Open in MetaMask link on mobile without ethereum (Firefox)", async ({ page }) => {
     await waitForLoggedOut(page);
     await expect(page.getByTestId("open-in-metamask")).toBeVisible({ timeout: 10_000 });
-    await expect(page.getByTestId("metamask-basic")).not.toBeVisible();
+    await expect(page.getByTestId("login-button")).toBeVisible({ timeout: 10_000 });
   });
 
   test("Open in MetaMask href points to metamask.app.link/dapp/", async ({ page }) => {
@@ -400,8 +392,8 @@ test.describe("MetaMask mobile - Firefox Android UA (no window.ethereum)", () =>
 // ── 7. MetaMask mobile — in MetaMask's in-app browser ─────────────────────────
 //
 // Simulates being inside MetaMask Mobile's built-in browser: mobile UA but
-// window.ethereum IS present (MetaMask injects it).  The app should show
-// the normal "MetaMask (Basic)" button, not the deep link.
+// window.ethereum IS present (MetaMask injects it).  The deep link should
+// be hidden (no need to redirect to MetaMask — already inside it).
 
 test.describe("MetaMask mobile in-app browser (window.ethereum injected on mobile)", () => {
   test.setTimeout(120_000);
@@ -417,11 +409,9 @@ test.describe("MetaMask mobile in-app browser (window.ethereum injected on mobil
     await setupPage(page);
   });
 
-  test("shows MetaMask Basic (not deep link) when ethereum is injected on mobile", async ({
-    page,
-  }) => {
+  test("deep link absent when ethereum is injected on mobile", async ({ page }) => {
     await waitForLoggedOut(page);
-    await expect(page.getByTestId("metamask-basic")).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByTestId("login-button")).toBeVisible({ timeout: 10_000 });
     await expect(page.getByTestId("open-in-metamask")).not.toBeVisible();
   });
 
