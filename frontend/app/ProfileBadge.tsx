@@ -130,7 +130,7 @@ export function ClaimForm() {
           autoFocus
           style={{
             height: 32,
-            width: 128,
+            width: "min(128px, 28vw)",
             borderRadius: "var(--cg-radius-sm)",
             border: "1px solid var(--cg-line-2)",
             background: "var(--cg-bg-1)",
@@ -143,6 +143,7 @@ export function ClaimForm() {
         />
         <span
           data-testid="ens-suffix"
+          className="hidden sm:inline"
           style={{ fontFamily: "var(--cg-font-mono)", fontSize: 12, color: "var(--cg-fg-3)" }}
         >
           .chaingammon.eth
