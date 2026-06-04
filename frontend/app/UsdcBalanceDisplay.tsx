@@ -1,20 +1,15 @@
 "use client";
 
 // Shows the connected player's USDC balance in the navbar with a "Get USDC"
-// dropdown offering two paths:
-//   1. "Buy with card" — Privy's fiat on-ramp (MoonPay/Stripe); ideal for
-//      web2 users who signed in with email or Google (embedded wallet).
-//   2. "Swap ETH" — deep link to Uniswap with the pair pre-filled.
+// dropdown linking to Uniswap (ETH → USDC swap).
 //
 // Falls back gracefully when usdcToken is the zero address (contracts not
 // yet deployed on this chain).
 
 import { useState, useRef, useEffect } from "react";
 import { useReadContract } from "wagmi";
-import { useFundWallet } from "@privy-io/react-auth";
 
 import { ERC20ABI, useChainContracts } from "./contracts";
-import { useActiveChain } from "./chains";
 
 const ZERO = "0x0000000000000000000000000000000000000000";
 const USDC_DECIMALS = 6;
@@ -30,11 +25,8 @@ interface Props {
 
 export function UsdcBalanceDisplay({ address }: Props) {
   const { usdcToken } = useChainContracts();
-  const activeChain = useActiveChain();
-  const { fundWallet } = useFundWallet();
 
   const [open, setOpen] = useState(false);
-  const [buying, setBuying] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
   const noToken = !usdcToken || usdcToken === ZERO;
@@ -64,24 +56,6 @@ export function UsdcBalanceDisplay({ address }: Props) {
   if (noToken) return null;
 
   const uniswapUrl = `https://app.uniswap.org/swap?chain=sepolia&inputCurrency=ETH&outputCurrency=${usdcToken}`;
-
-  const onBuyWithCard = async () => {
-    setBuying(true);
-    setOpen(false);
-    try {
-      await fundWallet({
-        address,
-        options: {
-          chain: activeChain?.chain,
-          asset: "USDC",
-        },
-      });
-    } catch {
-      // user dismissed or on-ramp unavailable — silently ignore
-    } finally {
-      setBuying(false);
-    }
-  };
 
   return (
     <div ref={menuRef} style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
@@ -153,31 +127,6 @@ export function UsdcBalanceDisplay({ address }: Props) {
             Get USDC
           </p>
 
-          {/* Buy with card — fiat on-ramp via Privy (best for email/Google login) */}
-          <button
-            type="button"
-            onClick={() => void onBuyWithCard()}
-            disabled={buying}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              width: "100%",
-              padding: "7px 14px",
-              background: "none",
-              border: "none",
-              cursor: buying ? "wait" : "pointer",
-              fontSize: 13,
-              color: "var(--cg-fg-1)",
-              textAlign: "left",
-            }}
-            className="hover:bg-[var(--cg-surface-1)]"
-          >
-            <span style={{ fontSize: 15 }}>💳</span>
-            <span>{buying ? "Opening…" : "Buy with card"}</span>
-          </button>
-
-          {/* Swap ETH → USDC via Uniswap */}
           <a
             href={uniswapUrl}
             target="_blank"

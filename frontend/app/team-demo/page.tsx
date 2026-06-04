@@ -23,7 +23,6 @@ import {
   type PrivateKeyAccount,
 } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
-import { useWallets } from "@privy-io/react-auth";
 
 import { Board } from "../Board";
 import { loadTheme, saveTheme, loadPrefer3d, pickGameCoins, BOARD_THEMES, type BoardThemeKey } from "../boardThemes";
@@ -573,20 +572,7 @@ function TeamDemoPageInner() {
 
   const { t } = useI18n();
   const { address, chain: walletChain, chainId: walletChainId } = useAccount();
-  const { wallets } = useWallets();
-  // Privy email/Google login produces an embedded wallet (walletClientType
-  // "privy" / "privy-v2") that holds no gas token. Settle through the server
-  // relay for these players; external wallets keep submitting the tx
-  // themselves. Matched against the active address so a user who linked both
-  // an embedded and an external wallet relays only when the embedded one is
-  // active.
-  const isEmbeddedWallet =
-    !!address &&
-    wallets.some(
-      (w) =>
-        w.address?.toLowerCase() === address.toLowerCase() &&
-        (w.walletClientType === "privy" || w.walletClientType === "privy-v2"),
-    );
+  const isEmbeddedWallet = false;
   const chainId = useActiveChainId();
   const activeChain = useActiveChain();
   const { agentRegistry, matchRegistry, agentVault } = useChainContracts();
