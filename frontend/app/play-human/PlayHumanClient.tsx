@@ -1133,6 +1133,9 @@ function HumanMatchInner() {
           >
             Resign
           </button>
+          <Link href="/" className="cg-chip" style={{ textDecoration: "none" }}>
+            New game
+          </Link>
         </div>
       )}
 
