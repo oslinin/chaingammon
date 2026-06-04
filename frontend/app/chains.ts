@@ -102,6 +102,7 @@ interface DeploymentRecord {
   // deployment records may be missing this field — callers should
   // treat it as optional and fall back to a sliding window.
   deployedBlock?: number;
+  legacyPlayerSubnameRegistrars?: string[];
 }
 
 /// ENS infrastructure for chains where chaingammon delegates subname
@@ -159,6 +160,8 @@ export interface ChainEntry {
   };
   /** Block at which the contracts were deployed. Optional for older records. */
   deployedBlock?: number;
+  /** Previous PlayerSubnameRegistrar addresses — scanned alongside the current one. */
+  legacyPlayerSubnameRegistrars?: `0x${string}`[];
 }
 
 function buildEntry(dep: DeploymentRecord, def: ChainDef): ChainEntry {
@@ -190,6 +193,7 @@ function buildEntry(dep: DeploymentRecord, def: ChainDef): ChainEntry {
       agentVaultToken: dep.contracts.AgentVaultToken as `0x${string}` | undefined,
     },
     deployedBlock: dep.deployedBlock,
+    legacyPlayerSubnameRegistrars: (dep.legacyPlayerSubnameRegistrars ?? []) as `0x${string}`[],
   };
 }
 

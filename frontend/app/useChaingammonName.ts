@@ -36,7 +36,9 @@ export function useChaingammonName(address: `0x${string}` | undefined) {
   // is currently on at the wagmi level (in case those drift).
   const client = usePublicClient({ chainId });
   const { playerSubnameRegistrar } = useChainContracts();
-  const deployedBlock = useActiveChain()?.deployedBlock;
+  const activeChain = useActiveChain();
+  const deployedBlock = activeChain?.deployedBlock;
+  const legacyRegistrars = activeChain?.legacyPlayerSubnameRegistrars ?? [];
 
   const [entries, setEntries] = useState<NameEntry[]>([]);
   const [preferredIdx, setPreferredIdxState] = useState<number>(0);
@@ -88,14 +90,17 @@ export function useChaingammonName(address: `0x${string}` | undefined) {
     // chunks so a deployedBlock range of any size succeeds.
     const MAX_BLOCK_RANGE = BigInt(49_000);
 
-    // Scan all SubnameMinted events without an RPC-side address filter.
-    // Filtering by args.subnameOwner in getLogs (topics filter) silently
-    // fails on some RPC providers (publicnode), while DiscoveryList's
-    // unfiltered scan succeeds. We match logs client-side instead.
-    const scanChunked = async (fromBlock: bigint | "earliest") => {
+    // All registrar addresses to scan: current + any legacy ones.
+    const allRegistrars = [
+      playerSubnameRegistrar as `0x${string}`,
+      ...legacyRegistrars,
+    ].filter(Boolean);
+
+    // Scan SubnameMinted events from one registrar address.
+    const scanChunked = async (registrar: `0x${string}`, fromBlock: bigint | "earliest") => {
       if (fromBlock === "earliest") {
         return client.getLogs({
-          address: playerSubnameRegistrar,
+          address: registrar,
           event: SUBNAME_MINTED_EVENT,
           fromBlock,
         });
@@ -111,7 +116,7 @@ export function useChaingammonName(address: `0x${string}` | undefined) {
       const results = await Promise.all(
         chunks.map((c) =>
           client.getLogs({
-            address: playerSubnameRegistrar,
+            address: registrar,
             event: SUBNAME_MINTED_EVENT,
             ...c,
           }),
@@ -122,47 +127,49 @@ export function useChaingammonName(address: `0x${string}` | undefined) {
 
     const addrLower = address.toLowerCase();
     computeFromBlock()
-      .then((fromBlock) => scanChunked(fromBlock))
-      .then(async (logs) => {
+      .then(async (fromBlock) => {
+        // Scan all registrars in parallel; tag each log with its source registrar.
+        const perRegistrar = await Promise.all(
+          allRegistrars.map(async (reg) => {
+            const logs = await scanChunked(reg, fromBlock).catch(() => []);
+            return logs.map((log) => ({ log, registrar: reg }));
+          }),
+        );
+        return perRegistrar.flat();
+      })
+      .then(async (tagged) => {
         if (cancelled) return;
         // Filter client-side: human names (inftId == 0) owned by this address.
-        const humanLogs = logs.filter(
-          (log) =>
+        const humanTagged = tagged.filter(
+          ({ log }) =>
             log.args?.inftId === 0n &&
             (log.args?.subnameOwner as string | undefined)?.toLowerCase() === addrLower,
         );
-        const allFound: NameEntry[] = humanLogs
-          .map((log) => ({
-            label: log.args?.label as string | undefined,
-            blockNumber: log.blockNumber ?? 0n,
-          }))
-          .filter((e): e is NameEntry => !!e.label);
-
-        // Deduplicate by label — multiple SubnameMinted events can share the
-        // same label (ENS allows overwrites); keep only the latest per label.
-        const deduped = new Map<string, NameEntry>();
-        for (const e of allFound) {
-          const prev = deduped.get(e.label);
-          if (!prev || e.blockNumber > prev.blockNumber) deduped.set(e.label, e);
+        // Deduplicate by label across all registrars; keep latest by block.
+        const deduped = new Map<string, { entry: NameEntry; registrar: `0x${string}` }>();
+        for (const { log, registrar } of humanTagged) {
+          const label = log.args?.label as string | undefined;
+          if (!label) continue;
+          const blockNumber = log.blockNumber ?? 0n;
+          const prev = deduped.get(label);
+          if (!prev || blockNumber > prev.entry.blockNumber) {
+            deduped.set(label, { entry: { label, blockNumber }, registrar });
+          }
         }
 
-        // Verify current ENS ownership to filter out revoked names.
-        // On RPC/network error, keep the entry so a transient outage doesn't
-        // hide a valid name and incorrectly show the ClaimForm.
+        // Verify ENS ownership against the registrar that emitted the event.
+        // Fall back to keeping the entry on network error.
         const verified = await Promise.all(
-          [...deduped.values()].map(async (e) => {
+          [...deduped.values()].map(async ({ entry: e, registrar }) => {
             try {
               const owner = await client!.readContract({
-                address: playerSubnameRegistrar as `0x${string}`,
+                address: registrar,
                 abi: PlayerSubnameRegistrarABI,
                 functionName: "ownerOf",
                 args: [e.label],
               });
-              // Only filter out when ENS explicitly returns a different address
-              // (revoked → address(0), or overwritten by another wallet).
               return (owner as string).toLowerCase() === addrLower ? e : null;
             } catch {
-              // Network / RPC error — keep the entry rather than hiding a name.
               return e;
             }
           }),
@@ -181,7 +188,7 @@ export function useChaingammonName(address: `0x${string}` | undefined) {
     return () => {
       cancelled = true;
     };
-  }, [address, client, playerSubnameRegistrar, chainId, deployedBlock]);
+  }, [address, client, playerSubnameRegistrar, chainId, deployedBlock, legacyRegistrars]);
 
   const setPreferred = (idx: number) => {
     if (!address) return;

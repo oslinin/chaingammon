@@ -28,6 +28,9 @@
     "tier": 2,
     "owner": "0xa2219C4f48bC9e6806Bce3B391aB9e23f55FEbb5"
   },
+  "legacyPlayerSubnameRegistrars": [
+    "0x0E198D518241230b730eB211d1cF7E5eB7e73000"
+  ],
   "deployedAt": "2026-05-03T04:30:00.000Z",
   "deployedBlock": 10779100
 }
