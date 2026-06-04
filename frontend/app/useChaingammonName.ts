@@ -145,6 +145,8 @@ export function useChaingammonName(address: `0x${string}` | undefined) {
         }
 
         // Verify current ENS ownership to filter out revoked names.
+        // On RPC/network error, keep the entry so a transient outage doesn't
+        // hide a valid name and incorrectly show the ClaimForm.
         const verified = await Promise.all(
           [...deduped.values()].map(async (e) => {
             try {
@@ -154,9 +156,12 @@ export function useChaingammonName(address: `0x${string}` | undefined) {
                 functionName: "ownerOf",
                 args: [e.label],
               });
+              // Only filter out when ENS explicitly returns a different address
+              // (revoked → address(0), or overwritten by another wallet).
               return (owner as string).toLowerCase() === addrLower ? e : null;
             } catch {
-              return null;
+              // Network / RPC error — keep the entry rather than hiding a name.
+              return e;
             }
           }),
         );
