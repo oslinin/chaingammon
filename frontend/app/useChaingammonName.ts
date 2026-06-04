@@ -129,9 +129,13 @@ export function useChaingammonName(address: `0x${string}` | undefined) {
     computeFromBlock()
       .then(async (fromBlock) => {
         // Scan all registrars in parallel; tag each log with its source registrar.
+        // Legacy registrars were deployed before `fromBlock` (the current
+        // contract's deployedBlock), so scan them from block 0 to capture
+        // all historical mints.
         const perRegistrar = await Promise.all(
-          allRegistrars.map(async (reg) => {
-            const logs = await scanChunked(reg, fromBlock).catch(() => []);
+          allRegistrars.map(async (reg, i) => {
+            const regFromBlock = i === 0 ? fromBlock : BigInt(0);
+            const logs = await scanChunked(reg, regFromBlock).catch(() => []);
             return logs.map((log) => ({ log, registrar: reg }));
           }),
         );
