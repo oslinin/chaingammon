@@ -41,6 +41,7 @@ export function useChaingammonName(address: `0x${string}` | undefined) {
   const [entries, setEntries] = useState<NameEntry[]>([]);
   const [preferredIdx, setPreferredIdxState] = useState<number>(0);
   const [isLoading, setIsLoading] = useState(false);
+  const [isError, setIsError] = useState(false);
 
   useEffect(() => {
     if (!address) { setPreferredIdxState(0); return; }
@@ -62,6 +63,7 @@ export function useChaingammonName(address: `0x${string}` | undefined) {
     }
     let cancelled = false;
     setIsLoading(true);
+    setIsError(false);
 
     // Public testnet RPCs cap eth_getLogs to a fixed block range
     // (publicnode Sepolia: 50000 blocks; many providers: 10000). A
@@ -168,7 +170,10 @@ export function useChaingammonName(address: `0x${string}` | undefined) {
         if (!cancelled) setEntries(verified.filter((e): e is NameEntry => e !== null));
       })
       .catch(() => {
-        if (!cancelled) setEntries([]);
+        // Scan failed (RPC error, rate limit, etc.). Don't clear existing
+        // entries so a known name isn't hidden, and set isError so the
+        // caller can avoid showing the ClaimForm on a mere network failure.
+        if (!cancelled) setIsError(true);
       })
       .finally(() => {
         if (!cancelled) setIsLoading(false);
@@ -187,5 +192,5 @@ export function useChaingammonName(address: `0x${string}` | undefined) {
   const selectedIdx = preferredIdx < entries.length ? preferredIdx : 0;
   const label = entries[selectedIdx]?.label ?? null;
   const name = label ? `${label}.chaingammon.eth` : null;
-  return { label, entries, selectedIdx, name, isLoading, setPreferred };
+  return { label, entries, selectedIdx, name, isLoading, isError, setPreferred };
 }

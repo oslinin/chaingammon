@@ -59,8 +59,6 @@ export function ClaimForm() {
   const { writeContractAsync, isPending, sponsored } = useSponsoredWrite();
   const { address } = useAccount();
 
-  // Server-pays mint — used for Privy embedded wallets (Google/email logins)
-  // which have no gas. The deployer key on the server signs and pays.
   const [serverMinting, setServerMinting] = useState(false);
   const submitViaServer = async (label: string) => {
     if (!address) throw new Error("No wallet connected");
@@ -113,20 +111,36 @@ export function ClaimForm() {
     setSuggestion(null);
     setTxHash(undefined);
     try {
-      // Privy embedded wallets (Google/email) have no gas — route through the
-      // server-pays endpoint so the deployer key covers the transaction.
+      let hash: `0x${string}` | undefined;
       if (sponsored) {
-        await submitViaServer(trimmed);
-        return;
+        // Privy embedded wallet: try native gas sponsorship first, fall back
+        // to server-pays if sponsorship isn't configured on the dashboard.
+        try {
+          hash = await writeContractAsync({
+            address: playerSubnameRegistrar,
+            abi: PlayerSubnameRegistrarABI,
+            functionName: "selfMintSubname",
+            args: [trimmed],
+            chainId,
+          });
+        } catch (privyErr) {
+          const privyMsg = privyErr instanceof Error ? privyErr.message : String(privyErr);
+          if (privyMsg.toLowerCase().includes("secret") || privyMsg.toLowerCase().includes("sponsor")) {
+            await submitViaServer(trimmed);
+            return;
+          }
+          throw privyErr;
+        }
+      } else {
+        hash = await writeContractAsync({
+          address: playerSubnameRegistrar,
+          abi: PlayerSubnameRegistrarABI,
+          functionName: "selfMintSubname",
+          args: [trimmed],
+          chainId,
+        });
       }
-      const hash = await writeContractAsync({
-        address: playerSubnameRegistrar,
-        abi: PlayerSubnameRegistrarABI,
-        functionName: "selfMintSubname",
-        args: [trimmed],
-        chainId,
-      });
-      setTxHash(hash);
+      if (hash) setTxHash(hash);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       if (
@@ -244,7 +258,7 @@ export function ClaimForm() {
 
 export function ProfileBadge({ address }: { address: `0x${string}` }) {
   const { t } = useI18n();
-  const { label, entries, selectedIdx, name, isLoading: nameLoading, setPreferred } = useChaingammonName(address);
+  const { label, entries, selectedIdx, name, isLoading: nameLoading, isError: nameError, setPreferred } = useChaingammonName(address);
   const { elo: ensElo, matchCount } = useChaingammonProfile(label);
   const { sync, syncing } = useSyncEnsProfile();
   const [syncError, setSyncError] = useState<string | null>(null);
@@ -263,7 +277,7 @@ export function ProfileBadge({ address }: { address: `0x${string}` }) {
   const chainElo = chainEloRaw != null ? String(chainEloRaw) : undefined;
   const elo = chainElo ?? ensElo;
 
-  if (nameLoading) {
+  if (nameLoading || (nameError && !label)) {
     return (
       <span
         data-testid="profile-badge"
