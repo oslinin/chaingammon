@@ -11,7 +11,7 @@
 // don't deploy to). The view shows "Wrong network" when that chainId
 // isn't in `selectableChains`.
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useAccount } from "wagmi";
 
 import { useSelectableChains } from "./chains";
@@ -27,6 +27,20 @@ export function NetworkDropdown() {
   const selectableChains = useSelectableChains();
   const [isPending, setIsPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // After every chain change, re-apply the namespace fix. MetaMask mobile
+  // omits methods/chains from session namespaces; updateNamespace() resets
+  // them on chainChanged, breaking subsequent WC requests (eth_sendTransaction etc.).
+  useEffect(() => {
+    if (connector?.id !== "walletConnect") return;
+    connector.getProvider().then((p: any) => {
+      const ns = p?.signer?.rpcProviders?.eip155?.namespace;
+      if (ns) {
+        if (!ns.chains) ns.chains = (ns.accounts ?? []).map((a: string) => a.split(":").slice(0, 2).join(":"));
+        if (!ns.methods) ns.methods = ["wallet_addEthereumChain", "wallet_switchEthereumChain", "eth_sendTransaction", "personal_sign", "eth_accounts", "eth_requestAccounts"];
+      }
+    }).catch(() => {});
+  }, [walletChainId, connector]);
 
   if (!isConnected) return null;
 
