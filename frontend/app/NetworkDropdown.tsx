@@ -53,11 +53,12 @@ export function NetworkDropdown() {
         try {
           const provider = await connector.getProvider() as WCProvider;
           // WC 2.x bug: MetaMask mobile sessions omit `chains` and `methods`
-          // from the eip155 namespace. Populate them so the library doesn't crash.
-          const ns = provider.session?.namespaces?.eip155;
-          if (ns) {
-            if (!ns.chains) ns.chains = (ns.accounts ?? []).map((a) => a.split(":").slice(0, 2).join(":"));
-            if (!ns.methods) ns.methods = ["wallet_addEthereumChain", "wallet_switchEthereumChain", "eth_sendTransaction", "personal_sign"];
+          // from the eip155 namespace. Patch the internal routing namespace so
+          // the provider doesn't crash on undefined.includes().
+          const internalNs = (provider as any)?.signer?.rpcProviders?.eip155?.namespace;
+          if (internalNs) {
+            if (!internalNs.chains) internalNs.chains = (internalNs.accounts ?? []).map((a: string) => a.split(":").slice(0, 2).join(":"));
+            if (!internalNs.methods) internalNs.methods = ["wallet_addEthereumChain", "wallet_switchEthereumChain", "eth_sendTransaction", "personal_sign"];
           }
           await provider.request({
             method: "wallet_addEthereumChain",
