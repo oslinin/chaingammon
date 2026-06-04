@@ -96,7 +96,7 @@ function EntryCard({ entry }: { entry: DiscoveryEntry }) {
   return (
     <div data-testid="discovery-entry">
       <PersonCard
-        label={entry.label}
+        label={ensName ?? entry.label}
         nameHref={ensName ? `https://app.ens.domains/${ensName}` : undefined}
         elo={entry.elo || undefined}
         balance={balance}

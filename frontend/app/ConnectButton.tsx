@@ -1,32 +1,26 @@
 "use client";
 
-// Privy login button — replaces the previous wagmi-only injected/WalletConnect
-// connect flow. A single "Log in" pill opens Privy's modal, which surfaces:
-//   - Email (one-time code → Privy embedded wallet)
-//   - Google OAuth (→ Privy embedded wallet)
-//   - MetaMask (window.ethereum, when injected)
-//   - WalletConnect (any mobile wallet via QR)
+// MetaMask connect button — replaces the previous Privy-based login flow.
 //
-// After login, Privy's wagmi connector promotes the active wallet into
-// wagmi state, so `useAccount()` returns the connected address and every
-// existing `useReadContract` / `useWriteContract` keeps working unchanged.
+// Connects directly to the browser-injected wallet (MetaMask, Brave, etc.)
+// via wagmi's useConnect hook with the injected() connector. No third-party
+// auth service is involved, so the button works identically in Chrome,
+// Firefox, and Brave as long as MetaMask (or any EIP-1193 wallet) is
+// installed.
 //
 // States:
-//   1. Not authenticated                       → "Log in" button (opens Privy modal)
-//   2. Authenticated, wallet not yet in wagmi   → "Connecting…" (embedded-wallet provisioning)
-//   3. Authenticated + connected wallet         → network dropdown, profile badge, disconnect
+//   1. Not mounted (SSR)                       → static "Log in" pill
+//   2. Mounted, no window.ethereum (mobile)    → "Open in MetaMask" deep link
+//   3. Mounted, ethereum present, disconnected → "Log in" button (connects)
+//   4. Connecting / pending                    → "Connecting…" + escape hatch
+//   5. Connected                               → network dropdown, profile badge, disconnect
 //
-// SSR note: no `mounted` guard is needed. During prerender Privy reports
-// `authenticated=false` and wagmi has no account, so the server renders the
-// "Log in" button; the client's first (hydration) render matches because
-// Privy hasn't restored a session yet. A stored session promotes to the
-// connected view on a later render, which React permits post-hydration. The
-// button shows independent of Privy's async `ready` flag, so the auth entry
-// point never disappears if Privy's backend is slow or unreachable — the
-// click handler guards on `ready` so a click before init is a safe no-op.
+// The "Open in MetaMask" deep link (state 2) sends mobile users to
+// MetaMask Mobile's in-app browser, where window.ethereum IS injected and
+// the normal connect flow (state 3→5) works.
 
-import { usePrivy } from "@privy-io/react-auth";
-import { useAccount } from "wagmi";
+import { useConnect, useDisconnect, useAccount } from "wagmi";
+import { injected } from "@wagmi/core";
 import { useState, useEffect } from "react";
 
 import { NetworkDropdown } from "./NetworkDropdown";
@@ -46,6 +40,7 @@ const pillBase: React.CSSProperties = {
   cursor: "pointer",
   transition: "background 120ms ease, border-color 120ms ease",
   whiteSpace: "nowrap",
+  textDecoration: "none",
 };
 
 const primaryBtn: React.CSSProperties = {
@@ -63,17 +58,16 @@ const secondaryBtn: React.CSSProperties = {
   border: "1px solid var(--cg-line-2)",
 };
 
-// @privy-io/wagmi's WagmiProvider does not provide wagmi context during SSR
-// in Next.js App Router. Guard all wagmi hook calls behind a mount check so
-// the server renders a static "Log in" pill (correct — Privy never has an
-// authenticated session during SSR) and the client hydrates cleanly.
+// Inner component — only rendered client-side after mount, so all wagmi
+// hooks are safe. The outer ConnectButton shell gates on `mounted`.
 function ConnectButtonInner() {
   const { t } = useI18n();
-  const { ready, authenticated, login, logout } = usePrivy();
-  const { address, isConnected } = useAccount();
+  const { address, isConnected, isConnecting } = useAccount();
+  const { connect, connectors, isPending } = useConnect();
+  const { disconnect } = useDisconnect();
 
-  // Connected: Privy authenticated AND wagmi has promoted the active wallet.
-  if (authenticated && isConnected && address) {
+  // Connected: wagmi has a live account.
+  if (isConnected && address) {
     return (
       <div
         style={{
@@ -89,7 +83,7 @@ function ConnectButtonInner() {
         <ProfileBadge address={address} />
         <button
           type="button"
-          onClick={() => { void logout(); }}
+          onClick={() => { disconnect(); }}
           style={{ ...secondaryBtn, height: 32, fontSize: 12 }}
         >
           {t("disconnect")}
@@ -98,12 +92,8 @@ function ConnectButtonInner() {
     );
   }
 
-  // Authenticated via Privy, but wagmi hasn't wired up an address yet —
-  // common while an embedded wallet (email/Google login) is provisioning,
-  // or immediately after login before Privy's wagmi connector finishes.
-  // The state can wedge (e.g. a stored session whose wallet no longer
-  // restores), so pair it with a log-out escape hatch.
-  if (authenticated) {
+  // Connecting: pending wagmi state (eth_requestAccounts in flight).
+  if (isConnecting || isPending) {
     return (
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
         <button type="button" disabled style={{ ...secondaryBtn, opacity: 0.6 }}>
@@ -111,7 +101,7 @@ function ConnectButtonInner() {
         </button>
         <button
           type="button"
-          onClick={() => { void logout(); }}
+          onClick={() => { disconnect(); }}
           style={{ ...secondaryBtn, height: 32, fontSize: 12 }}
         >
           {t("disconnect")}
@@ -120,15 +110,12 @@ function ConnectButtonInner() {
     );
   }
 
-  // Not authenticated → "Log in". Shown regardless of `ready`; the handler
-  // is a no-op until Privy finishes initialising.
-  // On mobile, use Log in → Continue with a wallet → WalletConnect and scan
-  // the QR with MetaMask Mobile — works on any browser without deep links.
+  // Disconnected with ethereum present — normal connect button.
   return (
     <button
       type="button"
       data-testid="login-button"
-      onClick={() => { if (ready) login(); }}
+      onClick={() => { connect({ connector: connectors[0] ?? injected() }); }}
       style={primaryBtn}
       className="cg-btn-primary"
     >
@@ -140,6 +127,10 @@ function ConnectButtonInner() {
 export function ConnectButton() {
   const [mounted, setMounted] = useState(false);
   useEffect(() => { setMounted(true); }, []);
+
+  // SSR / pre-hydration: static pill so the server render matches the first
+  // client render (no hydration mismatch). Privy used to handle this; now
+  // we just render a neutral button until the client has checked the wallet.
   if (!mounted) {
     return (
       <button type="button" style={primaryBtn} className="cg-btn-primary">
@@ -147,5 +138,24 @@ export function ConnectButton() {
       </button>
     );
   }
+
+  // Mobile / browsers without an injected EIP-1193 provider: show a deep
+  // link that opens the current page inside MetaMask Mobile's in-app
+  // browser, where window.ethereum IS injected.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  if (!(window as any).ethereum) {
+    const deepLink = `https://metamask.app.link/dapp/${window.location.host}${window.location.pathname}`;
+    return (
+      <a
+        data-testid="open-in-metamask"
+        href={deepLink}
+        style={primaryBtn}
+        className="cg-btn-primary"
+      >
+        Open in MetaMask
+      </a>
+    );
+  }
+
   return <ConnectButtonInner />;
 }

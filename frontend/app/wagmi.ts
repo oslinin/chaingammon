@@ -3,17 +3,20 @@
 //
 // To add a chain: edit `chains.ts`, not this file.
 //
-// The config is created via `@privy-io/wagmi`'s `createConfig` so that the
-// PrivyProvider can register its own connector at runtime. Privy supplies
-// the EIP-1193 provider for whatever wallet the user logs in with — email,
-// Google (embedded wallet), MetaMask, or WalletConnect — and surfaces it
-// to wagmi through that connector. We do NOT pre-register `injected()` /
-// `walletConnect()` here; Privy owns the wallet list.
+// Uses wagmi's standard `createConfig` with the `injected()` connector so
+// MetaMask (and any other browser-injected wallet) works directly. Privy
+// was removed in favour of this lighter approach — the injected connector
+// handles MetaMask in Chrome/Firefox/Brave; mobile browsers without an
+// extension see the "Open in MetaMask" deep link in ConnectButton.
+//
+// IMPORTANT: import `injected` from `@wagmi/core`, NOT from
+// `wagmi/connectors` — Webpack chokes on the wagmi/connectors umbrella
+// export (pulls in @wagmi/core/tempo which is missing an `accounts`
+// sub-package). Turbopack tree-shakes that path away; Webpack does not.
 
 import { http } from "viem";
-import { createStorage, noopStorage } from "wagmi";
-import { createConfig } from "@privy-io/wagmi";
-import { injected } from "wagmi/connectors";
+import { createStorage, noopStorage, createConfig } from "wagmi";
+import { injected } from "@wagmi/core";
 
 import { ALL_CHAINS, CHAIN_REGISTRY } from "./chains";
 
