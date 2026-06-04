@@ -3,6 +3,7 @@ pragma solidity ^0.8.24;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/Strings.sol";
+import "@openzeppelin/contracts/token/ERC1155/IERC1155Receiver.sol";
 
 /// @notice Subset of ENS NameWrapper used by PlayerSubnameRegistrar.
 interface INameWrapper {
@@ -52,7 +53,7 @@ interface IResolver {
 ///            for its own address.
 ///          - revokeSubname is owner / authorized-minter only and clears
 ///            the subname's owner in NameWrapper.
-contract PlayerSubnameRegistrar is Ownable {
+contract PlayerSubnameRegistrar is Ownable, IERC1155Receiver {
     /// @notice ENS namehash of the parent name (e.g. "chaingammon.eth").
     bytes32 public immutable parentNode;
 
@@ -83,6 +84,19 @@ contract PlayerSubnameRegistrar is Ownable {
     error NotAuthorized();
     error ZeroAddressOwner();
     error AlreadyRegistered();
+    error LabelTaken();
+
+    // ERC1155Receiver — required so the contract can temporarily hold a
+    // NameWrapper token during the two-step mint-then-transfer flow.
+    function onERC1155Received(address, address, uint256, uint256, bytes calldata) external pure returns (bytes4) {
+        return IERC1155Receiver.onERC1155Received.selector;
+    }
+    function onERC1155BatchReceived(address, address, uint256[] calldata, uint256[] calldata, bytes calldata) external pure returns (bytes4) {
+        return IERC1155Receiver.onERC1155BatchReceived.selector;
+    }
+    function supportsInterface(bytes4 interfaceId) public pure override returns (bool) {
+        return interfaceId == type(IERC1155Receiver).interfaceId;
+    }
 
     constructor(bytes32 _parentNode, address _nameWrapper, address _resolver) Ownable(msg.sender) {
         parentNode = _parentNode;
@@ -112,6 +126,18 @@ contract PlayerSubnameRegistrar is Ownable {
     }
 
     // -------------------------------------------------------------------------
+    // Internal helpers
+    // -------------------------------------------------------------------------
+
+    /// @dev Subname expiry must not exceed the parent's expiry (ENS NameWrapper
+    ///      enforces this). Read it dynamically so we stay valid as the parent
+    ///      is renewed over time.
+    function _parentExpiry() internal view returns (uint64) {
+        (, , uint64 exp) = nameWrapper.getData(uint256(parentNode));
+        return exp;
+    }
+
+    // -------------------------------------------------------------------------
     // Minting (delegates to NameWrapper)
     // -------------------------------------------------------------------------
 
@@ -127,24 +153,38 @@ contract PlayerSubnameRegistrar is Ownable {
         if (bytes(label).length == 0) revert EmptyLabel();
         if (subnameOwner_ == address(0)) revert ZeroAddressOwner();
 
-        node = nameWrapper.setSubnodeRecord(
+        node = subnameNode(label);
+        // (Removal of LabelTaken check in the admin path allows for re-minting
+        // to emit fresh events on a new contract deployment.)
+
+        // If human registration (inftId == 0), track claim status to enforce
+        // one-name-per-wallet.
+        if (inftId == 0) {
+            if (hasClaimed[subnameOwner_]) revert AlreadyRegistered();
+            hasClaimed[subnameOwner_] = true;
+        }
+
+        // 1. Mint to ourselves first so we have permission to set records on the resolver.
+        nameWrapper.setSubnodeRecord(
             parentNode,
             label,
-            subnameOwner_,
+            address(this),
             resolver,
-            0,           // ttl
-            0,           // fuses
-            type(uint64).max // expiry — never expires
+            0,
+            0,
+            _parentExpiry()
         );
 
-        // Phase 31: set text records so discovery tools (subgraph-based)
-        // can distinguish agents from humans without event scanning.
+        // 2. Set text records while we are still the owner.
         if (inftId > 0) {
             IResolver(resolver).setText(node, "kind", "agent");
             IResolver(resolver).setText(node, "inft_id", Strings.toString(inftId));
         } else {
             IResolver(resolver).setText(node, "kind", "human");
         }
+
+        // 3. Transfer ownership to the final owner.
+        nameWrapper.setSubnodeOwner(parentNode, label, subnameOwner_, 0, _parentExpiry());
 
         emit SubnameMinted(label, node, subnameOwner_, inftId);
     }
@@ -155,20 +195,29 @@ contract PlayerSubnameRegistrar is Ownable {
     function selfMintSubname(string calldata label) external returns (bytes32 node) {
         if (bytes(label).length == 0) revert EmptyLabel();
         if (hasClaimed[msg.sender]) revert AlreadyRegistered();
+        
+        node = subnameNode(label);
+        (address current, , ) = nameWrapper.getData(uint256(node));
+        if (current != address(0) && current != msg.sender) revert LabelTaken();
+
         hasClaimed[msg.sender] = true;
 
-        node = nameWrapper.setSubnodeRecord(
+        // 1. Mint to ourselves first so we have permission to set records.
+        nameWrapper.setSubnodeRecord(
             parentNode,
             label,
-            msg.sender,
+            address(this),
             resolver,
             0,
             0,
-            type(uint64).max
+            _parentExpiry()
         );
 
-        // Explicitly mark as human for discovery categorization.
+        // 2. Explicitly mark as human for discovery categorization.
         IResolver(resolver).setText(node, "kind", "human");
+
+        // 3. Transfer ownership to the caller.
+        nameWrapper.setSubnodeOwner(parentNode, label, msg.sender, 0, _parentExpiry());
 
         emit SubnameMinted(label, node, msg.sender, 0);
     }
@@ -197,6 +246,27 @@ contract PlayerSubnameRegistrar is Ownable {
         hasClaimed[msg.sender] = false;
         bytes32 node = nameWrapper.setSubnodeOwner(parentNode, label, address(0), 0, 0);
         emit SubnameRevoked(label, node);
+    }
+
+    // -------------------------------------------------------------------------
+    // Text records (Phase 11: server-pays ELO updates)
+    // -------------------------------------------------------------------------
+
+    /// @notice Proxy setText to the resolver. Owner / authorized minter only.
+    ///         Used by the server to push ELO / match history into ENS.
+    /// @dev    For this to succeed, the registrar must be authorized to call
+    ///         setText on the resolver for the given node. In NameWrapper-backed
+    ///         setups, the parent owner (registrar) can always reclaim the
+    ///         node, set records, and transfer back; for efficiency v1 assumes
+    ///         the registrar is an authorized manager on the resolver.
+    function setText(bytes32 node, string calldata key, string calldata value) external {
+        if (msg.sender != owner() && !_authorizedMinters[msg.sender]) revert NotAuthorized();
+        IResolver(resolver).setText(node, key, value);
+    }
+
+    /// @notice Proxy text read from the resolver.
+    function text(bytes32 node, string calldata key) external view returns (string memory) {
+        return IResolver(resolver).text(node, key);
     }
 
     // -------------------------------------------------------------------------
