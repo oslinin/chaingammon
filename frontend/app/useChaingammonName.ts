@@ -127,9 +127,11 @@ export function useChaingammonName(address: `0x${string}` | undefined) {
             log.args?.inftId === 0n &&
             (log.args?.subnameOwner as string | undefined)?.toLowerCase() === addrLower,
         );
-        const found = humanLogs
-          .map((log) => log.args?.label as string | undefined)
-          .filter((l): l is string => !!l);
+        const found = [...new Set(
+          humanLogs
+            .map((log) => log.args?.label as string | undefined)
+            .filter((l): l is string => !!l),
+        )];
         setLabels(found);
       })
       .catch(() => {
