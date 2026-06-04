@@ -329,6 +329,12 @@ export function ProfileBadge({ address }: { address: `0x${string}` }) {
             <span className="hidden sm:inline">{name}</span>
           </a>
         )}
+        <span
+          title={address}
+          style={{ fontSize: 11, color: "var(--cg-fg-3)", fontFamily: "var(--cg-font-mono)" }}
+        >
+          {shorten(address)}
+        </span>
         {elo ? (
           <span
             title={t("elo_rating_label")}
