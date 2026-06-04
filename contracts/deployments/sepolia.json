@@ -5,14 +5,10 @@
   "contracts": {
     "MatchRegistry": "0xaCF222C7c19a3418246B1aa2fbC4Bd97eC4930Dc",
     "AgentRegistry": "0x3Ba4260EB13138F3F167D3686fDb9Aa0887416b5",
-    "PlayerSubnameRegistrar": "0x0E198D518241230b730eB211d1cF7E5eB7e73000",
+    "PlayerSubnameRegistrar": "0x4e8163aE60E4Fe7Da3a487689AcCcB630d7A14B5",
     "MatchEscrow": "0xcBE5c2C30A3329C9fe8c2D8c36e0B1D0f7d01C9F",
     "NameWrapper": "0x0635513f179D50A207757E05759CbD106d7dFcE8",
-    "PublicResolver": "0x8FADE66B79cC9f707aB26799354482EB93a5B7dD",
-    "AgentVault": "0xeCe178F6a55cC504BEbA578a4B596125583D1f3E",
-    "UsdcToken": "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238",
-    "MatchEscrowUsdc": "0x2397fd71b535256C91ca383e496AD861ea1AFA32",
-    "AgentVaultToken": "0x1B3190D84855F00B4556F9e0CBf406eCa411407C"
+    "PublicResolver": "0x8FADE66B79cC9f707aB26799354482EB93a5B7dD"
   },
   "matchEscrowConstructorArgs": {
     "settler": "0xaCF222C7c19a3418246B1aa2fbC4Bd97eC4930Dc"
@@ -33,16 +29,5 @@
     "owner": "0xa2219C4f48bC9e6806Bce3B391aB9e23f55FEbb5"
   },
   "deployedAt": "2026-05-03T04:30:00.000Z",
-  "deployedBlock": 10779100,
-  "agentVaultConstructorArgs": {
-    "registry": "0x3Ba4260EB13138F3F167D3686fDb9Aa0887416b5"
-  },
-  "matchEscrowUsdcConstructorArgs": {
-    "token": "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238",
-    "settler": "0xaCF222C7c19a3418246B1aa2fbC4Bd97eC4930Dc"
-  },
-  "agentVaultTokenConstructorArgs": {
-    "registry": "0x3Ba4260EB13138F3F167D3686fDb9Aa0887416b5",
-    "token": "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238"
-  }
+  "deployedBlock": 10779100
 }
