@@ -70,7 +70,7 @@ function ConnectButtonInner() {
         const uri = data as string;
         setWcUri(uri);
         // Try the universal link; if the app isn't installed this is a no-op.
-        window.location.href = `metamask://wc?uri=${encodeURIComponent(uri)}`;
+        window.location.href = `https://metamask.app.link/wc?uri=${encodeURIComponent(uri)}`;
       }
     };
     wcConnector.emitter.on("message", onMessage);
