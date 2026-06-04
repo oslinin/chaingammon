@@ -244,7 +244,7 @@ export function ClaimForm() {
 
 export function ProfileBadge({ address }: { address: `0x${string}` }) {
   const { t } = useI18n();
-  const { label, labels, name, isLoading: nameLoading, setPreferred } = useChaingammonName(address);
+  const { label, entries, selectedIdx, name, isLoading: nameLoading, setPreferred } = useChaingammonName(address);
   const { elo: ensElo, matchCount } = useChaingammonProfile(label);
   const { sync, syncing } = useSyncEnsProfile();
   const [syncError, setSyncError] = useState<string | null>(null);
@@ -288,11 +288,11 @@ export function ProfileBadge({ address }: { address: `0x${string}` }) {
           fontSize: 13,
         }}
       >
-        {labels.length > 1 ? (
+        {entries.length > 1 ? (
           <select
             title={name ?? undefined}
-            value={label ?? ""}
-            onChange={(e) => setPreferred(e.target.value)}
+            value={selectedIdx}
+            onChange={(e) => setPreferred(Number(e.target.value))}
             style={{
               background: "none",
               border: "none",
@@ -303,9 +303,13 @@ export function ProfileBadge({ address }: { address: `0x${string}` }) {
               padding: 0,
             }}
           >
-            {labels.map((l) => (
-              <option key={l} value={l}>{l}.chaingammon.eth</option>
-            ))}
+            {entries.map((entry, i) => {
+              const isDup = entries.some((e, j) => j !== i && e.label === entry.label);
+              const text = isDup
+                ? `${entry.label}.chaingammon.eth (block ${entry.blockNumber})`
+                : `${entry.label}.chaingammon.eth`;
+              return <option key={i} value={i}>{text}</option>;
+            })}
           </select>
         ) : (
           <a

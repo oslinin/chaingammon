@@ -23,8 +23,10 @@ const SUBNAME_MINTED_EVENT = parseAbiItem(
   "event SubnameMinted(string label, bytes32 indexed node, address indexed subnameOwner, uint256 inftId)",
 );
 
+export interface NameEntry { label: string; blockNumber: bigint; }
+
 function preferredKey(address: string) {
-  return `cg:preferred-name:${address.toLowerCase()}`;
+  return `cg:preferred-idx:${address.toLowerCase()}`;
 }
 
 export function useChaingammonName(address: `0x${string}` | undefined) {
@@ -36,16 +38,16 @@ export function useChaingammonName(address: `0x${string}` | undefined) {
   const { playerSubnameRegistrar } = useChainContracts();
   const deployedBlock = useActiveChain()?.deployedBlock;
 
-  const [labels, setLabels] = useState<string[]>([]);
-  const [preferred, setPreferredState] = useState<string | null>(null);
+  const [entries, setEntries] = useState<NameEntry[]>([]);
+  const [preferredIdx, setPreferredIdxState] = useState<number>(0);
   const [isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {
-    if (!address) { setPreferredState(null); return; }
+    if (!address) { setPreferredIdxState(0); return; }
     const stored = typeof window !== "undefined"
       ? window.localStorage.getItem(preferredKey(address))
       : null;
-    setPreferredState(stored);
+    setPreferredIdxState(stored !== null ? Number(stored) : 0);
   }, [address]);
 
   useEffect(() => {
@@ -127,13 +129,16 @@ export function useChaingammonName(address: `0x${string}` | undefined) {
             log.args?.inftId === 0n &&
             (log.args?.subnameOwner as string | undefined)?.toLowerCase() === addrLower,
         );
-        const found = humanLogs
-          .map((log) => log.args?.label as string | undefined)
-          .filter((l): l is string => !!l);
-        setLabels(found);
+        const found: NameEntry[] = humanLogs
+          .map((log) => ({
+            label: log.args?.label as string | undefined,
+            blockNumber: log.blockNumber ?? 0n,
+          }))
+          .filter((e): e is NameEntry => !!e.label);
+        setEntries(found);
       })
       .catch(() => {
-        if (!cancelled) setLabels([]);
+        if (!cancelled) setEntries([]);
       })
       .finally(() => {
         if (!cancelled) setIsLoading(false);
@@ -143,16 +148,14 @@ export function useChaingammonName(address: `0x${string}` | undefined) {
     };
   }, [address, client, playerSubnameRegistrar, chainId, deployedBlock]);
 
-  const setPreferred = (l: string) => {
+  const setPreferred = (idx: number) => {
     if (!address) return;
-    window.localStorage.setItem(preferredKey(address), l);
-    setPreferredState(l);
+    window.localStorage.setItem(preferredKey(address), String(idx));
+    setPreferredIdxState(idx);
   };
 
-  // Pick preferred if it's still registered, otherwise oldest registration.
-  const label = (preferred && labels.includes(preferred))
-    ? preferred
-    : (labels[0] ?? null);
+  const selectedIdx = preferredIdx < entries.length ? preferredIdx : 0;
+  const label = entries[selectedIdx]?.label ?? null;
   const name = label ? `${label}.chaingammon.eth` : null;
-  return { label, labels, name, isLoading, setPreferred };
+  return { label, entries, selectedIdx, name, isLoading, setPreferred };
 }
