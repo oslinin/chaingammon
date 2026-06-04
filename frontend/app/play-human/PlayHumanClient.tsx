@@ -1126,6 +1126,15 @@ function HumanMatchInner() {
       {/* Actions */}
       {phase === "playing" && game && !game.game_over && (
         <div style={{ display: "flex", gap: 8 }}>
+          {stagedMoves.length > 0 && (
+            <button
+              type="button"
+              className="cg-chip"
+              onClick={() => { setStagedMoves([]); setDisplayBoard(null); setSelectedSource(null); }}
+            >
+              Reset
+            </button>
+          )}
           <button
             type="button"
             className="cg-chip"
@@ -1133,9 +1142,6 @@ function HumanMatchInner() {
           >
             Resign
           </button>
-          <Link href="/" className="cg-chip" style={{ textDecoration: "none" }}>
-            New game
-          </Link>
         </div>
       )}
 
