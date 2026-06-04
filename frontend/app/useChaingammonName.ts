@@ -174,7 +174,13 @@ export function useChaingammonName(address: `0x${string}` | undefined) {
             }
           }),
         );
-        if (!cancelled) setEntries(verified.filter((e): e is NameEntry => e !== null));
+        // If the scan returns empty it might be due to silent per-chunk RPC
+        // failures (.catch(()=>[])) rather than a genuinely absent name. Only
+        // clear entries when the new scan actually found something, or when we
+        // had nothing to begin with (first load). This prevents a rate-limited
+        // rescan from wiping a name that was found in the previous scan.
+        const newEntries = verified.filter((e): e is NameEntry => e !== null);
+        if (!cancelled) setEntries(prev => newEntries.length > 0 ? newEntries : prev);
       })
       .catch(() => {
         // Scan failed (RPC error, rate limit, etc.). Don't clear existing

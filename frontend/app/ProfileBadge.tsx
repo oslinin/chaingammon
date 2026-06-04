@@ -230,7 +230,7 @@ export function ProfileBadge({ address }: { address: `0x${string}` }) {
   const chainElo = chainEloRaw != null ? String(chainEloRaw) : undefined;
   const elo = chainElo ?? ensElo;
 
-  if (!label && (nameLoading || nameError)) {
+  if (!label && nameLoading) {
     return (
       <span
         data-testid="profile-badge"
