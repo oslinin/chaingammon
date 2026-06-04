@@ -81,4 +81,56 @@ describe("Phase 22 — selfMintSubname", function () {
     expect(await registrar.ownerOf("alice")).to.equal(alice.address);
     expect(await registrar.ownerOf("bob")).to.equal(bob.address);
   });
+
+  it("hasClaimed is false before any mint", async function () {
+    const { registrar, alice } = await deployFixture();
+    expect(await registrar.hasClaimed(alice.address)).to.be.false;
+  });
+
+  it("hasClaimed is true after selfMintSubname", async function () {
+    const { registrar, alice } = await deployFixture();
+    await registrar.connect(alice).selfMintSubname("alice");
+    expect(await registrar.hasClaimed(alice.address)).to.be.true;
+  });
+
+  it("second selfMintSubname from the same address reverts with AlreadyRegistered", async function () {
+    const { registrar, alice } = await deployFixture();
+    await registrar.connect(alice).selfMintSubname("alice");
+    let reverted = false;
+    try {
+      await registrar.connect(alice).selfMintSubname("alice2");
+    } catch {
+      reverted = true;
+    }
+    expect(reverted).to.be.true;
+  });
+
+  it("selfRevokeSubname clears hasClaimed and the ENS owner", async function () {
+    const { registrar, alice } = await deployFixture();
+    await registrar.connect(alice).selfMintSubname("alice");
+    await registrar.connect(alice).selfRevokeSubname("alice");
+    expect(await registrar.hasClaimed(alice.address)).to.be.false;
+    expect(await registrar.ownerOf("alice")).to.equal(ethers.ZeroAddress);
+  });
+
+  it("address can selfMintSubname again after selfRevokeSubname", async function () {
+    const { registrar, alice } = await deployFixture();
+    await registrar.connect(alice).selfMintSubname("alice");
+    await registrar.connect(alice).selfRevokeSubname("alice");
+    await registrar.connect(alice).selfMintSubname("alice-new");
+    expect(await registrar.ownerOf("alice-new")).to.equal(alice.address);
+    expect(await registrar.hasClaimed(alice.address)).to.be.true;
+  });
+
+  it("selfRevokeSubname reverts when caller does not own the label", async function () {
+    const { registrar, alice, bob } = await deployFixture();
+    await registrar.connect(alice).selfMintSubname("alice");
+    let reverted = false;
+    try {
+      await registrar.connect(bob).selfRevokeSubname("alice");
+    } catch {
+      reverted = true;
+    }
+    expect(reverted).to.be.true;
+  });
 });

@@ -75,9 +75,14 @@ contract PlayerSubnameRegistrar is Ownable {
     event SubnameRevoked(string label, bytes32 indexed node);
     event AuthorizedMinterSet(address indexed minter, bool authorized);
 
+    /// @notice Tracks which addresses have already claimed a subname via
+    ///         selfMintSubname so that duplicate self-registrations are blocked.
+    mapping(address => bool) public hasClaimed;
+
     error EmptyLabel();
     error NotAuthorized();
     error ZeroAddressOwner();
+    error AlreadyRegistered();
 
     constructor(bytes32 _parentNode, address _nameWrapper, address _resolver) Ownable(msg.sender) {
         parentNode = _parentNode;
@@ -145,9 +150,12 @@ contract PlayerSubnameRegistrar is Ownable {
     }
 
     /// @notice Open self-registration: anyone can claim a subname for
-    ///         themselves. Delegates to NameWrapper.
+    ///         themselves. Delegates to NameWrapper. Each address may claim
+    ///         at most one subname; use selfRevokeSubname to release the claim.
     function selfMintSubname(string calldata label) external returns (bytes32 node) {
         if (bytes(label).length == 0) revert EmptyLabel();
+        if (hasClaimed[msg.sender]) revert AlreadyRegistered();
+        hasClaimed[msg.sender] = true;
 
         node = nameWrapper.setSubnodeRecord(
             parentNode,
@@ -166,18 +174,28 @@ contract PlayerSubnameRegistrar is Ownable {
     }
 
     /// @notice Revoke a subname. Owner / authorized minter only.
-    ///         Clears the NameWrapper owner to address(0).
+    ///         Clears the NameWrapper owner to address(0) and releases the
+    ///         hasClaimed flag so the previous owner may re-register.
     function revokeSubname(string calldata label) external {
         if (msg.sender != owner() && !_authorizedMinters[msg.sender]) revert NotAuthorized();
 
-        bytes32 node = nameWrapper.setSubnodeOwner(
-            parentNode,
-            label,
-            address(0),
-            0,
-            0
-        );
+        bytes32 _node = subnameNode(label);
+        (address current, , ) = nameWrapper.getData(uint256(_node));
+        if (current != address(0)) hasClaimed[current] = false;
 
+        bytes32 node = nameWrapper.setSubnodeOwner(parentNode, label, address(0), 0, 0);
+        emit SubnameRevoked(label, node);
+    }
+
+    /// @notice Self-service revocation: the subname owner can release their
+    ///         own claim, clearing hasClaimed so they may later register a
+    ///         different name.
+    function selfRevokeSubname(string calldata label) external {
+        bytes32 _node = subnameNode(label);
+        (address current, , ) = nameWrapper.getData(uint256(_node));
+        if (current != msg.sender) revert NotAuthorized();
+        hasClaimed[msg.sender] = false;
+        bytes32 node = nameWrapper.setSubnodeOwner(parentNode, label, address(0), 0, 0);
         emit SubnameRevoked(label, node);
     }
 

@@ -138,4 +138,14 @@ describe("Phase 10 — PlayerSubnameRegistrar (NameWrapper-backed)", function ()
       expect(await registrar.ownerOf("alice")).to.equal(alice.address);
     });
   });
+
+  describe("revokeSubname clears hasClaimed", function () {
+    it("owner revoking a self-minted label releases hasClaimed for the previous owner", async function () {
+      const { registrar, alice } = await deployFixture();
+      await registrar.connect(alice).selfMintSubname("alice");
+      expect(await registrar.hasClaimed(alice.address)).to.be.true;
+      await registrar.revokeSubname("alice");
+      expect(await registrar.hasClaimed(alice.address)).to.be.false;
+    });
+  });
 });
