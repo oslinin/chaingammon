@@ -74,16 +74,31 @@ export function NetworkDropdown() {
             if (!internalNs.chains) internalNs.chains = (internalNs.accounts ?? []).map((a: string) => a.split(":").slice(0, 2).join(":"));
             if (!internalNs.methods) internalNs.methods = ["wallet_addEthereumChain", "wallet_switchEthereumChain", "eth_sendTransaction", "personal_sign"];
           }
-          await provider.request({
-            method: "wallet_addEthereumChain",
-            params: [{
-              chainId: `0x${id.toString(16)}`,
-              chainName: chain.name,
-              nativeCurrency: chain.nativeCurrency,
-              rpcUrls: chain.rpcUrls.default.http,
-              blockExplorerUrls: chain.blockExplorers ? [chain.blockExplorers.default.url] : [],
-            }],
-          });
+          // wallet_switchEthereumChain uses MetaMask's built-in chain config
+          // (no RPC validation). Fall back to wallet_addEthereumChain only for
+          // chains MetaMask doesn't know about.
+          try {
+            await provider.request({
+              method: "wallet_switchEthereumChain",
+              params: [{ chainId: `0x${id.toString(16)}` }],
+            });
+          } catch (switchErr: unknown) {
+            const code = (switchErr as { code?: number })?.code;
+            if (code === 4902 || code === -32603) {
+              await provider.request({
+                method: "wallet_addEthereumChain",
+                params: [{
+                  chainId: `0x${id.toString(16)}`,
+                  chainName: chain.name,
+                  nativeCurrency: chain.nativeCurrency,
+                  rpcUrls: chain.rpcUrls.default.http,
+                  blockExplorerUrls: chain.blockExplorers ? [chain.blockExplorers.default.url] : [],
+                }],
+              });
+            } else {
+              throw switchErr;
+            }
+          }
         } catch (e) {
           setError(e instanceof Error ? e.message : String(e));
         } finally {
