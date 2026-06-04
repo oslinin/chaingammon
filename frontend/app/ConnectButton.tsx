@@ -16,7 +16,6 @@ import { NetworkDropdown } from "./NetworkDropdown";
 import { ProfileBadge } from "./ProfileBadge";
 import { UsdcBalanceDisplay } from "./UsdcBalanceDisplay";
 import { useI18n } from "./i18n";
-import { FALLBACK_CHAIN_ID } from "./chains";
 
 const pillBase: React.CSSProperties = {
   display: "inline-flex",
@@ -109,7 +108,7 @@ function ConnectButtonInner() {
           data-testid="open-in-metamask"
           style={{ ...primaryBtn, background: "#F6851B", color: "#fff", border: "none", textDecoration: "none" }}
         >
-          Open MetaMask
+          {t("connect_wallet")}
         </a>
       );
     }
@@ -126,11 +125,11 @@ function ConnectButtonInner() {
       <button
         type="button"
         data-testid="login-button"
-        onClick={() => { if (wcConnector) connect({ connector: wcConnector, chainId: FALLBACK_CHAIN_ID }); }}
+        onClick={() => { if (wcConnector) connect({ connector: wcConnector }); }}
         style={{ ...primaryBtn, background: "#F6851B", color: "#fff", border: "1px solid rgba(0,0,0,0.2)" }}
         className="cg-btn-primary"
       >
-        {t("log_in")}
+        {t("connect_wallet")}
       </button>
     );
   }
@@ -151,7 +150,7 @@ function ConnectButtonInner() {
       style={primaryBtn}
       className="cg-btn-primary"
     >
-      {t("log_in")}
+      {t("connect_wallet")}
     </button>
   );
 }
@@ -162,7 +161,7 @@ export function ConnectButton() {
   if (!mounted) {
     return (
       <button type="button" style={primaryBtn} className="cg-btn-primary">
-        Log in
+        Connect wallet
       </button>
     );
   }

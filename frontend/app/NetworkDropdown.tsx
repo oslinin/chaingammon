@@ -11,97 +11,30 @@
 // don't deploy to). The view shows "Wrong network" when that chainId
 // isn't in `selectableChains`.
 
-import { useAccount, useConnect } from "wagmi";
-import { useState, useEffect, useRef } from "react";
+import { useState } from "react";
+import { useAccount } from "wagmi";
 
 import { useSelectableChains } from "./chains";
 import { NetworkDropdownView } from "./NetworkDropdownView";
 
-type EIP1193Provider = {
-  request: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
-  chainId?: number; // WC EthereumProvider's current chainId (set from rpc.chains config)
-  session?: { namespaces?: Record<string, { accounts?: string[]; chains?: string[] }> };
+type WCProvider = {
+  request: (a: { method: string; params?: unknown[] }) => Promise<unknown>;
+  session?: { namespaces?: Record<string, { accounts?: string[]; chains?: string[]; methods?: string[] }> };
 };
 
 export function NetworkDropdown() {
-  const { isConnected, chainId: walletChainId } = useAccount();
+  const { isConnected, chainId: walletChainId, connector } = useAccount();
   const selectableChains = useSelectableChains();
-  const { connectors } = useConnect();
   const [isPending, setIsPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [awaitingApproval, setAwaitingApproval] = useState(false);
-  const isWC = connectors.some((c) => c.id === "walletConnect");
-  const isMobileRef = useRef(typeof navigator !== "undefined" && /Android|iPhone|iPad|iPod|Mobi/i.test(navigator.userAgent));
-
-  // When chain changes (user approved in MetaMask), clear the awaiting state.
-  useEffect(() => { setAwaitingApproval(false); }, [walletChainId]);
 
   if (!isConnected) return null;
 
-  const handleSwitch = async (chainId: number) => {
-    const entry = selectableChains.find((c) => c.chain.id === chainId);
-    if (!entry) return;
-    setIsPending(true);
-    setError(null);
-    try {
-      const { chain } = entry;
-      const connector = connectors.find((c) => c.id === "walletConnect") ?? connectors[0];
-      if (!connector) return;
-      const provider = (await connector.getProvider()) as EIP1193Provider | undefined;
-      if (!provider) { setError("Wallet not initialized — please disconnect and reconnect."); return; }
-      const hexChainId = `0x${chainId.toString(16)}`;
-
-      // WC sessions from MetaMask mobile omit `chains` from the eip155 namespace.
-      // The UniversalProvider crashes on `undefined.includes(...)` when validating
-      // the request context. Patch it to include both the accounts' chains AND the
-      // provider's configured chainId (which is used as the request context).
-      if (provider.session?.namespaces?.eip155) {
-        const ns = provider.session.namespaces.eip155;
-        if (!ns.chains) {
-          const accountChains = (ns.accounts ?? []).map((a) => a.split(":").slice(0, 2).join(":"));
-          const configChain = `eip155:${provider.chainId ?? 11155111}`;
-          ns.chains = [...new Set([configChain, ...accountChains])];
-        }
-      }
-
-      // wallet_switchEthereumChain is silently ignored by MetaMask via WC for chains
-      // not already in the approved session namespace. wallet_addEthereumChain works
-      // unconditionally and prompts the user even for new chains.
-      const switchPromise = provider.request({
-        method: "wallet_addEthereumChain",
-        params: [{
-          chainId: hexChainId,
-          chainName: chain.name,
-          nativeCurrency: chain.nativeCurrency,
-          rpcUrls: chain.rpcUrls.default.http,
-          blockExplorerUrls: chain.blockExplorers ? [chain.blockExplorers.default.url] : [],
-        }],
-      });
-
-      // On mobile WC, the switch prompt appears inside MetaMask. Open MetaMask
-      // so the user can see and approve it before it times out.
-      if (isMobileRef.current && isWC) {
-        setAwaitingApproval(true);
-        window.location.href = "metamask://";
-      }
-
-      await switchPromise;
-    } catch (e) {
-      setAwaitingApproval(false);
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setIsPending(false);
-    }
-  };
-
-  if (awaitingApproval) {
+  if (isPending && connector?.id === "walletConnect") {
     return (
-      <a
-        href="metamask://"
-        style={{ fontSize: 12, color: "#F6851B", textDecoration: "none", whiteSpace: "nowrap" }}
-      >
-        Approve in MetaMask ↗
-      </a>
+      <span style={{ fontSize: 12, color: "#F6851B", whiteSpace: "nowrap" }}>
+        Switch to MetaMask to approve
+      </span>
     );
   }
 
@@ -111,7 +44,37 @@ export function NetworkDropdown() {
       selectableChains={selectableChains}
       isPending={isPending}
       error={error}
-      onSwitch={handleSwitch}
+      onSwitch={async (id) => {
+        const entry = selectableChains.find((c) => c.chain.id === id);
+        if (!entry || !connector) return;
+        const { chain } = entry;
+        setIsPending(true);
+        setError(null);
+        try {
+          const provider = await connector.getProvider() as WCProvider;
+          // WC 2.x bug: MetaMask mobile sessions omit `chains` and `methods`
+          // from the eip155 namespace. Populate them so the library doesn't crash.
+          const ns = provider.session?.namespaces?.eip155;
+          if (ns) {
+            if (!ns.chains) ns.chains = (ns.accounts ?? []).map((a) => a.split(":").slice(0, 2).join(":"));
+            if (!ns.methods) ns.methods = ["wallet_addEthereumChain", "wallet_switchEthereumChain", "eth_sendTransaction", "personal_sign"];
+          }
+          await provider.request({
+            method: "wallet_addEthereumChain",
+            params: [{
+              chainId: `0x${id.toString(16)}`,
+              chainName: chain.name,
+              nativeCurrency: chain.nativeCurrency,
+              rpcUrls: chain.rpcUrls.default.http,
+              blockExplorerUrls: chain.blockExplorers ? [chain.blockExplorers.default.url] : [],
+            }],
+          });
+        } catch (e) {
+          setError(e instanceof Error ? e.message : String(e));
+        } finally {
+          setIsPending(false);
+        }
+      }}
     />
   );
 }
