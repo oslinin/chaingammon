@@ -1,37 +1,24 @@
-// Gas-sponsored contract writes — simplified after Privy removal.
-//
-// Previously this hook branched on whether the active wallet was a Privy
-// embedded wallet (email / Google login) to route through Privy's native
-// gas sponsorship. Now that Privy is removed, all wallets are external
-// (MetaMask, injected) and pay their own gas via wagmi's standard
-// useWriteContract — so this hook is a thin pass-through that preserves
-// the same call-site API surface (writeContractAsync, writeContract, data,
-// error, isPending, reset, sponsored) for zero churn in callers.
-//
-// The `sponsored` flag is always false — no embedded-wallet paymaster
-// is active. It is kept in the return value so callers that read it
-// (e.g. to show a "gas is covered" badge) continue to compile without
-// changes.
+// Thin wrapper around wagmi's useWriteContract.
+// Previously routed embedded-wallet transactions through Privy gas sponsorship;
+// now that Privy is removed all writes go through MetaMask directly.
 "use client";
 
-import type { Abi } from "viem";
 import { useWriteContract } from "wagmi";
+import type { Abi } from "viem";
 
 export interface SponsoredWriteParams {
   address: `0x${string}`;
   abi: Abi;
   functionName: string;
   args?: readonly unknown[];
-  /** Native value to attach (wei). */
   value?: bigint;
-  /** Target chain; forwarded to wagmi's writeContractAsync. */
   chainId?: number;
 }
 
 export function useSponsoredWrite() {
   const wagmi = useWriteContract();
 
-  const writeContractAsync = (params: SponsoredWriteParams): Promise<`0x${string}`> =>
+  const writeContractAsync = (params: SponsoredWriteParams) =>
     wagmi.writeContractAsync({
       address: params.address,
       abi: params.abi,
@@ -52,7 +39,6 @@ export function useSponsoredWrite() {
     error: wagmi.error,
     isPending: wagmi.isPending,
     reset: wagmi.reset,
-    /** Always false — Privy gas sponsorship was removed. */
     sponsored: false,
   };
 }

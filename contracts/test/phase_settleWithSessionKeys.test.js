@@ -47,20 +47,31 @@ async function signOpen(signer, contractAddress, chainId, { human, nonce, agentI
  * @param {Wallet} sessionKeySigner  Session key — signs the result.
  * @param {string} contractAddress
  * @param {bigint} chainId
- * @param {object} params  {human, nonce, agentId, humanWins, gameRecordHash}
+ * @param {object} params  {human, nonce, agentId, humanWins, gameRecordHash, escrowMatchId, winners, shares}
  * @returns {string} hex signature
  */
-async function signResult(sessionKeySigner, contractAddress, chainId, { human, nonce, agentId, humanWins, gameRecordHash }) {
+async function signResult(
+  sessionKeySigner,
+  contractAddress,
+  chainId,
+  { human, nonce, agentId, humanWins, gameRecordHash, escrowMatchId = ZERO_HASH, winners = [], shares = [] }
+) {
+  const splitHash = ethers.keccak256(
+    ethers.AbiCoder.defaultAbiCoder().encode(
+      ["address[]", "uint256[]"],
+      [winners, shares]
+    )
+  );
   const inner = ethers.keccak256(
     ethers.AbiCoder.defaultAbiCoder().encode(
-      ["string", "uint256", "address", "address", "uint256", "uint256", "bool", "bytes32"],
-      ["Chaingammon:result", chainId, contractAddress, human, nonce, agentId, humanWins, gameRecordHash]
+      ["string", "uint256", "address", "address", "uint256", "uint256", "bool", "bytes32", "bytes32", "bytes32"],
+      ["Chaingammon:result", chainId, contractAddress, human, nonce, agentId, humanWins, gameRecordHash, escrowMatchId, splitHash]
     )
   );
   return sessionKeySigner.signMessage(ethers.getBytes(inner));
 }
 
-describe("Phase 26 — MatchRegistry.settleWithSessionKeys", function () {
+describe("Phase 26 — MatchRegistry.settle", function () {
   let registry;
   let owner, human, sessionKey, relayer;
   let chainId;
@@ -87,8 +98,21 @@ describe("Phase 26 — MatchRegistry.settleWithSessionKeys", function () {
       human: human.address, nonce, agentId, humanWins, gameRecordHash: ZERO_HASH,
     });
 
-    await registry.connect(relayer).settleWithSessionKeys(
-      human.address, agentId, matchLength, humanWins, ZERO_HASH, nonce, sessionKey.address, humanAuthSig, resultSig
+    const params = {
+      playerA: human.address,
+      playerB: ZERO,
+      agentId,
+      matchLength,
+      aWins: humanWins,
+      gameRecordHash: ZERO_HASH,
+      nonceA: nonce,
+      nonceB: 0n,
+      sessionKeyA: sessionKey.address,
+      sessionKeyB: ZERO,
+    };
+
+    await registry.connect(relayer).settle(
+      params, humanAuthSig, "0x", resultSig, "0x", ZERO_HASH, [], []
     );
 
     expect(Number(await registry.humanElo(human.address))).to.be.greaterThan(1500);
@@ -108,8 +132,21 @@ describe("Phase 26 — MatchRegistry.settleWithSessionKeys", function () {
       human: human.address, nonce, agentId, humanWins, gameRecordHash: ZERO_HASH,
     });
 
-    await registry.connect(relayer).settleWithSessionKeys(
-      human.address, agentId, matchLength, humanWins, ZERO_HASH, nonce, sessionKey.address, humanAuthSig, resultSig
+    const params = {
+      playerA: human.address,
+      playerB: ZERO,
+      agentId,
+      matchLength,
+      aWins: humanWins,
+      gameRecordHash: ZERO_HASH,
+      nonceA: nonce,
+      nonceB: 0n,
+      sessionKeyA: sessionKey.address,
+      sessionKeyB: ZERO,
+    };
+
+    await registry.connect(relayer).settle(
+      params, humanAuthSig, "0x", resultSig, "0x", ZERO_HASH, [], []
     );
 
     expect(Number(await registry.humanElo(human.address))).to.be.lessThan(1500);
@@ -129,8 +166,21 @@ describe("Phase 26 — MatchRegistry.settleWithSessionKeys", function () {
       human: human.address, nonce, agentId, humanWins: true, gameRecordHash: ZERO_HASH,
     });
 
-    await registry.connect(relayer).settleWithSessionKeys(
-      human.address, agentId, matchLength, true, ZERO_HASH, nonce, sessionKey.address, humanAuthSig, resultSig
+    const params = {
+      playerA: human.address,
+      playerB: ZERO,
+      agentId,
+      matchLength,
+      aWins: true,
+      gameRecordHash: ZERO_HASH,
+      nonceA: nonce,
+      nonceB: 0n,
+      sessionKeyA: sessionKey.address,
+      sessionKeyB: ZERO,
+    };
+
+    await registry.connect(relayer).settle(
+      params, humanAuthSig, "0x", resultSig, "0x", ZERO_HASH, [], []
     );
 
     expect(await registry.nonces(human.address)).to.equal(1n);
@@ -145,20 +195,29 @@ describe("Phase 26 — MatchRegistry.settleWithSessionKeys", function () {
       human: human.address, nonce, agentId, humanWins: true, gameRecordHash: ZERO_HASH,
     });
 
-    await registry.connect(relayer).settleWithSessionKeys(
-      human.address, agentId, matchLength, true, ZERO_HASH, nonce, sessionKey.address, humanAuthSig, resultSig
+    const params = {
+      playerA: human.address,
+      playerB: ZERO,
+      agentId,
+      matchLength,
+      aWins: true,
+      gameRecordHash: ZERO_HASH,
+      nonceA: nonce,
+      nonceB: 0n,
+      sessionKeyA: sessionKey.address,
+      sessionKeyB: ZERO,
+    };
+
+    await registry.connect(relayer).settle(
+      params, humanAuthSig, "0x", resultSig, "0x", ZERO_HASH, [], []
     );
 
     // Replay with the same nonce must fail.
-    let reverted = false;
-    try {
-      await registry.connect(relayer).settleWithSessionKeys(
-        human.address, agentId, matchLength, true, ZERO_HASH, nonce, sessionKey.address, humanAuthSig, resultSig
-      );
-    } catch {
-      reverted = true;
-    }
-    expect(reverted).to.be.true;
+    await expect(
+      registry.connect(relayer).settle(
+        params, humanAuthSig, "0x", resultSig, "0x", ZERO_HASH, [], []
+      )
+    ).to.be.reverted;
   });
 
   // ── Match record integrity ─────────────────────────────────────────────────
@@ -174,8 +233,21 @@ describe("Phase 26 — MatchRegistry.settleWithSessionKeys", function () {
       human: human.address, nonce, agentId, humanWins: true, gameRecordHash: hash,
     });
 
-    const tx = await registry.connect(relayer).settleWithSessionKeys(
-      human.address, agentId, matchLength, true, hash, nonce, sessionKey.address, humanAuthSig, resultSig
+    const params = {
+      playerA: human.address,
+      playerB: ZERO,
+      agentId,
+      matchLength,
+      aWins: true,
+      gameRecordHash: hash,
+      nonceA: nonce,
+      nonceB: 0n,
+      sessionKeyA: sessionKey.address,
+      sessionKeyB: ZERO,
+    };
+
+    const tx = await registry.connect(relayer).settle(
+      params, humanAuthSig, "0x", resultSig, "0x", ZERO_HASH, [], []
     );
     const receipt = await tx.wait();
     const evt = receipt.logs.find((l) => l.fragment?.name === "MatchRecorded");
@@ -198,15 +270,24 @@ describe("Phase 26 — MatchRegistry.settleWithSessionKeys", function () {
       human: human.address, nonce, agentId, humanWins: true, gameRecordHash: ZERO_HASH,
     });
 
-    let reverted = false;
-    try {
-      await registry.connect(relayer).settleWithSessionKeys(
-        human.address, agentId, matchLength, true, ZERO_HASH, nonce, sessionKey.address, humanAuthSig, resultSig
-      );
-    } catch {
-      reverted = true;
-    }
-    expect(reverted).to.be.true;
+    const params = {
+      playerA: human.address,
+      playerB: ZERO,
+      agentId,
+      matchLength,
+      aWins: true,
+      gameRecordHash: ZERO_HASH,
+      nonceA: nonce,
+      nonceB: 0n,
+      sessionKeyA: sessionKey.address,
+      sessionKeyB: ZERO,
+    };
+
+    await expect(
+      registry.connect(relayer).settle(
+        params, humanAuthSig, "0x", resultSig, "0x", ZERO_HASH, [], []
+      )
+    ).to.be.revertedWith("resultSigA bad");
   });
 
   it("rejects if humanAuthSig outcome differs from resultSig (wrong agentId)", async function () {
@@ -221,15 +302,24 @@ describe("Phase 26 — MatchRegistry.settleWithSessionKeys", function () {
       human: human.address, nonce, agentId: wrongAgentId, humanWins: true, gameRecordHash: ZERO_HASH,
     });
 
-    let reverted = false;
-    try {
-      await registry.connect(relayer).settleWithSessionKeys(
-        human.address, wrongAgentId, matchLength, true, ZERO_HASH, nonce, sessionKey.address, humanAuthSig, resultSig
-      );
-    } catch {
-      reverted = true;
-    }
-    expect(reverted).to.be.true;
+    const params = {
+      playerA: human.address,
+      playerB: ZERO,
+      agentId: wrongAgentId,
+      matchLength,
+      aWins: true,
+      gameRecordHash: ZERO_HASH,
+      nonceA: nonce,
+      nonceB: 0n,
+      sessionKeyA: sessionKey.address,
+      sessionKeyB: ZERO,
+    };
+
+    await expect(
+      registry.connect(relayer).settle(
+        params, humanAuthSig, "0x", resultSig, "0x", ZERO_HASH, [], []
+      )
+    ).to.be.revertedWith("authSigA bad");
   });
 
   it("rejects agentId = 0", async function () {
@@ -241,15 +331,25 @@ describe("Phase 26 — MatchRegistry.settleWithSessionKeys", function () {
       human: human.address, nonce, agentId: 0n, humanWins: true, gameRecordHash: ZERO_HASH,
     });
 
-    let reverted = false;
-    try {
-      await registry.connect(relayer).settleWithSessionKeys(
-        human.address, 0n, matchLength, true, ZERO_HASH, nonce, sessionKey.address, humanAuthSig, resultSig
-      );
-    } catch {
-      reverted = true;
-    }
-    expect(reverted).to.be.true;
+    const params = {
+      playerA: human.address,
+      playerB: ZERO,
+      agentId: 0n,
+      matchLength,
+      aWins: true,
+      gameRecordHash: ZERO_HASH,
+      nonceA: nonce,
+      nonceB: 0n,
+      sessionKeyA: sessionKey.address,
+      sessionKeyB: ZERO,
+    };
+
+    // If agentId=0, it enters HvH path and expects playerB != 0
+    await expect(
+      registry.connect(relayer).settle(
+        params, humanAuthSig, "0x", resultSig, "0x", ZERO_HASH, [], []
+      )
+    ).to.be.revertedWith("HvH: zero playerB");
   });
 
   // ── emits MatchRecorded ────────────────────────────────────────────────────
@@ -263,8 +363,21 @@ describe("Phase 26 — MatchRegistry.settleWithSessionKeys", function () {
       human: human.address, nonce, agentId, humanWins: true, gameRecordHash: ZERO_HASH,
     });
 
-    const tx = await registry.connect(relayer).settleWithSessionKeys(
-      human.address, agentId, matchLength, true, ZERO_HASH, nonce, sessionKey.address, humanAuthSig, resultSig
+    const params = {
+      playerA: human.address,
+      playerB: ZERO,
+      agentId,
+      matchLength,
+      aWins: true,
+      gameRecordHash: ZERO_HASH,
+      nonceA: nonce,
+      nonceB: 0n,
+      sessionKeyA: sessionKey.address,
+      sessionKeyB: ZERO,
+    };
+
+    const tx = await registry.connect(relayer).settle(
+      params, humanAuthSig, "0x", resultSig, "0x", ZERO_HASH, [], []
     );
     const receipt = await tx.wait();
     const evt = receipt.logs.find((l) => l.fragment?.name === "MatchRecorded");
@@ -273,7 +386,7 @@ describe("Phase 26 — MatchRegistry.settleWithSessionKeys", function () {
 
   // ── recordMatch (owner path) still works ──────────────────────────────────
 
-  it("existing recordMatch still works alongside settleWithSessionKeys", async function () {
+  it("existing recordMatch still works alongside settle", async function () {
     await registry.connect(owner).recordMatch(0, human.address, agentId, ZERO, matchLength, ZERO_HASH);
     expect(Number(await registry.humanElo(human.address))).to.be.greaterThan(1500);
   });

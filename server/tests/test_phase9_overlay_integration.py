@@ -72,7 +72,13 @@ def test_overlay_update_lands_on_chain_and_round_trips_through_0g_storage():
     if pre_overlay_hash == "0x" + "00" * 32:
         current = Overlay.default()
     else:
-        current = Overlay.from_bytes(get_blob(pre_overlay_hash))
+        blob = get_blob(pre_overlay_hash)
+        if blob.startswith(b"PK\x03\x04"):
+            # It's a PyTorch checkpoint (ModelProfile), not a JSON overlay.
+            # Use default for the reinforcement update part of this test.
+            current = Overlay.default()
+        else:
+            current = Overlay.from_bytes(blob)
 
     # Synthetic finished match — three "build the 5-point" moves, agent won.
     moves = [
@@ -83,7 +89,6 @@ def test_overlay_update_lands_on_chain_and_round_trips_through_0g_storage():
     new_overlay = update_overlay(
         current,
         agent_moves=moves,
-        won=True,
         match_count=current.match_count,
     )
 
@@ -123,15 +128,17 @@ def test_two_consecutive_updates_produce_distinct_overlay_hashes():
 
     # First update.
     pre_overlay_hash = pre_hashes_0[1]
-    current = (
-        Overlay.default()
-        if pre_overlay_hash == "0x" + "00" * 32
-        else Overlay.from_bytes(get_blob(pre_overlay_hash))
-    )
+    if pre_overlay_hash == "0x" + "00" * 32:
+        current = Overlay.default()
+    else:
+        blob = get_blob(pre_overlay_hash)
+        if blob.startswith(b"PK\x03\x04"):
+            current = Overlay.default()
+        else:
+            current = Overlay.from_bytes(blob)
     overlay_1 = update_overlay(
         current,
         agent_moves=[MoveEntry(turn=1, dice=[3, 1], move="8/5 6/5")],
-        won=True,
         match_count=current.match_count,
     )
     upload_1 = put_blob(overlay_1.to_bytes())
@@ -140,10 +147,10 @@ def test_two_consecutive_updates_produce_distinct_overlay_hashes():
     # Second update — different moves, different match_count, different blob.
     overlay_2 = update_overlay(
         overlay_1,
-        agent_moves=[MoveEntry(turn=1, dice=[5, 2], move="24/22 24/19")],
-        won=False,
+        agent_moves=[MoveEntry(turn=1, dice=[6, 5], move="24/13")],
         match_count=overlay_1.match_count,
     )
+
     upload_2 = put_blob(overlay_2.to_bytes())
     chain.update_overlay_hash(SEED_AGENT_ID, upload_2.root_hash)
 

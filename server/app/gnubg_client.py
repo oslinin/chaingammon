@@ -235,6 +235,42 @@ class GnubgClient:
             candidates.append({"move": move_str.strip(), "equity": equity})
         return candidates
 
+    def get_candidate_moves_with_dice(
+        self,
+        position_id: str,
+        match_id: str,
+        dice: list[int],
+        match_length: int = 3,
+    ) -> list[dict]:
+        """Return ranked candidate moves for a position with explicit dice.
+
+        gnubg requires an active game before `set board` / `set dice` work,
+        so we start a fresh match, set the board, then override the dice.
+        The match_id is used only to derive match_length; the board state
+        comes from position_id + the supplied dice.
+        """
+        d1, d2 = int(dice[0]), int(dice[1])
+        cmds = (
+            f"new match {match_length}\n"
+            f"set board {position_id}\n"
+            f"set dice {d1} {d2}\n"
+            f"hint\n"
+        )
+        stdout = self._run(cmds)
+
+        rows = re.findall(
+            r"(\d+)\.\s+[\w-]+\s+[0-9]+-ply\s+([\d/a-zA-Z*\(\)\s]+?)\s*Eq\.:\s*([+\-]?[0-9.]+)",
+            stdout,
+        )
+        candidates = []
+        for _rank, move_str, eq_str in rows:
+            try:
+                equity = float(eq_str)
+            except ValueError:
+                continue
+            candidates.append({"move": move_str.strip(), "equity": equity})
+        return candidates
+
     def get_agent_move(self, position_id: str, match_id: str) -> dict:
         """Pick gnubg's best move for the player on roll and apply it.
         Falls back to a `play` command when gnubg has no legal moves

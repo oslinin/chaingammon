@@ -40,7 +40,7 @@ def _torch_blob(*, extras_dim: int = 16, match_count: int = 5) -> bytes:
 
     net = BackgammonNet(extras_dim=extras_dim, extras_seed=99)
     state = {
-        "model": net.state_dict(),
+        "state_dict": net.state_dict(),
         "match_count": match_count,
         "extras_dim": extras_dim,
         "in_dim": 198,
@@ -209,7 +209,8 @@ def test_argmax_matches_underlying_function(fake_chain, fake_get_blob):
     rec = recommend_teammate(profile.net, [
         (11, _pad_overlay_values({"hits_blot": 0.9})),
         (13, _pad_overlay_values({"hits_blot": -0.9})),
-    ])
+    ], extras_dim=profile.net.extras_dim)
+
     assert body["best_teammate_id"] == rec.best_teammate_id
     for k, v in rec.equities.items():
         assert body["equities"][str(k)] == pytest.approx(v)

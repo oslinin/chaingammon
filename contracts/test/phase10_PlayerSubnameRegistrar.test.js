@@ -124,6 +124,60 @@ describe("Phase 10 — PlayerSubnameRegistrar (NameWrapper-backed)", function ()
       }
       expect(reverted).to.be.true;
     });
+
+    it("allows re-minting an existing name (backfill support)", async function () {
+      const { registrar, alice, nameWrapper, resolver } = await deployFixture();
+      // Directly populate NameWrapper as if from a previous deployment
+      await nameWrapper.setSubnodeRecord(
+        PARENT,
+        "alice",
+        alice.address,
+        await resolver.getAddress(),
+        0,
+        0,
+        (2n ** 64n) - 1n
+      );
+      
+      // Should succeed and emit event even though label is taken in NameWrapper
+      await expect(registrar.mintSubname("alice", alice.address, 0))
+        .to.emit(registrar, "SubnameMinted");
+      expect(await registrar.hasClaimed(alice.address)).to.be.true;
+    });
+  });
+
+  describe("selfMintSubname", function () {
+    it("allows re-minting if the caller already owns the name (self-service backfill)", async function () {
+      const { registrar, alice, nameWrapper, resolver } = await deployFixture();
+      await nameWrapper.setSubnodeRecord(
+        PARENT,
+        "alice",
+        alice.address,
+        await resolver.getAddress(),
+        0,
+        0,
+        (2n ** 64n) - 1n
+      );
+
+      await expect(registrar.connect(alice).selfMintSubname("alice"))
+        .to.emit(registrar, "SubnameMinted");
+      expect(await registrar.hasClaimed(alice.address)).to.be.true;
+    });
+
+    it("still rejects if someone else owns the name", async function () {
+      const { registrar, alice, bob, nameWrapper, resolver } = await deployFixture();
+      await nameWrapper.setSubnodeRecord(
+        PARENT,
+        "alice",
+        alice.address,
+        await resolver.getAddress(),
+        0,
+        0,
+        (2n ** 64n) - 1n
+      );
+
+      await expect(registrar.connect(bob).selfMintSubname("alice"))
+        .to.be.revertedWithCustomError(registrar, "LabelTaken");
+    });
   });
 
   describe("ownerOf", function () {

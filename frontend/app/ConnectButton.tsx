@@ -1,32 +1,22 @@
 "use client";
 
-// MetaMask connect button — replaces the previous Privy-based login flow.
-//
-// Connects directly to the browser-injected wallet (MetaMask, Brave, etc.)
-// via wagmi's useConnect hook with the injected() connector. No third-party
-// auth service is involved, so the button works identically in Chrome,
-// Firefox, and Brave as long as MetaMask (or any EIP-1193 wallet) is
-// installed.
+// MetaMask connect button — directly uses wagmi's injected() connector.
+// Connection is persisted in localStorage so it survives page reloads.
 //
 // States:
-//   1. Not mounted (SSR)                       → static "Log in" pill
-//   2. Mounted, no window.ethereum (mobile)    → "Open in MetaMask" deep link
-//   3. Mounted, ethereum present, disconnected → "Log in" button (connects)
-//   4. Connecting / pending                    → "Connecting…" + escape hatch
-//   5. Connected                               → network dropdown, profile badge, disconnect
-//
-// The "Open in MetaMask" deep link (state 2) sends mobile users to
-// MetaMask Mobile's in-app browser, where window.ethereum IS injected and
-// the normal connect flow (state 3→5) works.
+//   1. Not connected      → "Log in" button (opens MetaMask)
+//   2. Connecting         → "Connecting…" (MetaMask approval pending)
+//   3. Connected          → network dropdown, profile badge, disconnect
 
-import { useConnect, useDisconnect, useAccount } from "wagmi";
-import { injected } from "@wagmi/core";
+import { useAccount, useConnect, useDisconnect } from "wagmi";
+import { injected } from "wagmi/connectors";
 import { useState, useEffect } from "react";
 
 import { NetworkDropdown } from "./NetworkDropdown";
 import { ProfileBadge } from "./ProfileBadge";
 import { UsdcBalanceDisplay } from "./UsdcBalanceDisplay";
 import { useI18n } from "./i18n";
+import { FALLBACK_CHAIN_ID } from "./chains";
 
 const pillBase: React.CSSProperties = {
   display: "inline-flex",
@@ -40,7 +30,6 @@ const pillBase: React.CSSProperties = {
   cursor: "pointer",
   transition: "background 120ms ease, border-color 120ms ease",
   whiteSpace: "nowrap",
-  textDecoration: "none",
 };
 
 const primaryBtn: React.CSSProperties = {
@@ -58,64 +47,107 @@ const secondaryBtn: React.CSSProperties = {
   border: "1px solid var(--cg-line-2)",
 };
 
-// Inner component — only rendered client-side after mount, so all wagmi
-// hooks are safe. The outer ConnectButton shell gates on `mounted`.
 function ConnectButtonInner() {
   const { t } = useI18n();
-  const { address, isConnected, isConnecting } = useAccount();
-  const { connect, connectors, isPending } = useConnect();
+  const { address, isConnected } = useAccount();
+  const { connect, isPending, error: connectError, connectors } = useConnect();
   const { disconnect } = useDisconnect();
+  // ConnectButton guards this behind a mount check so window/navigator are safe here.
+  const [isMobile] = useState(() => /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || /Mobi/i.test(navigator.userAgent));
+  // Treat window.ethereum as injected only if it's a real browser extension (not WC-injected).
+  const [hasInjected] = useState(() => {
+    if (!("ethereum" in window)) return false;
+    const eth = (window as { ethereum?: { isWalletConnect?: boolean } }).ethereum;
+    return !!eth && !eth.isWalletConnect;
+  });
+  const wcConnector = connectors.find((c) => c.id === "walletConnect");
+  const [wcUri, setWcUri] = useState<string | null>(null);
 
-  // Connected: wagmi has a live account.
+  // Pre-register display_uri listener so there's no race with the async event.
+  useEffect(() => {
+    if (!wcConnector || !isMobile || hasInjected) return;
+    const onMessage = ({ type, data }: { type: string; data?: unknown }) => {
+      if (type === "display_uri") {
+        const uri = data as string;
+        setWcUri(uri);
+        // Try the universal link; if the app isn't installed this is a no-op.
+        window.location.href = `metamask://wc?uri=${encodeURIComponent(uri)}`;
+      }
+    };
+    wcConnector.emitter.on("message", onMessage);
+    return () => { wcConnector.emitter.off("message", onMessage); };
+  }, [wcConnector, isMobile, hasInjected]);
+
   if (isConnected && address) {
     return (
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          flexWrap: "wrap",
-          justifyContent: "flex-end",
-          gap: 8,
-        }}
-      >
+      <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end", gap: 8 }}>
         <NetworkDropdown />
         <UsdcBalanceDisplay address={address} />
         <ProfileBadge address={address} />
-        <button
-          type="button"
-          onClick={() => { disconnect(); }}
-          style={{ ...secondaryBtn, height: 32, fontSize: 12 }}
-        >
+        <button type="button" onClick={() => disconnect()} style={{ ...secondaryBtn, height: 32, fontSize: 12 }}>
           {t("disconnect")}
         </button>
       </div>
     );
   }
 
-  // Connecting: pending wagmi state (eth_requestAccounts in flight).
-  if (isConnecting || isPending) {
-    return (
-      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+  // On mobile Chrome/Safari, window.ethereum is absent — use WalletConnect.
+  if (isMobile && !hasInjected) {
+    if (connectError) {
+      return (
+        <div style={{ fontSize: 11, color: "red", maxWidth: 200 }}>
+          Error: {connectError.message}
+        </div>
+      );
+    }
+
+    if (isPending && wcUri) {
+      // URI ready but redirect may not have worked — show manual fallback.
+      return (
+        <a
+          href={`metamask://wc?uri=${encodeURIComponent(wcUri)}`}
+          data-testid="open-in-metamask"
+          style={{ ...primaryBtn, background: "#F6851B", color: "#fff", border: "none", textDecoration: "none" }}
+        >
+          Open MetaMask
+        </a>
+      );
+    }
+
+    if (isPending) {
+      return (
         <button type="button" disabled style={{ ...secondaryBtn, opacity: 0.6 }}>
           {t("connecting")}
         </button>
-        <button
-          type="button"
-          onClick={() => { disconnect(); }}
-          style={{ ...secondaryBtn, height: 32, fontSize: 12 }}
-        >
-          {t("disconnect")}
-        </button>
-      </div>
+      );
+    }
+
+    return (
+      <button
+        type="button"
+        data-testid="login-button"
+        onClick={() => { if (wcConnector) connect({ connector: wcConnector, chainId: FALLBACK_CHAIN_ID }); }}
+        style={{ ...primaryBtn, background: "#F6851B", color: "#fff", border: "1px solid rgba(0,0,0,0.2)" }}
+        className="cg-btn-primary"
+      >
+        {t("log_in")}
+      </button>
     );
   }
 
-  // Disconnected with ethereum present — normal connect button.
+  if (isPending) {
+    return (
+      <button type="button" disabled style={{ ...secondaryBtn, opacity: 0.6 }}>
+        {t("connecting")}
+      </button>
+    );
+  }
+
   return (
     <button
       type="button"
       data-testid="login-button"
-      onClick={() => { connect({ connector: connectors[0] ?? injected() }); }}
+      onClick={() => connect({ connector: injected() })}
       style={primaryBtn}
       className="cg-btn-primary"
     >
@@ -127,10 +159,6 @@ function ConnectButtonInner() {
 export function ConnectButton() {
   const [mounted, setMounted] = useState(false);
   useEffect(() => { setMounted(true); }, []);
-
-  // SSR / pre-hydration: static pill so the server render matches the first
-  // client render (no hydration mismatch). Privy used to handle this; now
-  // we just render a neutral button until the client has checked the wallet.
   if (!mounted) {
     return (
       <button type="button" style={primaryBtn} className="cg-btn-primary">
@@ -138,24 +166,5 @@ export function ConnectButton() {
       </button>
     );
   }
-
-  // Mobile / browsers without an injected EIP-1193 provider: show a deep
-  // link that opens the current page inside MetaMask Mobile's in-app
-  // browser, where window.ethereum IS injected.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  if (!(window as any).ethereum) {
-    const deepLink = `https://metamask.app.link/dapp/${window.location.host}${window.location.pathname}`;
-    return (
-      <a
-        data-testid="open-in-metamask"
-        href={deepLink}
-        style={primaryBtn}
-        className="cg-btn-primary"
-      >
-        Open in MetaMask
-      </a>
-    );
-  }
-
   return <ConnectButtonInner />;
 }

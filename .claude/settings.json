@@ -7,6 +7,24 @@
       "Bash(apt-cache show *)",
       "Bash(gnubg --version)",
       "Bash(~/.local/bin/uv run pytest *)"
+    ],
+    "deny": [
+      "Read(**/node_modules/**)",
+      "Read(**/.next/**)",
+      "Read(**/.turbo/**)",
+      "Read(**/out/**)",
+      "Read(**/dist/**)",
+      "Read(**/build/**)",
+      "Read(**/.venv/**)",
+      "Read(**/venv/**)",
+      "Read(**/__pycache__/**)",
+      "Read(**/.pytest_cache/**)",
+      "Read(**/contracts/artifacts/**)",
+      "Read(**/contracts/cache/**)",
+      "Read(**/contracts/typechain-types/**)",
+      "Read(**/target/**)",
+      "Read(**/.pnpm-store/**)",
+      "Read(**/*.log)"
     ]
   },
 

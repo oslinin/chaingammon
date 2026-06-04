@@ -1,78 +1,104 @@
 "use client";
 
-// Wraps the app in wagmi's WagmiProvider + react-query so client
-// components can use wagmi hooks (useAccount, useReadContract, etc.).
-// The injected() connector in wagmi.ts handles MetaMask (and other
-// browser-injected wallets) in Chrome, Firefox, and Brave natively.
-// Mobile users without an injected wallet see the "Open in MetaMask"
-// deep link rendered by ConnectButton.
+// Wraps the app in WagmiProvider + react-query so client components can use
+// wagmi hooks (useAccount, useReadContract, useWriteContract). MetaMask is
+// connected directly through wagmi's injected() connector — no Privy layer.
+// The connection state is persisted in localStorage so it survives page reloads.
 //
-// Has to be a Client Component because WagmiProvider and
-// QueryClientProvider both rely on React context, which doesn't exist
-// on the server.
+// Has to be a Client Component because WagmiProvider and QueryClientProvider
+// both rely on React context, which doesn't exist on the server.
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { WagmiProvider } from "wagmi";
-import { useAccount, useSwitchChain } from "wagmi";
+import { WagmiProvider, useConnect } from "wagmi";
 import { useEffect, useState } from "react";
 
 import { ComputeBackendsProvider } from "./ComputeBackendsContext";
 import { AppModeProvider } from "./AppModeContext";
-import { ALL_CHAINS, config } from "./wagmi";
+import { config } from "./wagmi";
 import { warmupOnnx } from "../lib/onnx_eval";
 import { I18nProvider } from "./i18n";
 
-// Silently switch to the app's default chain (Sepolia) when the wallet
-// connects on an unsupported chain. MetaMask persists the chain across
-// sessions, so this fires once and the prompt never reappears.
-//
-// Split into two components so wagmi hooks only run on the client.
-// During SSR the wagmi context is not yet hydrated; calling useAccount()
-// there throws WagmiProviderNotFoundError even though WagmiProvider wraps
-// this component — wagmi's provider only becomes active after client-side
-// hydration.
-function AutoSwitchChainEffect() {
-  const { address, chainId: walletChainId } = useAccount();
-  const { switchChain } = useSwitchChain();
-  const supportedIds = new Set(ALL_CHAINS.map((c) => c.id));
-  const defaultChainId = ALL_CHAINS[0].id;
-
+// MetaMask mobile returns WC sessions with accounts but no chains in the eip155
+// namespace. The WC UniversalProvider crashes on `undefined.includes(...)` when
+// routing any request through that namespace. Patch the provider's request method
+// to ensure chains is always populated before each call.
+function WCNamespacePatch() {
+  const { connectors } = useConnect();
   useEffect(() => {
-    if (address && walletChainId !== undefined && !supportedIds.has(walletChainId)) {
-      switchChain({ chainId: defaultChainId });
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [address, walletChainId]);
-
+    const wc = connectors.find((c) => c.id === "walletConnect");
+    if (!wc) return;
+    wc.getProvider().then((raw) => {
+      if (!raw) return;
+      const provider = raw as {
+        request?: (...a: unknown[]) => Promise<unknown>;
+        chainId?: number;
+        session?: { namespaces?: Record<string, { accounts?: string[]; chains?: string[] }> };
+      };
+      if (typeof provider.request !== "function" || (provider.request as { _patched?: boolean })._patched) return;
+      const original = provider.request.bind(provider);
+      const patched = function (...args: unknown[]) {
+        if (provider.session?.namespaces?.eip155) {
+          const ns = provider.session.namespaces.eip155;
+          if (!ns.chains) {
+            const fromAccounts = (ns.accounts ?? []).map((a) => a.split(":").slice(0, 2).join(":"));
+            const configChain = `eip155:${provider.chainId ?? 11155111}`;
+            ns.chains = [...new Set([configChain, ...fromAccounts])];
+          }
+        }
+        try {
+          return original(...args);
+        } catch (e) {
+          // Swallow crashes from internal WC calls (e.g. switchEthereumChain
+          // fired by session_event before signer is fully initialized).
+          return Promise.reject(e);
+        }
+      };
+      (patched as { _patched?: boolean })._patched = true;
+      provider.request = patched as typeof provider.request;
+    }).catch(() => {/* provider not ready yet — will be patched on next mount */});
+  }, [connectors]);
   return null;
 }
 
-function AutoSwitchChain() {
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => { setMounted(true); }, []);
-  return mounted ? <AutoSwitchChainEffect /> : null;
-}
-
 export function Providers({ children }: { children: React.ReactNode }) {
-  // One QueryClient per render tree, kept stable across renders. Avoids
-  // re-creating the cache on every render, which would defeat caching.
   const [queryClient] = useState(() => new QueryClient());
 
-  // Kick off ONNX WASM loading once at app startup so the model is ready
-  // before the first agent move. warmupOnnx() is idempotent — re-renders and
-  // React Strict Mode double-invocations are safe.
   useEffect(() => { warmupOnnx(); }, []);
 
+  // WalletConnect sessions expire on the relay (7-day TTL). When the page reloads
+  // with a stale session in localStorage, wagmi throws an unhandled "No matching key"
+  // rejection. Clear the stale WC data so the next connect starts fresh.
+  useEffect(() => {
+    const handler = (event: PromiseRejectionEvent) => {
+      const msg = (event.reason as { message?: string })?.message ?? "";
+      const isStaleSession = msg.includes("No matching key") || msg.includes("session topic");
+      const isSuppressable = isStaleSession ||
+        (msg.includes("Cannot read properties of undefined") && msg.includes("'request'"));
+      if (isSuppressable) {
+        event.preventDefault();
+        // Only clear stale session data for relay-not-found errors.
+        // The request error is an internal WC race condition — don't nuke the session.
+        if (isStaleSession) {
+          Object.keys(localStorage)
+            .filter((k) => k.startsWith("wc@2:"))
+            .forEach((k) => localStorage.removeItem(k));
+        }
+      }
+    };
+    window.addEventListener("unhandledrejection", handler);
+    return () => window.removeEventListener("unhandledrejection", handler);
+  }, []);
+
   return (
-    <WagmiProvider config={config}>
-      <QueryClientProvider client={queryClient}>
-        <AutoSwitchChain />
+    <QueryClientProvider client={queryClient}>
+      <WagmiProvider config={config}>
+          <WCNamespacePatch />
         <AppModeProvider>
           <ComputeBackendsProvider>
             <I18nProvider>{children}</I18nProvider>
           </ComputeBackendsProvider>
         </AppModeProvider>
-      </QueryClientProvider>
-    </WagmiProvider>
+      </WagmiProvider>
+    </QueryClientProvider>
   );
 }

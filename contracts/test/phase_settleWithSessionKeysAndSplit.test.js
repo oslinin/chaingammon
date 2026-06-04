@@ -46,13 +46,13 @@ async function signResultWithSplit(
   const inner = ethers.keccak256(
     ethers.AbiCoder.defaultAbiCoder().encode(
       ["string", "uint256", "address", "address", "uint256", "uint256", "bool", "bytes32", "bytes32", "bytes32"],
-      ["Chaingammon:result-with-split", chainId, contractAddress, human, nonce, agentId, humanWins, gameRecordHash, escrowMatchId, splitHash]
+      ["Chaingammon:result", chainId, contractAddress, human, nonce, agentId, humanWins, gameRecordHash, escrowMatchId, splitHash]
     )
   );
   return sessionKeySigner.signMessage(ethers.getBytes(inner));
 }
 
-describe("MatchRegistry.settleWithSessionKeysAndSplit", function () {
+describe("MatchRegistry.settle", function () {
   let registry;
   let escrow;
   let owner, human, opponentHuman, sessionKey, relayer, advisor;
@@ -94,10 +94,22 @@ describe("MatchRegistry.settleWithSessionKeysAndSplit", function () {
       human: human.address, nonce, agentId, humanWins, gameRecordHash: ZERO_HASH, escrowMatchId, winners, shares,
     });
 
+    const params = {
+      playerA: human.address,
+      playerB: ZERO,
+      agentId,
+      matchLength,
+      aWins: humanWins,
+      gameRecordHash: ZERO_HASH,
+      nonceA: nonce,
+      nonceB: 0n,
+      sessionKeyA: sessionKey.address,
+      sessionKeyB: ZERO,
+    };
+
     const humanBefore = await ethers.provider.getBalance(human.address);
-    await registry.connect(relayer).settleWithSessionKeysAndSplit(
-      human.address, agentId, matchLength, humanWins, ZERO_HASH,
-      nonce, sessionKey.address, humanAuthSig, resultSig,
+    await registry.connect(relayer).settle(
+      params, humanAuthSig, "0x", resultSig, "0x",
       escrowMatchId, winners, shares
     );
     const humanAfter = await ethers.provider.getBalance(human.address);
@@ -129,10 +141,22 @@ describe("MatchRegistry.settleWithSessionKeysAndSplit", function () {
       human: human.address, nonce, agentId, humanWins, gameRecordHash: ZERO_HASH, escrowMatchId, winners, shares,
     });
 
+    const params = {
+      playerA: human.address,
+      playerB: ZERO,
+      agentId,
+      matchLength,
+      aWins: humanWins,
+      gameRecordHash: ZERO_HASH,
+      nonceA: nonce,
+      nonceB: 0n,
+      sessionKeyA: sessionKey.address,
+      sessionKeyB: ZERO,
+    };
+
     const advisorBefore = await ethers.provider.getBalance(advisor.address);
-    await registry.connect(relayer).settleWithSessionKeysAndSplit(
-      human.address, agentId, matchLength, humanWins, ZERO_HASH,
-      nonce, sessionKey.address, humanAuthSig, resultSig,
+    await registry.connect(relayer).settle(
+      params, humanAuthSig, "0x", resultSig, "0x",
       escrowMatchId, winners, shares
     );
     const advisorAfter = await ethers.provider.getBalance(advisor.address);
@@ -158,17 +182,29 @@ describe("MatchRegistry.settleWithSessionKeysAndSplit", function () {
       winners: signedWinners, shares: signedShares,
     });
 
+    const params = {
+      playerA: human.address,
+      playerB: ZERO,
+      agentId,
+      matchLength,
+      aWins: humanWins,
+      gameRecordHash: ZERO_HASH,
+      nonceA: nonce,
+      nonceB: 0n,
+      sessionKeyA: sessionKey.address,
+      sessionKeyB: ZERO,
+    };
+
     // Relayer submits a different `winners[]` array than what was signed.
     const tamperedWinners = [advisor.address];
     const tamperedShares = [POT];
 
     await expect(
-      registry.connect(relayer).settleWithSessionKeysAndSplit(
-        human.address, agentId, matchLength, humanWins, ZERO_HASH,
-        nonce, sessionKey.address, humanAuthSig, resultSig,
+      registry.connect(relayer).settle(
+        params, humanAuthSig, "0x", resultSig, "0x",
         escrowMatchId, tamperedWinners, tamperedShares
       )
-    ).to.be.revertedWith("resultSig not from sessionKey");
+    ).to.be.revertedWith("resultSigA bad");
   });
 
   it("reverts if relayer tampers with the split (shares changed)", async function () {
@@ -186,16 +222,28 @@ describe("MatchRegistry.settleWithSessionKeysAndSplit", function () {
       winners, shares: signedShares,
     });
 
+    const params = {
+      playerA: human.address,
+      playerB: ZERO,
+      agentId,
+      matchLength,
+      aWins: humanWins,
+      gameRecordHash: ZERO_HASH,
+      nonceA: nonce,
+      nonceB: 0n,
+      sessionKeyA: sessionKey.address,
+      sessionKeyB: ZERO,
+    };
+
     // Tampered shares (not what the session key signed).
     const tamperedShares = [POT - 1n];
 
     await expect(
-      registry.connect(relayer).settleWithSessionKeysAndSplit(
-        human.address, agentId, matchLength, humanWins, ZERO_HASH,
-        nonce, sessionKey.address, humanAuthSig, resultSig,
+      registry.connect(relayer).settle(
+        params, humanAuthSig, "0x", resultSig, "0x",
         escrowMatchId, winners, tamperedShares
       )
-    ).to.be.revertedWith("resultSig not from sessionKey");
+    ).to.be.revertedWith("resultSigA bad");
   });
 
   it("reverts if relayer tampers with escrowMatchId", async function () {
@@ -213,21 +261,32 @@ describe("MatchRegistry.settleWithSessionKeysAndSplit", function () {
       winners, shares,
     });
 
+    const params = {
+      playerA: human.address,
+      playerB: ZERO,
+      agentId,
+      matchLength,
+      aWins: humanWins,
+      gameRecordHash: ZERO_HASH,
+      nonceA: nonce,
+      nonceB: 0n,
+      sessionKeyA: sessionKey.address,
+      sessionKeyB: ZERO,
+    };
+
     const wrongEscrowId = ethers.id("session-split-002");
 
     await expect(
-      registry.connect(relayer).settleWithSessionKeysAndSplit(
-        human.address, agentId, matchLength, humanWins, ZERO_HASH,
-        nonce, sessionKey.address, humanAuthSig, resultSig,
+      registry.connect(relayer).settle(
+        params, humanAuthSig, "0x", resultSig, "0x",
         wrongEscrowId, winners, shares
       )
-    ).to.be.revertedWith("resultSig not from sessionKey");
+    ).to.be.revertedWith("resultSigA bad");
   });
 
-  it("non-payout settleWithSessionKeys signature cannot be replayed here", async function () {
-    // The non-payout result hash uses prefix "Chaingammon:result"; this
-    // function uses "Chaingammon:result-with-split". A signature for one
-    // must NOT validate against the other.
+  it("non-payout settle signature cannot be replayed here", async function () {
+    // A signature for an ELO-only game (empty winners/shares) must NOT
+    // validate against a payout attempt, because the hash binds them.
     const POT = STAKE * 2n;
     const nonce = 0n;
     const humanWins = true;
@@ -237,22 +296,31 @@ describe("MatchRegistry.settleWithSessionKeysAndSplit", function () {
     const humanAuthSig = await signOpen(human, await registry.getAddress(), chainId, {
       human: human.address, nonce, agentId, matchLength, sessionKey: sessionKey.address,
     });
-    // Sign the OLD format (no split).
-    const oldResultInner = ethers.keccak256(
-      ethers.AbiCoder.defaultAbiCoder().encode(
-        ["string", "uint256", "address", "address", "uint256", "uint256", "bool", "bytes32"],
-        ["Chaingammon:result", chainId, await registry.getAddress(), human.address, nonce, agentId, humanWins, ZERO_HASH]
-      )
-    );
-    const oldResultSig = await sessionKey.signMessage(ethers.getBytes(oldResultInner));
+    // Sign for an ELO-only game (ZERO_HASH escrowMatchId and empty arrays).
+    const eloOnlyResultSig = await signResultWithSplit(sessionKey, await registry.getAddress(), chainId, {
+      human: human.address, nonce, agentId, humanWins, gameRecordHash: ZERO_HASH,
+      escrowMatchId: ZERO_HASH, winners: [], shares: [],
+    });
+
+    const params = {
+      playerA: human.address,
+      playerB: ZERO,
+      agentId,
+      matchLength,
+      aWins: humanWins,
+      gameRecordHash: ZERO_HASH,
+      nonceA: nonce,
+      nonceB: 0n,
+      sessionKeyA: sessionKey.address,
+      sessionKeyB: ZERO,
+    };
 
     await expect(
-      registry.connect(relayer).settleWithSessionKeysAndSplit(
-        human.address, agentId, matchLength, humanWins, ZERO_HASH,
-        nonce, sessionKey.address, humanAuthSig, oldResultSig,
+      registry.connect(relayer).settle(
+        params, humanAuthSig, "0x", eloOnlyResultSig, "0x",
         escrowMatchId, winners, shares
       )
-    ).to.be.revertedWith("resultSig not from sessionKey");
+    ).to.be.revertedWith("resultSigA bad");
   });
 
   // -------------------------------------------------------------------
@@ -274,13 +342,25 @@ describe("MatchRegistry.settleWithSessionKeysAndSplit", function () {
       winners, shares,
     });
 
+    const params = {
+      playerA: human.address,
+      playerB: ZERO,
+      agentId,
+      matchLength,
+      aWins: humanWins,
+      gameRecordHash: ZERO_HASH,
+      nonceA: wrongNonce,
+      nonceB: 0n,
+      sessionKeyA: sessionKey.address,
+      sessionKeyB: ZERO,
+    };
+
     // signOpen with wrongNonce produces a sig the contract will accept
     // for the auth check (the human signed it) but then the on-chain
     // nonce check rejects.
     await expect(
-      registry.connect(relayer).settleWithSessionKeysAndSplit(
-        human.address, agentId, matchLength, humanWins, ZERO_HASH,
-        wrongNonce, sessionKey.address, humanAuthSig, resultSig,
+      registry.connect(relayer).settle(
+        params, humanAuthSig, "0x", resultSig, "0x",
         escrowMatchId, winners, shares
       )
     ).to.be.revertedWith("nonce mismatch");
@@ -301,11 +381,23 @@ describe("MatchRegistry.settleWithSessionKeysAndSplit", function () {
       winners, shares,
     });
 
+    const params = {
+      playerA: human.address,
+      playerB: ZERO,
+      agentId,
+      matchLength,
+      aWins: humanWins,
+      gameRecordHash: ZERO_HASH,
+      nonceA: nonce,
+      nonceB: 0n,
+      sessionKeyA: sessionKey.address,
+      sessionKeyB: ZERO,
+    };
+
     const matchCountBefore = await registry.matchCount();
     await expect(
-      registry.connect(relayer).settleWithSessionKeysAndSplit(
-        human.address, agentId, matchLength, humanWins, ZERO_HASH,
-        nonce, sessionKey.address, humanAuthSig, resultSig,
+      registry.connect(relayer).settle(
+        params, humanAuthSig, "0x", resultSig, "0x",
         escrowMatchId, winners, shares
       )
     ).to.be.revertedWithCustomError(escrow, "ShareSumMismatch");
@@ -328,18 +420,29 @@ describe("MatchRegistry.settleWithSessionKeysAndSplit", function () {
       winners, shares,
     });
 
-    await registry.connect(relayer).settleWithSessionKeysAndSplit(
-      human.address, agentId, matchLength, humanWins, ZERO_HASH,
-      nonce, sessionKey.address, humanAuthSig, resultSig,
+    const params = {
+      playerA: human.address,
+      playerB: ZERO,
+      agentId,
+      matchLength,
+      aWins: humanWins,
+      gameRecordHash: ZERO_HASH,
+      nonceA: nonce,
+      nonceB: 0n,
+      sessionKeyA: sessionKey.address,
+      sessionKeyB: ZERO,
+    };
+
+    await registry.connect(relayer).settle(
+      params, humanAuthSig, "0x", resultSig, "0x",
       escrowMatchId, winners, shares
     );
     expect(await registry.nonces(human.address)).to.equal(1n);
 
     // Replay with the same nonce now reverts.
     await expect(
-      registry.connect(relayer).settleWithSessionKeysAndSplit(
-        human.address, agentId, matchLength, humanWins, ZERO_HASH,
-        nonce, sessionKey.address, humanAuthSig, resultSig,
+      registry.connect(relayer).settle(
+        params, humanAuthSig, "0x", resultSig, "0x",
         escrowMatchId, winners, shares
       )
     ).to.be.revertedWith("nonce mismatch");

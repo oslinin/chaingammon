@@ -47,9 +47,12 @@ function cleanLabel(metadataUri) {
   return label;
 }
 
+const FORCE_REMINT = process.env.FORCE_REMINT === "true";
+
 async function main() {
   const [deployer] = await ethers.getSigners();
   console.log(`Running on network: ${network.name} (deployer: ${deployer.address})`);
+  if (FORCE_REMINT) console.log("FORCE_REMINT is enabled — will re-mint even if subname exists");
 
   const deploymentsPath = path.join(__dirname, "..", "deployments", `${network.name}.json`);
   if (!fs.existsSync(deploymentsPath)) {
@@ -104,7 +107,7 @@ async function main() {
       subnameOwner = ethers.ZeroAddress;
     }
 
-    if (subnameOwner === ethers.ZeroAddress) {
+    if (subnameOwner === ethers.ZeroAddress || FORCE_REMINT) {
       console.log(`  Minting subname "${label}.chaingammon.eth" → owner ${agentOwner}, inftId ${agentId}...`);
       const mintTx = await registrar.mintSubname(label, agentOwner, agentId);
       const mintReceipt = await mintTx.wait();
