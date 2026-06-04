@@ -46,6 +46,7 @@ export function useChaingammonName(address: `0x${string}` | undefined) {
   const [isError, setIsError] = useState(false);
 
   useEffect(() => {
+    setEntries([]);
     if (!address) { setPreferredIdxState(0); return; }
     const stored = typeof window !== "undefined"
       ? window.localStorage.getItem(preferredKey(address))
@@ -60,7 +61,6 @@ export function useChaingammonName(address: `0x${string}` | undefined) {
       !playerSubnameRegistrar ||
       playerSubnameRegistrar.length < 4
     ) {
-      setEntries([]);
       return;
     }
     let cancelled = false;
