@@ -244,7 +244,7 @@ export function ClaimForm() {
 
 export function ProfileBadge({ address }: { address: `0x${string}` }) {
   const { t } = useI18n();
-  const { label, name, isLoading: nameLoading } = useChaingammonName(address);
+  const { label, labels, name, isLoading: nameLoading, setPreferred } = useChaingammonName(address);
   const { elo: ensElo, matchCount } = useChaingammonProfile(label);
   const { sync, syncing } = useSyncEnsProfile();
   const [syncError, setSyncError] = useState<string | null>(null);
@@ -288,22 +288,43 @@ export function ProfileBadge({ address }: { address: `0x${string}` }) {
           fontSize: 13,
         }}
       >
-        <a
-          href={`https://app.ens.domains/${name}`}
-          target="_blank"
-          rel="noreferrer"
-          title={name ?? undefined}
-          style={{ color: "var(--cg-fg-1)", textDecoration: "none" }}
-          onMouseEnter={(e) => { (e.currentTarget as HTMLAnchorElement).style.color = "var(--cg-brass)"; }}
-          onMouseLeave={(e) => { (e.currentTarget as HTMLAnchorElement).style.color = "var(--cg-fg-1)"; }}
-        >
-          {/* Narrow screens see just the label (e.g. "oleg") so the connected
-              header fits inside a phone-width viewport without horizontal
-              scroll; ≥640px (sm: breakpoint) sees the full subname. The
-              tooltip exposes the full name on either size. */}
-          <span className="sm:hidden">{label}</span>
-          <span className="hidden sm:inline">{name}</span>
-        </a>
+        {labels.length > 1 ? (
+          <select
+            title={name ?? undefined}
+            value={label ?? ""}
+            onChange={(e) => setPreferred(e.target.value)}
+            style={{
+              background: "none",
+              border: "none",
+              color: "var(--cg-fg-1)",
+              fontFamily: "var(--cg-font-mono)",
+              fontSize: 13,
+              cursor: "pointer",
+              padding: 0,
+            }}
+          >
+            {labels.map((l) => (
+              <option key={l} value={l}>{l}.chaingammon.eth</option>
+            ))}
+          </select>
+        ) : (
+          <a
+            href={`https://app.ens.domains/${name}`}
+            target="_blank"
+            rel="noreferrer"
+            title={name ?? undefined}
+            style={{ color: "var(--cg-fg-1)", textDecoration: "none" }}
+            onMouseEnter={(e) => { (e.currentTarget as HTMLAnchorElement).style.color = "var(--cg-brass)"; }}
+            onMouseLeave={(e) => { (e.currentTarget as HTMLAnchorElement).style.color = "var(--cg-fg-1)"; }}
+          >
+            {/* Narrow screens see just the label (e.g. "oleg") so the connected
+                header fits inside a phone-width viewport without horizontal
+                scroll; ≥640px (sm: breakpoint) sees the full subname. The
+                tooltip exposes the full name on either size. */}
+            <span className="sm:hidden">{label}</span>
+            <span className="hidden sm:inline">{name}</span>
+          </a>
+        )}
         {elo ? (
           <span
             title={t("elo_rating_label")}
