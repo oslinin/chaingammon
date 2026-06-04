@@ -17,7 +17,7 @@ import { parseAbiItem } from "viem";
 import { usePublicClient } from "wagmi";
 
 import { useActiveChain, useActiveChainId } from "./chains";
-import { useChainContracts } from "./contracts";
+import { PlayerSubnameRegistrarABI, useChainContracts } from "./contracts";
 
 const SUBNAME_MINTED_EVENT = parseAbiItem(
   "event SubnameMinted(string label, bytes32 indexed node, address indexed subnameOwner, uint256 inftId)",
@@ -57,7 +57,7 @@ export function useChaingammonName(address: `0x${string}` | undefined) {
       !playerSubnameRegistrar ||
       playerSubnameRegistrar.length < 4
     ) {
-      setLabels([]);
+      setEntries([]);
       return;
     }
     let cancelled = false;
@@ -121,7 +121,7 @@ export function useChaingammonName(address: `0x${string}` | undefined) {
     const addrLower = address.toLowerCase();
     computeFromBlock()
       .then((fromBlock) => scanChunked(fromBlock))
-      .then((logs) => {
+      .then(async (logs) => {
         if (cancelled) return;
         // Filter client-side: human names (inftId == 0) owned by this address.
         const humanLogs = logs.filter(
@@ -129,13 +129,38 @@ export function useChaingammonName(address: `0x${string}` | undefined) {
             log.args?.inftId === 0n &&
             (log.args?.subnameOwner as string | undefined)?.toLowerCase() === addrLower,
         );
-        const found: NameEntry[] = humanLogs
+        const allFound: NameEntry[] = humanLogs
           .map((log) => ({
             label: log.args?.label as string | undefined,
             blockNumber: log.blockNumber ?? 0n,
           }))
           .filter((e): e is NameEntry => !!e.label);
-        setEntries(found);
+
+        // Deduplicate by label — multiple SubnameMinted events can share the
+        // same label (ENS allows overwrites); keep only the latest per label.
+        const deduped = new Map<string, NameEntry>();
+        for (const e of allFound) {
+          const prev = deduped.get(e.label);
+          if (!prev || e.blockNumber > prev.blockNumber) deduped.set(e.label, e);
+        }
+
+        // Verify current ENS ownership to filter out revoked names.
+        const verified = await Promise.all(
+          [...deduped.values()].map(async (e) => {
+            try {
+              const owner = await client!.readContract({
+                address: playerSubnameRegistrar as `0x${string}`,
+                abi: PlayerSubnameRegistrarABI,
+                functionName: "ownerOf",
+                args: [e.label],
+              });
+              return (owner as string).toLowerCase() === addrLower ? e : null;
+            } catch {
+              return null;
+            }
+          }),
+        );
+        if (!cancelled) setEntries(verified.filter((e): e is NameEntry => e !== null));
       })
       .catch(() => {
         if (!cancelled) setEntries([]);
