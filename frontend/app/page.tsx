@@ -231,7 +231,15 @@ function EloHome() {
     const myEloNum = Number(chainEloRaw ?? 1500) || 1500;
     nostr.startPresence({ ensLabel: "", address: address ?? "", sessionPubkey: nostr.pubkey, elo: myEloNum }, PRESENCE_INTERVAL_MS);
     const unsub = nostr.subscribePresence((p, pubkey, at) => {
-      searchersRef.current.set(pubkey, { s: { pubkey, elo: p.elo ?? 1500 }, at });
+      // Skip ghost sessions from my own wallet (same address, different Nostr pubkey).
+      if (p.address && address && p.address.toLowerCase() === address.toLowerCase()) return;
+      // Key by wallet address so multiple Nostr sessions from the same wallet
+      // collapse to one entry; keep whichever arrived most recently.
+      const key = p.address || pubkey;
+      const existing = searchersRef.current.get(key);
+      if (!existing || at >= existing.at) {
+        searchersRef.current.set(key, { s: { pubkey, elo: p.elo ?? 1500 }, at });
+      }
     });
     // First attempt after presence has had time to stabilize.
     const stabilizeTimer = setTimeout(() => tryConnect(nostr, myEloNum), STABILIZE_MS);
