@@ -150,7 +150,9 @@ export class NostrMatchClient {
   ): () => void {
     const sub = this.pool.subscribeMany(
       this.relays,
-      { kinds: [SIGNAL_KIND], "#p": [this.id.pubkey], since: nowSec() },
+      // Look back 10 s to tolerate clock skew and relay propagation delay;
+      // this is narrow enough to never replay stale signals from prior sessions.
+      { kinds: [SIGNAL_KIND], "#p": [this.id.pubkey], since: nowSec() - 10 },
       {
         onevent: (evt: Event) => {
           const matchId = evt.tags.find((t) => t[0] === "d")?.[1] ?? "";

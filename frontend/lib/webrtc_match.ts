@@ -23,13 +23,9 @@ import type { NostrMatchClient, SignalMsg } from "./nostr";
 const ICE_SERVERS: RTCIceServer[] = [
   { urls: "stun:stun.l.google.com:19302" },
   {
-    urls: [
-      "turn:openrelay.metered.ca:80",
-      "turn:openrelay.metered.ca:443",
-      "turn:openrelay.metered.ca:443?transport=tcp",
-    ],
-    username: "openrelayproject",
-    credential: "openrelayproject",
+    urls: "turn:132.145.158.84:3479?transport=tcp",
+    username: "cg",
+    credential: "chaingammon2026",
   },
 ];
 
@@ -113,15 +109,13 @@ export function connectPeer(
 
   if (isOfferer) {
     wireChannel(pc.createDataChannel("game", { ordered: true }));
-    void (async () => {
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
-      nostr.sendSignal(peerPubkey, matchId, { type: "offer", sdp: offer });
-    })();
   } else {
     pc.ondatachannel = (e) => wireChannel(e.channel);
   }
 
+  // Subscribe BEFORE sending the offer so the answerer's relay subscription is
+  // in place when the offer event arrives. Ephemeral Nostr events are not stored;
+  // if the offer fires before subscribeSignals sends its REQ, it is gone forever.
   const unsub = nostr.subscribeSignals(async (payload: SignalMsg, from, mId) => {
     if (from !== peerPubkey || mId !== matchId) return;
     if (payload.type === "offer" && payload.sdp) {
@@ -143,6 +137,18 @@ export function connectPeer(
       }
     }
   });
+
+  // Send offer now that our own subscribeSignals is registered (answerer side has
+  // the same timing guarantee because both peers call connectPeer simultaneously
+  // from tryConnect, so by the time the offer is published the answerer's REQ is
+  // already in-flight to the relay).
+  if (isOfferer) {
+    void (async () => {
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      nostr.sendSignal(peerPubkey, matchId, { type: "offer", sdp: offer });
+    })();
+  }
 
   emit("connecting");
 
