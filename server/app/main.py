@@ -43,7 +43,10 @@ from .game_record import (
     serialize_record,
 )
 from .game_state import GameState, decode_position_id
+from .gnubg_client import GnubgClient
 from .og_storage_client import OgStorageError, get_blob, get_kv, put_blob, put_kv
+
+gnubg = GnubgClient()
 
 app = FastAPI()
 # Phase 20: the Next.js frontend at :3000 calls these endpoints cross-origin
@@ -2157,3 +2160,54 @@ def post_agent_teammate_chat(req: TeammateRequest):
         "backend": "compute",
         "latency_ms": int((time.time() - t0) * 1000),
     }
+
+
+# ─── gnubg evaluation endpoints ──────────────────────────────────────────────
+
+
+class EvaluateRequest(BaseModel):
+    position_id: str
+    match_id: str
+    dice: List[int]
+
+
+class PlayToEndRequest(BaseModel):
+    position_id: str
+    match_id: str
+
+
+@app.post("/evaluate")
+def post_evaluate(req: EvaluateRequest):
+    """Rank legal moves for the given position and dice using gnubg.
+
+    The dice are encoded into the match_id before calling gnubg's `hint`
+    so gnubg evaluates move quality for exactly the specified dice roll.
+
+    Request:  {"position_id": "...", "match_id": "...", "dice": [d1, d2]}
+    Response: {"candidates": [{"move": str, "equity": float}, ...]}
+    """
+    if len(req.dice) != 2:
+        raise HTTPException(status_code=400, detail="dice must have exactly 2 values")
+    try:
+        candidates = gnubg.evaluate(req.position_id, req.match_id, req.dice)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    return {"candidates": candidates}
+
+
+@app.post("/play_to_end")
+def post_play_to_end(req: PlayToEndRequest):
+    """Play a backgammon position to completion using gnubg for both sides.
+
+    gnubg plays both players from the given position until the game ends.
+    Returns game_over=true and the winner (0 or 1) determined from the
+    final match-id score.
+
+    Request:  {"position_id": "...", "match_id": "..."}
+    Response: {"game_over": true, "winner": 0|1, ...}
+    """
+    try:
+        result = gnubg.play_to_end(req.position_id, req.match_id)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    return result

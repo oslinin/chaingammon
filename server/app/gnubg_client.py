@@ -35,6 +35,7 @@ not very visible in the docs.
 
 from __future__ import annotations
 
+import base64
 import re
 import subprocess
 from typing import Optional
@@ -216,6 +217,7 @@ class GnubgClient:
         equities. Empty if no legal moves (e.g. dance from the bar) —
         caller should fall back to auto-play."""
         cmds = (
+            f"new match 1\n"
             f"set matchid {match_id}\n"
             f"set board {position_id}\n"
             f"hint\n"
@@ -252,8 +254,6 @@ class GnubgClient:
             # via `play` (which works for unforced no-move cases too).
             # We have to flip the on-roll player to gnubg first because
             # `play` doesn't act when both players are human.
-            import base64
-
             try:
                 b = base64.b64decode(match_id + "==")
                 turn_bit = (b[1] >> 3) & 1  # bit 11 in match-id
@@ -273,3 +273,99 @@ class GnubgClient:
         result = self.submit_move(position_id, match_id, best_move)
         result["best_move"] = best_move
         return result
+
+    # ─── gnubg evaluation + full-game play ────────────────────────
+
+    @staticmethod
+    def _patch_match_id(match_id: str, d1: Optional[int] = None, d2: Optional[int] = None) -> str:
+        """Return match_id with game_state=PLAYING and, if provided, dice set to (d1, d2).
+
+        Match-id bitstream (LSB-first per byte):
+          bits 8-10: game_state  (0=NONE, 1=PLAYING, 2=OVER, ...)
+          bits 15-17: dice1
+          bits 18-20: dice2
+
+        gnubg refuses set-board/hint when game_state=0 (NONE). This helper
+        forces PLAYING so the position is accepted.
+        """
+        b = bytearray(base64.b64decode(match_id + "=="))
+        while len(b) < 3:
+            b.append(0)
+
+        def set_bit(buf: bytearray, n: int, v: int) -> None:
+            idx, bit = n // 8, n % 8
+            if v:
+                buf[idx] |= 1 << bit
+            else:
+                buf[idx] &= ~(1 << bit)
+
+        # Force game_state = 1 (PLAYING): bit8=1, bit9=0, bit10=0
+        set_bit(b, 8, 1)
+        set_bit(b, 9, 0)
+        set_bit(b, 10, 0)
+
+        if d1 is not None and d2 is not None:
+            for i in range(3):
+                set_bit(b, 15 + i, (d1 >> i) & 1)
+                set_bit(b, 18 + i, (d2 >> i) & 1)
+
+        return base64.b64encode(bytes(b)).decode().rstrip("=")
+
+    def evaluate(self, position_id: str, match_id: str, dice: list[int]) -> list[dict]:
+        """Return candidate moves for the given dice, encoding them into match_id
+        so gnubg's `hint` evaluates move quality for exactly those dice."""
+        mid = self._patch_match_id(match_id, dice[0], dice[1])
+        return self.get_candidate_moves(position_id, mid)
+
+    _WINS_RE = re.compile(r"Player\s+(\d+)\s+wins", re.IGNORECASE)
+
+    def play_to_end(self, position_id: str, match_id: str) -> dict:
+        """Play from the given position to game completion using gnubg for both sides.
+
+        Sends 250 `play` commands in a single gnubg session — enough to cover
+        any backgammon game. Commands after game-end are silently ignored by gnubg.
+        Winner is inferred from the final match-id score fields; a regex on gnubg's
+        "Player N wins" output is used as a fallback.
+        """
+        active_mid = self._patch_match_id(match_id)
+        play_cmds = "play\n" * 250
+        cmds = (
+            f"set matchid {active_mid}\n"
+            f"set board {position_id}\n"
+            f"set player 0 gnubg\n"
+            f"set player 1 gnubg\n"
+            f"set automatic roll on\n"
+            + play_cmds
+            + "set output rawboard off\nshow board\n"
+        )
+        out = self._run(cmds)
+
+        final_pos = self._last_position_id(out)
+        final_mid = self._last_match_id(out)
+
+        # Primary: decode score from final match-id to determine winner.
+        winner: Optional[int] = None
+        if final_mid:
+            try:
+                from .game_state import decode_match_id
+                state = decode_match_id(final_mid)
+                score = state.get("score", [0, 0])
+                if score[0] > score[1]:
+                    winner = 0
+                elif score[1] > score[0]:
+                    winner = 1
+            except Exception:
+                pass
+
+        # Fallback: parse "Player N wins" from gnubg output.
+        if winner is None:
+            m = self._WINS_RE.search(out)
+            if m:
+                winner = int(m.group(1))
+
+        return {
+            "game_over": True,
+            "winner": winner,
+            "final_position_id": final_pos,
+            "final_match_id": final_mid,
+        }
