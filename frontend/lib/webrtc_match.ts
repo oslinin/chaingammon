@@ -23,9 +23,22 @@ import type { NostrMatchClient, SignalMsg } from "./nostr";
 const ICE_SERVERS: RTCIceServer[] = [
   { urls: "stun:stun.l.google.com:19302" },
   {
-    urls: "turn:132.145.158.84:3479?transport=tcp",
+    urls: [
+      "turn:132.145.158.84:3478",
+      "turn:132.145.158.84:3478?transport=tcp",
+    ],
     username: "cg",
     credential: "chaingammon2026",
+  },
+  // Public fallback — remove once VCN security list opens port 3478 on 132.145.158.84
+  {
+    urls: [
+      "turn:openrelay.metered.ca:80",
+      "turn:openrelay.metered.ca:443",
+      "turn:openrelay.metered.ca:443?transport=tcp",
+    ],
+    username: "openrelayproject",
+    credential: "openrelayproject",
   },
 ];
 

@@ -21,6 +21,8 @@ import { useAccount, useReadContracts, useSignMessage } from "wagmi";
 
 import { Board } from "../Board";
 import { DiceRoll } from "../DiceRoll";
+import { AgentTeammatePanel } from "../ChiefOfStaffPanel";
+import { MoveCycler } from "../MoveCycler";
 import { loadTheme, pickGameCoins } from "../boardThemes";
 import { useActiveChainId } from "../chains";
 import { MatchRegistryABI, useChainContracts } from "../contracts";
@@ -28,6 +30,7 @@ import { useChaingammonName } from "../useChaingammonName";
 import { useChaingammonProfile } from "../useChaingammonProfile";
 import { useEnsName } from "../useEnsName";
 import { useSponsoredWrite } from "../useSponsoredWrite";
+import { useTaggedCandidates } from "../../lib/useTaggedCandidates";
 import {
   type MatchState,
   newMatch,
@@ -86,16 +89,18 @@ function applyMoveSegment(
   off: [number, number],
   from: number | "bar",
   to: number | "off",
+  side: 0 | 1,
 ): { board: number[]; bar: [number, number]; off: [number, number] } {
   const b = [...board];
   const r: [number, number] = [bar[0], bar[1]];
   const o: [number, number] = [off[0], off[1]];
-  if (from === "bar") r[0] = Math.max(0, r[0] - 1);
-  else b[from - 1] -= 1;
-  if (to === "off") o[0] += 1;
+  const sign = side === 0 ? 1 : -1;
+  if (from === "bar") r[side] = Math.max(0, r[side] - 1);
+  else b[from - 1] -= sign;
+  if (to === "off") o[side] += 1;
   else {
-    if (b[to - 1] === -1) { b[to - 1] = 0; r[1] += 1; }
-    b[to - 1] += 1;
+    if (b[to - 1] === -sign) { b[to - 1] = 0; r[1 - side] += 1; }
+    b[to - 1] += sign;
   }
   return { board: b, bar: r, off: o };
 }
@@ -209,6 +214,10 @@ function HumanMatchInner() {
 
   // Doubling cube UI
   const [cubePrompt, setCubePrompt] = useState<"accept-drop" | null>(null);
+
+  // Advisor ghost-move hover + landscape cycler
+  const [hoveredMove, setHoveredMove] = useState<string | null>(null);
+  const [cyclerState, setCyclerState] = useState<{ positionId: string; idx: number }>({ positionId: "", idx: 0 });
 
   // Coins & theme
   const [gameCoins] = useState(() => pickGameCoins());
@@ -415,6 +424,7 @@ function HumanMatchInner() {
         setSelectedSource(null);
         setStagedMoves([]);
         setDisplayBoard(null);
+        setHoveredMove(null);
 
         if (next.game_over) {
           // Settlement handled by effect below.
@@ -441,13 +451,17 @@ function HumanMatchInner() {
       if (!game?.dice || waitingForRollRef.current || waitingForMoveRef.current) return;
       const fromStr = from === "bar" ? "bar" : String(from);
       const toStr = to === "off" ? "off" : String(to);
-      const seg = `${fromStr}/${toStr}`;
+      const curBoardForHit = displayBoard?.board ?? game.board;
+      const side = mySideRef.current ?? 0;
+      const dstCount = typeof to === "number" ? curBoardForHit[to - 1] : 0;
+      const isHit = typeof to === "number" && ((side === 0 && dstCount === -1) || (side === 1 && dstCount === 1));
+      const seg = `${fromStr}/${toStr}${isHit ? "*" : ""}`;
       const newStaged = [...stagedMoves, seg];
 
       const curBoard = displayBoard?.board ?? game.board;
       const curBar = displayBoard?.bar ?? game.bar;
       const curOff = displayBoard?.off ?? game.off;
-      const newDisplay = applyMoveSegment(curBoard, curBar as [number, number], curOff as [number, number], from, to);
+      const newDisplay = applyMoveSegment(curBoard, curBar as [number, number], curOff as [number, number], from, to, (mySideRef.current ?? 0) as 0 | 1);
 
       setStagedMoves(newStaged);
       setDisplayBoard(newDisplay);
@@ -471,9 +485,13 @@ function HumanMatchInner() {
       if (selectedSource === null) {
         // Clicking a source point.
         const side = mySideRef.current ?? 0;
-        const hasBar = game.bar[side] > 0;
+        // Use displayBoard when moves are staged so compound moves (same
+        // checker used twice) correctly see the intermediate position.
+        const activeBoard = displayBoard?.board ?? game.board;
+        const activeBar = displayBoard?.bar ?? game.bar;
+        const hasBar = (activeBar as [number, number])[side] > 0;
         if (hasBar) return; // must move from bar first
-        const checker = game.board[point - 1];
+        const checker = activeBoard[point - 1];
         const isOwn = side === 0 ? checker > 0 : checker < 0;
         if (!isOwn) return;
         setSelectedSource(point);
@@ -974,11 +992,36 @@ function HumanMatchInner() {
     stagedMoves.length === 0 &&
     (game?.cubeOwner === -1 || game?.cubeOwner === mySideRef.current);
 
-  const oppName = oppInfo?.ensLabel
+  const advisorDisabled = !canInteract || !!game?.game_over;
+  const { candidates: taggedCandidates, loading: candidatesLoading } = useTaggedCandidates({
+    board: game?.board,
+    bar: game?.bar as [number, number] | undefined,
+    off: game?.off as [number, number] | undefined,
+    turn: game?.turn as 0 | 1 | undefined,
+    dice: game?.dice ?? null,
+    positionId: game?.position_id ?? "",
+    disabled: advisorDisabled,
+  });
+
+  const cycleIdx = cyclerState.positionId === (game?.position_id ?? "") ? cyclerState.idx : 0;
+  const setCycleIdx = (next: number) => setCyclerState({ positionId: game?.position_id ?? "", idx: next });
+  const cyclerActive = !advisorDisabled && stagedMoves.length === 0 && selectedSource === null && taggedCandidates.length > 0;
+  const cyclerPreview = cyclerActive ? (taggedCandidates[Math.min(cycleIdx, taggedCandidates.length - 1)]?.move ?? null) : null;
+
+  const confirmCycledMove = (move: string) => {
+    setHoveredMove(null);
+    setStagedMoves([]);
+    setDisplayBoard(null);
+    setSelectedSource(null);
+    if (game) void commitMove(move, game);
+  };
+
+  const oppNameFull = oppInfo?.ensLabel
     ? `${oppInfo.ensLabel}.chaingammon.eth`
     : oppAddress
     ? `${oppAddress.slice(0, 8)}…`
     : "Opponent";
+  const oppNameShort = oppInfo?.ensLabel ?? (oppAddress ? `${oppAddress.slice(0, 8)}…` : "Opponent");
 
   return (
     <main
@@ -1021,7 +1064,7 @@ function HumanMatchInner() {
             color: "var(--cg-fg-3)",
           }}
         >
-          vs {oppName}
+          vs {oppNameFull}
           {oppInfo?.elo ? ` · ELO ${oppInfo.elo}` : ""}
         </span>
       </div>
@@ -1051,12 +1094,13 @@ function HumanMatchInner() {
           off={currentOff}
           turn={game?.turn ?? 0}
           mySide={mySideRef.current ?? 0}
-          opponentName={oppName}
+          opponentName={oppNameShort}
           themeKey={themeKey}
           cubeValue={game?.cubeValue ?? 1}
           cubeOwner={game?.cubeOwner ?? -1}
           onCubeClick={canOffer ? handleCubeClick : undefined}
           selectedPoint={selectedSource}
+          ghostMove={hoveredMove ?? cyclerPreview}
           onPointClick={canInteract ? handlePointClick : undefined}
           onBarClick={canInteract ? handleBarClick : undefined}
           playerAvatarUrls={gameCoins}
@@ -1075,6 +1119,37 @@ function HumanMatchInner() {
         <div style={{ fontSize: 13, fontFamily: "var(--cg-font-mono)", color: "var(--cg-fg-2)" }}>
           Score: {game.score[mySideRef.current ?? 0]} – {game.score[(1 - (mySideRef.current ?? 0)) as 0 | 1]}
           {" (first to "}{game.match_length}{")"}
+        </div>
+      )}
+
+      {/* Landscape-mobile move cycler */}
+      {game && game.dice && !game.game_over && canInteract && stagedMoves.length === 0 && taggedCandidates.length > 0 && (
+        <MoveCycler
+          candidates={taggedCandidates}
+          index={Math.min(cycleIdx, taggedCandidates.length - 1)}
+          onIndexChange={setCycleIdx}
+          onConfirm={confirmCycledMove}
+        />
+      )}
+
+      {/* Advisor panel — desktop only, shown when game is active */}
+      {game && phase === "playing" && !game.game_over && (
+        <div className="hidden sm:block" style={{ width: "100%", maxWidth: 740 }}>
+          <AgentTeammatePanel
+            positionId={game.position_id}
+            matchId={game.match_id}
+            dice={game.dice}
+            board={game.board}
+            bar={game.bar}
+            off={game.off}
+            turn={game.turn}
+            disabled={advisorDisabled}
+            onMoveSelect={(move) => { void commitMove(move, game); }}
+            onMoveHover={setHoveredMove}
+            noLLM
+            candidates={taggedCandidates}
+            candidatesLoading={candidatesLoading}
+          />
         </div>
       )}
 
