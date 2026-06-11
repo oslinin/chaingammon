@@ -119,7 +119,7 @@ Root-level workspace scripts (run from repo root):
 ```bash
 pnpm contracts:compile             # compile contracts
 pnpm contracts:test                # run Hardhat tests
-pnpm contracts:deploy              # deploy to 0G testnet (writes deployments/0g-testnet.json)
+pnpm contracts:deploy              # deploy to Sepolia (writes deployments/sepolia.json)
 pnpm contracts:verify              # verify deployed contracts on the explorer
 pnpm contracts:deploy-and-verify   # both in one shot
 pnpm frontend:dev                  # Next.js dev server
@@ -159,8 +159,8 @@ pnpm exec hardhat test
 # Run a single test file
 pnpm exec hardhat test test/phase2_EloMath.test.js
 
-# Deploy to 0G testnet (requires DEPLOYER_PRIVATE_KEY + RPC_URL in .env)
-pnpm exec hardhat run script/deploy.js --network 0g-testnet
+# Deploy to Sepolia (requires DEPLOYER_PRIVATE_KEY + RPC_URL in .env)
+pnpm exec hardhat run script/deploy.js --network sepolia
 ```
 
 ### frontend/ (Next.js 16, wagmi v3, viem v2)
@@ -197,7 +197,7 @@ See `## Frontend Policies` below for the three rules every frontend change must 
 | `contracts/src/MatchRegistry.sol` | Records matches with `gameRecordHash`, updates ELO |
 | `contracts/src/AgentRegistry.sol` | ERC-7857 iNFT registry (or ERC-721 fallback) |
 | `contracts/src/PlayerSubnameRegistrar.sol` | ENS subname issuance + text record control |
-| `frontend/app/wagmi.ts` | wagmi config (Phase 12): `defineChain` for 0G Galileo testnet (chainId 16602) + `createConfig` with `injected` connector. |
+| `frontend/app/wagmi.ts` | wagmi config: multi-chain setup with Sepolia as the primary settlement chain; `createConfig` with `injected` connector. |
 | `frontend/app/contracts.ts` | ABI + address constants for deployed contracts |
 | `frontend/app/providers.tsx` | Client Component wrapping `WagmiProvider` + `QueryClientProvider` (Phase 12). |
 | `frontend/app/ConnectButton.tsx` | Client Component (Phase 12): three-state connect button (no wallet / connect / connected with chain-switch nudge). |
@@ -208,7 +208,7 @@ See `## Frontend Policies` below for the three rules every frontend change must 
 
 ## Environment Variables
 
-Copy `.env.example` to `.env` in each sub-project before running. Never commit `.env`. After Phase 4 deploy, contract addresses go into `contracts/deployments/0g-testnet.json` and `frontend/app/contracts.ts`.
+Copy `.env.example` to `.env` in each sub-project before running. Never commit `.env`. After deploy, contract addresses go into `contracts/deployments/sepolia.json` and are picked up automatically via `frontend/app/contracts.ts`.
 
 Required envs by phase:
 
@@ -222,12 +222,11 @@ Required envs by phase:
 | 16+ | server/ | `KH_API_KEY` (or use `kh auth login`), `KEEPERHUB_WORKFLOW_ID` |
 | 12+ | frontend/ | `NEXT_PUBLIC_*` for contract addresses, RPC, API URL |
 
-## 0G Testnet
+## Settlement Chain (Sepolia)
 
-- RPC: `https://evmrpc-testnet.0g.ai`
-- Chain ID: `16602`
-- Explorer: `https://chainscan-galileo.0g.ai`
-- Faucet: `https://build.0g.ai`
+- Chain ID: `11155111`
+- Explorer: `https://sepolia.etherscan.io`
+- Faucet: any public Sepolia faucet
 
 ## Sponsor Notes
 
@@ -342,7 +341,7 @@ Three rules every change inside `frontend/` must follow. They exist because each
 - **No per-address env vars.** `NEXT_PUBLIC_AGENT_REGISTRY_ADDRESS` etc. were removed and must not come back. Addresses ride from the deployment JSON files.
 - **Reading addresses in components:** call `useChainContracts()` from `frontend/app/contracts.ts` — returns `{matchRegistry, agentRegistry, playerSubnameRegistrar}` for the wallet's current chain. Pair every `useReadContract` / `useReadContracts` with `chainId: useActiveChainId()` so the read goes to the same chain whose addresses you're using.
 
-Why: before this design, switching between Mode A (0G testnet) and Mode B (Hardhat localhost) meant editing four env vars and three TS files. We shipped at least one bug from address/chain mismatch where the wallet was on Hardhat but reads went to testnet addresses.
+Why: before this design, switching between Mode A (Sepolia) and Mode B (Hardhat localhost) meant editing four env vars and three TS files. We shipped at least one bug from address/chain mismatch where the wallet was on Hardhat but reads went to testnet addresses.
 
 ### 2. Playwright is the visual-regression gate
 

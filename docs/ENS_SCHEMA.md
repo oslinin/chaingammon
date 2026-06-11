@@ -12,7 +12,7 @@ Chaingammon issues subnames under `chaingammon.eth` for every registered player 
 
 `chaingammon.eth`
 
-Currently deployed on 0G testnet (chainId 16602, RPC `https://evmrpc-testnet.0g.ai`). The registrar contract is `PlayerSubnameRegistrar` at the address published in [`contracts/deployments/0g-testnet.json`](../contracts/deployments/0g-testnet.json).
+Currently deployed on Sepolia (chainId 11155111). The registrar contract is `PlayerSubnameRegistrar` at the address published in [`contracts/deployments/sepolia.json`](../contracts/deployments/sepolia.json).
 
 ---
 
@@ -67,7 +67,7 @@ The protocol guarantees that the `elo` text record is updated by the server in t
 
 ## Migration Note
 
-Currently deployed on 0G testnet as a self-contained registrar (no dependency on the canonical ENS root). v2 migrates to L2 ENS via Durin so mainnet ENS resolvers can read subnames directly. The text record schema above is stable across v1 → v2.
+Currently deployed on Sepolia as a self-contained registrar (no dependency on the canonical ENS root). v2 migrates to L2 ENS via Durin so mainnet ENS resolvers can read subnames directly. The text record schema above is stable across v1 → v2.
 
 ---
 
