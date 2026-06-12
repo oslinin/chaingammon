@@ -97,11 +97,12 @@ export function Providers({ children }: { children: React.ReactNode }) {
         appearance: {
           theme: "dark",
           accentColor: "#C99B5C",
-          // WalletConnect only — direct injected MetaMask ("metamask" /
-          // "detected_wallets") caused broken deep links and inconsistent
-          // behaviour across browsers. Users connect MetaMask via the
-          // WalletConnect QR/app picker, where it appears as the top option.
-          walletList: ["wallet_connect"],
+          // MetaMask first, then WalletConnect. On Android, "metamask" triggers
+          // a broken metamask.app.link deep link when window.ethereum is absent,
+          // so Android gets WalletConnect-only.
+          walletList: (typeof window !== "undefined" && /Android/i.test(navigator.userAgent))
+            ? ["wallet_connect"]
+            : ["metamask", "wallet_connect"],
           showWalletLoginFirst: false,
         },
         embeddedWallets: {
