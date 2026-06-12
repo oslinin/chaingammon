@@ -149,6 +149,7 @@ function HumanMatchInner() {
 
   const { name: myEnsName } = useEnsName(address);
   const { name: oppEnsName } = useEnsName(oppAddress ?? undefined);
+  const { label: oppCgLabel } = useChaingammonName(oppAddress ?? undefined);
 
   const nonceCalls =
     !testMode && address && oppAddress && matchRegistry
@@ -1016,12 +1017,13 @@ function HumanMatchInner() {
     if (game) void commitMove(move, game);
   };
 
-  const oppNameFull = oppInfo?.ensLabel
-    ? `${oppInfo.ensLabel}.chaingammon.eth`
+  const resolvedOppLabel = oppInfo?.ensLabel ?? oppCgLabel;
+  const oppNameFull = resolvedOppLabel
+    ? `${resolvedOppLabel}.chaingammon.eth`
     : oppAddress
     ? `${oppAddress.slice(0, 8)}…`
     : "Opponent";
-  const oppNameShort = oppInfo?.ensLabel ?? (oppAddress ? `${oppAddress.slice(0, 8)}…` : "Opponent");
+  const oppNameShort = resolvedOppLabel ?? (oppAddress ? `${oppAddress.slice(0, 8)}…` : "Opponent");
 
   return (
     <main
