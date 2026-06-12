@@ -15,10 +15,11 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useAccount, useReadContract, useWaitForTransactionReceipt } from "wagmi";
+import Link from "next/link";
 
 import { useChaingammonName } from "./useChaingammonName";
 import { useChaingammonProfile, useSyncEnsProfile } from "./useChaingammonProfile";
-import { useActiveChainId } from "./chains";
+import { useActiveChainId, useExplorerUrl } from "./chains";
 import { MatchRegistryABI, PlayerSubnameRegistrarABI, useChainContracts } from "./contracts";
 import { recordTransaction } from "./transactions";
 import { useI18n } from "./i18n";
@@ -26,6 +27,12 @@ import { useSponsoredWrite } from "./useSponsoredWrite";
 
 function shorten(addr: string) {
   return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
+}
+
+/** Build an explorer address URL for the given address on the active chain. */
+function addressUrl(addr: string, explorerUrl: string | undefined): string | undefined {
+  if (!explorerUrl) return undefined;
+  return `${explorerUrl}/address/${addr}`;
 }
 
 function isValidLabel(s: string): boolean {
@@ -218,6 +225,7 @@ export function ProfileBadge({ address }: { address: `0x${string}` }) {
   const [renaming, setRenaming] = useState(false);
 
   const chainId = useActiveChainId();
+  const explorerUrl = useExplorerUrl();
   const { matchRegistry } = useChainContracts();
   const { data: chainEloRaw } = useReadContract({
     address: matchRegistry,
@@ -231,12 +239,26 @@ export function ProfileBadge({ address }: { address: `0x${string}` }) {
   const elo = chainElo ?? ensElo;
 
   if (nameLoading || (nameError && !label)) {
+    const url = addressUrl(address, explorerUrl);
     return (
       <span
         data-testid="profile-badge"
         style={{ fontFamily: "var(--cg-font-mono)", fontSize: 13, color: "var(--cg-fg-3)" }}
       >
-        {shorten(address)}
+        {url ? (
+          <a
+            href={url}
+            target="_blank"
+            rel="noreferrer"
+            style={{ color: "inherit", textDecoration: "none" }}
+            onMouseEnter={(e) => { (e.currentTarget as HTMLAnchorElement).style.color = "var(--cg-brass)"; }}
+            onMouseLeave={(e) => { (e.currentTarget as HTMLAnchorElement).style.color = "inherit"; }}
+          >
+            {shorten(address)}
+          </a>
+        ) : (
+          shorten(address)
+        )}
       </span>
     );
   }
@@ -300,24 +322,49 @@ export function ProfileBadge({ address }: { address: `0x${string}` }) {
           title={address}
           style={{ fontSize: 11, color: "var(--cg-fg-3)", fontFamily: "var(--cg-font-mono)" }}
         >
-          {shorten(address)}
+          {(() => {
+            const url = addressUrl(address, explorerUrl);
+            if (url) {
+              return (
+                <a
+                  href={url}
+                  target="_blank"
+                  rel="noreferrer"
+                  style={{ color: "inherit", textDecoration: "none" }}
+                  onMouseEnter={(e) => { (e.currentTarget as HTMLAnchorElement).style.color = "var(--cg-brass)"; }}
+                  onMouseLeave={(e) => { (e.currentTarget as HTMLAnchorElement).style.color = "inherit"; }}
+                >
+                  {shorten(address)}
+                </a>
+              );
+            }
+            return shorten(address);
+          })()}
         </span>
         {elo ? (
-          <span
-            title={t("elo_rating_label")}
-            style={{
-              borderRadius: "var(--cg-radius-sm)",
-              background: "rgba(201,155,92,0.15)",
-              border: "1px solid rgba(201,155,92,0.30)",
-              padding: "1px 6px",
-              fontSize: 11,
-              fontWeight: 600,
-              color: "var(--cg-brass-hi)",
-              fontFamily: "var(--cg-font-mono)",
-            }}
+          <Link
+            href={`/humans/${label || address}`}
+            style={{ textDecoration: "none" }}
           >
-            ELO {elo}
-          </span>
+            <span
+              title={t("elo_rating_label")}
+              style={{
+                borderRadius: "var(--cg-radius-sm)",
+                background: "rgba(201,155,92,0.15)",
+                border: "1px solid rgba(201,155,92,0.30)",
+                padding: "1px 6px",
+                fontSize: 11,
+                fontWeight: 600,
+                color: "var(--cg-brass-hi)",
+                fontFamily: "var(--cg-font-mono)",
+                cursor: "pointer",
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(201,155,92,0.25)"; }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = "rgba(201,155,92,0.15)"; }}
+            >
+              ELO {elo}
+            </span>
+          </Link>
         ) : null}
         {chainElo && label && chainElo !== ensElo ? (
           <button

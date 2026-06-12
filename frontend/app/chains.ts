@@ -244,6 +244,12 @@ export function useActiveChainId(): number {
   return useChainId();
 }
 
+/** Return the block-explorer URL for the active chain, or undefined. */
+export function useExplorerUrl(): string | undefined {
+  const chainId = useChainId();
+  return CHAIN_DEFS[chainId]?.explorerUrl;
+}
+
 // Returns all chains for which a real deployment exists (non-placeholder).
 // Shown in the network dropdown — grows automatically as each testnet is deployed.
 export function useSelectableChains(): ChainEntry[] {
