@@ -30,9 +30,9 @@ test.describe("game layout — phone landscape", () => {
   const { defaultBrowserType: _1, ...iphoneLandscape } = devices["iPhone 12 landscape"];
   test.use(iphoneLandscape);
 
-  test("board takes the whole screen; advisor panel is a toggleable overlay", async ({ page }) => {
+  test("board takes the whole screen; advisor panel is a toggleable overlay", async ({ page, baseURL }) => {
     await mockAgentList(page);
-    await page.goto("/team-demo?opponents=1");
+    await page.goto(`${baseURL}/team-demo?opponents=1`);
 
     // The header is hidden in landscape, so wait on the landscape-only toggle.
     const toggle = page.getByTestId("advisor-toggle-landscape");
@@ -59,9 +59,9 @@ test.describe("game layout — phone landscape", () => {
     await expect(panel).toBeHidden();
   });
 
-  test("move cycler previews gnubg-ranked turns and commits on confirm", async ({ page }) => {
+  test("move cycler previews gnubg-ranked turns and commits on confirm", async ({ page, baseURL }) => {
     await mockAgentList(page);
-    await page.goto("/team-demo?opponents=1");
+    await page.goto(`${baseURL}/team-demo?opponents=1`);
 
     // Wait for the game to render (advisor toggle is the landscape canary).
     await expect(page.getByTestId("advisor-toggle-landscape")).toBeVisible({ timeout: 10_000 });
@@ -113,9 +113,9 @@ test.describe("game layout — phone portrait", () => {
   const { defaultBrowserType: _2, ...iphone } = devices["iPhone 12"];
   test.use(iphone);
 
-  test("layout stays stacked and shows player status cards", async ({ page }) => {
+  test("layout stays stacked and shows player status cards", async ({ page, baseURL }) => {
     await mockAgentList(page);
-    await page.goto("/team-demo?opponents=1");
+    await page.goto(`${baseURL}/team-demo?opponents=1`);
 
     await expect(
       page.locator("h1", { hasText: "Off-chain game" })

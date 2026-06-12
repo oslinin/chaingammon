@@ -108,12 +108,12 @@ async function mockServerRoutes(page: Page): Promise<void> {
 // ── Tests ──────────────────────────────────────────────────────────────────
 
 test.describe("off-chain game flow", () => {
-  test("plays a full match to completion via fast-forward — no errors", async ({ page }) => {
+  test("plays a full match to completion via fast-forward — no errors", async ({ page, baseURL }) => {
     // FIXME: Next.js SSR hydration leaves `setup=true` even with ?opponents=1,
     // so the game never auto-starts and the "Fast forward" button is unreachable.
     test.fixme();
     // ?opponents=1 skips the setup screen and auto-starts with opponent Agent 1.
-    await page.goto("/team-demo?opponents=1");
+    await page.goto(`${baseURL}/team-demo?opponents=1`);
 
     // Header confirms we're in an off-chain game (not settlement mode).
     await expect(
@@ -140,11 +140,11 @@ test.describe("on-chain game flow", () => {
     await mockServerRoutes(page);
   });
 
-  test("plays a full on-chain match via fast-forward and settles — no errors", async ({ page }) => {
+  test("plays a full on-chain match via fast-forward and settles — no errors", async ({ page, baseURL }) => {
     // FIXME: same SSR hydration issue as off-chain test.
     test.fixme();
     // opponents=1&settle=1 — auto-start with KeeperHub settlement enabled.
-    await page.goto("/team-demo?opponents=1&settle=1");
+    await page.goto(`${baseURL}/team-demo?opponents=1&settle=1`);
 
     // On-chain mode labels the header "Official Game".
     await expect(
