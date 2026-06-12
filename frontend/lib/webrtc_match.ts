@@ -32,16 +32,6 @@ const ICE_SERVERS: RTCIceServer[] = [
     username: "cg",
     credential: "chaingammon2026",
   },
-  // Public fallback for symmetric NAT when the private TURN is unreachable.
-  {
-    urls: [
-      "turn:openrelay.metered.ca:80",
-      "turn:openrelay.metered.ca:443",
-      "turn:openrelay.metered.ca:443?transport=tcp",
-    ],
-    username: "openrelayproject",
-    credential: "openrelayproject",
-  },
 ];
 
 export type ConnState = "connecting" | "open" | "closed" | "failed";

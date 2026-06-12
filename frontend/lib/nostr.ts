@@ -32,7 +32,6 @@ export const DEFAULT_RELAYS = [
   "wss://nos.lol",
   "wss://relay.primal.net",
   "wss://relay.damus.io",
-  "wss://relay.nostr.band",
 ];
 
 const MATCH_TAG = "chaingammon-match";
