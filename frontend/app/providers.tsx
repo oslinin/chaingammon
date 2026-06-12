@@ -97,14 +97,11 @@ export function Providers({ children }: { children: React.ReactNode }) {
         appearance: {
           theme: "dark",
           accentColor: "#C99B5C",
-          // On Android, "metamask" triggers a broken metamask.app.link deep
-          // link when the extension isn't present. Use detected_wallets there
-          // (surfaces the extension if somehow installed) and WalletConnect
-          // for mobile wallet pairing. On desktop, "metamask" always shows
-          // the entry — with a download prompt when the extension isn't installed.
-          walletList: (typeof window !== "undefined" && /Android/i.test(navigator.userAgent))
-            ? ["detected_wallets", "wallet_connect"]
-            : ["metamask", "detected_wallets", "wallet_connect"],
+          // WalletConnect only — direct injected MetaMask ("metamask" /
+          // "detected_wallets") caused broken deep links and inconsistent
+          // behaviour across browsers. Users connect MetaMask via the
+          // WalletConnect QR/app picker, where it appears as the top option.
+          walletList: ["wallet_connect"],
           showWalletLoginFirst: false,
         },
         embeddedWallets: {
