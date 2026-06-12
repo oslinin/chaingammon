@@ -23,14 +23,16 @@ import type { NostrMatchClient, SignalMsg } from "./nostr";
 const ICE_SERVERS: RTCIceServer[] = [
   { urls: "stun:stun.l.google.com:19302" },
   {
+    // Port 3479 is open on the VCN security list; 3478 is not yet.
+    // Switch to 3478 once the VCN rule is updated.
     urls: [
-      "turn:132.145.158.84:3478",
-      "turn:132.145.158.84:3478?transport=tcp",
+      "turn:132.145.158.84:3479",
+      "turn:132.145.158.84:3479?transport=tcp",
     ],
     username: "cg",
     credential: "chaingammon2026",
   },
-  // Public fallback — remove once VCN security list opens port 3478 on 132.145.158.84
+  // Public fallback for symmetric NAT when the private TURN is unreachable.
   {
     urls: [
       "turn:openrelay.metered.ca:80",

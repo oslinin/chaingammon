@@ -148,7 +148,6 @@ function HumanMatchInner() {
   const [oppAddress, setOppAddress] = useState<`0x${string}` | null>(null);
 
   const { name: myEnsName } = useEnsName(address);
-  const { name: oppEnsName } = useEnsName(oppAddress ?? undefined);
   const { label: oppCgLabel } = useChaingammonName(oppAddress ?? undefined);
 
   const nonceCalls =
