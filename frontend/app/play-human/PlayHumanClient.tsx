@@ -386,30 +386,35 @@ function HumanMatchInner() {
 
   // ── Per-turn: roll dice (mover side) ──────────────────────────────────
   const rollMyDice = useCallback(async (currentGame: MatchState) => {
-    try {
-      const round = await fetchDrandRound();
-      const idx = turnIndexRef.current;
-      const roll = deriveDice(`0x${round.randomness.replace(/^0x/, "")}` as `0x${string}`, idx, round.round);
-      turnIndexRef.current += 1;
-
-      sendMsg({ type: "roll", roundNumber: round.round, turnIndex: idx });
-
-      const withDice: MatchState = { ...currentGame, dice: [roll.d1, roll.d2] };
-      gameRef.current = withDice;
-      setGame(withDice);
-
-      // Auto-skip if no legal moves.
-      const gboard: GameBoard = { points: withDice.board, bar: withDice.bar, off: withDice.off };
-      if (!hasLegalMoves(gboard, mySideRef.current as 0 | 1, [roll.d1, roll.d2])) {
-        const skipped = skipTurn(withDice);
-        gameRef.current = skipped;
-        setGame(skipped);
-        sendMsg({ type: "skip" });
-        // Opponent's turn — wait for their roll.
-        waitingForRollRef.current = true;
+    let round: { round: number; randomness: string } | null = null;
+    for (let attempt = 0; attempt < 3 && !round; attempt++) {
+      try {
+        round = await fetchDrandRound();
+      } catch {
+        if (attempt < 2) await new Promise((r) => setTimeout(r, 2000));
       }
-    } catch {
-      // drand fetch failed — retry next turn
+    }
+    if (!round) return; // all retries failed — game stays in "Rolling dice…" until reload
+
+    const idx = turnIndexRef.current;
+    const roll = deriveDice(`0x${round.randomness.replace(/^0x/, "")}` as `0x${string}`, idx, round.round);
+    turnIndexRef.current += 1;
+
+    sendMsg({ type: "roll", roundNumber: round.round, turnIndex: idx });
+
+    const withDice: MatchState = { ...currentGame, dice: [roll.d1, roll.d2] };
+    gameRef.current = withDice;
+    setGame(withDice);
+
+    // Auto-skip if no legal moves.
+    const gboard: GameBoard = { points: withDice.board, bar: withDice.bar, off: withDice.off };
+    if (!hasLegalMoves(gboard, mySideRef.current as 0 | 1, [roll.d1, roll.d2])) {
+      const skipped = skipTurn(withDice);
+      gameRef.current = skipped;
+      setGame(skipped);
+      sendMsg({ type: "skip" });
+      // Opponent's turn — wait for their roll.
+      waitingForRollRef.current = true;
     }
   }, [sendMsg]);
 
@@ -553,8 +558,15 @@ function HumanMatchInner() {
 
       if (msg.type === "roll") {
         if (!currentGame) return;
-        try {
-          const round = await fetchDrandRound(msg.roundNumber);
+        let round: { round: number; randomness: string } | null = null;
+        for (let attempt = 0; attempt < 3 && !round; attempt++) {
+          try {
+            round = await fetchDrandRound(msg.roundNumber);
+          } catch {
+            if (attempt < 2) await new Promise((r) => setTimeout(r, 2000));
+          }
+        }
+        if (round) {
           const roll = deriveDice(`0x${round.randomness.replace(/^0x/, "")}` as `0x${string}`, msg.turnIndex, round.round);
           turnIndexRef.current = msg.turnIndex + 1;
           const withDice: MatchState = { ...currentGame, dice: [roll.d1, roll.d2] };
@@ -562,7 +574,7 @@ function HumanMatchInner() {
           setGame(withDice);
           waitingForMoveRef.current = true;
           waitingForRollRef.current = false;
-        } catch {/* ignore */}
+        }
       }
 
       if (msg.type === "move") {
@@ -1061,16 +1073,23 @@ function HumanMatchInner() {
         >
           ← Home
         </Link>
-        <span
-          style={{
-            fontSize: 13,
-            fontFamily: "var(--cg-font-mono)",
-            color: "var(--cg-fg-3)",
-          }}
-        >
-          vs {oppNameFull}
-          {oppInfo?.elo ? ` · ELO ${oppInfo.elo}` : ""}
-        </span>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <span
+            style={{
+              fontSize: 13,
+              fontFamily: "var(--cg-font-mono)",
+              color: "var(--cg-fg-3)",
+            }}
+          >
+            vs {oppNameFull}
+            {oppInfo?.elo ? ` · ELO ${oppInfo.elo}` : ""}
+          </span>
+          {phase === "playing" && game && !game.game_over && (
+            <button type="button" className="cg-chip" style={{ fontSize: 12 }} onClick={handleResign}>
+              Resign
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Phase banners */}
