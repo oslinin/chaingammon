@@ -19,9 +19,9 @@ import { connectPeer } from "../lib/webrtc_match";
 import { peerMatches } from "../lib/peer_connections";
 
 const STABILIZE_MS = 3_000;
-const PRESENCE_TTL_S = 35;
-const PRESENCE_INTERVAL_MS = 5_000;  // re-publish often; ephemeral events not stored by relays
-const CONNECT_TIMEOUT_MS = 30_000;
+const PRESENCE_TTL_S = 22;
+const PRESENCE_INTERVAL_MS = 10_000; // 10s: stays under relay rate limits while keeping discovery fast
+const CONNECT_TIMEOUT_MS = 15_000;
 const REPAIR_MS = 5_000;    // retry pairing interval
 const GIVE_UP_MS = 120_000; // fall back to agent after 2 minutes without a match
 
@@ -247,9 +247,10 @@ function EloHome() {
     const myEloNum = Number(chainEloRaw ?? 1500) || 1500;
     nostr.startPresence({ ensLabel: "", address: address ?? "", sessionPubkey: nostr.pubkey, elo: myEloNum }, PRESENCE_INTERVAL_MS);
     const unsub = nostr.subscribePresence((p, pubkey, at) => {
-      // Skip ghost sessions from my own wallet (same address, different Nostr pubkey).
-      if (p.address && address && p.address.toLowerCase() === address.toLowerCase()) {
-        console.debug("[hvh] ignored self-echo from own wallet", pubkey.slice(0, 8));
+      // Skip our own presence echo (same wallet address AND same Nostr pubkey).
+      // Different pubkey = different browser tab/window sharing a wallet — allow matching.
+      if (p.address && address && p.address.toLowerCase() === address.toLowerCase() && pubkey === nostr.pubkey) {
+        console.debug("[hvh] ignored self-echo", pubkey.slice(0, 8));
         return;
       }
       console.debug("[hvh] presence received from", pubkey.slice(0, 8), "elo", p.elo, "addr", p.address?.slice(0, 8));
