@@ -22,12 +22,16 @@ import {
   type Event,
 } from "nostr-tools";
 
-// A small spread of reliable public relays. More = more robust discovery, but
-// slower; tune during testing.
-export const DEFAULT_RELAYS = [
-  "wss://relay.damus.io",
+// Separate publish and subscribe relay sets.
+// Publish to fewer relays to stay under rate limits; subscribe broadly for discovery.
+export const PUBLISH_RELAYS = [
   "wss://nos.lol",
   "wss://relay.primal.net",
+];
+export const DEFAULT_RELAYS = [
+  "wss://nos.lol",
+  "wss://relay.primal.net",
+  "wss://relay.damus.io",
   "wss://relay.nostr.band",
 ];
 
@@ -65,12 +69,14 @@ export interface SignalMsg {
 export class NostrMatchClient {
   private pool = new SimplePool();
   private relays: string[];
+  private publishRelays: string[];
   private id: NostrIdentity;
   private presenceTimer: ReturnType<typeof setInterval> | null = null;
 
-  constructor(id: NostrIdentity, relays: string[] = DEFAULT_RELAYS) {
+  constructor(id: NostrIdentity, relays: string[] = DEFAULT_RELAYS, publishRelays: string[] = PUBLISH_RELAYS) {
     this.id = id;
     this.relays = relays;
+    this.publishRelays = publishRelays;
   }
 
   get pubkey(): string {
@@ -89,7 +95,7 @@ export class NostrMatchClient {
         },
         this.id.sk,
       );
-      this.pool.publish(this.relays, evt);
+      this.pool.publish(this.publishRelays, evt);
     };
     publishOnce();
     this.presenceTimer = setInterval(publishOnce, intervalMs);
@@ -141,7 +147,7 @@ export class NostrMatchClient {
       },
       this.id.sk,
     );
-    this.pool.publish(this.relays, evt);
+    this.pool.publish(this.publishRelays, evt);
   }
 
   /** Subscribe to signaling addressed to me (#p == my pubkey). Returns unsubscribe fn. */
