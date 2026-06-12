@@ -69,9 +69,10 @@ interface ActionCardProps {
   meta: string;
   href?: string;
   onClick?: () => void;
+  disabled?: boolean;
 }
 
-function ActionCard({ variant, glyph, label, sublabel, meta, href, onClick }: ActionCardProps) {
+function ActionCard({ variant, glyph, label, sublabel, meta, href, onClick, disabled }: ActionCardProps) {
   const primary = variant === "primary";
   const cardStyle: React.CSSProperties = {
     display: "flex",
@@ -84,9 +85,10 @@ function ActionCard({ variant, glyph, label, sublabel, meta, href, onClick }: Ac
     color: primary ? "var(--cg-brass-ink)" : "var(--cg-fg-1)",
     textDecoration: "none",
     transition: "background 120ms ease, border-color 120ms ease",
-    cursor: "pointer",
+    cursor: disabled ? "not-allowed" : "pointer",
     textAlign: "left" as const,
     width: "100%",
+    opacity: disabled ? 0.45 : 1,
   };
   const inner = (
     <>
@@ -129,7 +131,10 @@ function ActionCard({ variant, glyph, label, sublabel, meta, href, onClick }: Ac
     </>
   );
   if (onClick) {
-    return <button type="button" onClick={onClick} style={cardStyle}>{inner}</button>;
+    return <button type="button" onClick={onClick} disabled={disabled} style={cardStyle}>{inner}</button>;
+  }
+  if (disabled) {
+    return <span style={cardStyle}>{inner}</span>;
   }
   return <Link href={href!} style={cardStyle}>{inner}</Link>;
 }
@@ -241,6 +246,7 @@ function EloHome() {
   }, [router]);
 
   const startPlay = useCallback(() => {
+    if (!address) return; // wallet not connected yet — presence would publish empty address
     const id = newIdentity();
     const nostr = new NostrMatchClient(id);
     nostrRef.current = nostr;
@@ -386,6 +392,7 @@ function EloHome() {
             meta="RATED"
             sublabel={searching ? searchStatus : "Find a human first · falls back to bot"}
             onClick={searching ? stopSearching : startPlay}
+            disabled={!address && !searching}
           />
           <ActionCard
             variant="secondary"
@@ -394,6 +401,7 @@ function EloHome() {
             meta="STAKE"
             sublabel="Wagered match · winner takes pot"
             href="/match?stake=1"
+            disabled={!address}
           />
         </div>
 

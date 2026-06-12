@@ -779,8 +779,15 @@ function HumanMatchInner() {
     const processHello = (msg: HelloMsg) => {
       if (oppHelloRef.current) return;
       const currentAddr = addressRef.current;
-      if (!currentAddr || !msg.address) {
+      if (!currentAddr) {
         bufferedHelloRef.current = msg;
+        return;
+      }
+      // If opponent sent empty address they connected before their wallet loaded.
+      // Don't buffer forever — show an error so the user knows to retry.
+      if (!msg.address) {
+        setPhase("error");
+        setPhaseError("Opponent connected before their wallet loaded. Both players should refresh and try again.");
         return;
       }
       oppHelloRef.current = msg;
