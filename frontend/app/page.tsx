@@ -213,7 +213,7 @@ function EloHome() {
     const mid = hvhMatchId(nostr.pubkey, partner.pubkey);
     setSearchStatus("Connecting…");
     const peer = connectPeer(nostr, partner.pubkey, mid, isOfferer);
-    peerMatches.set(mid, { peer, isOfferer });
+    peerMatches.set(mid, { peer, isOfferer, myNostrPubkey: nostr.pubkey });
     let timedOut = false;
     const timer = setTimeout(() => {
       timedOut = true;
@@ -254,9 +254,10 @@ function EloHome() {
         return;
       }
       console.debug("[hvh] presence received from", pubkey.slice(0, 8), "elo", p.elo, "addr", p.address?.slice(0, 8));
-      // Key by wallet address so multiple Nostr sessions from the same wallet
-      // collapse to one entry; keep whichever arrived most recently.
-      const key = p.address || pubkey;
+      // Key by Nostr pubkey (unique per session) so same-wallet tabs each
+      // appear as a separate entry. Address-keying caused two tabs from the
+      // same wallet to never see each other and both pair with a third party.
+      const key = pubkey;
       const existing = searchersRef.current.get(key);
       if (!existing || at >= existing.at) {
         searchersRef.current.set(key, { s: { pubkey, elo: p.elo ?? 1500 }, at });

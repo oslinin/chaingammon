@@ -11,6 +11,7 @@ import type { PeerConnection } from "./webrtc_match";
 export interface PeerMatchInfo {
   peer: PeerConnection;
   isOfferer: boolean;
+  myNostrPubkey: string;
 }
 
 export const peerMatches = new Map<string, PeerMatchInfo>();

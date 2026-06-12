@@ -54,8 +54,9 @@ type HelloMsg = {
   ensLabel: string | null;
   ensName: string | null;
   elo: number;
-  nonce: string;       // BigInt serialized as decimal string
-  sessionKey: string;  // session key address (0x...)
+  nonce: string;        // BigInt serialized as decimal string
+  sessionKey: string;   // session key address (0x...)
+  nostrPubkey?: string; // ephemeral Nostr pubkey; if present, used for deterministic side assignment
 };
 
 type AuthMsg = {
@@ -717,6 +718,8 @@ function HumanMatchInner() {
     const entry = peerMatches.get(matchId);
     if (!entry) return;
 
+    const nostrPubkey = entry.myNostrPubkey;
+
     // Listen for state open to send hello.
     entry.peer.onState((s) => {
       if (s === "open" && !helloSentRef.current && address) {
@@ -732,6 +735,7 @@ function HumanMatchInner() {
           elo: Number(elo ?? "1500") || 1500,
           nonce: "0",     // placeholder — real nonce sent in auth phase
           sessionKey: acct.address,
+          nostrPubkey,
         };
         entry.peer.send(hello);
       } else if (s === "failed" || s === "closed") {
@@ -754,6 +758,7 @@ function HumanMatchInner() {
         elo: Number(elo ?? "1500") || 1500,
         nonce: "0",
         sessionKey: acct.address,
+        nostrPubkey,
       };
       entry.peer.send(hello);
     }
@@ -790,11 +795,16 @@ function HumanMatchInner() {
         sessionKey: msg.sessionKey,
       });
 
-      // Use the offerer role (set by computePairing in FindHumanButton) as the
-      // side-0/1 tiebreaker. Wallet-address comparison breaks when both players
-      // share the same address (e.g. same embedded wallet in both browsers).
-      const side: 0 | 1 = peerEntry.isOfferer ? 0 : 1;
-      console.debug("[hvh] side assigned", { isOfferer: peerEntry.isOfferer, side, myAddr: currentAddr?.slice(0, 8), oppAddr: msg.address?.slice(0, 8) });
+      // Determine side by comparing Nostr pubkeys when both are present — this is
+      // self-consistent regardless of which code version either player runs.
+      // Lower Nostr pubkey → side 0 (first mover). Falls back to peerMatches.isOfferer
+      // if the opponent sent an older hello without nostrPubkey.
+      const myNostrPk = peerEntry.myNostrPubkey;
+      const oppNostrPk = msg.nostrPubkey;
+      const side: 0 | 1 = (myNostrPk && oppNostrPk)
+        ? (myNostrPk < oppNostrPk ? 0 : 1)
+        : (peerEntry.isOfferer ? 0 : 1);
+      console.debug("[hvh] side assigned", { isOfferer: peerEntry.isOfferer, side, myNostrPk: myNostrPk?.slice(0, 8), oppNostrPk: oppNostrPk?.slice(0, 8), myAddr: currentAddr?.slice(0, 8), oppAddr: msg.address?.slice(0, 8) });
       setMySide(side);
       mySideRef.current = side;
     };
@@ -873,6 +883,7 @@ function HumanMatchInner() {
           elo: Number(elo ?? "1500") || 1500,
           nonce: myNonce.toString(),
           sessionKey: sessionAccount.address,
+          nostrPubkey: peerMatches.get(matchId)?.myNostrPubkey,
         };
         sendMsg(hello2);
       } catch {
