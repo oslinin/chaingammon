@@ -98,7 +98,7 @@ export function FindHumanButton() {
       setStatus(`Connecting to opponent…`);
 
       const peer = connectPeer(nostr, partner.pubkey, mid, isOfferer);
-      peerMatches.set(mid, { peer, isOfferer });
+      peerMatches.set(mid, { peer, isOfferer, myNostrPubkey: nostr.pubkey });
 
       let timedOut = false;
       const timer = setTimeout(() => {
