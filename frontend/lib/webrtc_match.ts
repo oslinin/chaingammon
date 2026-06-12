@@ -71,8 +71,8 @@ export function connectPeer(
 
   const wireChannel = (ch: RTCDataChannel) => {
     channel = ch;
-    ch.onopen = () => emit("open");
-    ch.onclose = () => emit("closed");
+    ch.onopen = () => { console.debug("[hvh] channel open"); emit("open"); };
+    ch.onclose = () => { console.debug("[hvh] channel closed"); emit("closed"); };
     ch.onmessage = (e) => {
       try {
         const msg = JSON.parse(e.data);
@@ -89,13 +89,21 @@ export function connectPeer(
 
   pc.onicecandidate = (e) => {
     if (e.candidate) {
+      console.debug("[hvh] ice candidate", e.candidate.type, e.candidate.protocol);
       nostr.sendSignal(peerPubkey, matchId, {
         type: "ice",
         candidate: e.candidate.toJSON(),
       });
     }
   };
+  pc.onicegatheringstatechange = () => {
+    console.debug("[hvh] ice gathering", pc.iceGatheringState);
+  };
+  pc.oniceconnectionstatechange = () => {
+    console.debug("[hvh] ice connection", pc.iceConnectionState);
+  };
   pc.onconnectionstatechange = () => {
+    console.debug("[hvh] pc state", pc.connectionState);
     if (pc.connectionState === "failed") emit("failed");
     else if (pc.connectionState === "closed") emit("closed");
   };
@@ -123,6 +131,7 @@ export function connectPeer(
   // if the offer fires before subscribeSignals sends its REQ, it is gone forever.
   const unsub = nostr.subscribeSignals(async (payload: SignalMsg, from, mId) => {
     if (from !== peerPubkey || mId !== matchId) return;
+    console.debug("[hvh] signal received", payload.type);
     if (payload.type === "offer" && payload.sdp) {
       await applyRemote(payload.sdp);
       const answer = await pc.createAnswer();
@@ -151,6 +160,7 @@ export function connectPeer(
     void (async () => {
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
+      console.debug("[hvh] offer sent to", peerPubkey.slice(0, 8));
       nostr.sendSignal(peerPubkey, matchId, { type: "offer", sdp: offer });
     })();
   }

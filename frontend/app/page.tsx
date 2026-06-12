@@ -61,6 +61,14 @@ function CoinGlyph() {
     </svg>
   );
 }
+function MarketsGlyph() {
+  return (
+    <svg viewBox="0 0 24 24" width={22} height={22} aria-hidden="true">
+      <polyline points="3 17 8 11 13 14 21 6" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+      <polyline points="17 6 21 6 21 10" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
 
 interface ActionCardProps {
   variant: "primary" | "secondary";
@@ -405,6 +413,14 @@ function EloHome() {
             href="/match?stake=1"
             disabled={!address || !authenticated}
           />
+          <ActionCard
+            variant="secondary"
+            glyph={<MarketsGlyph />}
+            label="Advanced"
+            meta="MARKETS"
+            sublabel="Practice markets · trade live matches"
+            onClick={() => setMode("advanced")}
+          />
         </div>
 
         <div style={{ flex: 1 }} />
@@ -413,26 +429,12 @@ function EloHome() {
         <div style={{
           padding: "16px",
           borderTop: "1px solid var(--cg-line-1)",
-          display: "flex", alignItems: "center", justifyContent: "space-between",
-          gap: 12,
         }}>
           <span style={{
             fontFamily: "var(--cg-font-mono)",
             fontSize: 10, color: "var(--cg-fg-4)",
             letterSpacing: "0.04em",
           }}>7-pt · single cube · 30s/move</span>
-          <button
-            onClick={() => setMode("advanced")}
-            style={{
-              fontFamily: "var(--cg-font-sans)",
-              fontSize: 11, fontWeight: 500,
-              color: "var(--cg-brass)",
-              letterSpacing: "0.04em",
-              background: "none", border: "none", cursor: "pointer", padding: 0,
-            }}
-          >
-            Advanced ↗
-          </button>
         </div>
       </div>
     </div>

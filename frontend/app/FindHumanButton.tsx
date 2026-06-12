@@ -95,6 +95,7 @@ export function FindHumanButton() {
 
       connectingRef.current = true;
       const mid = matchId(nostr.pubkey, partner.pubkey);
+      console.debug("[hvh2] tryConnect paired", partner.pubkey.slice(0, 8), "isOfferer", isOfferer, "mid", mid.slice(0, 8));
       setStatus(`Connecting to opponent…`);
 
       const peer = connectPeer(nostr, partner.pubkey, mid, isOfferer);
@@ -131,6 +132,7 @@ export function FindHumanButton() {
     const id = newIdentity();
     const nostr = new NostrMatchClient(id);
     nostrRef.current = nostr;
+    console.debug("[hvh2] startSearching", nostr.pubkey.slice(0, 8), "addr", address?.slice(0, 8));
 
     const myEloNum = Number(elo ?? "1500") || 1500;
 
@@ -143,6 +145,7 @@ export function FindHumanButton() {
     nostr.startPresence(content);
 
     const unsub = nostr.subscribePresence((p, pubkey, at) => {
+      console.debug("[hvh2] presence received from", pubkey.slice(0, 8), "elo", p.elo, "addr", p.address?.slice(0, 8));
       const searcher: Searcher = { pubkey, elo: p.elo ?? 1500 };
       searchersRef.current.set(pubkey, { s: searcher, at });
     });
