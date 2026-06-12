@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { keccak256, toBytes } from "viem";
 import { useAccount, useReadContract } from "wagmi";
+import { usePrivy } from "@privy-io/react-auth";
 
 import { AgentsList } from "./AgentsList";
 import { DiscoveryList } from "./DiscoveryList";
@@ -141,6 +142,7 @@ function ActionCard({ variant, glyph, label, sublabel, meta, href, onClick, disa
 
 function EloHome() {
   const { address } = useAccount();
+  const { authenticated } = usePrivy();
   const { matchRegistry } = useChainContracts();
   const chainId = useActiveChainId();
   const { setMode } = useAppMode();
@@ -246,7 +248,7 @@ function EloHome() {
   }, [router]);
 
   const startPlay = useCallback(() => {
-    if (!address) return; // wallet not connected yet — presence would publish empty address
+    if (!address || !authenticated) return; // must be Privy-authenticated with a wallet
     const id = newIdentity();
     const nostr = new NostrMatchClient(id);
     nostrRef.current = nostr;
@@ -288,7 +290,7 @@ function EloHome() {
     };
     setSearching(true);
     setSearchStatus("Searching for a human…");
-  }, [address, chainEloRaw, tryConnect, stopSearching, router]);
+  }, [address, authenticated, chainEloRaw, tryConnect, stopSearching, router]);
 
   useEffect(() => () => stopSearching(), [stopSearching]);
 
@@ -392,7 +394,7 @@ function EloHome() {
             meta="RATED"
             sublabel={searching ? searchStatus : "Find a human first · falls back to bot"}
             onClick={searching ? stopSearching : startPlay}
-            disabled={!address && !searching}
+            disabled={(!address || !authenticated) && !searching}
           />
           <ActionCard
             variant="secondary"
@@ -401,7 +403,7 @@ function EloHome() {
             meta="STAKE"
             sublabel="Wagered match · winner takes pot"
             href="/match?stake=1"
-            disabled={!address}
+            disabled={!address || !authenticated}
           />
         </div>
 
