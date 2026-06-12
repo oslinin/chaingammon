@@ -97,7 +97,14 @@ export function Providers({ children }: { children: React.ReactNode }) {
         appearance: {
           theme: "dark",
           accentColor: "#C99B5C",
-          walletList: ["detected_wallets", "wallet_connect"],
+          // On Android, "metamask" triggers a broken metamask.app.link deep
+          // link when the extension isn't present. Use detected_wallets there
+          // (surfaces the extension if somehow installed) and WalletConnect
+          // for mobile wallet pairing. On desktop, "metamask" always shows
+          // the entry — with a download prompt when the extension isn't installed.
+          walletList: (typeof window !== "undefined" && /Android/i.test(navigator.userAgent))
+            ? ["detected_wallets", "wallet_connect"]
+            : ["metamask", "detected_wallets", "wallet_connect"],
           showWalletLoginFirst: false,
         },
         embeddedWallets: {
