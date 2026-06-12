@@ -794,6 +794,7 @@ function HumanMatchInner() {
       // side-0/1 tiebreaker. Wallet-address comparison breaks when both players
       // share the same address (e.g. same embedded wallet in both browsers).
       const side: 0 | 1 = peerEntry.isOfferer ? 0 : 1;
+      console.debug("[hvh] side assigned", { isOfferer: peerEntry.isOfferer, side, myAddr: currentAddr?.slice(0, 8), oppAddr: msg.address?.slice(0, 8) });
       setMySide(side);
       mySideRef.current = side;
     };
@@ -1222,23 +1223,14 @@ function HumanMatchInner() {
       )}
 
       {/* Actions */}
-      {phase === "playing" && game && !game.game_over && (
+      {phase === "playing" && game && !game.game_over && stagedMoves.length > 0 && (
         <div style={{ display: "flex", gap: 8 }}>
-          {stagedMoves.length > 0 && (
-            <button
-              type="button"
-              className="cg-chip"
-              onClick={() => { setStagedMoves([]); setDisplayBoard(null); setSelectedSource(null); }}
-            >
-              Reset
-            </button>
-          )}
           <button
             type="button"
             className="cg-chip"
-            onClick={handleResign}
+            onClick={() => { setStagedMoves([]); setDisplayBoard(null); setSelectedSource(null); }}
           >
-            Resign
+            Reset
           </button>
         </div>
       )}
