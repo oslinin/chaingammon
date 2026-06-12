@@ -133,6 +133,9 @@ async function relaySettle(args: {
   sessionKey: string;
   humanAuthSig: string;
   resultSig: string;
+  escrowMatchId?: string;
+  winners?: string[];
+  shares?: bigint[];
 }): Promise<`0x${string}`> {
   const resp = await fetch(`${SERVER}/relay-settle`, {
     method: "POST",
@@ -147,6 +150,9 @@ async function relaySettle(args: {
       session_key: args.sessionKey,
       human_auth_sig: args.humanAuthSig,
       result_sig: args.resultSig,
+      ...(args.escrowMatchId ? { escrow_match_id: args.escrowMatchId } : {}),
+      ...(args.winners?.length ? { winners: args.winners } : {}),
+      ...(args.shares?.length ? { shares: args.shares.map(String) } : {}),
     }),
   });
   if (!resp.ok) {
@@ -1164,27 +1170,13 @@ function TeamDemoPageInner() {
         sessionKeyB: "0x0000000000000000000000000000000000000000" as `0x${string}`,
       };
 
-      if (isEmbeddedWallet && !useEscrow) {
-        txHash = await relaySettle({
-          human: address,
-          agentId: primaryOpponentId,
-          matchLength,
-          humanWins,
-          gameRecordHash,
-          nonce: authNonce,
-          sessionKey: sessionAccount.address,
-          humanAuthSig,
-          resultSig,
-        });
-      } else {
-        txHash = await writeContractAsync({
-          address: matchRegistry,
-          abi: MatchRegistryABI,
-          functionName: "settle",
-          args: [params, humanAuthSig, "0x", resultSig, "0x", settleEscrowId, winners, shares],
-          chainId,
-        });
-      }
+      txHash = await writeContractAsync({
+        address: matchRegistry,
+        abi: MatchRegistryABI,
+        functionName: "settle",
+        args: [params, humanAuthSig, "0x", resultSig, "0x", settleEscrowId, winners, shares],
+        chainId,
+      });
       setSettleTxHash(txHash);
     } catch (e) {
       setSettleStatus("error");

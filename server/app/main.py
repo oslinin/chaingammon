@@ -1014,6 +1014,9 @@ class RelaySettleRequest(BaseModel):
     session_key: str
     human_auth_sig: str
     result_sig: str
+    escrow_match_id: str | None = None
+    winners: list[str] = []
+    shares: list[str] = []
 
 
 @app.post("/relay-settle")
@@ -1041,6 +1044,9 @@ def relay_settle(req: RelaySettleRequest):
             session_key=req.session_key,
             human_auth_sig=req.human_auth_sig,
             result_sig=req.result_sig,
+            escrow_match_id=req.escrow_match_id,
+            winners=req.winners,
+            shares=[int(s) for s in req.shares],
         )
     except ChainError as e:
         # Bad signature, nonce mismatch, or malformed input — client error.

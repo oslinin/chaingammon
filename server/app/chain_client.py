@@ -523,6 +523,9 @@ class ChainClient:
         session_key: str,
         human_auth_sig: str,
         result_sig: str,
+        escrow_match_id: str | None = None,
+        winners: list[str] | None = None,
+        shares: list[int] | None = None,
     ) -> FinalizedMatch:
         """Relay a trustless settle() tx (PvE mode) from the operator's
         gas-paying account and wait for inclusion. Returns the new matchId.
@@ -552,15 +555,22 @@ class ChainClient:
             "sessionKeyA": session_addr,
             "sessionKeyB": zero_addr,
         }
+        escrow_id_bytes = (
+            self.w3.to_bytes(hexstr=escrow_match_id)
+            if escrow_match_id and escrow_match_id != ("0x" + "00" * 32)
+            else b"\x00" * 32
+        )
+        winner_addrs = [Web3.to_checksum_address(w) for w in (winners or [])]
+        share_amounts = [int(s) for s in (shares or [])]
         call_args = (
             params,
             self.w3.to_bytes(hexstr=human_auth_sig),  # authSigA
             b"",                                        # authSigB (unused in PvE)
             self.w3.to_bytes(hexstr=result_sig),        # resultSigA
             b"",                                        # resultSigB (unused in PvE)
-            b"\x00" * 32,                               # escrowMatchId (bytes32(0))
-            [],                                         # winners (ELO-only)
-            [],                                         # shares
+            escrow_id_bytes,                            # escrowMatchId
+            winner_addrs,                               # winners
+            share_amounts,                              # shares
         )
 
         # Pre-flight: surface the revert reason cleanly before burning gas.
