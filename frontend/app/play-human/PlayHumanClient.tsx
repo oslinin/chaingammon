@@ -778,7 +778,10 @@ function HumanMatchInner() {
         sessionKey: msg.sessionKey,
       });
 
-      const side: 0 | 1 = BigInt(currentAddr) < BigInt(msg.address) ? 0 : 1;
+      // Use the offerer role (set by computePairing in FindHumanButton) as the
+      // side-0/1 tiebreaker. Wallet-address comparison breaks when both players
+      // share the same address (e.g. same embedded wallet in both browsers).
+      const side: 0 | 1 = peerEntry.isOfferer ? 0 : 1;
       setMySide(side);
       mySideRef.current = side;
     };
