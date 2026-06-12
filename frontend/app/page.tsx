@@ -21,7 +21,7 @@ import { peerMatches } from "../lib/peer_connections";
 const STABILIZE_MS = 3_000;
 const PRESENCE_TTL_S = 35;
 const PRESENCE_INTERVAL_MS = 5_000;  // re-publish often; ephemeral events not stored by relays
-const CONNECT_TIMEOUT_MS = 15_000;
+const CONNECT_TIMEOUT_MS = 30_000;
 const REPAIR_MS = 5_000;    // retry pairing interval
 const GIVE_UP_MS = 120_000; // fall back to agent after 2 minutes without a match
 
@@ -151,6 +151,22 @@ function EloHome() {
   });
   const elo = chainEloRaw != null ? String(chainEloRaw) : undefined;
 
+  // ELO delta: compare current on-chain value against the last-seen value
+  // stored in localStorage. Updated only when the value actually changes so
+  // the badge persists across page visits until the next match settles.
+  const [eloDelta, setEloDelta] = useState<number | null>(null);
+  useEffect(() => {
+    if (chainEloRaw == null || !address) return;
+    const key = `chaingammon.lastElo.${address.toLowerCase()}`;
+    const prev = localStorage.getItem(key);
+    const current = Number(chainEloRaw);
+    if (prev !== null) {
+      const delta = current - Number(prev);
+      if (delta !== 0) setEloDelta(delta);
+    }
+    localStorage.setItem(key, String(current));
+  }, [chainEloRaw, address]);
+
   // ── Human-vs-human matchmaking (falls back to train on no match) ──────────
   const [searching, setSearching] = useState(false);
   const [searchStatus, setSearchStatus] = useState("");
@@ -188,8 +204,8 @@ function EloHome() {
       // propagated yet when this fires (race with STABILIZE_MS).
       setSearchStatus(
         searchersRef.current.size === 0
-          ? "Searching…"
-          : `${searchersRef.current.size} also searching`,
+          ? "No one found yet — open console for debug"
+          : `${searchersRef.current.size} found, pairing…`,
       );
       return;
     }
@@ -232,7 +248,11 @@ function EloHome() {
     nostr.startPresence({ ensLabel: "", address: address ?? "", sessionPubkey: nostr.pubkey, elo: myEloNum }, PRESENCE_INTERVAL_MS);
     const unsub = nostr.subscribePresence((p, pubkey, at) => {
       // Skip ghost sessions from my own wallet (same address, different Nostr pubkey).
-      if (p.address && address && p.address.toLowerCase() === address.toLowerCase()) return;
+      if (p.address && address && p.address.toLowerCase() === address.toLowerCase()) {
+        console.debug("[hvh] ignored self-echo from own wallet", pubkey.slice(0, 8));
+        return;
+      }
+      console.debug("[hvh] presence received from", pubkey.slice(0, 8), "elo", p.elo, "addr", p.address?.slice(0, 8));
       // Key by wallet address so multiple Nostr sessions from the same wallet
       // collapse to one entry; keep whichever arrived most recently.
       const key = p.address || pubkey;
@@ -334,6 +354,15 @@ function EloHome() {
                 fontSize: 20, fontWeight: 600,
                 color: "var(--cg-fg-1)", lineHeight: 1,
               }}>{elo}</span>
+              {eloDelta !== null && (
+                <span style={{
+                  fontFamily: "var(--cg-font-mono)",
+                  fontSize: 11, fontWeight: 500,
+                  color: eloDelta >= 0 ? "var(--cg-success)" : "var(--cg-danger)",
+                }}>
+                  {eloDelta >= 0 ? "▲" : "▼"}{Math.abs(eloDelta)}
+                </span>
+              )}
             </div>
           )}
         </div>
