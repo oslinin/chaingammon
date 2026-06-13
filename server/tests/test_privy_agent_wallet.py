@@ -216,3 +216,55 @@ def test_endpoint_503_when_privy_unconfigured(monkeypatch):
     tc = TestClient(main.app)
     r = tc.post("/agents/7/privy-wallet")
     assert r.status_code == 503
+
+
+# ─── PR 1.2: payout routing ────────────────────────────────────────────────
+
+
+def test_privy_wallet_address_for_returns_address_when_provisioned(tmp_path):
+    """_privy_wallet_address_for returns the Privy wallet address when the
+    agent has been provisioned (store file exists with the mapping)."""
+    import json, os
+
+    from app.main import _privy_wallet_address_for
+
+    store = tmp_path / "wallets.json"
+    store.write_text(json.dumps({"5": {"agent_id": 5, "wallet_id": "wal_x",
+                                       "address": _ADDR, "chain_type": "ethereum"}}))
+    os.environ["PRIVY_AGENT_WALLET_STORE"] = str(store)
+    os.environ.setdefault("PRIVY_APP_ID", "app_test")
+    os.environ.setdefault("PRIVY_APP_SECRET", "secret_test")
+
+    addr = _privy_wallet_address_for(5)
+    assert addr == _ADDR
+
+    del os.environ["PRIVY_AGENT_WALLET_STORE"]
+
+
+def test_privy_wallet_address_for_returns_none_when_not_provisioned(tmp_path):
+    """Returns None (triggering fallback to agent_owner) when the agent has
+    no entry in the store."""
+    import json, os
+
+    from app.main import _privy_wallet_address_for
+
+    store = tmp_path / "wallets.json"
+    store.write_text(json.dumps({}))
+    os.environ["PRIVY_AGENT_WALLET_STORE"] = str(store)
+    os.environ.setdefault("PRIVY_APP_ID", "app_test")
+    os.environ.setdefault("PRIVY_APP_SECRET", "secret_test")
+
+    assert _privy_wallet_address_for(99) is None
+
+    del os.environ["PRIVY_AGENT_WALLET_STORE"]
+
+
+def test_privy_wallet_address_for_returns_none_when_unconfigured(monkeypatch):
+    """Returns None (no exception) when PRIVY_APP_ID is missing."""
+    from app import main
+
+    def _raise(_cls):
+        raise PrivyAgentWalletError("Missing env var PRIVY_APP_ID")
+
+    monkeypatch.setattr(main.PrivyAgentWallets, "from_env", classmethod(_raise))
+    assert main._privy_wallet_address_for(1) is None

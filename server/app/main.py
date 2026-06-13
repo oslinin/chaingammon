@@ -47,6 +47,22 @@ from .gnubg_client import GnubgClient
 from .og_storage_client import OgStorageError, get_blob, get_kv, put_blob, put_kv
 from .privy_agent_wallet import PrivyAgentWalletError, PrivyAgentWallets
 
+
+def _privy_wallet_address_for(agent_id: int) -> str | None:
+    """Return the agent's Privy server-wallet address, or None if unavailable.
+
+    Used by PR 1.2 payout routing: when an agent wins, USDC goes to its Privy
+    wallet rather than the server operator or NFT owner. Silently returns None
+    if Privy is not configured or the wallet hasn't been provisioned (PR 1.1).
+    """
+    try:
+        mgr = PrivyAgentWallets.from_env()
+        wallet = mgr.wallet_for(agent_id)
+        return wallet.address if wallet else None
+    except PrivyAgentWalletError:
+        return None
+
+
 gnubg = GnubgClient()
 
 app = FastAPI()
@@ -604,18 +620,25 @@ def finalize_direct_staked(req: StakedFinalizeRequest):
     except OgStorageError as e:
         raise HTTPException(status_code=502, detail=f"0G Storage upload failed: {e}") from e
 
-    # Winner payout address: agent wins → owner withdraws from vault directly;
-    # human wins → their wallet address.
+    # [EthGlobalNYC26 PR 1.2] Winner payout address:
+    #   human wins → their wallet address.
+    #   agent wins → its Privy server wallet (PR 1.2); falls back to the NFT
+    #                owner if Privy is not configured or the wallet hasn't been
+    #                provisioned yet (PR 1.1 not run).
     if req.winner_human_address == "0x0000000000000000000000000000000000000000" and req.winner_agent_id == 0:
         raise HTTPException(status_code=400, detail="winner_human_address required when human wins")
-    winner_payout_addr = req.winner_human_address if req.winner_agent_id == 0 else req.winner_human_address
-
-    pot_wei = stake_wei * 2
 
     try:
         chain = ChainClient.from_env()
     except ChainError as e:
         raise HTTPException(status_code=500, detail=f"chain client misconfigured: {e}") from e
+
+    if req.winner_agent_id == 0:
+        winner_payout_addr = req.winner_human_address
+    else:
+        winner_payout_addr = _privy_wallet_address_for(req.winner_agent_id) or chain.agent_owner(req.winner_agent_id)
+
+    pot_wei = stake_wei * 2
 
     if req.keeper_settle:
         # Store params for KeeperHub to pick up via POST /replay and settle on-chain directly.
@@ -863,11 +886,15 @@ def settle_endpoint(req: SettleRequest):
         # produced by the /replay endpoint. Normalise to a checksum address.
         winner_addr = req.winner
         if winner_addr.lower().startswith("agent:"):
-            # Agent won — pay out to the NFT owner's wallet; owner can
-            # deposit winnings back into AgentVault if desired.
+            # [EthGlobalNYC26 PR 1.2] Agent won — pay to its Privy wallet;
+            # fall back to NFT owner if Privy not configured / not provisioned.
             try:
                 agent_id_str = winner_addr.split(":", 1)[1]
-                winner_addr = chain.agent_owner(int(agent_id_str))
+                _aid = int(agent_id_str)
+                winner_addr = (
+                    _privy_wallet_address_for(_aid)
+                    or chain.agent_owner(_aid)
+                )
             except Exception:
                 winner_addr = chain.account_address
         try:
