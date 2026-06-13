@@ -1,32 +1,39 @@
 # Parametric Options Marketplace — Audited Hackathon Plan (ETHGlobal 2026)
 
-> **Status:** Audited. The core architecture is sound and well-targeted at the
-> 1inch Aqua/SwapVM prize, but it needs fixes before it qualifies for the
-> Uniswap prize and is over-scoped for a hackathon. Read the **Audit Verdict**
-> and **Must-Fix Findings** first, then the **Revised 15-Commit Plan**.
+> **Status:** Audited. The core architecture is sound: **1inch Aqua/SwapVM mints
+> the option, and Uniswap v4 is the trading + price-discovery layer** traders see
+> and interact with. Both are central and both target a bounty. The plan is
+> over-scoped for a hackathon and a few technical points need fixing. Read the
+> **Audit Verdict** and **Must-Fix Findings**, then the **Revised 15-Commit Plan**.
 
 ---
 
 ## Audit Verdict
 
-**Thesis (keep it):** Use **1inch Aqua + SwapVM** as the primary/underwriting
-market and a fully-collateralized vault, so LP capital stays self-custodied in
-the LP's wallet until a buyer triggers a Just-In-Time fill. This is exactly what
-Aqua is for — "each wallet becomes its own self-custodial liquidity pool" — and
-options are a named example in the bounty. Targeting SwapVM is correct: projects
-that use SwapVM are explicitly scored higher.
+**Thesis (keep it):** Two markets, two sponsors, both central:
+- **1inch Aqua + SwapVM** underwrites and *mints* the option from a
+  fully-collateralized vault — LP capital stays self-custodied in the LP's wallet
+  until a buyer triggers a Just-In-Time fill. This is exactly what Aqua is for,
+  options are a named example in the bounty, and using SwapVM is scored higher.
+- **Uniswap v4** is the **trading and price-discovery layer**: each option series
+  (e.g. `oETH-3500-CALL / USDC`) gets a v4 pool, the constant-product curve sets
+  the price traders see, and an `afterSwap` hook reads the new price, recomputes
+  implied volatility, and widens spread/fees under buying pressure. This is how
+  traders see prices and trade the option — it is a primary piece, not an add-on.
 
-**Three things will sink this plan if not fixed:**
+**Three things to get right:**
 
-1. **The Uniswap path is valid but the specific "API key" sub-prize needs more.**
-   Uniswap v4 **hooks qualify** — building with any part of the Uniswap stack
-   (hooks, periphery, open-source) is an accepted way to submit for the rewards,
-   so Phase 3's hook work is *not* wasted. The nuance: the **"Best Uniswap API
-   Integration" ($7,000)** line specifically reads "Projects must integrate the
-   Uniswap API with a valid API key," so to win *that exact* sub-prize you also
-   need a real Trading-API integration (key + captured onchain transaction IDs).
-   **Recommendation:** keep the v4 hook *and* add a thin Trading-API integration
-   so you're eligible for both the hooks/stack track and the API sub-prize.
+1. **Uniswap v4 is core and it qualifies — just confirm which prize you're
+   claiming.** Building with the Uniswap stack (hooks, periphery, open-source) is
+   an accepted submission path, so your v4 pool + `afterSwap` hook is legitimate,
+   front-and-center prize work. One eligibility check: the **"Best Uniswap API
+   Integration" ($7,000)** prize text reads "Projects must integrate the Uniswap
+   API with a valid API key," and the **"Best Uniswap Stack Contribution"
+   ($3,000)** prize is Continuity-Track only. So if you are *not* in the
+   Continuity Track, the surest way to claim a Uniswap prize is to *also* wire in
+   the **Uniswap Trading API** (real key + captured onchain tx IDs) — cheap
+   insurance that costs ~2 commits and turns "hopefully eligible" into
+   "unambiguously eligible." Keep the hook as the centerpiece either way.
    (See Finding A.)
 2. **Hedera is a *separate* prize track, not a bolt-on.** There are real Hedera
    prizes — **Tokenization on Hedera ($3,000)** and **AI & Agentic Payments on
@@ -43,9 +50,9 @@ that use SwapVM are explicitly scored higher.
 
 | Prize | Amount | Fit | Notes |
 |---|---|---|---|
-| 1inch — Build an Aqua App | $5,000 (2.5k/1.5k/1k) | **Strong** | Options on Aqua+SwapVM; SwapVM scored higher |
-| Uniswap — hooks / stack track | (per event) | **Valid** | v4 hook qualifies; building with the stack is accepted |
-| Uniswap — Best Uniswap **API** Integration | $7,000 (4k/2k/1k) | **Add Trading API** | This sub-prize also needs a valid API key + onchain tx IDs |
+| 1inch — Build an Aqua App | $5,000 (2.5k/1.5k/1k) | **Strong** | Options minted on Aqua+SwapVM; SwapVM scored higher |
+| Uniswap — Best Uniswap **API** Integration | $7,000 (4k/2k/1k) | **Primary target** | v4 hook is the core; add a valid API key + onchain tx IDs to lock eligibility |
+| Uniswap — Best Uniswap Stack Contribution | $3,000 | **If eligible** | Hooks/stack build qualifies directly — but Continuity-Track only |
 | Hedera — Tokenization | $3,000 (up to 2×$1,500) | **Separate track** | Issue OptionToken via HTS + scheduled settlement; coherent fit |
 | Hedera — AI & Agentic Payments | $6,000 (up to 2×$3,000) | **Stretch** | Needs autonomous agents (x402 / Agent Kit) settling onchain |
 | 1inch / Uniswap Continuity Track | $2,000 / $3,000 | Optional | Continuity-Track participants only — confirm eligibility |
@@ -112,26 +119,33 @@ day," so the commit log is part of the score. Rules for this repo:
 
 ## Must-Fix Findings
 
-### Finding A — Uniswap: keep the hook, and add the Trading API for the API sub-prize
-v4 **hooks qualify** for the Uniswap rewards — building with any part of the
-stack (hooks, periphery, open-source) is an accepted submission path, so Phase 3
-is legitimate prize work. The only catch is the **"Best Uniswap API Integration"
-($7,000)** sub-prize, whose text requires integrating the **Uniswap API with a
-valid API key** and showing **real onchain transaction IDs**.
-**Fix:** keep the v4 hook for the hooks/stack track, *and* add a thin Trading-API
-integration in the trade flow (quote → routing → swap, or the liquidity
-endpoints) using a real Developer-Platform key, capturing the resulting tx IDs.
-That makes you eligible for both the hooks track and the API sub-prize instead of
-just one. (My earlier draft was wrong to call the hook "wasted" — it isn't.)
+### Finding A — Uniswap v4 is the centerpiece; lock prize eligibility with the API
+Your v4 pool + `afterSwap` hook is the trading and price-discovery layer — how
+traders see prices and trade option tokens — so it is correctly central, and
+building with the Uniswap stack is an accepted submission path. The only thing to
+nail down is *which* Uniswap prize pays out for it at this event:
+- **Best Uniswap Stack Contribution ($3,000)** would reward a pure hooks build
+  directly — **but it's Continuity-Track only.** Confirm whether you're in that
+  track.
+- **Best Uniswap API Integration ($7,000)** is the open prize, and its text says
+  "Projects must integrate the Uniswap API with a valid API key" plus real
+  onchain **transaction IDs**.
+
+**Fix (cheap insurance):** keep the hook as the core, *and* wire the **Uniswap
+Trading API** into the real trade path (e.g. quote/route the premium asset, or
+execute the secondary swap) with a Developer-Platform key, capturing tx IDs. Two
+small commits convert "I built a hook and hope it counts" into "I integrated the
+Uniswap API" — the exact wording the $7k prize asks for — while the hook still
+carries the technical story. Don't rely on the hook alone for the $7k unless the
+bounty page explicitly says hooks qualify for *that* prize without an API key.
 
 ### Finding B — SwapVM is stateless; the "global volatility" loop is stateful  *(critical)*
 Commit 3 correctly calls the SwapVM pricing script **stateless**, but Commit 8
 stores and mutates `σ_global` across swaps. A stateless script cannot hold that
-state. **Fix:** put any mutable demand/vol state in a **stateful contract**
-(the Aqua vault or a small `VolState` contract / the v4 hook if you keep one),
-and have the SwapVM script *read* it as an input parameter. Be explicit about
-where each variable lives: spot/strike/expiry/side are call inputs; `σ_global`
-is contract storage.
+state. **Fix:** keep the mutable demand/vol state in the **v4 hook** (its natural
+home — `afterSwap` already runs there) and have the SwapVM mint script *read* it
+as an input parameter. Be explicit about where each variable lives:
+spot/strike/expiry/side are call inputs; `σ_global` is hook storage.
 
 ### Finding C — Hedera: a viable second track, but rebuild the commit  *(corrected)*
 My first draft said "no Hedera prize is in scope" — that was wrong. There are two
@@ -159,16 +173,15 @@ EVM supports any Cancun opcodes you rely on before porting EVM contracts.
 
 ### Finding D — Cut to the prize-critical path  *(critical)*
 Custom Yul bytecode + Aqua vault + v4 hooks (CREATE2 mining) + Hedera + four UI
-screens will not finish cleanly. **Fix priorities:**
-1. **Must-have (1inch $5k):** OptionToken → SwapVM pricing assembled from the
+screens will not finish cleanly. **Two co-equal must-haves, then trim:**
+1. **Must-have (Uniswap $7k):** v4 pool per option series + `afterSwap` IV
+   repricing hook (the price-discovery core) **and** a Uniswap Trading-API
+   touchpoint with a real key + captured tx IDs to lock eligibility.
+2. **Must-have (1inch $5k):** OptionToken → SwapVM pricing assembled from the
    instruction library → Aqua JIT collateral vault → a script/test that performs
-   a real onchain token transfer (buy → mint → settle).
-2. **Prize-relevant (Uniswap):** the v4 hook secondary market qualifies for the
-   hooks/stack track; add a Trading-API integration with captured tx IDs to also
-   reach the API sub-prize. Either path is a valid Uniswap submission — do the
-   hook if that's your strength, the API if you want the $7k sub-prize, both if
-   time allows.
-3. **Nice-to-have:** dynamic-vol loop, LP dashboard. Build after the above.
+   a real onchain token transfer (buy → mint).
+3. **Nice-to-have:** full lifecycle/settlement automation, LP dashboard. Build
+   after the two must-haves demo end-to-end.
 4. **Always:** README + ≤3-min video + Uniswap feedback form.
 
 ### Finding E — Prefer assembling SwapVM instructions over hand-writing Yul
@@ -200,14 +213,16 @@ strong "scored higher" story — keep it small and well-tested).
   blocks legitimate price discovery. **Fix:** use a wide tolerance band or a
   dynamic fee rather than an outright revert; if you keep a revert, demo it on a
   clearly toxic trade only.
-- **I. "No market makers" vs. needing v4 LPs.** A tradeable v4 pool per option
-  series still needs someone to seed liquidity, which is in tension with the
-  "eliminate active market makers" pitch. **Fix:** be precise in the README —
-  the *primary* market (Aqua JIT) needs no active MM; the *secondary* v4 market,
-  if present, is optional peer liquidity.
-- **J. CREATE2 hook-address mining (Phase 5)** is real but necessary work — v4
+- **I. "No market makers" vs. needing v4 LPs (be precise in the README).** Your
+  v4 pools still need someone to seed initial liquidity, which is in tension with
+  the "eliminate active market makers" pitch. **Fix:** state it cleanly — the
+  *primary* market (Aqua JIT mint) needs no active MM; the *secondary* Uniswap v4
+  market is where price discovery happens and needs only passive/seed liquidity,
+  not an active quoting desk. Also decide who seeds each pool for the demo (you
+  can seed it yourself with the minted tokens).
+- **J. CREATE2 hook-address mining (Phase 3)** is real but necessary work — v4
   requires the hook address to encode its permission flags, so keep the salt
-  miner if you ship the hook.
+  miner; it's part of standing up the centerpiece, not optional.
 - **K. `evm_version = "cancun"` (Commit 1) is correct** for v4 transient
   storage — keep it, and confirm your demo chain/fork supports TSTORE/TLOAD.
 - **L. Don't forget the non-code deliverables.** The Uniswap prize needs a
@@ -218,10 +233,11 @@ strong "scored higher" story — keep it small and well-tested).
 
 ## Revised 15-Commit Plan
 
-Phases reordered so the prize-critical 1inch path lands first. Each bullet is one
-clean, short commit. **Hedera is an optional parallel track** (see the Hedera
-add-on after Phase 6) — include it only if you commit to a second sponsor; it
-does not slot into the EVM contracts.
+Ordered so the option is **minted** (Aqua/SwapVM) and then **traded** (Uniswap v4
+— the centerpiece) before anything optional. Each bullet is one clean, short
+commit. **Hedera is an optional parallel track** (see the add-on after Phase 6) —
+include it only if you commit to a second sponsor; it does not slot into the EVM
+contracts.
 
 ### Phase 1 — Foundation
 1. **Scaffold Foundry repo.** `foundry.toml` (`evm_version = "cancun"`),
@@ -232,56 +248,59 @@ does not slot into the EVM contracts.
    `strikePrice`, `expiry`, `isCall`; protocol-only `mint`/`burn`. *Verify:*
    only the vault can mint/burn; metadata reads back.
 
-### Phase 2 — Underwriting (1inch Aqua + SwapVM)  ← prize-critical
+### Phase 2 — Minting (1inch Aqua + SwapVM)
 3. **SwapVM pricing skeleton.** Start from `AquaSwapVMRouter` / the existing
    instruction set; define the entry path taking `S, K, T, side(BUY/SELL)`.
    *Verify:* interface compiles; mock call returns a number.
 4. **Parametric pricing + asymmetric spread.** Implement a concrete cheap vol
    smile (document the formula + fixed-point format) and the ±2% BUY/SELL
-   modifier. Read `σ_global` as an **input** (state lives elsewhere — Finding B).
+   modifier. Read `σ_global` as an **input** (state lives in the hook — Finding B).
    *Verify:* OTM/ITM scale vol; BUY/SELL return asymmetric bid/ask.
-5. **`AquaCollateralVault.sol` — JIT fill.** Track LP virtual balances; on a
+5. **`AquaCollateralVault.sol` — JIT mint.** Track LP virtual balances; on a
    buyer paying the exact SwapVM premium, lock 1 ETH (call) or K USDC (put) from
    the LP, route the premium to the LP, mint an OptionToken to the buyer.
    *Verify:* forge test of the full JIT mint with a **real token transfer**.
 
-### Phase 3 — Uniswap Trading-API integration  ← unlocks the API sub-prize
-6. **Trading-API client + key wiring.** Add a thin client (frontend or a small
-   service) that calls the Uniswap Trading API for quotes/routing using a real
-   API key from the Developer Platform. *Verify:* a live quote round-trips.
-7. **Execute a real swap via the API.** Use the API to execute the
-   premium-asset acquisition (or secondary sale) onchain and **capture the
+### Phase 3 — Trading & price discovery (Uniswap v4)  ← centerpiece
+6. **Pool + hook scaffold.** `OptionPricingHook.sol` (BaseHook with
+   `beforeSwap`/`afterSwap` flags) + CREATE2 salt miner; initialize a v4 pool for
+   an `oETH-3500-CALL / USDC` series. *Verify:* hook attaches; pool initializes.
+7. **`afterSwap` IV repricing + `beforeSwap` band.** `afterSwap` reads the new
+   pool price, recomputes implied volatility, and widens spread/fee under buying
+   pressure (this is the **stateful home** for `σ_global`, Finding B);
+   `beforeSwap` guards with a **tolerance band**, not a hard revert (Finding H).
+   *Verify:* back-to-back buys reprice upward; only a toxic trade is blocked.
+
+### Phase 4 — Uniswap API integration (lock $7k eligibility)
+8. **Trading-API client + key wiring.** Thin client (frontend or small service)
+   calling the Uniswap Trading API for quotes/routing with a real Developer-
+   Platform key. *Verify:* a live quote round-trips.
+9. **Execute a real swap via the API.** Route a real trade (premium asset or the
+   secondary option-token swap) through the API onchain and **capture the
    transaction ID**. *Verify:* tx hash recorded; visible on an explorer.
 
-### Phase 4 — Lifecycle & settlement
-8. **Expiration engine.** Lock the final settlement spot once
-   `block.timestamp > expiry` via oracle. *Verify:* settlement blocked before T,
-   frozen after T.
-9. **Fully-collateralized payout.** OTM → release full collateral to LP; ITM →
-   settle (pick physical per Finding G) and return remainder to LP. *Verify:*
-   vault returns to zero-liability; capital distributes cleanly.
-
-### Phase 5 — Secondary market (v4 hook)  ← qualifies for Uniswap hooks/stack track
-10. **Scaffold `OptionPricingHook.sol`** (BaseHook, `beforeSwap`/`afterSwap`
-    flags) + CREATE2 salt miner. *Verify:* hook attaches to a fresh pool.
-11. **Dynamic-vol feedback in the hook.** Store/update `σ_global` here (the
-    stateful home from Finding B); `afterSwap` nudges it by ±γ on buy/sell;
-    `beforeSwap` uses a **tolerance band**, not a hard revert (Finding H).
-    *Verify:* back-to-back swaps reprice; toxic trade is the only thing blocked.
+### Phase 5 — Lifecycle & settlement
+10. **Expiration engine.** Lock the final settlement spot once
+    `block.timestamp > expiry` via oracle. *Verify:* blocked before T, frozen
+    after T.
+11. **Fully-collateralized payout.** OTM → release full collateral to LP; ITM →
+    settle (pick physical per Finding G) and return remainder to LP. *Verify:*
+    vault returns to zero-liability; capital distributes cleanly.
 
 ### Phase 6 — Frontend & demo deliverables
 12. **Next.js + wallet boilerplate.** Next.js, tailwind, wagmi, viem against the
     EVM RPC/fork. *Verify:* `npm run dev`, wallet connects.
-13. **Option matrix UI.** Grid of strikes calling the SwapVM pricing read; shows
-    a real bid/ask smile. *Verify:* options chain renders with smile tails.
-14. **One-click trade orchestrator.** Approve premium asset → JIT route through
-    Aqua/SwapVM → (uses the Uniswap API path from Phase 3 where relevant) →
-    update UI on confirm. *Verify:* "Buy Call" mints a token to the wallet in one
-    flow.
+13. **Option matrix UI.** Grid of strikes showing **live prices from the Uniswap
+    v4 pools** (secondary) alongside the SwapVM mint quote (primary). *Verify:*
+    options chain renders with a real bid/ask smile that moves as the pool trades.
+14. **One-click trade orchestrator.** Buy: either mint via Aqua/SwapVM (primary)
+    or swap on the v4 pool via the Trading API (secondary), approve + execute in
+    one flow. *Verify:* "Buy Call" lands a token in the wallet; price updates.
 15. **LP dashboard + README + demo assets.** LP "Total Value Unlocked" view;
-    `README.md` explaining the Aqua/SwapVM architecture and the math; record the
-    **≤3-min demo video** and submit the **Uniswap feedback form**. *Verify:*
-    full test suite green; both prize submissions complete.
+    `README.md` explaining how Aqua/SwapVM mint and Uniswap v4 trade/reprice
+    compose (with the math); record the **≤3-min demo video** and submit the
+    **Uniswap feedback form**. *Verify:* full test suite green; both submissions
+    complete.
 
 ### Optional add-on — Hedera Tokenization track (parallel build)
 Only if you choose Hedera as a second sponsor. These are *additional* commits in
@@ -302,8 +321,9 @@ a separate `hedera/` deployment, not edits to the EVM contracts above.
 
 ## Pre-Submission Checklist
 - [ ] 1inch: onchain token transfer demoed (local fork OK), SwapVM used.
-- [ ] Uniswap: v4 hook submitted (hooks/stack track) and/or Trading API
-      integrated with a real key + **tx IDs captured** (API sub-prize).
+- [ ] Uniswap (primary): v4 pool + `afterSwap` repricing hook live; **and**
+      Trading API integrated with a real key + **tx IDs captured** to lock the
+      $7k eligibility. Confirm Continuity-Track status for the $3k Stack prize.
 - [ ] Public repo, clean `README.md` with the pricing math.
 - [ ] ≤3-min demo video recorded.
 - [ ] Uniswap Developer Feedback Form submitted.
