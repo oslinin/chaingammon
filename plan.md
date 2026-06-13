@@ -28,9 +28,13 @@ that use SwapVM are explicitly scored higher.
    **Recommendation:** keep the v4 hook *and* add a thin Trading-API integration
    so you're eligible for both the hooks/stack track and the API sub-prize.
    (See Finding A.)
-2. **Hedera (Commit 11) is off-target scope creep.** No Hedera prize is in
-   scope, and the commit also mis-describes Hedera Consensus Service. Cut it.
-   (See Finding C.)
+2. **Hedera is a *separate* prize track, not a bolt-on.** There are real Hedera
+   prizes — **Tokenization on Hedera ($3,000)** and **AI & Agentic Payments on
+   Hedera ($6,000)** — so Hedera is worth money (my first draft wrongly said no
+   Hedera prize existed). But Uniswap v4 and 1inch Aqua/SwapVM are **not deployed
+   on Hedera**, so a Hedera entry is a *parallel build* (HTS option token +
+   scheduled settlement), not an extension of the EVM stack. Pursue it only as a
+   deliberate second track, and fix the muddled HCS framing. (See Finding C.)
 3. **The plan is too big for a hackathon.** Custom SwapVM bytecode + Aqua vault
    + v4 hooks (with CREATE2 mining) + Hedera + a four-screen Next.js app is more
    than a weekend. Cut to the prize-critical path. (See Finding D.)
@@ -42,6 +46,8 @@ that use SwapVM are explicitly scored higher.
 | 1inch — Build an Aqua App | $5,000 (2.5k/1.5k/1k) | **Strong** | Options on Aqua+SwapVM; SwapVM scored higher |
 | Uniswap — hooks / stack track | (per event) | **Valid** | v4 hook qualifies; building with the stack is accepted |
 | Uniswap — Best Uniswap **API** Integration | $7,000 (4k/2k/1k) | **Add Trading API** | This sub-prize also needs a valid API key + onchain tx IDs |
+| Hedera — Tokenization | $3,000 (up to 2×$1,500) | **Separate track** | Issue OptionToken via HTS + scheduled settlement; coherent fit |
+| Hedera — AI & Agentic Payments | $6,000 (up to 2×$3,000) | **Stretch** | Needs autonomous agents (x402 / Agent Kit) settling onchain |
 | 1inch / Uniswap Continuity Track | $2,000 / $3,000 | Optional | Continuity-Track participants only — confirm eligibility |
 
 ---
@@ -71,6 +77,16 @@ that use SwapVM are explicitly scored higher.
 
 > The two prizes have **different verification bars**: 1inch accepts local forks;
 > Uniswap wants real testnet/mainnet **transaction IDs**. Plan demos for both.
+
+**Hedera (separate sponsor — optional second track):**
+- **Tokenization on Hedera ($3,000, up to 2 teams × $1,500):** build with the
+  **Hedera Token Service (HTS)** — create/configure/manage tokens at the protocol
+  level with custom fee schedules, compliance controls, and atomic operations, no
+  smart contract required. RWA focus; "settle on maturity via **Scheduled
+  Transactions**" is a listed example.
+- **AI & Agentic Payments on Hedera ($6,000, up to 2 teams × $3,000):** build AI
+  agents that move value autonomously (sub-second finality, sub-cent fees) using
+  the Hedera Agent Kit, OpenClaw Agent Commerce Protocol, or the x402 standard.
 
 ---
 
@@ -117,13 +133,29 @@ and have the SwapVM script *read* it as an input parameter. Be explicit about
 where each variable lives: spot/strike/expiry/side are call inputs; `σ_global`
 is contract storage.
 
-### Finding C — Drop Hedera (Commit 11)  *(critical for scope, not just polish)*
-No Hedera prize is in scope. The commit also mischaracterizes Hedera Consensus
-Service (HCS is consensus ordering/timestamps, not a keeper/cron; "scheduled
-transactions" are a separate feature) and Hedera's EVM may not support all the
-Cancun opcodes the rest of the plan relies on (TSTORE/TLOAD). **Fix:** remove
-the Hedera commit entirely. If you need periodic "marking," do it with a simple
-script/keeper or an onchain `poke()` anyone can call — no new dependency.
+### Finding C — Hedera: a viable second track, but rebuild the commit  *(corrected)*
+My first draft said "no Hedera prize is in scope" — that was wrong. There are two
+Hedera prizes (**Tokenization $3k**, **AI & Agentic Payments $6k**). The original
+Commit 11 was still technically muddled, though: it leaned on **Hedera Consensus
+Service (HCS)** for scheduling, but HCS is consensus ordering/timestamps, not a
+scheduler. The correct primitives are:
+- **Hedera Token Service (HTS):** mint/manage the OptionToken as a *native* token
+  from Solidity via the HTS precompile (HIP-206/358), with **custom fee schedules**
+  (the premium spread can be a native custom fee) and built-in compliance/KYC.
+- **Hedera Schedule Service (HSS):** schedule the **expiry settlement** as a
+  native scheduled transaction/contract call — the tokenization bounty's own
+  "settle on maturity via Scheduled Transactions" example is structurally
+  identical to an option settling at expiry.
+
+**Key constraint:** Uniswap v4 and 1inch Aqua/SwapVM do **not** run on Hedera, so
+this is a *parallel* deployment, not a cross-call from the EVM contracts. Treat a
+Hedera entry as its own focused submission (HTS option token + HSS settlement →
+Tokenization prize), and only attempt the $6k Agentic-Payments prize if you add a
+real autonomous-agent layer (x402 / Hedera Agent Kit) — that is a separate
+product, not a feature toggle. **Recommendation:** if you want Hedera, target the
+**Tokenization $3k** with the HTS+HSS build and treat 1inch as your primary; do
+not try to win all three sponsors at depth in one hackathon. Also verify Hedera's
+EVM supports any Cancun opcodes you rely on before porting EVM contracts.
 
 ### Finding D — Cut to the prize-critical path  *(critical)*
 Custom Yul bytecode + Aqua vault + v4 hooks (CREATE2 mining) + Hedera + four UI
@@ -186,9 +218,10 @@ strong "scored higher" story — keep it small and well-tested).
 
 ## Revised 15-Commit Plan
 
-Phases reordered so the two prize-critical paths (1inch vault, Uniswap API) land
-before the optional v4 hook work. Hedera removed. Each bullet is one clean,
-short commit.
+Phases reordered so the prize-critical 1inch path lands first. Each bullet is one
+clean, short commit. **Hedera is an optional parallel track** (see the Hedera
+add-on after Phase 6) — include it only if you commit to a second sponsor; it
+does not slot into the EVM contracts.
 
 ### Phase 1 — Foundation
 1. **Scaffold Foundry repo.** `foundry.toml` (`evm_version = "cancun"`),
@@ -250,6 +283,21 @@ short commit.
     **≤3-min demo video** and submit the **Uniswap feedback form**. *Verify:*
     full test suite green; both prize submissions complete.
 
+### Optional add-on — Hedera Tokenization track (parallel build)
+Only if you choose Hedera as a second sponsor. These are *additional* commits in
+a separate `hedera/` deployment, not edits to the EVM contracts above.
+- **H1. HTS option token.** Mint/configure the OptionToken as a native HTS token
+  from a Solidity contract via the HTS precompile, encoding the premium spread as
+  a **custom fee** and (optionally) KYC/compliance flags. *Verify:* token created
+  + a real onchain transfer on Hedera testnet (tx ID captured).
+- **H2. Scheduled expiry settlement.** Use the Hedera Schedule Service to schedule
+  the settlement transaction at expiry (the bounty's "settle on maturity via
+  Scheduled Transactions" pattern). *Verify:* scheduled settlement fires and
+  distributes/burns the HTS token at maturity.
+- **H3. (Stretch, $6k Agentic Payments only)** Add an autonomous agent (x402 /
+  Hedera Agent Kit) that discovers, prices, and settles an option position
+  without manual steps. *Verify:* agent completes a buy→settle cycle onchain.
+
 ---
 
 ## Pre-Submission Checklist
@@ -260,7 +308,9 @@ short commit.
 - [ ] ≤3-min demo video recorded.
 - [ ] Uniswap Developer Feedback Form submitted.
 - [ ] Commit log: many small, building commits across days — no final-day dump.
-- [ ] Hedera removed; scope trimmed to the must-haves.
+- [ ] Hedera: decided in or out. If in, target Tokenization $3k via HTS option
+      token + HSS scheduled settlement (parallel build) — not a cross-call from
+      the EVM stack. Don't chase all three sponsors at depth.
 
 ---
 
@@ -270,3 +320,6 @@ short commit.
 - [Uniswap Trading API overview](https://docs.uniswap.org/api/trading/overview)
 - [Uniswap Developer Platform is live](https://blog.uniswap.org/uniswap-developer-platform-is-live)
 - [Uniswap developer docs](https://developers.uniswap.org/docs) — building with any part of the stack, including hooks, qualifies
+- [Hedera Token Service](https://hedera.com/service/token-service/)
+- [HIP-206: HTS precompile for smart contracts](https://hips.hedera.com/hip/hip-206) / [HIP-358: token create via precompile](https://hips.hedera.com/hip/hip-358)
+- [Hedera system smart contracts (HTS + Schedule Service)](https://docs.hedera.com/hedera/core-concepts/smart-contracts/system-smart-contracts)
