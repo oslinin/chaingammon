@@ -23,8 +23,6 @@ export function HeaderLinks() {
       </Link>
       <Link
         href="/help"
-        target="_blank"
-        rel="noreferrer"
         className="cg-nav-link"
         style={{
           fontSize: 13,
