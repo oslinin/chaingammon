@@ -17,13 +17,14 @@ import {
 } from "wagmi";
 import {
   encodeAbiParameters,
+  encodeFunctionData,
   keccak256,
   parseAbiParameters,
   toHex,
   type PrivateKeyAccount,
 } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
-import { useWallets } from "@privy-io/react-auth";
+import { useSendTransaction, useWallets } from "@privy-io/react-auth";
 
 import { Board } from "../Board";
 import { loadTheme, saveTheme, loadPrefer3d, pickGameCoins, BOARD_THEMES, type BoardThemeKey } from "../boardThemes";
@@ -599,6 +600,7 @@ function TeamDemoPageInner() {
   const { label: humanLabel } = useChaingammonName(address);
   const { signMessageAsync } = useSignMessage();
   const { writeContractAsync } = useSponsoredWrite();
+  const { sendTransaction: privySendTransaction } = useSendTransaction();
   const { switchChain, isPending: isSwitchingChain, error: switchChainError } =
     useSwitchChain();
   const txReceipt = useWaitForTransactionReceipt({ hash: settleTxHash ?? undefined });
@@ -1114,7 +1116,7 @@ function TeamDemoPageInner() {
           });
 
       let resultSig: `0x${string}`;
-      let txHash: `0x${string}`;
+      let txHash: `0x${string}` = "" as `0x${string}`;
 
       // Determine payout split (empty = ELO-only, non-empty = staked).
       const useEscrow =
@@ -1170,13 +1172,61 @@ function TeamDemoPageInner() {
         sessionKeyB: "0x0000000000000000000000000000000000000000" as `0x${string}`,
       };
 
-      txHash = await writeContractAsync({
-        address: matchRegistry,
+      const settleCalldata = encodeFunctionData({
         abi: MatchRegistryABI,
         functionName: "settle",
         args: [params, humanAuthSig, "0x", resultSig, "0x", settleEscrowId, winners, shares],
-        chainId,
       });
+      const relayArgs = {
+        human: address,
+        agentId: primaryOpponentId,
+        matchLength,
+        humanWins,
+        gameRecordHash,
+        nonce: authNonce,
+        sessionKey: sessionAccount.address,
+        humanAuthSig,
+        resultSig,
+        ...(useEscrow && escrowMatchId ? { escrowMatchId } : {}),
+        ...(winners.length ? { winners, shares } : {}),
+      };
+      const isGasError = (e: unknown) =>
+        /insufficient funds|gas required exceeds|out of gas/i.test(
+          e instanceof Error ? e.message : String(e),
+        );
+
+      // For Privy embedded wallets, try gas-sponsored send first.
+      let settled = false;
+      if (isEmbeddedWallet) {
+        try {
+          const { hash } = await privySendTransaction(
+            { to: matchRegistry, data: settleCalldata, chainId },
+            { sponsor: true },
+          );
+          txHash = hash;
+          settled = true;
+        } catch {
+          // Sponsorship unavailable or rejected — fall through to direct submit.
+        }
+      }
+
+      if (!settled) {
+        try {
+          txHash = await writeContractAsync({
+            address: matchRegistry,
+            abi: MatchRegistryABI,
+            functionName: "settle",
+            args: [params, humanAuthSig, "0x", resultSig, "0x", settleEscrowId, winners, shares],
+            chainId,
+          });
+        } catch (directErr) {
+          if (isGasError(directErr)) {
+            txHash = await relaySettle(relayArgs);
+          } else {
+            throw directErr;
+          }
+        }
+      }
       setSettleTxHash(txHash);
     } catch (e) {
       setSettleStatus("error");
