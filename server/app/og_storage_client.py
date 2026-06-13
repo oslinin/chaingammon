@@ -1,6 +1,17 @@
 """
-0G Storage client — thin Python wrapper around the og-bridge Node CLI.
+Blob/KV storage client for agent artifacts and game records.
 
+Two storage backends are selectable at runtime via the `STORAGE_BACKEND`
+env var (default `0g`):
+
+  STORAGE_BACKEND=0g      (default) — 0G Storage via the og-bridge Node CLI
+  STORAGE_BACKEND=walrus            — Walrus over its plain HTTP REST API
+
+Only blob storage (`put_blob` / `get_blob`) has a Walrus branch; KV
+(`put_kv` / `get_kv`) is 0G-only since Walrus has no mutable key store.
+
+0G Storage backend
+------------------
 There is no native Python SDK for 0G Storage, so we shell out to the
 TypeScript SDK via CLI scripts in /og-bridge:
 
@@ -22,6 +33,17 @@ Canonical KV key scheme:
   chaingammon/weights/agent/{agent_id}       — ONNX/PyTorch checkpoint
   chaingammon/overlay/agent/{agent_id}       — 21-float JSON style overlay
   chaingammon/overlay/human/{address_lower}  — future: per-human style profile
+
+Walrus backend
+--------------
+Walrus exposes a plain HTTP REST API, so no subprocess is needed:
+
+  PUT  {WALRUS_PUBLISHER}/v1/blobs?epochs=N   raw bytes body → JSON blob info
+  GET  {WALRUS_AGGREGATOR}/v1/blobs/{blobId}  → raw bytes
+
+The returned Walrus `blobId` takes the place of the 0G Merkle root: it is the
+id Python writes to a Sepolia contract (AgentRegistry.dataHashes /
+MatchRegistry.gameRecordHash) and later uses to fetch the blob back.
 """
 
 from __future__ import annotations
@@ -32,6 +54,8 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
+import httpx
+
 # Path to the og-bridge package at the repo root.
 _BRIDGE_DIR = Path(__file__).resolve().parents[2] / "og-bridge"
 _UPLOAD_SCRIPT = _BRIDGE_DIR / "src" / "upload.mjs"
@@ -40,6 +64,17 @@ _KV_PUT_SCRIPT = _BRIDGE_DIR / "src" / "kv-put.mjs"
 _KV_GET_SCRIPT = _BRIDGE_DIR / "src" / "kv-get.mjs"
 
 _REQUIRED_ENV = ("OG_STORAGE_RPC", "OG_STORAGE_INDEXER", "OG_STORAGE_PRIVATE_KEY")
+
+# Selectable blob backend. "0g" (default) keeps the og-bridge subprocess path;
+# "walrus" routes put_blob/get_blob over Walrus's HTTP REST API.
+_DEFAULT_BACKEND = "0g"
+# Walrus stores blobs for a number of epochs; default if WALRUS_EPOCHS unset.
+_WALRUS_DEFAULT_EPOCHS = 5
+
+
+def _storage_backend() -> str:
+    """Return the selected blob backend, normalized to lowercase ("0g"/"walrus")."""
+    return (os.environ.get("STORAGE_BACKEND") or _DEFAULT_BACKEND).strip().lower() or _DEFAULT_BACKEND
 
 # Server-side JSON fallback for KV. Used when the 0G KV Node script fails
 # (e.g. on testnet before the 0G SDK ships a KV client). Data is stored as
@@ -90,15 +125,39 @@ def _check_env() -> None:
         raise OgStorageError(f"Missing env vars for 0G Storage: {missing}")
 
 
-def put_blob(data: bytes, *, timeout: float = 180.0) -> UploadResult:
-    """Upload arbitrary bytes to 0G Storage and return the Merkle root + tx hash.
+def put_blob(data: bytes, *, timeout: float | None = None) -> UploadResult:
+    """Upload arbitrary bytes to the selected backend and return an UploadResult.
+
+    Dispatches on STORAGE_BACKEND: "walrus" stores over HTTP, anything else
+    (default "0g") uploads via the og-bridge subprocess. For 0G, root_hash is
+    the Merkle root; for Walrus it is the blobId. Either is the id later passed
+    to get_blob and written on-chain.
+    """
+    if not data:
+        raise OgStorageError("put_blob received empty bytes")
+    if _storage_backend() == "walrus":
+        return _put_blob_walrus(data, timeout=120.0 if timeout is None else timeout)
+    return _put_blob_og(data, timeout=180.0 if timeout is None else timeout)
+
+
+def get_blob(root_hash: str, *, timeout: float | None = None) -> bytes:
+    """Download a blob by id from the selected backend and return raw bytes.
+
+    Dispatches on STORAGE_BACKEND: "walrus" fetches over HTTP, anything else
+    (default "0g") downloads via the og-bridge subprocess.
+    """
+    if _storage_backend() == "walrus":
+        return _get_blob_walrus(root_hash, timeout=120.0 if timeout is None else timeout)
+    return _get_blob_og(root_hash, timeout=120.0 if timeout is None else timeout)
+
+
+def _put_blob_og(data: bytes, *, timeout: float) -> UploadResult:
+    """Upload bytes to 0G Storage and return the Merkle root + tx hash.
 
     Uploads can take ~30s on testnet because the SDK waits for inclusion of the
     flow-contract tx that pins the data. Default timeout is 180s.
     """
     _check_env()
-    if not data:
-        raise OgStorageError("put_blob received empty bytes")
     proc = subprocess.run(
         ["node", str(_UPLOAD_SCRIPT)],
         input=data,
@@ -118,7 +177,7 @@ def put_blob(data: bytes, *, timeout: float = 180.0) -> UploadResult:
     return UploadResult(root_hash=payload["rootHash"], tx_hash=payload["txHash"])
 
 
-def get_blob(root_hash: str, *, timeout: float = 120.0) -> bytes:
+def _get_blob_og(root_hash: str, *, timeout: float) -> bytes:
     """Download a blob from 0G Storage by its Merkle root and return raw bytes."""
     _check_env()
     if not root_hash.startswith("0x"):
@@ -135,6 +194,78 @@ def get_blob(root_hash: str, *, timeout: float = 120.0) -> bytes:
             f"og-bridge download failed (exit {proc.returncode}): {proc.stderr.decode(errors='replace')}"
         )
     return proc.stdout
+
+
+def _walrus_endpoint(env_var: str) -> str:
+    """Read a Walrus endpoint from the env, stripping any trailing slash."""
+    url = os.environ.get(env_var)
+    if not url:
+        raise OgStorageError(f"Missing env var for Walrus storage: {env_var}")
+    return url.rstrip("/")
+
+
+def _walrus_blob_id(payload: dict) -> str:
+    """Extract the blobId from a Walrus store response.
+
+    The publisher returns either `newlyCreated` (first time these bytes are
+    stored) or `alreadyCertified` (the content-addressed blob already exists);
+    both carry the blobId we need to fetch it back.
+    """
+    if "newlyCreated" in payload:
+        return payload["newlyCreated"]["blobObject"]["blobId"]
+    if "alreadyCertified" in payload:
+        return payload["alreadyCertified"]["blobId"]
+    raise OgStorageError(f"Walrus store returned unexpected shape: {payload!r}")
+
+
+def _put_blob_walrus(data: bytes, *, timeout: float) -> UploadResult:
+    """Store bytes on Walrus via the publisher's HTTP API and return the blobId.
+
+    PUT {WALRUS_PUBLISHER}/v1/blobs?epochs=N with the raw bytes as the body.
+    WALRUS_EPOCHS controls how many epochs the blob is paid to persist.
+    """
+    publisher = _walrus_endpoint("WALRUS_PUBLISHER")
+    epochs = os.environ.get("WALRUS_EPOCHS") or str(_WALRUS_DEFAULT_EPOCHS)
+    try:
+        resp = httpx.put(
+            f"{publisher}/v1/blobs",
+            params={"epochs": epochs},
+            content=data,
+            timeout=timeout,
+        )
+    except httpx.HTTPError as e:
+        raise OgStorageError(f"Walrus store request failed: {e}") from e
+    if resp.status_code >= 400:
+        raise OgStorageError(
+            f"Walrus store failed (HTTP {resp.status_code}): {resp.text}"
+        )
+    try:
+        payload = resp.json()
+    except ValueError as e:
+        raise OgStorageError(f"Walrus store returned non-JSON: {resp.text!r}") from e
+    blob_id = _walrus_blob_id(payload)
+    # Walrus has no Sepolia tx at upload time (the on-chain write is a separate
+    # step in Python), so tx_hash is empty for this backend.
+    return UploadResult(root_hash=blob_id, tx_hash="")
+
+
+def _get_blob_walrus(blob_id: str, *, timeout: float) -> bytes:
+    """Fetch a blob from a Walrus aggregator by its blobId and return raw bytes.
+
+    GET {WALRUS_AGGREGATOR}/v1/blobs/{blobId}.
+    """
+    if not blob_id:
+        raise OgStorageError("get_blob: blob id must not be empty")
+    aggregator = _walrus_endpoint("WALRUS_AGGREGATOR")
+    try:
+        resp = httpx.get(f"{aggregator}/v1/blobs/{blob_id}", timeout=timeout)
+    except httpx.HTTPError as e:
+        raise OgStorageError(f"Walrus read request failed: {e}") from e
+    if resp.status_code >= 400:
+        raise OgStorageError(
+            f"Walrus read failed (HTTP {resp.status_code}): {resp.text}"
+        )
+    return resp.content
 
 
 def put_kv(key: str, data: bytes, *, timeout: float = 30.0) -> None:
