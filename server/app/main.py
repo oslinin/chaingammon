@@ -45,6 +45,7 @@ from .game_record import (
 from .game_state import GameState, decode_position_id
 from .gnubg_client import GnubgClient
 from .og_storage_client import OgStorageError, get_blob, get_kv, put_blob, put_kv
+from .privy_agent_wallet import PrivyAgentWalletError, PrivyAgentWallets
 
 gnubg = GnubgClient()
 
@@ -1690,6 +1691,41 @@ def list_agents():
         except ChainError:
             pass
     return agents
+
+
+@app.post("/agents/{agent_id}/privy-wallet")
+def provision_agent_privy_wallet(agent_id: int):
+    """Provision (or return) the agent's Privy server wallet and its USDC balance.
+
+    Stream 1 / PR 1.1 (ETHGlobal NYC 2026): gives the agent its own Privy server
+    wallet so Privy — not the server — can custody and later distribute winnings.
+    Idempotent: repeated calls return the same wallet without re-calling Privy.
+    503 when Privy isn't configured (PRIVY_APP_ID / PRIVY_APP_SECRET). The USDC
+    balance is best-effort: null when RPC_URL / USDC token aren't configured, so
+    this stays additive while USDC wiring lands.
+    """
+    try:
+        wallets = PrivyAgentWallets.from_env()
+    except PrivyAgentWalletError as e:
+        raise HTTPException(status_code=503, detail=f"privy unavailable: {e}")
+    try:
+        wallet = wallets.get_or_create_wallet(agent_id)
+    except PrivyAgentWalletError as e:
+        raise HTTPException(status_code=502, detail=f"privy wallet provisioning failed: {e}")
+    usdc_balance: Optional[str] = None
+    try:
+        # Return as a string — USDC's smallest unit (6 decimals) can exceed JS
+        # safe-integer range once balances grow.
+        usdc_balance = str(wallets.usdc_balance(agent_id))
+    except PrivyAgentWalletError:
+        usdc_balance = None  # USDC reads not configured yet — additive PR.
+    return {
+        "agent_id": wallet.agent_id,
+        "wallet_id": wallet.wallet_id,
+        "address": wallet.address,
+        "chain_type": wallet.chain_type,
+        "usdc_balance": usdc_balance,
+    }
 
 
 @app.get("/agents/{agent_id}/profile")
