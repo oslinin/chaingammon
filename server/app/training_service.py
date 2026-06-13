@@ -35,7 +35,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
-from .agent_wallets import AgentWalletManager
+from .privy_agent_wallet import PrivyAgentWallets
 
 
 # Repository root — agent/round_robin_trainer.py lives at ../agent/.
@@ -242,11 +242,11 @@ def start_job(
         depths_str = ",".join(f"{k}:{v}" for k, v in search_depths.items())
         cmd.extend(["--search-depths", depths_str])
 
-    # Pre-provision wallets for all agents so they show up in status.
+    # Pre-provision Privy wallets for all agents so they show up in status.
     try:
-        wallets = AgentWalletManager.from_env()
+        wallets = PrivyAgentWallets.from_env()
         for aid in agent_ids:
-            wallets.get_or_create(aid)
+            wallets.get_or_create_wallet(aid)
     except Exception:
         pass
 
@@ -558,11 +558,17 @@ def _aggregate(events: list[dict], *, job: Optional[TrainingJob],
     training_complete = False
 
     # Resolve agent wallet addresses for the checkpoints panel.
-    wallets: Optional[AgentWalletManager] = None
+    privy_wallets: Optional[PrivyAgentWallets] = None
     try:
-        wallets = AgentWalletManager.from_env()
+        privy_wallets = PrivyAgentWallets.from_env()
     except Exception:
         pass
+
+    def _wallet_address(aid: int) -> Optional[str]:
+        if privy_wallets is None:
+            return None
+        w = privy_wallets.wallet_for(aid)
+        return w.address if w else None
 
     for e in events:
         kind = e.get("event")
@@ -582,32 +588,20 @@ def _aggregate(events: list[dict], *, job: Optional[TrainingJob],
             ended = "aborted"
         elif kind == "agent_saved":
             aid = int(e.get("agent_id", 0))
-            address = None
-            if wallets and wallets.has_wallet(aid):
-                try:
-                    address = wallets.get_address(aid)
-                except Exception:
-                    pass
             checkpoints.append({
                 "agent_id": aid,
                 "path": str(e.get("path", "")),
                 "root_hash": e.get("root_hash"),
-                "address": address,
+                "address": _wallet_address(aid),
                 "error": None,
             })
         elif kind == "agent_save_error":
             aid = int(e.get("agent_id", 0))
-            address = None
-            if wallets and wallets.has_wallet(aid):
-                try:
-                    address = wallets.get_address(aid)
-                except Exception:
-                    pass
             checkpoints.append({
                 "agent_id": aid,
                 "path": None,
                 "root_hash": None,
-                "address": address,
+                "address": _wallet_address(aid),
                 "error": str(e.get("detail", "unknown error")),
             })
         elif kind == "agents_loaded":
