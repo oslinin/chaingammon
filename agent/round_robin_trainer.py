@@ -75,7 +75,7 @@ _env_path = _Path(__file__).resolve().parents[1] / "server" / ".env"
 load_dotenv(_env_path, override=False)
 
 from agent_state_io import AgentState, load_or_seed, save_and_upload_checkpoint
-from career_features import encode_career_context, CareerContext
+from career_features import encode_career_context, CareerContext, ACTIVE_AXES
 from sample_trainer import DEFAULT_EXTRAS_DIM, td_lambda_match, encode_state
 from sklearn_agent import SklearnProxy, fit_and_export_sklearn, is_sklearn_code
 
@@ -427,6 +427,13 @@ def run_round_robin(
             )
 
         _emit(status_fh, "epoch_end", epoch=epoch)
+
+        for aid in agent_ids:
+            state = agents.get(aid)
+            if state and state.net.extras is not None:
+                norms = state.net.extras.weight.data[:, :len(ACTIVE_AXES)].norm(dim=0).tolist()
+                _emit(status_fh, "weight_snapshot", agent_id=aid, epoch=epoch,
+                      norms={ax: round(float(norms[i]), 4) for i, ax in enumerate(ACTIVE_AXES)})
 
         if writer:
             for aid in agent_ids:

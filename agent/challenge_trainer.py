@@ -38,6 +38,7 @@ TensorBoard scalars written per epoch (when --logdir is set):
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import signal
 import sys
@@ -63,7 +64,7 @@ load_dotenv(_env_path, override=False)
 
 from agent_state_io import AgentState, load_or_seed, save_and_upload_checkpoint
 from sample_trainer import DEFAULT_EXTRAS_DIM, td_lambda_match
-from career_features import encode_career_context, CareerContext
+from career_features import encode_career_context, CareerContext, ACTIVE_AXES
 from challenge_policy import ChallengePolicy
 
 # Using the same phase G and hash logic from round_robin_trainer
@@ -125,6 +126,7 @@ def run_challenge_loop(
     gamma: float = 1.0,
     use_0g_inference: bool = False,
     logdir: Optional[str] = None,
+    tournament: bool = False,
 ) -> dict[int, AgentState]:
 
     if len(agent_ids) < 2:
@@ -172,13 +174,29 @@ def run_challenge_loop(
         loaded={aid: a.profile_kind for aid, a in agents.items()},
     )
 
+    # Tournament mode: lazy-import server chain clients and init bankrolls once.
+    # In normal training, bankrolls reset every epoch (simulated); in tournament
+    # mode they carry over across epochs and map to real AgentVault balances.
+    _chain_client = None
+    _vault_operator = None
+    if tournament:
+        _repo_root = Path(__file__).resolve().parents[1]
+        if str(_repo_root) not in sys.path:
+            sys.path.insert(0, str(_repo_root))
+        from server.app.chain_client import ChainClient  # type: ignore[import]
+        from server.app.agent_wallets import AgentVaultOperator  # type: ignore[import]
+        _chain_client = ChainClient.from_env()
+        _vault_operator = AgentVaultOperator.from_env()
+        for aid in agent_ids:
+            bankrolls[aid] = starting_bankroll
 
     for epoch in range(epochs):
         _emit(status_fh, "epoch_start", epoch=epoch, total=epochs)
 
-        # Reset bankrolls
-        for aid in agent_ids:
-            bankrolls[aid] = starting_bankroll
+        if not tournament:
+            # Reset bankrolls each epoch (simulated training mode only).
+            for aid in agent_ids:
+                bankrolls[aid] = starting_bankroll
 
         proposed_count = 0
         accepted_count = 0
@@ -258,6 +276,31 @@ def run_challenge_loop(
                 if infer_fn is not None:
                     kwargs["infer_fn"] = infer_fn
 
+                # Tournament: fund escrow before the match so funds are locked.
+                escrow_match_id: Optional[str] = None
+                if tournament and _vault_operator is not None:
+                    escrow_match_id = (
+                        "0x"
+                        + hashlib.sha256(
+                            f"{proposer}-{target}-{global_match}".encode()
+                        ).hexdigest()
+                    )
+                    try:
+                        _vault_operator.deposit_to_escrow(
+                            agent_id=proposer,
+                            match_id_hex=escrow_match_id,
+                            stake_wei=stake,
+                        )
+                        _vault_operator.deposit_to_escrow(
+                            agent_id=target,
+                            match_id_hex=escrow_match_id,
+                            stake_wei=stake,
+                        )
+                    except Exception as exc:
+                        _emit(status_fh, "tournament_escrow_error",
+                              proposer=proposer, target=target, error=str(exc))
+                        escrow_match_id = None  # fall back to simulated
+
                 steps, won, *_ = td_match(
                     agents[proposer].net, agents[target].net,
                     a_extras, b_extras,
@@ -265,6 +308,7 @@ def run_challenge_loop(
                 )
 
                 winner = proposer if won else target
+                loser = target if won else proposer
                 _emit(
                     status_fh, "match",
                     proposer=proposer, target=target,
@@ -281,7 +325,41 @@ def run_challenge_loop(
                 matches_played[proposer] += 1
                 matches_played[target] += 1
 
-                # UPDATE BANKROLL
+                # Tournament: settle escrow + record ELO on-chain.
+                if tournament and _chain_client is not None:
+                    zero = "0x0000000000000000000000000000000000000000"
+                    grh = "0x" + hashlib.sha256(
+                        f"grh-{proposer}-{target}-{global_match}".encode()
+                    ).hexdigest()
+                    try:
+                        if escrow_match_id is not None:
+                            winner_owner = _chain_client.agent_owner(winner)
+                            _chain_client.record_match_and_split(
+                                winner_agent_id=winner,
+                                winner_human=zero,
+                                loser_agent_id=loser,
+                                loser_human=zero,
+                                match_length=int(steps),
+                                game_record_hash=grh,
+                                escrow_match_id=escrow_match_id,
+                                winners=[winner_owner],
+                                shares=[stake * 2],
+                            )
+                        else:
+                            # Escrow deposit failed — record ELO only (no payout).
+                            _chain_client.record_match(
+                                winner_agent_id=winner,
+                                winner_human=zero,
+                                loser_agent_id=loser,
+                                loser_human=zero,
+                                match_length=int(steps),
+                                game_record_hash=grh,
+                            )
+                    except Exception as exc:
+                        _emit(status_fh, "tournament_chain_error",
+                              winner=winner, loser=loser, error=str(exc))
+
+                # UPDATE BANKROLL (in-memory — mirrors on-chain in tournament mode)
                 if won:
                     bankrolls[proposer] += stake
                     bankrolls[target] -= stake
@@ -303,6 +381,15 @@ def run_challenge_loop(
         accept_rate = accepted_count / proposed_count if proposed_count > 0 else 0.0
         avg_stake = total_stake_wei / accepted_count if accepted_count > 0 else 0.0
         _emit(status_fh, "epoch_end", epoch=epoch, accept_rate=accept_rate, avg_stake_wei=avg_stake)
+
+        # Emit per-agent column norms for the extras layer (own-style axes only,
+        # indices 0:18). The norm of column i measures how strongly axis i
+        # influences hidden activations — useful for tracking feature stability.
+        for aid, state in agents.items():
+            if state.net.extras is not None:
+                norms = state.net.extras.weight.data[:, :len(ACTIVE_AXES)].norm(dim=0).tolist()
+                _emit(status_fh, "weight_snapshot", agent_id=aid, epoch=epoch,
+                      norms={ax: round(float(norms[i]), 4) for i, ax in enumerate(ACTIVE_AXES)})
 
         if writer:
             writer.add_scalar("market/accept_rate", accept_rate, epoch)
@@ -364,6 +451,8 @@ def main() -> int:
                         help="Write TensorBoard event files to this directory.")
     parser.add_argument("--launch-tensorboard", action="store_true",
                         help="Spawn 'tensorboard --logdir <logdir>' after training completes.")
+    parser.add_argument("--tournament", action="store_true",
+                        help="Live tournament mode: real AgentVault escrow transfers and on-chain ELO updates per match.")
     args = parser.parse_args()
 
     torch.manual_seed(args.seed)
@@ -390,6 +479,7 @@ def main() -> int:
                 lam=args.lam,
                 gamma=args.gamma,
                 use_0g_inference=args.use_0g_inference,
+                tournament=args.tournament,
             )
             completed = True
         finally:

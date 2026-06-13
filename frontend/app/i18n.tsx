@@ -40,6 +40,7 @@ const DICTIONARY: Record<Language, Record<string, string>> = {
     // Action chips
     chip_mint: "Mint",
     chip_train: "Train",
+    chip_tournament: "Tournament",
     chip_offchain: "Off-chain game",
     chip_onchain: "On-chain game",
     // PersonCard
@@ -215,6 +216,7 @@ const DICTIONARY: Record<Language, Record<string, string>> = {
     // Action chips
     chip_mint: "Crear",
     chip_train: "Entrenar",
+    chip_tournament: "Torneo",
     chip_offchain: "Juego off-chain",
     chip_onchain: "Juego on-chain",
     // PersonCard
@@ -390,6 +392,7 @@ const DICTIONARY: Record<Language, Record<string, string>> = {
     // Action chips
     chip_mint: "Mint",
     chip_train: "Eğit",
+    chip_tournament: "Turnuva",
     chip_offchain: "Zincir dışı oyun",
     chip_onchain: "Zincir üstü oyun",
     // PersonCard
@@ -565,6 +568,7 @@ const DICTIONARY: Record<Language, Record<string, string>> = {
     // Action chips
     chip_mint: "Минт",
     chip_train: "Тренировка",
+    chip_tournament: "Турнир",
     chip_offchain: "Игра off-chain",
     chip_onchain: "Игра on-chain",
     // PersonCard
@@ -740,6 +744,7 @@ const DICTIONARY: Record<Language, Record<string, string>> = {
     // Action chips
     chip_mint: "Мінт",
     chip_train: "Тренування",
+    chip_tournament: "Турнір",
     chip_offchain: "Гра off-chain",
     chip_onchain: "Гра on-chain",
     // PersonCard

@@ -20,6 +20,7 @@ export function HomeActionChips() {
         <>
           <Link href="/create-agent" className="cg-chip cg-chip-gold">{t("chip_mint")}</Link>
           <Link href="/training" className="cg-chip cg-chip-muted">{t("chip_train")}</Link>
+          <Link href="/tournament" className="cg-chip cg-chip-warm">{t("chip_tournament")}</Link>
         </>
       )}
       <Link href="/team-demo" className="cg-chip cg-chip-muted">{t("chip_offchain")}</Link>

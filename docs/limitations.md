@@ -44,6 +44,26 @@ sklearn models are re-fitted once per epoch on accumulated game data. They canno
 
 ---
 
+## 0G Compute
+
+### 8. Training and tournament loops run locally, not on 0G Compute
+
+**Status: Wired but waiting for a provider.**
+
+There are two separate 0G compute paths, and neither is fully active today:
+
+**Server-side `use_0g_inference` (Phase G placeholder):**
+The `--use-0g-inference` flag in `round_robin_trainer`, `challenge_trainer`, and `team_challenge_trainer` is intended to route each neural-net forward pass (move evaluation) to a 0G Compute provider via `og_compute_eval_client`. In practice, the eval bridge is not yet active — `_maybe_build_0g_infer_fn` returns `None` and all inference falls back to local PyTorch. The full TD-lambda weight-update loop always runs as a local subprocess on the server machine.
+
+**Browser-side `submitTrainingJob` (og_training.ts):**
+The training page's "0G" backend calls `submitTrainingJob`, which submits the full training job (self-play + weight updates + ONNX export) to a `backgammon-train-v1` provider on the 0G serving network. The browser sends starting weights and receives trained weights back. The wire is in place but no `backgammon-train-v1` provider is registered on the network — the call throws `OgTrainingUnavailable`.
+
+**Checkpoint storage is active:** after every training run, `.pt` checkpoints are uploaded to 0G KV storage regardless of the inference mode. This path works today.
+
+**Impact on tournament:** the `--tournament` flag settles real MatchEscrow stakes and pushes live ELO to ENS (EVM chain calls, not 0G). The training loop itself runs locally. Once a `backgammon-train-v1` provider registers, the browser-side path will route the full job to 0G with no code changes needed.
+
+---
+
 ## Overlay
 
 ### 6. Human overlay populated only after on-chain settlement

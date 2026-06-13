@@ -17,6 +17,7 @@ import { useReadContracts } from "wagmi";
 import { useActiveChainId } from "./chains";
 import {
   AgentRegistryABI,
+  AgentVaultTokenABI,
   MatchRegistryABI,
   useChainContracts,
 } from "./contracts";
@@ -36,7 +37,7 @@ interface ProfileResponse {
 
 export function AgentCard({ agentId }: AgentCardProps) {
   const chainId = useActiveChainId();
-  const { agentRegistry, matchRegistry } = useChainContracts();
+  const { agentRegistry, matchRegistry, agentVaultToken } = useChainContracts();
   const { t } = useI18n();
 
   const { data, isLoading } = useReadContracts({
@@ -55,6 +56,13 @@ export function AgentCard({ agentId }: AgentCardProps) {
         args: [BigInt(agentId)],
         chainId,
       },
+      {
+        address: agentVaultToken,
+        abi: AgentVaultTokenABI,
+        functionName: "balances",
+        args: [BigInt(agentId)],
+        chainId,
+      },
     ],
     // Sepolia block time is ~12s and ELO bumps once recordMatch lands.
     // Without a poll the card stays frozen until manual refresh.
@@ -63,6 +71,7 @@ export function AgentCard({ agentId }: AgentCardProps) {
 
   const metadataUri = data?.[0]?.result as string | undefined;
   const elo = data?.[1]?.result as bigint | undefined;
+  const usdcBalance = data?.[2]?.result as bigint | undefined;
 
   // Parse metadataUri: either JSON {"label","summary"} or a plain label string.
   let parsedLabel = metadataUri ?? "";
@@ -90,6 +99,8 @@ export function AgentCard({ agentId }: AgentCardProps) {
     : BigInt(0);
   const balance = walletQuery.isLoading
     ? undefined
+    : usdcBalance !== undefined
+    ? `${(Number(usdcBalance) / 1_000_000).toFixed(2)} USDC`
     : `${parseFloat(formatEther(balanceWei)).toFixed(4)} ETH`;
 
   // 0G "games trained" — read from the trained checkpoint metadata via

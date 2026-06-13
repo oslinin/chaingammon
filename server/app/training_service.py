@@ -199,7 +199,7 @@ def start_job(
     else:
         if trainer_mode == "team_challenge":
             target_trainer = _TEAM_CHALLENGE_TRAINER
-        elif trainer_mode == "challenge":
+        elif trainer_mode in ("challenge", "tournament"):
             target_trainer = _CHALLENGE_TRAINER
         else:
             target_trainer = _TRAINER
@@ -226,6 +226,8 @@ def start_job(
             cmd.append("--upload-to-0g")
         if no_encrypt:
             cmd.append("--no-encrypt")
+        if trainer_mode == "tournament":
+            cmd.append("--tournament")
     if use_0g_inference:
         cmd.append("--use-0g-inference")
 

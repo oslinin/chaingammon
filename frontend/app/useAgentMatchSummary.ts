@@ -122,6 +122,102 @@ export function useAgentMatchSummary(agentId: number) {
   return { summary, isLoading, error };
 }
 
+export interface EloPoint {
+  blockNumber: bigint;
+  timestamp: number | null;
+  elo: number;
+  won: boolean;
+}
+
+export function useAgentEloHistory(agentId: number) {
+  const chainId = useActiveChainId();
+  const client = usePublicClient({ chainId });
+  const { matchRegistry } = useChainContracts();
+  const deployedBlock = useActiveChain()?.deployedBlock;
+
+  const [points, setPoints] = useState<EloPoint[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!client || !matchRegistry || matchRegistry.length < 4 || !agentId) {
+      setPoints([]);
+      return;
+    }
+    let cancelled = false;
+    setLoading(true);
+
+    const isLocalChain = chainId === 31337;
+    const computeFromBlock = async (): Promise<bigint | "earliest"> => {
+      if (isLocalChain) return "earliest";
+      if (typeof deployedBlock === "number") return BigInt(deployedBlock);
+      const tip = await client.getBlockNumber();
+      const WINDOW = BigInt(49_000);
+      return tip > WINDOW ? tip - WINDOW : BigInt(0);
+    };
+
+    const targetId = BigInt(agentId);
+    const MAX_BLOCK_RANGE = BigInt(49_000);
+
+    const scanChunked = async (fromBlock: bigint | "earliest") => {
+      if (fromBlock === "earliest") {
+        return client.getLogs({ address: matchRegistry, event: MATCH_RECORDED_EVENT, fromBlock });
+      }
+      const tip = await client.getBlockNumber();
+      const chunks: { fromBlock: bigint; toBlock: bigint }[] = [];
+      let from = fromBlock;
+      while (from <= tip) {
+        const to = from + MAX_BLOCK_RANGE <= tip ? from + MAX_BLOCK_RANGE : tip;
+        chunks.push({ fromBlock: from, toBlock: to });
+        from = to + 1n;
+      }
+      const results = await Promise.all(
+        chunks.map((c) => client.getLogs({ address: matchRegistry, event: MATCH_RECORDED_EVENT, ...c })),
+      );
+      return results.flat();
+    };
+
+    computeFromBlock()
+      .then((fromBlock) => scanChunked(fromBlock))
+      .then(async (logs) => {
+        if (cancelled) return;
+        const relevant = logs.filter((l) => {
+          const a = l.args;
+          return a && (a.winnerAgentId === targetId || a.loserAgentId === targetId);
+        });
+        // Fetch timestamps for each unique block (batch).
+        const blockNums = [...new Set(relevant.map((l) => l.blockNumber ?? 0n))];
+        const tsMap = new Map<bigint, number>();
+        await Promise.all(
+          blockNums.map(async (bn) => {
+            try {
+              const block = await client.getBlock({ blockNumber: bn });
+              tsMap.set(bn, Number(block.timestamp) * 1000);
+            } catch { /* skip */ }
+          }),
+        );
+        if (cancelled) return;
+        const pts: EloPoint[] = relevant.map((l) => {
+          const a = l.args!;
+          const won = a.winnerAgentId === targetId;
+          const elo = Number(won ? a.newWinnerElo : a.newLoserElo);
+          return {
+            blockNumber: l.blockNumber ?? 0n,
+            timestamp: tsMap.get(l.blockNumber ?? 0n) ?? null,
+            elo,
+            won,
+          };
+        });
+        setPoints(pts);
+      })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setLoading(false); });
+
+    return () => { cancelled = true; };
+  }, [agentId, client, matchRegistry, chainId, deployedBlock]);
+
+  return { points, loading };
+}
+
 /**
  * Format the chain-derived match summary as the popover prose. Mirrors
  * the cadence of agent_profile.summarize() so the UI stays consistent

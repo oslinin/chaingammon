@@ -30,7 +30,7 @@ import {
   MatchRegistryABI,
   useChainContracts,
 } from "../../contracts";
-import { useAgentMatchSummary } from "../../useAgentMatchSummary";
+import { useAgentMatchSummary, useAgentEloHistory, EloPoint } from "../../useAgentMatchSummary";
 import { AgentWalletPanel } from "../../AgentWalletPanel";
 import { useOgWeights } from "../../useOgWeights";
 import { useI18n } from "../../i18n";
@@ -53,6 +53,25 @@ interface ProfileResponse {
   address: string | null;
   values: Record<string, number>;
   model_meta: Record<string, unknown>;
+}
+
+interface WeightSnapshot {
+  epoch: number;
+  norms: Record<string, number>;
+}
+
+interface RunEntry {
+  started_at: string | null;
+  ended_at: string | null;
+  status: "done" | "aborted" | "running";
+  is_tournament: boolean;
+  epochs: number | null;
+  matches: number;
+  wins: number;
+  losses: number;
+  net_wei: number;
+  file: string;
+  weight_snapshots: WeightSnapshot[];
 }
 
 interface MintInfo {
@@ -247,6 +266,19 @@ export default function AgentClient() {
     fetch(`${SERVER}/agents/${agentId}/wallet`)
       .then((r) => r.ok ? r.json() : null)
       .then((d) => { if (d?.address) setAgentWalletAddress(d.address); })
+      .catch(() => {});
+  }, [agentId, mounted]);
+
+  // ELO history from MatchRecorded chain events.
+  const eloHistory = useAgentEloHistory(agentId);
+
+  // Training/tournament run history from the server.
+  const [runs, setRuns] = useState<RunEntry[]>([]);
+  useEffect(() => {
+    if (!agentId || !mounted) return;
+    fetch(`${SERVER}/agents/${agentId}/runs`)
+      .then((r) => r.ok ? r.json() : null)
+      .then((d) => { if (d?.runs) setRuns(d.runs); })
       .catch(() => {});
   }, [agentId, mounted]);
 
@@ -595,6 +627,128 @@ export default function AgentClient() {
           </dl>
         </section>
 
+        {/* ELO curve */}
+        <section className="rounded-lg border border-zinc-200 bg-white p-6 dark:border-zinc-800 dark:bg-zinc-900">
+          <h3 className="mb-1 text-sm font-semibold uppercase tracking-wide text-zinc-500">ELO over time</h3>
+          <p className="mb-4 text-xs text-zinc-500">Derived from on-chain MatchRecorded events — one point per match.</p>
+          {eloHistory.loading && <p className="animate-pulse text-sm text-zinc-500">Loading…</p>}
+          {!eloHistory.loading && eloHistory.points.length === 0 && (
+            <p className="text-sm text-zinc-500">No on-chain matches yet.</p>
+          )}
+          {eloHistory.points.length > 0 && (
+            <LineChart
+              points={eloHistory.points.map((p, i) => ({ x: i, y: p.elo }))}
+              label="ELO"
+              color="#6366f1"
+            />
+          )}
+        </section>
+
+        {/* ELO + training progression */}
+        <section className="rounded-lg border border-zinc-200 bg-white p-6 dark:border-zinc-800 dark:bg-zinc-900">
+          <h3 className="mb-1 text-sm font-semibold uppercase tracking-wide text-zinc-500">Training effectiveness</h3>
+          <p className="mb-4 text-xs text-zinc-500">
+            ELO (blue, left axis) vs cumulative games trained (green dashed, right axis) by games played.
+            Jumps in the green line mark completed training sessions.
+          </p>
+          {eloHistory.loading && <p className="animate-pulse text-sm text-zinc-500">Loading…</p>}
+          {!eloHistory.loading && eloHistory.points.length === 0 && (
+            <p className="text-sm text-zinc-500">No on-chain matches yet.</p>
+          )}
+          {!eloHistory.loading && eloHistory.points.length > 0 && (
+            <DualProgressionChart eloPoints={eloHistory.points} runs={runs} />
+          )}
+        </section>
+
+        {/* Feature weight stability */}
+        <section className="rounded-lg border border-zinc-200 bg-white p-6 dark:border-zinc-800 dark:bg-zinc-900">
+          <h3 className="mb-1 text-sm font-semibold uppercase tracking-wide text-zinc-500">Feature weight stability</h3>
+          <p className="mb-4 text-xs text-zinc-500">
+            Extras-layer column norms for the top-5 own-style axes across training epochs.
+            Flat lines = stable features; noisy lines = weak signal.
+          </p>
+          {runs.length === 0 ? (
+            <p className="text-sm text-zinc-500">No training runs recorded yet.</p>
+          ) : (
+            <WeightHistoryChart runs={runs} />
+          )}
+        </section>
+
+        {/* Balance (net wei) curve */}
+        <section className="rounded-lg border border-zinc-200 bg-white p-6 dark:border-zinc-800 dark:bg-zinc-900">
+          <h3 className="mb-1 text-sm font-semibold uppercase tracking-wide text-zinc-500">Balance over time</h3>
+          <p className="mb-4 text-xs text-zinc-500">Cumulative net balance from training and tournament runs (simulated wei for training; real wei for tournaments).</p>
+          {runs.length === 0 && <p className="text-sm text-zinc-500">No training runs recorded yet.</p>}
+          {runs.length > 0 && (() => {
+            let cumulative = 0;
+            const pts = runs
+              .slice()
+              .reverse()
+              .map((r, i) => { cumulative += r.net_wei; return { x: i, y: cumulative }; });
+            return <LineChart points={pts} label="Net wei" color="#f59e0b" />;
+          })()}
+        </section>
+
+        {/* Training / tournament history */}
+        <section className="rounded-lg border border-zinc-200 bg-white p-6 dark:border-zinc-800 dark:bg-zinc-900">
+          <h3 className="mb-4 text-sm font-semibold uppercase tracking-wide text-zinc-500">Training &amp; tournament history</h3>
+          {runs.length === 0 ? (
+            <p className="text-sm text-zinc-500">No runs found.</p>
+          ) : (
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-xs text-zinc-500 text-left border-b border-zinc-200 dark:border-zinc-700">
+                  <th className="pb-2 font-medium">Type</th>
+                  <th className="pb-2 font-medium">Date</th>
+                  <th className="pb-2 font-medium text-right">W</th>
+                  <th className="pb-2 font-medium text-right">L</th>
+                  <th className="pb-2 font-medium text-right">Net</th>
+                  <th className="pb-2 font-medium text-right">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {runs.map((r) => {
+                  const date = r.started_at
+                    ? new Date(r.started_at).toLocaleDateString()
+                    : "—";
+                  const netEth = r.net_wei !== 0
+                    ? (r.net_wei / 1e18).toFixed(4)
+                    : "0";
+                  return (
+                    <tr key={r.file} className="border-b border-zinc-100 dark:border-zinc-800">
+                      <td className="py-2">
+                        <span className={`rounded px-1.5 py-0.5 text-xs font-mono ${
+                          r.is_tournament
+                            ? "bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200"
+                            : "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400"
+                        }`}>
+                          {r.is_tournament ? "tournament" : "training"}
+                        </span>
+                      </td>
+                      <td className="py-2 font-mono text-xs text-zinc-500">{date}</td>
+                      <td className="py-2 text-right text-green-600 dark:text-green-400">{r.wins}</td>
+                      <td className="py-2 text-right text-red-500 dark:text-red-400">{r.losses}</td>
+                      <td className={`py-2 text-right font-mono text-xs ${
+                        r.net_wei >= 0 ? "text-green-600 dark:text-green-400" : "text-red-500 dark:text-red-400"
+                      }`}>
+                        {r.net_wei >= 0 ? "+" : ""}{netEth} ETH
+                      </td>
+                      <td className="py-2 text-right">
+                        <span className={`text-xs ${
+                          r.status === "done" ? "text-green-600" :
+                          r.status === "running" ? "text-amber-500" : "text-zinc-400"
+                        }`}>
+                          {r.status}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </section>
+
         {/* NN weights / style profile — fetched directly from 0G Storage */}
         <section
           data-testid="agent-info-weights"
@@ -778,6 +932,268 @@ function KindBadge({ kind }: { kind: string }) {
     <span className={`rounded-md px-2 py-0.5 font-mono text-xs ${cls}`}>
       {kind}
     </span>
+  );
+}
+
+// ─── SVG charts ───────────────────────────────────────────────────────────────
+
+const LINE_COLORS = ["#6366f1", "#f59e0b", "#10b981", "#ef4444", "#8b5cf6"];
+
+function WeightHistoryChart({ runs }: { runs: RunEntry[] }) {
+  // Flatten all weight snapshots across runs into a single ordered timeline.
+  const allSnapshots: WeightSnapshot[] = runs
+    .flatMap((r) => r.weight_snapshots ?? [])
+    .sort((a, b) => a.epoch - b.epoch);
+
+  if (allSnapshots.length < 2) {
+    return (
+      <div className="flex h-24 items-center justify-center text-xs text-zinc-400">
+        No weight snapshots yet — run training to populate
+      </div>
+    );
+  }
+
+  // Pick top-5 axes by average norm across all snapshots.
+  const axisNorms: Record<string, number[]> = {};
+  for (const snap of allSnapshots) {
+    for (const [ax, val] of Object.entries(snap.norms)) {
+      (axisNorms[ax] ??= []).push(val);
+    }
+  }
+  const avgNorm = (vals: number[]) => vals.reduce((s, v) => s + v, 0) / vals.length;
+  const top5 = Object.entries(axisNorms)
+    .sort((a, b) => avgNorm(b[1]) - avgNorm(a[1]))
+    .slice(0, 5)
+    .map(([ax]) => ax);
+
+  const W = 400;
+  const H = 100;
+  const LEFT = 8;
+  const RIGHT = 8;
+  const TOP = 4;
+  const BOT = 16;
+  const PW = W - LEFT - RIGHT;
+  const PH = H - TOP - BOT;
+
+  const N = allSnapshots.length;
+  const allVals = allSnapshots.flatMap((s) => top5.map((ax) => s.norms[ax] ?? 0));
+  const minV = Math.min(...allVals);
+  const maxV = Math.max(...allVals);
+  const range = maxV - minV || 1;
+
+  const toX = (i: number) => LEFT + (i / Math.max(N - 1, 1)) * PW;
+  const toY = (v: number) => TOP + PH - ((v - minV) / range) * PH;
+
+  return (
+    <div>
+      <div className="overflow-x-auto">
+        <svg
+          viewBox={`0 0 ${W} ${H}`}
+          className="w-full"
+          style={{ minWidth: "200px", maxHeight: "140px" }}
+          aria-label="Feature weight stability"
+        >
+          {[0, 0.5, 1].map((t) => (
+            <line key={t} x1={LEFT} y1={TOP + (1 - t) * PH} x2={W - RIGHT} y2={TOP + (1 - t) * PH}
+              stroke="#e4e4e7" strokeWidth="0.5" />
+          ))}
+          {top5.map((ax, li) => {
+            const pts = allSnapshots.map((s, i) => ({
+              x: toX(i), y: toY(s.norms[ax] ?? 0),
+            }));
+            const d = pts.map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
+            return (
+              <path key={ax} d={d} fill="none" stroke={LINE_COLORS[li]} strokeWidth="1.5"
+                strokeLinejoin="round" strokeLinecap="round" />
+            );
+          })}
+          {/* X axis label */}
+          <text x={LEFT + PW / 2} y={H} fontSize="7" fill="#a1a1aa" textAnchor="middle">epoch →</text>
+        </svg>
+      </div>
+      {/* Legend */}
+      <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1">
+        {top5.map((ax, li) => (
+          <span key={ax} className="flex items-center gap-1 font-mono text-xs">
+            <span style={{ display: "inline-block", width: 12, height: 3, backgroundColor: LINE_COLORS[li], borderRadius: 2 }} />
+            <span className="text-zinc-600 dark:text-zinc-400">{ax.replaceAll("_", " ")}</span>
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function DualProgressionChart({
+  eloPoints,
+  runs,
+}: {
+  eloPoints: EloPoint[];
+  runs: RunEntry[];
+}) {
+  if (eloPoints.length < 2) {
+    return (
+      <div className="flex h-24 items-center justify-center text-xs text-zinc-400">
+        Not enough match data
+      </div>
+    );
+  }
+
+  const W = 400;
+  const H = 100;
+  const LEFT = 28;
+  const RIGHT = 32;
+  const TOP = 4;
+  const BOT = 4;
+  const PW = W - LEFT - RIGHT;
+  const PH = H - TOP - BOT;
+
+  // Cumulative training games at each elo point (correlated by timestamp).
+  const sortedRuns = runs
+    .filter((r) => r.ended_at)
+    .map((r) => ({ ts: new Date(r.ended_at!).getTime(), matches: r.matches }))
+    .sort((a, b) => a.ts - b.ts);
+
+  const eloVals = eloPoints.map((p) => p.elo);
+  const minElo = Math.min(...eloVals);
+  const maxElo = Math.max(...eloVals);
+  const eloRange = maxElo - minElo || 1;
+
+  const cumTrained = eloPoints.map((p) => {
+    const ts = p.timestamp ?? 0;
+    let c = 0;
+    for (const r of sortedRuns) {
+      if (r.ts <= ts) c += r.matches;
+    }
+    return c;
+  });
+  const maxTrained = Math.max(...cumTrained, 1);
+  const hasTrained = maxTrained > 0 && sortedRuns.length > 0;
+
+  const toX = (i: number) => LEFT + (i / (eloPoints.length - 1)) * PW;
+  const toYelo = (elo: number) => TOP + PH - ((elo - minElo) / eloRange) * PH;
+  const toYtrain = (n: number) => TOP + PH - (n / maxTrained) * PH;
+
+  const eloPath = eloPoints
+    .map((p, i) => `${i === 0 ? "M" : "L"}${toX(i).toFixed(1)},${toYelo(p.elo).toFixed(1)}`)
+    .join(" ");
+
+  const trainPath = eloPoints
+    .map((_, i) => `${i === 0 ? "M" : "L"}${toX(i).toFixed(1)},${toYtrain(cumTrained[i]).toFixed(1)}`)
+    .join(" ");
+
+  return (
+    <div className="overflow-x-auto">
+      <svg
+        viewBox={`0 0 ${W} ${H}`}
+        className="w-full"
+        style={{ minWidth: "200px", maxHeight: "140px" }}
+        aria-label="ELO vs games trained"
+      >
+        {[0, 0.5, 1].map((t) => (
+          <line key={t} x1={LEFT} y1={TOP + (1 - t) * PH} x2={W - RIGHT} y2={TOP + (1 - t) * PH}
+            stroke="#e4e4e7" strokeWidth="0.5" />
+        ))}
+        {[0, 0.5, 1].map((t) => (
+          <text key={t} x={LEFT - 2} y={TOP + (1 - t) * PH + 3} fontSize="7" fill="#6366f1" textAnchor="end">
+            {(minElo + t * eloRange).toFixed(0)}
+          </text>
+        ))}
+        {hasTrained && [0, 1].map((t) => (
+          <text key={t} x={W - RIGHT + 2} y={TOP + (1 - t) * PH + 3} fontSize="7" fill="#10b981" textAnchor="start">
+            {(t * maxTrained).toFixed(0)}
+          </text>
+        ))}
+        <path d={eloPath} fill="none" stroke="#6366f1" strokeWidth="1.5"
+          strokeLinejoin="round" strokeLinecap="round" />
+        {hasTrained && (
+          <path d={trainPath} fill="none" stroke="#10b981" strokeWidth="1.5"
+            strokeLinejoin="round" strokeLinecap="round" strokeDasharray="4,2" />
+        )}
+        {/* Legend */}
+        <rect x={LEFT + 2} y={TOP + 2} width="8" height="2" fill="#6366f1" rx="1" />
+        <text x={LEFT + 12} y={TOP + 5} fontSize="7" fill="#6366f1">ELO</text>
+        {hasTrained && (
+          <>
+            <line x1={LEFT + 36} y1={TOP + 3} x2={LEFT + 44} y2={TOP + 3}
+              stroke="#10b981" strokeWidth="1.5" strokeDasharray="4,2" />
+            <text x={LEFT + 46} y={TOP + 5} fontSize="7" fill="#10b981">trained</text>
+          </>
+        )}
+        {/* X axis label */}
+        <text x={LEFT + PW / 2} y={H} fontSize="7" fill="#a1a1aa" textAnchor="middle">
+          games played →
+        </text>
+      </svg>
+    </div>
+  );
+}
+
+function LineChart({
+  points,
+  label,
+  color,
+}: {
+  points: { x: number; y: number }[];
+  label: string;
+  color: string;
+}) {
+  if (points.length < 2) {
+    return (
+      <div className="flex h-24 items-center justify-center text-xs text-zinc-400">
+        {points.length === 1 ? `${label}: ${points[0].y}` : "Not enough data"}
+      </div>
+    );
+  }
+
+  const W = 400;
+  const H = 80;
+  const PAD = 4;
+
+  const ys = points.map((p) => p.y);
+  const minY = Math.min(...ys);
+  const maxY = Math.max(...ys);
+  const rangeY = maxY - minY || 1;
+
+  const toSvg = (p: { x: number; y: number }, i: number) => {
+    const sx = PAD + (i / (points.length - 1)) * (W - PAD * 2);
+    const sy = H - PAD - ((p.y - minY) / rangeY) * (H - PAD * 2);
+    return `${sx.toFixed(1)},${sy.toFixed(1)}`;
+  };
+
+  const path = points.map((p, i) => `${i === 0 ? "M" : "L"}${toSvg(p, i)}`).join(" ");
+
+  return (
+    <div className="overflow-x-auto">
+      <svg
+        viewBox={`0 0 ${W} ${H}`}
+        className="w-full"
+        style={{ minWidth: "200px", maxHeight: "120px" }}
+        aria-label={label}
+      >
+        {/* Grid lines */}
+        {[0, 0.5, 1].map((t) => {
+          const y = PAD + (1 - t) * (H - PAD * 2);
+          const val = (minY + t * rangeY).toFixed(0);
+          return (
+            <g key={t}>
+              <line x1={PAD} y1={y} x2={W - PAD} y2={y} stroke="#e4e4e7" strokeWidth="0.5" />
+              <text x={W - PAD + 2} y={y + 3} fontSize="7" fill="#a1a1aa" textAnchor="start">
+                {val}
+              </text>
+            </g>
+          );
+        })}
+        {/* Line */}
+        <path d={path} fill="none" stroke={color} strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round" />
+        {/* End dot */}
+        {(() => {
+          const last = points[points.length - 1];
+          const [lx, ly] = toSvg(last, points.length - 1).split(",");
+          return <circle cx={lx} cy={ly} r="2.5" fill={color} />;
+        })()}
+      </svg>
+    </div>
   );
 }
 

@@ -1816,6 +1816,110 @@ def get_agent_profile(agent_id: int):
     }
 
 
+@app.get("/agents/{agent_id}/runs")
+def get_agent_runs(agent_id: int):
+    """Return a list of training and tournament runs that included this agent.
+
+    Scans all persisted JSONL status files in /tmp for runs where this
+    agent_id appears in the `agents_loaded` event.  Returns newest-first.
+    Each entry: {started_at, ended_at, mode, epochs, matches, wins, losses,
+                 net_wei, tournament}.
+    """
+    import glob
+    import tempfile
+
+    tmp = tempfile.gettempdir()
+    jsonl_files = sorted(
+        glob.glob(os.path.join(tmp, "chaingammon-training-*.jsonl")),
+        key=os.path.getmtime,
+        reverse=True,
+    )
+
+    runs = []
+    for path in jsonl_files:
+        try:
+            events: list[dict] = []
+            with open(path) as f:
+                for line in f:
+                    line = line.strip()
+                    if line:
+                        try:
+                            events.append(json.loads(line))
+                        except json.JSONDecodeError:
+                            pass
+
+            # Find agents_loaded event to check if this agent participated.
+            loaded_event = next((e for e in events if e.get("event") == "agents_loaded"), None)
+            if not loaded_event:
+                continue
+            loaded_ids = list(loaded_event.get("loaded", {}).keys())
+            if str(agent_id) not in loaded_ids:
+                continue
+
+            started = next((e.get("ts") for e in events if e.get("event") == "started"), None)
+            done_event = next((e for e in events if e.get("event") in ("done", "aborted")), None)
+            ended = done_event.get("ts") if done_event else None
+            mode = done_event.get("event", "aborted") if done_event else "running"
+
+            # Detect tournament by presence of tournament_escrow_error or
+            # any escrow-related events (challenge_trainer --tournament).
+            is_tournament = any(
+                e.get("event") in ("tournament_escrow_error", "tournament_chain_error")
+                for e in events
+            )
+            # Also infer from started event flags.
+            if not is_tournament:
+                started_ev = next((e for e in events if e.get("event") == "started"), None)
+                if started_ev:
+                    is_tournament = bool(started_ev.get("tournament", False))
+
+            # Count matches and compute net balance change for this agent.
+            agent_matches = [
+                e for e in events
+                if e.get("event") == "match"
+                and (e.get("proposer") == agent_id or e.get("target") == agent_id
+                     or e.get("agent_a") == agent_id or e.get("agent_b") == agent_id)
+            ]
+            wins = sum(1 for e in agent_matches if e.get("winner") == agent_id)
+            losses = len(agent_matches) - wins
+            net_wei = sum(
+                e.get("profit_wei", 0) if e.get("winner") == agent_id
+                else -e.get("profit_wei", 0)
+                for e in agent_matches
+            )
+
+            epochs_total = next(
+                (e.get("total") for e in events if e.get("event") == "epoch_start"),
+                None,
+            )
+
+            # Weight snapshots: one entry per epoch for this agent.
+            weight_snapshots = [
+                {"epoch": e["epoch"], "norms": e["norms"]}
+                for e in events
+                if e.get("event") == "weight_snapshot"
+                and e.get("agent_id") == agent_id
+            ]
+
+            runs.append({
+                "started_at": started,
+                "ended_at": ended,
+                "status": mode,
+                "is_tournament": is_tournament,
+                "epochs": epochs_total,
+                "matches": len(agent_matches),
+                "wins": wins,
+                "losses": losses,
+                "net_wei": net_wei,
+                "file": os.path.basename(path),
+                "weight_snapshots": weight_snapshots,
+            })
+        except Exception:
+            continue
+
+    return {"agent_id": agent_id, "runs": runs}
+
+
 # ── Agent vault operator endpoint (stake deposit into AgentVault.sol) ─────────
 #
 # Funding, balance reads, and withdrawals are now handled directly by the
