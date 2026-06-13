@@ -139,9 +139,13 @@ All sourced from `server/.env` locally, or from the systemd `EnvironmentFile` on
 
 | Variable                      | Required             | Description                                                        |
 | ----------------------------- | -------------------- | ------------------------------------------------------------------ |
-| `OG_STORAGE_RPC`              | yes                  | 0G testnet RPC — `https://evmrpc-testnet.0g.ai`                    |
-| `OG_STORAGE_INDEXER`          | yes                  | 0G storage indexer — `https://indexer-storage-testnet-turbo.0g.ai` |
-| `OG_STORAGE_PRIVATE_KEY`      | yes                  | Wallet key for signing 0G Storage uploads                          |
+| `STORAGE_BACKEND`             | no                   | Blob backend: `0g` (default) or `walrus`. KV is always 0G          |
+| `OG_STORAGE_RPC`              | yes (0g backend)     | 0G testnet RPC — `https://evmrpc-testnet.0g.ai`                    |
+| `OG_STORAGE_INDEXER`          | yes (0g backend)     | 0G storage indexer — `https://indexer-storage-testnet-turbo.0g.ai` |
+| `OG_STORAGE_PRIVATE_KEY`      | yes (0g backend)     | Wallet key for signing 0G Storage uploads                          |
+| `WALRUS_PUBLISHER`            | yes (walrus backend) | Walrus publisher base URL — `PUT /v1/blobs?epochs=N`              |
+| `WALRUS_AGGREGATOR`           | yes (walrus backend) | Walrus aggregator base URL — `GET /v1/blobs/{blobId}`            |
+| `WALRUS_EPOCHS`               | no                   | Epochs a Walrus blob is paid to persist (default `5`)             |
 | `OG_EQUITY_URL`               | no                   | Direct equity provider URL, bypasses on-chain 0G registration      |
 | `AGENT_KEYSTORE_PASSPHRASE`   | yes (staked matches) | Passphrase for agent session-key keystores in `data/agent_keys/`   |
 | `OG_COMPUTE_PROVIDER`         | no                   | Pin a specific 0G Compute chat provider                            |
