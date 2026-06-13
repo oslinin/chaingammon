@@ -245,8 +245,8 @@ class FinalizeRequest(BaseModel):
 
 
 class FinalizeResponse(BaseModel):
-    match_id: int
-    tx_hash: str
+    match_id: int | None = None
+    tx_hash: str | None = None
     root_hash: str  # 0G Storage Merkle root of the uploaded game record
     # Phase 9: per-agent overlay update results, one entry per agent that
     # played in the match. Empty for human-vs-human matches.
@@ -256,6 +256,9 @@ class FinalizeResponse(BaseModel):
     # not appear. ENS push failure does NOT fail finalize — instead the
     # entry contains an `error` field so the caller can see what broke.
     ens_updates: list[dict] = []
+    keeper_settle: bool = False
+    archive_uri: str | None = None
+    escrow_match_id: str | None = None
 
 
 def _fetch_overlay(agent_id: int) -> Overlay:
@@ -657,6 +660,7 @@ def finalize_direct_staked(req: StakedFinalizeRequest):
             "keeper_settle": True,
             "escrow_match_id": req.escrow_match_id,
             "archive_uri": upload.root_hash,
+            "root_hash": upload.root_hash,
         }
 
     try:

@@ -5,7 +5,8 @@ export default defineConfig({
   workers: 1,
   retries: 1,
   use: {
-    baseURL: "http://localhost:3000",
+    baseURL: process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:3000",
+    ignoreHTTPSErrors: true,
   },
   projects: [
     {

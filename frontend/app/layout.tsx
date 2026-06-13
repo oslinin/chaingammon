@@ -60,7 +60,7 @@ export default function RootLayout({
       lang="en"
       className={`${cgSans.variable} ${cgMono.variable} ${cgDisplay.variable} h-full antialiased`}
     >
-      <body className="h-full flex flex-col overflow-x-hidden overflow-y-auto">
+      <body className="min-h-full flex flex-col overflow-x-hidden overflow-y-auto">
         {/* Restore the URL after a GitHub Pages SPA redirect via 404.html.
             Only injected when deployed under a base path (GitHub Pages).
             A no-op in local dev — skipping it here silences the React 19

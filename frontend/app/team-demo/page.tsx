@@ -1234,6 +1234,60 @@ function TeamDemoPageInner() {
     }
   };
 
+  const settleStakedKeeperHub = async (humanWins: boolean) => {
+    if (!address || !primaryOpponentId || !escrowMatchId) return;
+    if (settleStatus === "settling" || settleStatus === "settled") return;
+
+    setSettleStatus("settling");
+    setSettleError(null);
+
+    try {
+      const resp = await fetch(`${SERVER}/finalize-direct-staked`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          winner_agent_id: humanWins ? 0 : primaryOpponentId,
+          winner_human_address: humanWins ? address : "0x0000000000000000000000000000000000000000",
+          loser_agent_id: humanWins ? primaryOpponentId : 0,
+          loser_human_address: humanWins ? "0x0000000000000000000000000000000000000000" : address,
+          winner_label: humanWins ? (humanLabel ?? "") : "",
+          loser_label: humanWins ? "" : (humanLabel ?? ""),
+          match_length: 3,
+          position_id: game?.position_id ?? "",
+          gnubg_match_id: game?.match_id ?? "",
+          score: game?.score ?? [0, 0],
+          moves: [],
+          winner_turn: null,
+          loser_turn: null,
+          escrow_match_id: escrowMatchId,
+          stake_wei: escrowStakeWei.toString(),
+          keeper_settle: true,
+        }),
+      });
+
+      if (!resp.ok) {
+        let detail = `finalize-direct-staked failed (${resp.status})`;
+        try {
+          const err = await resp.json();
+          if (err?.detail) {
+            detail = typeof err.detail === "string" ? err.detail : JSON.stringify(err.detail);
+          }
+        } catch {}
+        throw new Error(detail);
+      }
+
+      const data = await resp.json();
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem("keeperMatchId", escrowMatchId);
+      }
+      setSettleStatus("settled");
+      router.push(`/keeper/${escrowMatchId}`);
+    } catch (e) {
+      setSettleStatus("error");
+      setSettleError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
   // Tx receipt → mark settled and clear persisted session.
   useEffect(() => {
     if (!settleTxHash || !txReceipt.isSuccess) return;
@@ -1258,7 +1312,11 @@ function TeamDemoPageInner() {
     if (!game?.game_over || !settleOnChain || opponentIds.length === 0) return;
     if (settleStatus !== "ready") return;
     const humanWins = game.winner === 0;
-    void settleOnChainDirect(humanWins, { useForfeitSig: !humanWins });
+    if (hasEscrow) {
+      void settleStakedKeeperHub(humanWins);
+    } else {
+      void settleOnChainDirect(humanWins, { useForfeitSig: !humanWins });
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [game?.game_over, settleStatus]);
 
@@ -1960,7 +2018,11 @@ function TeamDemoPageInner() {
                     error={settleError}
                     onRetry={() => {
                       const humanWins = game.winner === 0;
-                      void settleOnChainDirect(humanWins, { useForfeitSig: !humanWins });
+                      if (hasEscrow) {
+                        void settleStakedKeeperHub(humanWins);
+                      } else {
+                        void settleOnChainDirect(humanWins, { useForfeitSig: !humanWins });
+                      }
                     }}
                   />
                 ) : null}
