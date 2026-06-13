@@ -850,6 +850,63 @@ class ChainClient:
             tx_hash_hex = "0x" + tx_hash_hex
         return tx_hash_hex
 
+    def deposit_dividend_via_privy(
+        self, agent_id: int, usdc_amount: int, privy_wallets: "object"
+    ) -> str:
+        """Like deposit_dividend but the agent signs autonomously via Privy.
+
+        The agent's Privy wallet (not the server operator key) approves the
+        dividend vault and calls depositDividend.  The tx hash is also stored
+        in the wallet store for display in the UI via record_tx().
+
+        privy_wallets: a PrivyAgentWallets instance (typed as object to avoid
+        a circular import — the caller imports both chain_client and
+        privy_agent_wallet).
+
+        Raises:
+            ChainError if dividend vault or USDC contracts are not configured.
+            PrivyAgentWalletError (propagated) if the agent has no auth key.
+        """
+        if self.dividend_vault is None:
+            raise ChainError(
+                "AgentDividendVault not configured — set AGENT_DIVIDEND_VAULT_ADDRESS "
+                "or run deploy_dividend_vault.js"
+            )
+        if self.usdc_token is None:
+            raise ChainError("UsdcToken not configured — set USDC_TOKEN_ADDRESS")
+
+        chain_id = self.w3.eth.chain_id
+        caip2 = f"eip155:{chain_id}"
+        vault_addr = str(self.dividend_vault.address)
+        usdc_addr  = str(self.usdc_token.address)
+
+        # Step 1: agent approves vault to pull USDC.
+        approve_data = self.usdc_token.encodeABI(
+            fn_name="approve", args=[vault_addr, usdc_amount]
+        )
+        privy_wallets.sign_and_send(
+            agent_id,
+            caip2=caip2,
+            to=usdc_addr,
+            data=approve_data,
+            gas_limit=80_000,
+        )
+
+        # Step 2: agent deposits dividend.
+        deposit_data = self.dividend_vault.encodeABI(
+            fn_name="depositDividend", args=[agent_id, usdc_amount]
+        )
+        tx_hash = privy_wallets.sign_and_send(
+            agent_id,
+            caip2=caip2,
+            to=vault_addr,
+            data=deposit_data,
+            gas_limit=120_000,
+        )
+
+        privy_wallets.record_tx(agent_id, tx_hash, usdc_amount)
+        return tx_hash
+
     def deposit_dividend(self, agent_id: int, usdc_amount: int) -> str:
         """Approve the dividend vault then call depositDividend(agentId, amount).
 

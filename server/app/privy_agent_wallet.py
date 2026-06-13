@@ -99,6 +99,9 @@ class AgentWallet:
     chain_type: str = "ethereum"
     auth_key_id: Optional[str] = None
     auth_key_private_pem: Optional[str] = None
+    last_tx_hash: Optional[str] = None
+    last_tx_amount_usdc: Optional[str] = None
+    last_tx_ts: Optional[int] = None
 
     def to_dict(self) -> dict:
         d: dict = {
@@ -111,6 +114,12 @@ class AgentWallet:
             d["auth_key_id"] = self.auth_key_id
         if self.auth_key_private_pem:
             d["auth_key_private_pem"] = self.auth_key_private_pem
+        if self.last_tx_hash:
+            d["last_tx_hash"] = self.last_tx_hash
+        if self.last_tx_amount_usdc is not None:
+            d["last_tx_amount_usdc"] = self.last_tx_amount_usdc
+        if self.last_tx_ts is not None:
+            d["last_tx_ts"] = self.last_tx_ts
         return d
 
 
@@ -228,6 +237,9 @@ class PrivyAgentWallets:
             chain_type=record.get("chain_type", "ethereum"),
             auth_key_id=record.get("auth_key_id"),
             auth_key_private_pem=record.get("auth_key_private_pem"),
+            last_tx_hash=record.get("last_tx_hash"),
+            last_tx_amount_usdc=record.get("last_tx_amount_usdc"),
+            last_tx_ts=record.get("last_tx_ts"),
         )
 
     # ----- provisioning -----
@@ -280,6 +292,20 @@ class PrivyAgentWallets:
             return resp.json()
         except ValueError as e:
             raise PrivyAgentWalletError(f"Privy returned non-JSON: {resp.text!r}") from e
+
+    def record_tx(self, agent_id: int, tx_hash: str, amount_usdc: int) -> None:
+        """Persist the last autonomous transaction for display in the UI."""
+        import time as _time
+        store = self._load_store()
+        record = store.get(str(agent_id))
+        if record is None:
+            return
+        record["last_tx_hash"] = tx_hash
+        record["last_tx_amount_usdc"] = str(amount_usdc)
+        record["last_tx_ts"] = int(_time.time())
+        store[str(agent_id)] = record
+        self._store_path.parent.mkdir(parents=True, exist_ok=True)
+        self._store_path.write_text(json.dumps(store, indent=2, sort_keys=True))
 
     # ----- PR 1.5: autonomous signing ----------------------------------------
 

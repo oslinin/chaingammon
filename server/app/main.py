@@ -1720,16 +1720,53 @@ def list_agents():
     return agents
 
 
+def _privy_wallet_response(wallets: PrivyAgentWallets, agent_id: int, wallet) -> dict:
+    """Build the full wallet response dict (shared by GET + POST endpoints)."""
+    usdc_balance: Optional[str] = None
+    try:
+        usdc_balance = str(wallets.usdc_balance(agent_id))
+    except PrivyAgentWalletError:
+        pass
+    return {
+        "agent_id": wallet.agent_id,
+        "wallet_id": wallet.wallet_id,
+        "address": wallet.address,
+        "chain_type": wallet.chain_type,
+        "usdc_balance": usdc_balance,
+        "auth_key_id": wallet.auth_key_id,
+        "last_tx_hash": wallet.last_tx_hash,
+        "last_tx_amount_usdc": wallet.last_tx_amount_usdc,
+        "last_tx_ts": wallet.last_tx_ts,
+    }
+
+
+@app.get("/agents/{agent_id}/privy-wallet")
+def get_agent_privy_wallet(agent_id: int):
+    """Read the agent's Privy wallet state without provisioning.
+
+    Returns 404 if the wallet has not been provisioned yet. Safe to poll
+    frequently — never calls the Privy API, only reads the local store.
+    """
+    try:
+        wallets = PrivyAgentWallets.from_env()
+    except PrivyAgentWalletError as e:
+        raise HTTPException(status_code=503, detail=f"privy unavailable: {e}")
+    wallet = wallets.wallet_for(agent_id)
+    if wallet is None:
+        raise HTTPException(status_code=404, detail="wallet not provisioned")
+    return _privy_wallet_response(wallets, agent_id, wallet)
+
+
 @app.post("/agents/{agent_id}/privy-wallet")
 def provision_agent_privy_wallet(agent_id: int):
     """Provision (or return) the agent's Privy server wallet and its USDC balance.
 
-    Stream 1 / PR 1.1 (ETHGlobal NYC 2026): gives the agent its own Privy server
-    wallet so Privy — not the server — can custody and later distribute winnings.
+    Stream 1 / PR 1.1–1.5 (ETHGlobal NYC 2026): gives the agent its own Privy
+    server wallet so Privy — not the server — can custody and later distribute
+    winnings.  Also auto-registers a P-256 authorization key (PR 1.5) so the
+    agent can sign transactions autonomously after provisioning.
     Idempotent: repeated calls return the same wallet without re-calling Privy.
-    503 when Privy isn't configured (PRIVY_APP_ID / PRIVY_APP_SECRET). The USDC
-    balance is best-effort: null when RPC_URL / USDC token aren't configured, so
-    this stays additive while USDC wiring lands.
+    503 when Privy isn't configured (PRIVY_APP_ID / PRIVY_APP_SECRET).
     """
     try:
         wallets = PrivyAgentWallets.from_env()
@@ -1739,19 +1776,34 @@ def provision_agent_privy_wallet(agent_id: int):
         wallet = wallets.get_or_create_wallet(agent_id)
     except PrivyAgentWalletError as e:
         raise HTTPException(status_code=502, detail=f"privy wallet provisioning failed: {e}")
-    usdc_balance: Optional[str] = None
+    # Auto-register auth key so autonomous signing is ready after first provision.
     try:
-        # Return as a string — USDC's smallest unit (6 decimals) can exceed JS
-        # safe-integer range once balances grow.
-        usdc_balance = str(wallets.usdc_balance(agent_id))
+        wallet = wallets.register_auth_key(agent_id)
     except PrivyAgentWalletError:
-        usdc_balance = None  # USDC reads not configured yet — additive PR.
+        pass  # Non-fatal: wallet is usable without an auth key (receive-only).
+    return _privy_wallet_response(wallets, agent_id, wallet)
+
+
+@app.post("/agents/{agent_id}/privy-wallet/auth-key")
+def register_agent_auth_key(agent_id: int):
+    """Register (or return) a P-256 authorization key for autonomous signing.
+
+    Idempotent: if an auth key is already registered, returns it immediately
+    without contacting Privy.  Called explicitly from the frontend "Enable
+    autonomous signing" button.
+    """
+    try:
+        wallets = PrivyAgentWallets.from_env()
+    except PrivyAgentWalletError as e:
+        raise HTTPException(status_code=503, detail=f"privy unavailable: {e}")
+    try:
+        wallet = wallets.register_auth_key(agent_id)
+    except PrivyAgentWalletError as e:
+        raise HTTPException(status_code=502, detail=str(e))
     return {
         "agent_id": wallet.agent_id,
-        "wallet_id": wallet.wallet_id,
-        "address": wallet.address,
-        "chain_type": wallet.chain_type,
-        "usdc_balance": usdc_balance,
+        "auth_key_id": wallet.auth_key_id,
+        "autonomous_signing": wallet.auth_key_id is not None,
     }
 
 
