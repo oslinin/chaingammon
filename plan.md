@@ -18,13 +18,16 @@ that use SwapVM are explicitly scored higher.
 
 **Three things will sink this plan if not fixed:**
 
-1. **The Uniswap component targets the wrong thing.** The visible Uniswap prize
-   is **"Best Uniswap API Integration" ($7,000)**, which requires integrating
-   the **Uniswap Trading API** (Developer Platform, API key, routing/swaps/
-   liquidity) with **real onchain transaction IDs**. The plan's Phase 3 builds
-   **Uniswap v4 Hooks**, which is a *different* product and does **not** satisfy
-   the API-integration prize. Either add a real Trading-API integration or drop
-   the Uniswap prize from scope. (See Finding A.)
+1. **The Uniswap path is valid but the specific "API key" sub-prize needs more.**
+   Uniswap v4 **hooks qualify** — building with any part of the Uniswap stack
+   (hooks, periphery, open-source) is an accepted way to submit for the rewards,
+   so Phase 3's hook work is *not* wasted. The nuance: the **"Best Uniswap API
+   Integration" ($7,000)** line specifically reads "Projects must integrate the
+   Uniswap API with a valid API key," so to win *that exact* sub-prize you also
+   need a real Trading-API integration (key + captured onchain transaction IDs).
+   **Recommendation:** keep the v4 hook *and* add a thin Trading-API integration
+   so you're eligible for both the hooks/stack track and the API sub-prize.
+   (See Finding A.)
 2. **Hedera (Commit 11) is off-target scope creep.** No Hedera prize is in
    scope, and the commit also mis-describes Hedera Consensus Service. Cut it.
    (See Finding C.)
@@ -37,7 +40,8 @@ that use SwapVM are explicitly scored higher.
 | Prize | Amount | Fit | Notes |
 |---|---|---|---|
 | 1inch — Build an Aqua App | $5,000 (2.5k/1.5k/1k) | **Strong** | Options on Aqua+SwapVM; SwapVM scored higher |
-| Uniswap — Best Uniswap **API** Integration | $7,000 (4k/2k/1k) | **Only if reworked** | Needs Trading API + onchain tx IDs, not v4 hooks |
+| Uniswap — hooks / stack track | (per event) | **Valid** | v4 hook qualifies; building with the stack is accepted |
+| Uniswap — Best Uniswap **API** Integration | $7,000 (4k/2k/1k) | **Add Trading API** | This sub-prize also needs a valid API key + onchain tx IDs |
 | 1inch / Uniswap Continuity Track | $2,000 / $3,000 | Optional | Continuity-Track participants only — confirm eligibility |
 
 ---
@@ -92,14 +96,17 @@ day," so the commit log is part of the score. Rules for this repo:
 
 ## Must-Fix Findings
 
-### Finding A — Uniswap: integrate the API, not (only) v4 hooks  *(critical)*
-The $7k prize is for the **Uniswap Trading API**. v4 hooks earn nothing here.
-**Fix:** make the frontend's trade/secondary-market flow call the Uniswap
-Trading API (quote → routing → swap, or the liquidity endpoints) using a real
-API key, and capture the resulting **onchain transaction IDs** for the demo. If
-you still want a v4 hook for the secondary options market, keep it only if time
-allows and treat it as a bonus — it is not what gets judged for this prize. Do
-not claim the API prize on the strength of a hook.
+### Finding A — Uniswap: keep the hook, and add the Trading API for the API sub-prize
+v4 **hooks qualify** for the Uniswap rewards — building with any part of the
+stack (hooks, periphery, open-source) is an accepted submission path, so Phase 3
+is legitimate prize work. The only catch is the **"Best Uniswap API Integration"
+($7,000)** sub-prize, whose text requires integrating the **Uniswap API with a
+valid API key** and showing **real onchain transaction IDs**.
+**Fix:** keep the v4 hook for the hooks/stack track, *and* add a thin Trading-API
+integration in the trade flow (quote → routing → swap, or the liquidity
+endpoints) using a real Developer-Platform key, capturing the resulting tx IDs.
+That makes you eligible for both the hooks track and the API sub-prize instead of
+just one. (My earlier draft was wrong to call the hook "wasted" — it isn't.)
 
 ### Finding B — SwapVM is stateless; the "global volatility" loop is stateful  *(critical)*
 Commit 3 correctly calls the SwapVM pricing script **stateless**, but Commit 8
@@ -124,10 +131,13 @@ screens will not finish cleanly. **Fix priorities:**
 1. **Must-have (1inch $5k):** OptionToken → SwapVM pricing assembled from the
    instruction library → Aqua JIT collateral vault → a script/test that performs
    a real onchain token transfer (buy → mint → settle).
-2. **Must-have (Uniswap $7k):** Trading-API integration in the trade flow with
-   captured tx IDs + README + 3-min video + feedback form.
-3. **Nice-to-have:** v4 hook secondary market, dynamic-vol loop, LP dashboard.
-   Build these only after 1 and 2 are demoable.
+2. **Prize-relevant (Uniswap):** the v4 hook secondary market qualifies for the
+   hooks/stack track; add a Trading-API integration with captured tx IDs to also
+   reach the API sub-prize. Either path is a valid Uniswap submission — do the
+   hook if that's your strength, the API if you want the $7k sub-prize, both if
+   time allows.
+3. **Nice-to-have:** dynamic-vol loop, LP dashboard. Build after the above.
+4. **Always:** README + ≤3-min video + Uniswap feedback form.
 
 ### Finding E — Prefer assembling SwapVM instructions over hand-writing Yul
 1inch's own framing is "assemble strategies from a **library of instructions**"
@@ -163,9 +173,9 @@ strong "scored higher" story — keep it small and well-tested).
   "eliminate active market makers" pitch. **Fix:** be precise in the README —
   the *primary* market (Aqua JIT) needs no active MM; the *secondary* v4 market,
   if present, is optional peer liquidity.
-- **J. CREATE2 hook-address mining (Commit 6)** is real work for a feature
-  that's now optional. If you keep the hook, keep the miner; if you cut the hook
-  per Finding D, this disappears.
+- **J. CREATE2 hook-address mining (Phase 5)** is real but necessary work — v4
+  requires the hook address to encode its permission flags, so keep the salt
+  miner if you ship the hook.
 - **K. `evm_version = "cancun"` (Commit 1) is correct** for v4 transient
   storage — keep it, and confirm your demo chain/fork supports TSTORE/TLOAD.
 - **L. Don't forget the non-code deliverables.** The Uniswap prize needs a
@@ -202,7 +212,7 @@ short commit.
    the LP, route the premium to the LP, mint an OptionToken to the buyer.
    *Verify:* forge test of the full JIT mint with a **real token transfer**.
 
-### Phase 3 — Uniswap **API** integration  ← prize-critical (replaces v4-hook-first)
+### Phase 3 — Uniswap Trading-API integration  ← unlocks the API sub-prize
 6. **Trading-API client + key wiring.** Add a thin client (frontend or a small
    service) that calls the Uniswap Trading API for quotes/routing using a real
    API key from the Developer Platform. *Verify:* a live quote round-trips.
@@ -218,7 +228,7 @@ short commit.
    settle (pick physical per Finding G) and return remainder to LP. *Verify:*
    vault returns to zero-liability; capital distributes cleanly.
 
-### Phase 5 — Optional secondary market (v4 hook)  ← bonus, only if ahead
+### Phase 5 — Secondary market (v4 hook)  ← qualifies for Uniswap hooks/stack track
 10. **Scaffold `OptionPricingHook.sol`** (BaseHook, `beforeSwap`/`afterSwap`
     flags) + CREATE2 salt miner. *Verify:* hook attaches to a fresh pool.
 11. **Dynamic-vol feedback in the hook.** Store/update `σ_global` here (the
@@ -244,7 +254,8 @@ short commit.
 
 ## Pre-Submission Checklist
 - [ ] 1inch: onchain token transfer demoed (local fork OK), SwapVM used.
-- [ ] Uniswap: Trading API integrated with a real key; **tx IDs captured**.
+- [ ] Uniswap: v4 hook submitted (hooks/stack track) and/or Trading API
+      integrated with a real key + **tx IDs captured** (API sub-prize).
 - [ ] Public repo, clean `README.md` with the pricing math.
 - [ ] ≤3-min demo video recorded.
 - [ ] Uniswap Developer Feedback Form submitted.
@@ -258,3 +269,4 @@ short commit.
 - [1inch/swap-vm (SwapVM routers & instruction set)](https://github.com/1inch/swap-vm)
 - [Uniswap Trading API overview](https://docs.uniswap.org/api/trading/overview)
 - [Uniswap Developer Platform is live](https://blog.uniswap.org/uniswap-developer-platform-is-live)
+- [Uniswap developer docs](https://developers.uniswap.org/docs) — building with any part of the stack, including hooks, qualifies
