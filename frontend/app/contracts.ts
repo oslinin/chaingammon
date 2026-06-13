@@ -5,6 +5,7 @@
 
 import type { Abi } from "viem";
 
+import AgentDividendVaultArtifact from "../../contracts/artifacts/src/AgentDividendVault.sol/AgentDividendVault.json";
 import AgentRegistryArtifact from "../../contracts/artifacts/src/AgentRegistry.sol/AgentRegistry.json";
 import AgentVaultArtifact from "../../contracts/artifacts/src/AgentVault.sol/AgentVault.json";
 import MatchEscrowArtifact from "../../contracts/artifacts/src/MatchEscrow.sol/MatchEscrow.json";
@@ -32,6 +33,7 @@ export function useChainContracts() {
     usdcToken: (active?.contracts.usdcToken ?? ZERO) as `0x${string}`,
     matchEscrowUsdc: (active?.contracts.matchEscrowUsdc ?? ZERO) as `0x${string}`,
     agentVaultToken: (active?.contracts.agentVaultToken ?? ZERO) as `0x${string}`,
+    agentDividendVault: (active?.contracts.agentDividendVault ?? ZERO) as `0x${string}`,
   };
 }
 
@@ -39,6 +41,7 @@ export function useChainContracts() {
 // to wagmi / viem hooks without per-call-site casts. The JSON imports
 // otherwise come back as a wide structural type whose `type: string`
 // fields don't narrow to the discriminated-union viem expects.
+export const AgentDividendVaultABI = AgentDividendVaultArtifact.abi as Abi;
 export const AgentRegistryABI = AgentRegistryArtifact.abi as Abi;
 export const AgentVaultABI = AgentVaultArtifact.abi as Abi;
 export const MatchEscrowABI = MatchEscrowArtifact.abi as Abi;

@@ -20,6 +20,52 @@ from typing import Optional
 from web3 import Web3
 from web3.types import TxReceipt
 
+# Minimal ABI for AgentDividendVault — depositDividend + views the server calls.
+_AGENT_DIVIDEND_VAULT_ABI = [
+    {
+        "type": "function",
+        "name": "depositDividend",
+        "stateMutability": "nonpayable",
+        "inputs": [{"name": "agentId", "type": "uint256"}, {"name": "amount", "type": "uint256"}],
+        "outputs": [],
+    },
+    {
+        "type": "function",
+        "name": "sharesOf",
+        "stateMutability": "view",
+        "inputs": [{"name": "agentId", "type": "uint256"}, {"name": "holder", "type": "address"}],
+        "outputs": [{"name": "", "type": "uint64"}],
+    },
+    {
+        "type": "function",
+        "name": "vaults",
+        "stateMutability": "view",
+        "inputs": [{"name": "agentId", "type": "uint256"}],
+        "outputs": [
+            {"name": "accPerShare", "type": "uint128"},
+            {"name": "totalShares", "type": "uint64"},
+        ],
+    },
+]
+
+# Minimal ERC-20 ABI — approve + transfer for USDC allowance management.
+_ERC20_ABI = [
+    {
+        "type": "function",
+        "name": "approve",
+        "stateMutability": "nonpayable",
+        "inputs": [{"name": "spender", "type": "address"}, {"name": "amount", "type": "uint256"}],
+        "outputs": [{"name": "", "type": "bool"}],
+    },
+    {
+        "type": "function",
+        "name": "allowance",
+        "stateMutability": "view",
+        "inputs": [{"name": "owner", "type": "address"}, {"name": "spender", "type": "address"}],
+        "outputs": [{"name": "", "type": "uint256"}],
+    },
+]
+
 # Minimal ABI for MatchEscrow — only the views the server calls.
 # Mirrors contracts/src/MatchEscrow.sol exactly.
 _MATCH_ESCROW_ABI = [
@@ -317,6 +363,8 @@ class ChainClient:
         private_key: str,
         agent_registry_address: Optional[str] = None,
         match_escrow_address: Optional[str] = None,
+        dividend_vault_address: Optional[str] = None,
+        usdc_token_address: Optional[str] = None,
     ) -> None:
         self.w3 = Web3(Web3.HTTPProvider(rpc_url))
         if not self.w3.is_connected():
@@ -340,6 +388,22 @@ class ChainClient:
                 abi=_MATCH_ESCROW_ABI,
             )
             if match_escrow_address
+            else None
+        )
+        self.dividend_vault = (
+            self.w3.eth.contract(
+                address=Web3.to_checksum_address(dividend_vault_address),
+                abi=_AGENT_DIVIDEND_VAULT_ABI,
+            )
+            if dividend_vault_address
+            else None
+        )
+        self.usdc_token = (
+            self.w3.eth.contract(
+                address=Web3.to_checksum_address(usdc_token_address),
+                abi=_ERC20_ABI,
+            )
+            if usdc_token_address
             else None
         )
 
@@ -375,12 +439,22 @@ class ChainClient:
             os.environ.get("MATCH_ESCROW_ADDRESS")
             or address_from_deployment("MatchEscrow")
         )
+        dividend_vault = (
+            os.environ.get("AGENT_DIVIDEND_VAULT_ADDRESS")
+            or address_from_deployment("AgentDividendVault")
+        )
+        usdc_token = (
+            os.environ.get("USDC_TOKEN_ADDRESS")
+            or address_from_deployment("UsdcToken")
+        )
         return cls(
             rpc_url=os.environ["RPC_URL"],
             match_registry_address=match_registry,
             private_key=os.environ["DEPLOYER_PRIVATE_KEY"],
             agent_registry_address=agent_registry,
             match_escrow_address=match_escrow,
+            dividend_vault_address=dividend_vault,
+            usdc_token_address=usdc_token,
         )
 
     @property
@@ -771,6 +845,67 @@ class ChainClient:
         receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
         if receipt.status != 1:
             raise ChainError(f"updateOverlayHash tx reverted: {tx_hash.hex()}")
+        tx_hash_hex = tx_hash.hex()
+        if not tx_hash_hex.startswith("0x"):
+            tx_hash_hex = "0x" + tx_hash_hex
+        return tx_hash_hex
+
+    def deposit_dividend(self, agent_id: int, usdc_amount: int) -> str:
+        """Approve the dividend vault then call depositDividend(agentId, amount).
+
+        The server operator key pays the USDC (tournament winnings must have
+        been routed to the operator address first). Returns the depositDividend
+        tx hash.
+
+        Raises ChainError if the vault or USDC contracts are not configured.
+        This is intentional — callers in the tournament flow should gate on
+        `chain.dividend_vault is not None` before calling.
+        """
+        if self.dividend_vault is None:
+            raise ChainError(
+                "AgentDividendVault not configured — set AGENT_DIVIDEND_VAULT_ADDRESS "
+                "or run deploy_dividend_vault.js"
+            )
+        if self.usdc_token is None:
+            raise ChainError("UsdcToken not configured — set USDC_TOKEN_ADDRESS")
+
+        vault_addr = self.dividend_vault.address
+        nonce = self.w3.eth.get_transaction_count(self.account.address, "pending")
+
+        # Step 1: approve vault to pull USDC from operator.
+        allowance = self.usdc_token.functions.allowance(
+            self.account.address, vault_addr
+        ).call()
+        if allowance < usdc_amount:
+            approve_tx = self.usdc_token.functions.approve(
+                vault_addr, usdc_amount
+            ).build_transaction({
+                "from": self.account.address,
+                "nonce": nonce,
+                "chainId": self.w3.eth.chain_id,
+                "gas": 80_000,
+            })
+            signed = self.account.sign_transaction(approve_tx)
+            approve_hash = self.w3.eth.send_raw_transaction(signed.raw_transaction)
+            receipt: TxReceipt = self.w3.eth.wait_for_transaction_receipt(approve_hash, timeout=60)
+            if receipt.status != 1:
+                raise ChainError(f"USDC approve reverted: {approve_hash.hex()}")
+            nonce += 1
+
+        # Step 2: deposit dividend.
+        tx = self.dividend_vault.functions.depositDividend(
+            agent_id, usdc_amount
+        ).build_transaction({
+            "from": self.account.address,
+            "nonce": nonce,
+            "chainId": self.w3.eth.chain_id,
+            "gas": 120_000,
+        })
+        signed = self.account.sign_transaction(tx)
+        tx_hash = self.w3.eth.send_raw_transaction(signed.raw_transaction)
+        receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
+        if receipt.status != 1:
+            raise ChainError(f"depositDividend reverted: {tx_hash.hex()}")
         tx_hash_hex = tx_hash.hex()
         if not tx_hash_hex.startswith("0x"):
             tx_hash_hex = "0x" + tx_hash_hex

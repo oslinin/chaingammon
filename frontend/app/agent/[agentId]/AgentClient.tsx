@@ -32,6 +32,7 @@ import {
 } from "../../contracts";
 import { useAgentMatchSummary, useAgentEloHistory, EloPoint } from "../../useAgentMatchSummary";
 import { AgentWalletPanel } from "../../AgentWalletPanel";
+import { DividendVaultPanel } from "./DividendVaultPanel";
 import { useOgWeights } from "../../useOgWeights";
 import { useI18n } from "../../i18n";
 
@@ -424,8 +425,13 @@ export default function AgentClient() {
         </div>
 
         {/* Agent Wallet Management */}
-        <section className="mb-8">
+        <section className="mb-4">
           <AgentWalletPanel agentId={agentId} stakeWei={BigInt(0)} />
+        </section>
+
+        {/* Equity vault */}
+        <section className="mb-8">
+          <DividendVaultPanel agentId={agentId} />
         </section>
 
         {/* On-chain data */}

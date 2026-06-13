@@ -95,6 +95,7 @@ interface DeploymentRecord {
     UsdcToken?: string;
     MatchEscrowUsdc?: string;
     AgentVaultToken?: string;
+    AgentDividendVault?: string;
   };
   // Captured by deploy.js as the chain head right before the first
   // deploy tx. Used by log-scan hooks (e.g. useChaingammonName) to
@@ -157,6 +158,7 @@ export interface ChainEntry {
     usdcToken?: `0x${string}`;
     matchEscrowUsdc?: `0x${string}`;
     agentVaultToken?: `0x${string}`;
+    agentDividendVault?: `0x${string}`;
   };
   /** Block at which the contracts were deployed. Optional for older records. */
   deployedBlock?: number;
@@ -191,6 +193,7 @@ function buildEntry(dep: DeploymentRecord, def: ChainDef): ChainEntry {
       usdcToken: dep.contracts.UsdcToken as `0x${string}` | undefined,
       matchEscrowUsdc: dep.contracts.MatchEscrowUsdc as `0x${string}` | undefined,
       agentVaultToken: dep.contracts.AgentVaultToken as `0x${string}` | undefined,
+      agentDividendVault: dep.contracts.AgentDividendVault as `0x${string}` | undefined,
     },
     deployedBlock: dep.deployedBlock,
     legacyPlayerSubnameRegistrars: (dep.legacyPlayerSubnameRegistrars ?? []) as `0x${string}`[],
