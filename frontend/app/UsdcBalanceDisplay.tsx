@@ -9,7 +9,11 @@
 //      chain (e.g. Arbitrum ETH) to a generated address and Privy
 //      automagically bridges + swaps it into Base USDC in their account.
 //      Privy's own modal shows the bridge/swap status.
-//   3. "Swap ETH" — deep link to Uniswap with the pair pre-filled.
+//   3. "Deposit with blink.cash" — one-tap stablecoin deposit (ETHGlobal NYC
+//      2026, Stream 3) via the @swype-org/deposit SDK. Opens blink's hosted
+//      modal and credits this wallet in USDC. Agent staking and money games
+//      then draw from that USDC credit — blink does not route to stakes.
+//   4. "Swap ETH" — deep link to Uniswap with the pair pre-filled.
 //
 // Falls back gracefully when usdcToken is the zero address (contracts not
 // yet deployed on this chain).
@@ -20,6 +24,7 @@ import { useFundWallet } from "@privy-io/react-auth";
 // useDepositAddress lives on the /internal entry and is marked @experimental
 // by Privy; it powers the universal "deposit crypto from any chain" flow.
 import { useDepositAddress } from "@privy-io/react-auth/internal";
+import { useBlinkDeposit } from "@swype-org/deposit/react";
 
 import { ERC20ABI, useChainContracts } from "./contracts";
 import { useActiveChain } from "./chains";
@@ -32,6 +37,17 @@ const USDC_DECIMALS = 6;
 // CAIP-2 chain id for Base mainnet (eip155:8453); destination currency "usdc".
 const BASE_USDC_CAIP2_CHAIN = "eip155:8453";
 const DEPOSIT_DESTINATION_CURRENCY = "usdc";
+
+// blink.cash deposit destination — Base USDC, credited to the connected
+// wallet. amount=null lets the user choose the amount in blink's hosted flow.
+const BASE_CHAIN_ID = 8453;
+const BASE_USDC_TOKEN = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+// Merchant id is a public identifier (safe in client code); the signing key
+// stays server-side in /api/sign-payment. Environment is sandbox by default
+// to match the rest of the app's testnet setup.
+const BLINK_MERCHANT_ID = process.env.NEXT_PUBLIC_BLINK_MERCHANT_ID;
+const BLINK_ENVIRONMENT =
+  (process.env.NEXT_PUBLIC_BLINK_ENVIRONMENT as "production" | "sandbox" | undefined) ?? "sandbox";
 
 function formatUsdc(raw: bigint): string {
   const n = Number(raw) / 10 ** USDC_DECIMALS;
@@ -47,6 +63,15 @@ export function UsdcBalanceDisplay({ address }: Props) {
   const activeChain = useActiveChain();
   const { fundWallet } = useFundWallet();
   const { createDepositAddress } = useDepositAddress();
+  // blink.cash one-tap deposit. preload off so we don't fetch blink's hosted
+  // flow until the user actually clicks (keeps page load side-effect-free).
+  const { status: blinkStatus, requestDeposit: requestBlinkDeposit } = useBlinkDeposit({
+    signer: "/api/sign-payment",
+    merchantId: BLINK_MERCHANT_ID,
+    environment: BLINK_ENVIRONMENT,
+    preload: false,
+  });
+  const blinkLoading = blinkStatus === "signer-loading";
 
   const [open, setOpen] = useState(false);
   const [buying, setBuying] = useState(false);
@@ -115,6 +140,22 @@ export function UsdcBalanceDisplay({ address }: Props) {
       // user dismissed or deposit flow unavailable — silently ignore
     } finally {
       setDepositing(false);
+    }
+  };
+
+  // Start blink.cash's one-tap deposit. The SDK opens its own hosted modal
+  // and resolves when the deposit completes; it surfaces its own errors.
+  const onBlinkDeposit = async () => {
+    setOpen(false);
+    try {
+      await requestBlinkDeposit({
+        amount: null,
+        chainId: BASE_CHAIN_ID,
+        address,
+        token: BASE_USDC_TOKEN,
+      });
+    } catch {
+      // user dismissed or deposit unavailable — ignore
     }
   };
 
@@ -235,6 +276,31 @@ export function UsdcBalanceDisplay({ address }: Props) {
           >
             <span style={{ fontSize: 15 }}>🌉</span>
             <span>{depositing ? "Opening…" : "Deposit crypto (any chain)"}</span>
+          </button>
+
+          {/* blink.cash one-tap stablecoin deposit — hosted modal, credits
+              this wallet in USDC */}
+          <button
+            type="button"
+            onClick={() => void onBlinkDeposit()}
+            disabled={blinkLoading}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              width: "100%",
+              padding: "7px 14px",
+              background: "none",
+              border: "none",
+              cursor: blinkLoading ? "wait" : "pointer",
+              fontSize: 13,
+              color: "var(--cg-fg-1)",
+              textAlign: "left",
+            }}
+            className="hover:bg-[var(--cg-surface-1)]"
+          >
+            <span style={{ fontSize: 15 }}>⚡</span>
+            <span>{blinkLoading ? "Preparing…" : "Deposit with blink.cash"}</span>
           </button>
 
           {/* Swap ETH → USDC via Uniswap */}
