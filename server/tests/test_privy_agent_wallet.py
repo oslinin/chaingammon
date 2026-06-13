@@ -268,3 +268,212 @@ def test_privy_wallet_address_for_returns_none_when_unconfigured(monkeypatch):
 
     monkeypatch.setattr(main.PrivyAgentWallets, "from_env", classmethod(_raise))
     assert main._privy_wallet_address_for(1) is None
+
+
+# ─── PR 1.5: autonomous signing ────────────────────────────────────────────
+
+
+def _wallets_with_wallet(tmp_path, *, agent_id=20) -> PrivyAgentWallets:
+    """Helper: a PrivyAgentWallets instance that already has agent provisioned."""
+    calls: list = []
+    w = _wallets(tmp_path, calls=calls)
+    w.get_or_create_wallet(agent_id)
+    return w
+
+
+def test_register_auth_key_calls_privy_and_persists(tmp_path):
+    """register_auth_key POSTs a secp256r1 public key to Privy and stores
+    the resulting auth_key_id + private PEM in the wallet store."""
+    import json as json_
+
+    auth_key_responses: list = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if "/auth-keys" in str(request.url):
+            auth_key_responses.append(request)
+            return httpx.Response(200, json={"id": "authkey_test", "type": "secp256r1"})
+        # wallet provisioning
+        return httpx.Response(
+            200, json={"id": "wal_r", "address": _ADDR, "chain_type": "ethereum"}
+        )
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    w = PrivyAgentWallets(
+        app_id="a", app_secret="s", store_path=tmp_path / "w.json", http_client=client
+    )
+    w.get_or_create_wallet(20)
+    wallet = w.register_auth_key(20)
+
+    # One POST to /auth-keys was made.
+    assert len(auth_key_responses) == 1
+    req = auth_key_responses[0]
+    body = json_.loads(req.content)
+    assert body["type"] == "secp256r1"
+    # Public key is a non-empty base64url string.
+    assert len(body["public_key"]) > 40
+
+    # auth_key_id and private PEM stored on the returned wallet.
+    assert wallet.auth_key_id == "authkey_test"
+    assert "BEGIN" in (wallet.auth_key_private_pem or "")
+
+    # Persisted to disk — a fresh instance can read it back.
+    w2 = PrivyAgentWallets(
+        app_id="a", app_secret="s", store_path=tmp_path / "w.json",
+        http_client=httpx.Client(transport=httpx.MockTransport(handler))
+    )
+    w2_wallet = w2.wallet_for(20)
+    assert w2_wallet is not None
+    assert w2_wallet.auth_key_id == "authkey_test"
+
+
+def test_register_auth_key_is_idempotent(tmp_path):
+    """Calling register_auth_key twice does not hit Privy a second time."""
+    auth_key_calls: list = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if "/auth-keys" in str(request.url):
+            auth_key_calls.append(request)
+            return httpx.Response(200, json={"id": "authkey_once", "type": "secp256r1"})
+        return httpx.Response(
+            200, json={"id": "wal_idem", "address": _ADDR, "chain_type": "ethereum"}
+        )
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    w = PrivyAgentWallets(
+        app_id="a", app_secret="s", store_path=tmp_path / "w.json", http_client=client
+    )
+    w.get_or_create_wallet(21)
+    w.register_auth_key(21)
+    w.register_auth_key(21)  # second call — should NOT hit Privy
+
+    assert len(auth_key_calls) == 1
+
+
+def test_register_auth_key_requires_provisioned_wallet(tmp_path):
+    w = _wallets(tmp_path)
+    with pytest.raises(PrivyAgentWalletError, match="no Privy wallet"):
+        w.register_auth_key(999)
+
+
+def test_sign_and_send_sends_correct_rpc_body(tmp_path):
+    """sign_and_send posts eth_sendTransaction JSON to /rpc with the
+    privy-authorization-signature header set."""
+    import json as json_
+
+    from cryptography.hazmat.primitives.asymmetric import ec as ec_
+    from cryptography.hazmat.primitives import hashes as hashes_
+    from cryptography.hazmat.primitives.serialization import (
+        Encoding, NoEncryption, PrivateFormat, PublicFormat,
+    )
+
+    rpc_requests: list = []
+    private_key = ec_.generate_private_key(ec_.SECP256R1())
+    private_pem = private_key.private_bytes(
+        Encoding.PEM, PrivateFormat.TraditionalOpenSSL, NoEncryption()
+    ).decode()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if "/rpc" in str(request.url):
+            rpc_requests.append(request)
+            return httpx.Response(200, json={"method": "eth_sendTransaction",
+                                              "data": {"hash": "0xdeadbeef"}})
+        return httpx.Response(
+            200, json={"id": "wal_rpc", "address": _ADDR, "chain_type": "ethereum"}
+        )
+
+    import json as json_
+
+    # Pre-populate store with wallet + auth key.
+    store_path = tmp_path / "w.json"
+    store_path.write_text(json_.dumps({
+        "22": {
+            "agent_id": 22, "wallet_id": "wal_rpc", "address": _ADDR,
+            "chain_type": "ethereum",
+            "auth_key_id": "authkey_rpc",
+            "auth_key_private_pem": private_pem,
+        }
+    }))
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    w = PrivyAgentWallets(app_id="a", app_secret="s", store_path=store_path, http_client=client)
+    tx_hash = w.sign_and_send(
+        22,
+        caip2="eip155:11155111",
+        to="0x" + "cc" * 20,
+        data="0x1234",
+    )
+    assert tx_hash == "0xdeadbeef"
+    assert len(rpc_requests) == 1
+
+    req = rpc_requests[0]
+    # Authorization signature header must be present and non-empty.
+    sig_header = req.headers.get("privy-authorization-signature", "")
+    assert len(sig_header) > 10
+
+    # The signature must be a valid ECDSA-P256 signature over the body.
+    body_bytes = req.content
+    body_dict = json_.loads(body_bytes)
+    assert body_dict["method"] == "eth_sendTransaction"
+    assert body_dict["caip2"] == "eip155:11155111"
+    assert body_dict["params"]["transaction"]["to"] == "0x" + "cc" * 20
+
+    from cryptography.hazmat.primitives.asymmetric import ec as ec_
+    from cryptography.hazmat.primitives import hashes as hashes_
+    import base64 as b64
+
+    sig_bytes = b64.urlsafe_b64decode(sig_header + "==")  # restore padding
+    # Verify the signature against the canonical body bytes.
+    private_key.public_key().verify(sig_bytes, body_bytes, ec_.ECDSA(hashes_.SHA256()))
+    # If verify() doesn't raise, the signature is valid.
+
+
+def test_sign_and_send_requires_auth_key(tmp_path):
+    """sign_and_send raises if the wallet has no auth key registered."""
+    import json as json_
+
+    store_path = tmp_path / "w.json"
+    store_path.write_text(json_.dumps({
+        "23": {"agent_id": 23, "wallet_id": "wal_nk", "address": _ADDR, "chain_type": "ethereum"}
+    }))
+    w = PrivyAgentWallets(app_id="a", app_secret="s", store_path=store_path,
+                          http_client=_mock_client([]))
+    with pytest.raises(PrivyAgentWalletError, match="authorization key"):
+        w.sign_and_send(23, caip2="eip155:1", to=_ADDR, data="0x")
+
+
+def test_ensure_policy_posts_correct_payload(tmp_path):
+    """ensure_policy sends a method_rules policy to /v1/wallets/{id}/policies."""
+    import json as json_
+
+    policy_requests: list = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if "/policies" in str(request.url):
+            policy_requests.append(request)
+            return httpx.Response(200, json={"id": "policy_abc"})
+        return httpx.Response(
+            200, json={"id": "wal_pol", "address": _ADDR, "chain_type": "ethereum"}
+        )
+
+    store_path = tmp_path / "w.json"
+    store_path.write_text(json_.dumps({
+        "24": {"agent_id": 24, "wallet_id": "wal_pol", "address": _ADDR, "chain_type": "ethereum"}
+    }))
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    w = PrivyAgentWallets(app_id="a", app_secret="s", store_path=store_path, http_client=client)
+
+    policy_id = w.ensure_policy(24, allowed_contracts=["0xDividend", "0xUsdc"])
+    assert policy_id == "policy_abc"
+
+    req = policy_requests[0]
+    body = json_.loads(req.content)
+    assert body["version"] == "1.0.0"
+    assert body["chain_type"] == "ethereum"
+    rules = body["method_rules"][0]
+    assert rules["method"] == "eth_sendTransaction"
+    conditions = rules["rules"][0]["conditions"]
+    to_cond = next(c for c in conditions if c["field"] == "to")
+    assert "0xDividend" in to_cond["value"]
+    # max_value_wei=0 default → value eq 0x0 condition added
+    val_cond = next(c for c in conditions if c["field"] == "value")
+    assert val_cond["operator"] == "eq"
