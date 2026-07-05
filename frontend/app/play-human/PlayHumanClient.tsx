@@ -31,6 +31,7 @@ import { useChaingammonProfile } from "../useChaingammonProfile";
 import { useEnsName } from "../useEnsName";
 import { useSponsoredWrite } from "../useSponsoredWrite";
 import { useTaggedCandidates } from "../../lib/useTaggedCandidates";
+import { evaluateMoves } from "../../lib/onnx_eval";
 import {
   type MatchState,
   newMatch,
@@ -125,6 +126,14 @@ function HumanMatchInner() {
   const testMode =
     typeof window !== "undefined" &&
     !!(window as Window & { __HVH_TEST_MODE?: boolean }).__HVH_TEST_MODE;
+
+  // testMode: allow tests to shorten the match (e.g. 1 = a single game) so a
+  // full game played with per-turn ONNX inference finishes within CI
+  // timeouts. Rated play always uses MATCH_LENGTH.
+  const matchLength =
+    (testMode &&
+      Number((window as Window & { __HVH_MATCH_LENGTH?: number }).__HVH_MATCH_LENGTH)) ||
+    MATCH_LENGTH;
 
   const { address: wagmiAddress } = useAccount();
   // In testMode Privy auth is skipped, so wagmi has no connected account.
@@ -917,7 +926,7 @@ function HumanMatchInner() {
     gameStartedRef.current = true;
     setPhase("playing");
 
-    const initial = newMatch(MATCH_LENGTH);
+    const initial = newMatch(matchLength);
     gameRef.current = initial;
     setGame(initial);
 
@@ -941,27 +950,64 @@ function HumanMatchInner() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [myAuthSig, oppAuthSig, rollMyDice, testMode, mySide]);
 
-  // ── testMode: auto-commit first legal move on each turn ───────────────
+  // ── testMode: auto-commit a move on each turn ──────────────────────────
   // Drives both sides to game-over without UI clicks so Playwright tests
   // can verify the full game loop end-to-end.
+  //
+  // Move selection:
+  //   - default: first legal move (fast, no ONNX dependency)
+  //   - window.__HVH_MODEL_MOVES: highest-equity candidate from the
+  //     BackgammonNet ONNX evaluator (the same model that powers the
+  //     MoveCycler advisor), falling back to legal-move order when ONNX
+  //     is unavailable. window.__HVH_MODEL_MOVE_COUNT counts the turns the
+  //     model actually decided, so tests can assert the model drove play.
   useEffect(() => {
     if (!testMode || phase !== "playing" || !game || game.game_over) return;
     if (game.turn !== mySideRef.current || !game.dice) return;
 
+    const modelMoves =
+      !!(window as Window & { __HVH_MODEL_MOVES?: boolean }).__HVH_MODEL_MOVES;
     const board: GameBoard = { points: game.board, bar: game.bar, off: game.off };
-    const moves = generateLegalMoves(board, mySideRef.current, game.dice).filter(
-      (m) => m.trim(),
-    );
-    if (moves.length === 0) return;
+    const side = mySideRef.current;
+    const dice = game.dice;
 
-    // Pre-validate each move with applyMoveToState before committing —
-    // generateLegalMoves has a known edge case where it returns a move that
-    // isLegal then rejects; commitMove swallows the error silently and the
-    // game would stall. Try each candidate in order until one is accepted.
-    const t = setTimeout(() => {
-      for (const move of moves) {
+    // The cleanup below cancels a stale run when the effect re-fires (the
+    // ONNX evaluation is async, so this can no longer rely on clearTimeout
+    // alone the way the synchronous first-legal-move path could).
+    let cancelled = false;
+    const t = setTimeout(async () => {
+      // Rank candidates. The ONNX list is sorted by equity, so index 0 is
+      // the model's best move; later entries are its ranked alternatives.
+      let candidates: string[] = [];
+      let fromModel = false;
+      if (modelMoves) {
+        try {
+          const ranked = await evaluateMoves(board, side, dice);
+          if (ranked.length > 0) {
+            candidates = ranked.map((c) => c.move);
+            fromModel = true;
+          }
+        } catch {
+          // ONNX unavailable — fall through to legal-move order below.
+        }
+      }
+      if (candidates.length === 0) {
+        candidates = generateLegalMoves(board, side, dice);
+      }
+      candidates = candidates.filter((m) => m.trim());
+      if (cancelled || candidates.length === 0) return;
+
+      // Pre-validate each move with applyMoveToState before committing —
+      // generateLegalMoves has a known edge case where it returns a move that
+      // isLegal then rejects; commitMove swallows the error silently and the
+      // game would stall. Try each candidate in order until one is accepted.
+      for (const move of candidates) {
         try {
           applyMoveToState(game, move); // throws if illegal
+          if (fromModel) {
+            const w = window as Window & { __HVH_MODEL_MOVE_COUNT?: number };
+            w.__HVH_MODEL_MOVE_COUNT = (w.__HVH_MODEL_MOVE_COUNT ?? 0) + 1;
+          }
           void commitMove(move, game);
           break;
         } catch {
@@ -969,8 +1015,25 @@ function HumanMatchInner() {
         }
       }
     }, 50);
-    return () => clearTimeout(t);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
   }, [testMode, game, phase, commitMove]);
+
+  // ── testMode: mirror live game state onto window ───────────────────────
+  // Lets Playwright assert on the authoritative MatchState (winner, score,
+  // borne-off counts, position_id) instead of scraping the DOM, so tests
+  // can verify both peers resolved the game to the identical final state.
+  useEffect(() => {
+    if (!testMode) return;
+    const w = window as Window & {
+      __HVH_GAME_STATE?: MatchState | null;
+      __HVH_MY_SIDE?: 0 | 1 | null;
+    };
+    w.__HVH_GAME_STATE = game;
+    w.__HVH_MY_SIDE = mySide;
+  }, [testMode, game, mySide]);
 
   // ── Post-game: auto-sign and exchange result sigs ─────────────────────
   useEffect(() => {
