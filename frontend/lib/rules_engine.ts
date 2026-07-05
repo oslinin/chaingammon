@@ -57,20 +57,30 @@ export const OPENING_BOARD: Board = {
  * @example parseMove("bar/22", 0)  → [{src:25,dst:22,hit:false}]
  * @example parseMove("6/off", 0)   → [{src:6,dst:0,hit:false}]
  * @example parseMove("13/8*", 0)   → [{src:13,dst:8,hit:true}]
+ * @example parseMove("9/4(2)", 0)  → [{src:9,dst:4,hit:false}, {src:9,dst:4,hit:false}]
  */
 export function parseMove(moveStr: string, side: number): CheckerMove[] {
   const moves: CheckerMove[] = [];
-  const re = /(\d+|bar)\/(\d+|off)(\*?)/gi;
+  // `(n)` is gnubg's repeat suffix for doubles ("9/4(2)" = two checkers
+  // 9→4). generateLegalMoves emits it via formatMove grouping, so it MUST
+  // round-trip here — dropping it makes isLegal simulate only one copy and
+  // reject the generator's own move (the game then stalls with no
+  // committable move).
+  const re = /(\d+|bar)\/(\d+|off)(\*?)(?:\((\d+)\))?/gi;
   let m: RegExpExecArray | null;
   while ((m = re.exec(moveStr)) !== null) {
     const rawSrc = m[1].toLowerCase();
     const rawDst = m[2].toLowerCase();
     const hit = m[3] === "*";
+    const count = m[4] ? parseInt(m[4], 10) : 1;
     const src =
       rawSrc === "bar" ? (side === 0 ? BAR_SRC : BAR_SRC_P1) : parseInt(rawSrc, 10);
     const dst =
       rawDst === "off" ? (side === 0 ? OFF_DST : OFF_DST_P1) : parseInt(rawDst, 10);
-    moves.push({ src, dst, hit });
+    for (let i = 0; i < count; i++) {
+      // A blot can only be hit once — the first copy carries the hit flag.
+      moves.push({ src, dst, hit: hit && i === 0 });
+    }
   }
   return moves;
 }
@@ -371,7 +381,16 @@ export function generateLegalMoves(board: Board, side: number, dice: [number, nu
           parts.push(count > 1 ? `${str}(${count})` : str);
       }
 
-      const display = parts.join(" ");
+      // Grouping repeats as "(n)" collapses them onto their first
+      // occurrence's position, which can synthesise an order that was never
+      // played — e.g. "9/8(2) 10/9" when the second 9/8 is only possible
+      // after 10/9 has vacated the point. Keep the compact form only when it
+      // still simulates legally; otherwise fall back to the actual played
+      // order, fully expanded.
+      let display = parts.join(" ");
+      if (!isLegal(board, dice, side, display)) {
+          display = seq.map((p) => formatMove(p, side)).join(" ");
+      }
       const key = [...parts].sort().join(" ");
       const existing = byKey.get(key);
       if (existing === undefined || display > existing) {
