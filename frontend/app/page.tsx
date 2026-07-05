@@ -149,8 +149,25 @@ function ActionCard({ variant, glyph, label, sublabel, meta, href, onClick, disa
 }
 
 function EloHome() {
-  const { address } = useAccount();
+  const { address: wagmiAddress } = useAccount();
   const { authenticated } = usePrivy();
+
+  // testMode (__HVH_TEST_MODE): Playwright E2E runs skip Privy auth entirely.
+  // Read the flag in an effect — not during render — so the server HTML and
+  // the first client render agree (no hydration mismatch on `disabled`).
+  // The mock wallet injected by the test provides the address, mirroring the
+  // testModeAddress fallback in PlayHumanClient.
+  const [testMode, setTestMode] = useState(false);
+  useEffect(() => {
+    if ((window as Window & { __HVH_TEST_MODE?: boolean }).__HVH_TEST_MODE) setTestMode(true);
+  }, []);
+  const testModeAddress =
+    testMode && typeof window !== "undefined"
+      ? ((window as Window & { ethereum?: { _accounts?: string[] } }).ethereum
+          ?._accounts?.[0] as `0x${string}` | undefined)
+      : undefined;
+  const address = wagmiAddress ?? testModeAddress;
+  const authed = authenticated || testMode;
   const { matchRegistry } = useChainContracts();
   const chainId = useActiveChainId();
   const { setMode } = useAppMode();
@@ -256,7 +273,7 @@ function EloHome() {
   }, [router]);
 
   const startPlay = useCallback(() => {
-    if (!address || !authenticated) return; // must be Privy-authenticated with a wallet
+    if (!address || !authed) return; // must be Privy-authenticated with a wallet (testMode bypasses)
     const id = newIdentity();
     const nostr = new NostrMatchClient(id);
     nostrRef.current = nostr;
@@ -298,7 +315,7 @@ function EloHome() {
     };
     setSearching(true);
     setSearchStatus("Searching for a human…");
-  }, [address, authenticated, chainEloRaw, tryConnect, stopSearching, router]);
+  }, [address, authed, chainEloRaw, tryConnect, stopSearching, router]);
 
   useEffect(() => () => stopSearching(), [stopSearching]);
 
@@ -402,7 +419,7 @@ function EloHome() {
             meta="RATED"
             sublabel={searching ? searchStatus : "Find a human first · falls back to bot"}
             onClick={searching ? stopSearching : startPlay}
-            disabled={(!address || !authenticated) && !searching}
+            disabled={(!address || !authed) && !searching}
           />
           <ActionCard
             variant="secondary"
@@ -411,7 +428,7 @@ function EloHome() {
             meta="STAKE"
             sublabel="Wagered match · winner takes pot"
             href="/match?stake=1"
-            disabled={!address || !authenticated}
+            disabled={!address || !authed}
           />
           <ActionCard
             variant="secondary"
