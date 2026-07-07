@@ -225,10 +225,97 @@ Tasks are ordered so each can ship alone. Do them in order; if a task blocks, sk
 
 ---
 
-## Out of scope (deliberately — needs owner decisions first)
+---
 
-- **Guest/no-wallet play** — product/auth architecture (Privy) decision.
-- **Async challenge links + ENS `open_to_challenges` record** — protocol addition; spec it separately.
-- **Human opponent style at HvH inference** — needs a 0G KV read path by wallet address.
-- **ERC-7857 re-encryption transfer / agent marketplace** — contract-audit-grade work.
-- **Both-sign settlement griefing fallback (KeeperHub adjudication)** — cross-system design.
+# Phase 2 — decided follow-ups (owner decisions recorded 2026-07-07)
+
+Owner decisions: **(a)** guests may play the bot AND unrated HvH without a wallet; **(b)** settlement griefing is resolved by KeeperHub adjudication (signed move log replayed through the rules engine); **(c)** agent *selling* is deferred — build the star-agent surface (leaderboard) first; **(d)** human style profiles are published **by default** (chess.com-stats model) and feed opponent conditioning; **(e)** async discovery ships as challenge deep-links only (no ENS challenge board yet).
+
+Phase 2 tasks follow the same rules as Phase 1. Do them after Phase 1, in this order. Tasks 9–12 are implementation; Task 13 is groundwork; Task 14 is a design doc that STOPS for owner review.
+
+| # | Task | Risk | Touches |
+|---|------|------|---------|
+| 9 | Challenge deep-links | low | `matchmaker/nostr/page.tsx`, new route, tests |
+| 10 | Guest play: bot + unrated HvH without a wallet | medium | `page.tsx`, `PlayHumanClient.tsx`, tests |
+| 11 | Human style profiles: publish by default + feed HvH opponents | medium | server overlay path, `PlayHumanClient`, advisor |
+| 12 | Star-agent leaderboard | low | new `frontend/app/leaderboard`, DiscoveryList reuse |
+| 13 | Signed move log (adjudication groundwork) | medium | `PlayHumanClient.tsx`, wire types, tests |
+| 14 | KeeperHub adjudication design spec (doc only) | low | `docs/superpowers/specs/` |
+
+---
+
+## Task 9: Challenge deep-links
+
+**Why:** live presence fails the "3am problem" — an invited friend and an empty lobby are both dead ends today. A shareable URL that pairs two specific browsers removes the need for simultaneous searching.
+
+**Files:** modify `frontend/lib/nostr.ts` (targeted presence), `frontend/app/page.tsx` (Create-link UI + accept flow), create `frontend/app/challenge/page.tsx` (or query-param route — mirror how `/play-human` uses `?id=`), create `frontend/tests/challenge_link.spec.ts`, modify `README.md`, `CHANGELOG.md`.
+
+- [ ] **Step 1: Read the pairing flow first** (`page.tsx` `startPlay`/`tryConnect`, `lib/matchmaker.ts` `hvhMatchId`, `computePairing`). A challenge link is the same flow with the pairing predetermined: the link carries `{challengerNostrPubkey, matchTag}` (random 16-byte hex tag).
+- [ ] **Step 2: Create link.** "Challenge a friend" button on the home page: generates identity + tag, starts presence on `#t=cg-challenge-<tag>` (add an optional `tag` parameter to `startPresence`/`subscribePresence` — default remains `chaingammon-match`), shows a copyable URL `/?challenge=<tag>&from=<pubkey>` (use `navigator.clipboard`, fall back to a visible input). Challenger waits on that tag only.
+- [ ] **Step 3: Accept link.** On home-page load with `?challenge=` params: skip open matchmaking entirely; publish presence on the challenge tag; pair deterministically with `from` (lower pubkey = offerer, same rule as `computePairing`); proceed through the existing `connectPeer` → `/play-human?id=` flow. Expire: if no connection in 120s, show "challenge expired — ask for a new link."
+- [ ] **Step 4: Test** — extend the HvH E2E harness (`tests/hvh_test_utils.ts` mocks all `wss://`): page1 creates a link (read the URL from the DOM), page2 `goto()`s it, both land on the same `/play-human?id=`; then reuse the game-completion assertions from the model-moves test.
+- [ ] **Step 5: README** — "Challenge a friend" section: how links work, privacy note (link contains an ephemeral pubkey, not your wallet), how to run the spec. **CHANGELOG** `### Added`. Show the owner the diff.
+
+## Task 10: Guest play — bot + unrated HvH without a wallet
+
+**Why (owner decision a):** wallet-before-play is the funnel killer for paid traffic. Guests get the bot AND unrated human matches; wallet remains required for rated/staked play.
+
+**Files:** modify `frontend/app/page.tsx`, `frontend/app/play-human/PlayHumanClient.tsx`, `frontend/tests/guest_play.spec.ts` (new), `README.md`, `CHANGELOG.md`.
+
+- [ ] **Step 1: Home gating.** Un-gate a new "Play unrated" path when not authenticated: reuse `startPlay` but with a `guest: true` mode — identity is the ephemeral Nostr pubkey, presence `address` field stays `""`, and add `unrated: true` to `PresenceContent`. Guests must only pair with matches flagged unrated: rated searchers and guest searchers must not mix — filter in the presence handler (a rated player never sees guest presence as pairable and vice versa; simplest: guests publish/subscribe on a distinct tag `chaingammon-match-unrated`). Keep the existing wallet-gated "Play" (rated) untouched.
+- [ ] **Step 2: PlayHumanClient guest path.** Read the `testMode` seams in this file — guest mode reuses most of them: skip auth signing, skip settlement (both are already gated on auth sigs). Changes needed: (i) hello with empty `address` currently ERRORS on the receiver ("Opponent connected before their wallet loaded", ~line 788) — allow it when the hello also carries `unrated: true` (add the field to `HelloMsg`); (ii) identity display falls back to Nostr pubkey prefix (`guest-a1b2c3`); (iii) show an "UNRATED — no ELO change" badge in the header; (iv) at game end show the winner banner + a "connect a wallet to play rated" CTA instead of the settlement phase.
+- [ ] **Step 3: Do NOT mix modes.** A guest hello arriving in a rated match (or vice versa) → `setPhaseError("Match mode mismatch")`. This prevents a rated player being tricked into an unsettleable game.
+- [ ] **Step 4: Test** `guest_play.spec.ts` — reuse `hvh_test_utils.setupMatch` with a new `guest: true` option that skips the mock-wallet init scripts and clicks "Play unrated"; assert both pages reach game-over (reuse model-moves assertions), no settlement phase occurs, and the UNRATED badge is visible. Also assert a rated searcher and a guest searcher do NOT pair (start one of each, expect no match within 20s).
+- [ ] **Step 5: README** — new "Playing as a guest" section (what works without a wallet, what needs one) + spec command. **CHANGELOG** `### Added`. Show the owner the diff.
+
+## Task 11: Human style profiles — publish by default, feed HvH opponents
+
+**Why (owner decision d):** agents publish style; humans don't, so HvH play is style-blind. Owner chose chess.com-style public-by-default stats.
+
+**Files:** modify `server/app/main.py` (+ read `server/app/agent_overlay.py` first), `frontend/app/play-human/PlayHumanClient.tsx`, `frontend/lib/career_features.ts` call sites, create `server/tests/test_human_overlay.py`, `frontend/tests/human_style.spec.ts`, modify `README.md`, `CHANGELOG.md`.
+
+- [ ] **Step 1: Server endpoints.** Mirror the agent overlay KV path (`_fetch_overlay`/`_update_agent_overlay_kv`, key `chaingammon/overlay/agent/{id}`) for humans at key `chaingammon/overlay/human/{address_lowercase}`: `GET /overlay/human/{address}` (returns Overlay.default() when absent) and `POST /overlay/human/{address}` accepting `{move_strs: string[], boards: number[][]}` → classify with the existing `classify_move_str`/`update_overlay` machinery (read `agent_overlay.py` for exact signatures) → EMA-update → write KV. Pytest both (happy path + default-when-absent), stubbing the KV client the way existing overlay tests do (`server/tests/test_phase9_overlay_integration.py` is the reference).
+- [ ] **Step 2: Client write path.** In `PlayHumanClient`, accumulate `(move, board)` per own committed move; on `game_over`, POST to `/overlay/human/{address}` (fire-and-forget, non-fatal, skipped for guests/testMode). The backend URL: read how other pages call the FastAPI server (e.g. the coach panel) and reuse that base-URL convention.
+- [ ] **Step 3: Read path + conditioning.** At match start (after hello), GET the opponent's overlay by their address; build `encodeStyleVector(ownProfile, oppProfile)` and pass it to the advisor evaluator via the `setEvaluatorStyle` API from Phase 1 Task 7. Also render a small "opponent style" chip (top-2 axes by |value|) near the opponent name — that's the user-visible payoff.
+- [ ] **Step 4: Tests** — server pytest (Step 1); frontend logic spec asserting the accumulated-moves → POST payload shape; E2E stays green (server absent in harness → fire-and-forget must not break the game).
+- [ ] **Step 5: README** — "Player style profiles" section: what is published (18 style axes, no move logs), where it lives (0G KV key), that it's public by default, and the API endpoints. **CHANGELOG** `### Added`. Show the owner the diff.
+
+## Task 12: Star-agent leaderboard
+
+**Why (owner decision c):** selling is deferred, so the "star agent" story needs its discovery surface: who are the best agents, what have they earned.
+
+**Files:** create `frontend/app/leaderboard/page.tsx`, modify `frontend/app/HeaderLinks.tsx` (nav entry), create `frontend/tests/leaderboard.spec.ts`, modify `README.md`, `CHANGELOG.md`.
+
+- [ ] **Step 1: Read `frontend/app/DiscoveryList.tsx` first** — it already enumerates agents + humans from `SubnameMinted` logs with ELO fallbacks. The leaderboard is a re-sort of that data source: extract the enumeration into a shared hook (`useDiscoveryEntries`) rather than copying it.
+- [ ] **Step 2: Page.** Table ranked by ELO: name (ENS label), kind (agent/human toggle), ELO, matches (`AgentRegistry.matchCount`), bankroll (read `AgentVault` — check the contract for the public balance accessor; if none exists, sum `Deposited`/`Withdrawn`/`StakeDeposited` events the same chunked way DiscoveryList scans logs), owner address. Link each agent row to its existing profile/agent page.
+- [ ] **Step 3: Test** — Playwright spec with mocked RPC (mirror how existing specs mock `eth_call`/logs if any do — check `agent-teammate.spec.ts`; if nothing mocks RPC, render against localhost deployments and mark the spec skipped-unless-`LEADERBOARD_E2E=1`, documenting that in the spec header).
+- [ ] **Step 4: README** — leaderboard section + how to run its spec. **CHANGELOG** `### Added`. Show the owner the diff.
+
+## Task 13: Signed move log (adjudication groundwork)
+
+**Why (owner decision b):** KeeperHub adjudication needs evidence: every move signed by the mover's session key, held by both players. This task ships the evidence layer only — no contract changes.
+
+**Files:** modify `frontend/app/play-human/PlayHumanClient.tsx` (wire types + log), create `frontend/lib/move_log.ts`, `frontend/tests/move_log.spec.ts`, modify `README.md`, `CHANGELOG.md`.
+
+- [ ] **Step 1: `lib/move_log.ts`.** `signMoveEntry(sessionAccount, {matchId, index, move, positionId, roundNumber, turnIndex})` → EIP-191 signature over the keccak256 of the ABI-encoded tuple prefixed `"Chaingammon:move"` (mirror the encoding style of the existing auth/result hashes in `PlayHumanClient` — read them first, lines ~843-902 and ~308-386), and `verifyMoveEntry(entry, expectedSigner)` via viem `recoverMessageAddress`.
+- [ ] **Step 2: Wire it.** Extend the `move` wire message with `sig` and `index`; sender signs each committed move with its session key; receiver verifies against the opponent's `sessionKey` from hello — invalid sig → `setPhaseError`. Both sides append every verified entry (own + opponent's) to an in-memory log; on `game_over`, serialize `{matchId, players, entries[]}` and (i) offer it as a downloadable JSON (`URL.createObjectURL`), (ii) if the existing game-record 0G archive path already uploads at game end (check what `finishGame`/settle does with the record), attach the signed log to that same record rather than inventing a second upload.
+- [ ] **Step 3: Tests** — logic spec: sign→verify round-trip, tampered move fails, wrong signer fails. E2E: model-moves test still green; add an assertion that `window.__HVH_MOVE_LOG.length` equals the number of committed moves (expose it in testMode alongside `__HVH_GAME_STATE`).
+- [ ] **Step 4: README** — "Match evidence" paragraph: every move is session-key-signed and both players hold the log; this is the input for keeper adjudication (Task 14 spec). **CHANGELOG** `### Added`. Show the owner the diff.
+
+## Task 14: KeeperHub adjudication — design spec ONLY
+
+**Why:** the adjudication flow crosses contracts + keeper workflows + client timeout UX; per plan rules that design gets owner review before code.
+
+**Files:** create `docs/superpowers/specs/2026-07-adjudicated-settlement.md`. NO code changes.
+
+- [ ] **Step 1: Read** `contracts/src/MatchRegistry.sol` (`settleWithSessionKeys*`), `keeperhub/match-settle.yaml`, `keeperhub/post-settle-audit.yaml`, and Task 13's move-log format.
+- [ ] **Step 2: Write the spec** covering: trigger (co-sign timeout T after game_over), evidence submission (signed move log hash → 0G, hash on-chain), keeper steps (fetch log → verify sigs → replay via WASM rules engine → determine result), new contract entrypoint (`settleAdjudicated` — auth model, who may call, how the existing nonce/auth-sig scheme binds it), dispute/appeal window, gas/incentives, failure modes (both offline, log withheld, keeper down), and an explicit "what can the keeper NOT cheat about" analysis. End with open questions for the owner.
+- [ ] **Step 3: STOP.** Present the spec for review. Do not begin implementation in this plan.
+
+---
+
+## Out of scope (still deferred)
+
+- **Full ERC-7857 re-encryption transfer / agent marketplace** — owner deferred selling until the star-agent surface proves demand (Task 12 is the prerequisite).
+- **ENS `open_to_challenges` challenge board** — owner chose deep-links only for now; revisit if link sharing shows demand.
+- **Human style opt-out toggle** — profiles are publish-by-default per owner decision; add an opt-out setting only if players ask.
