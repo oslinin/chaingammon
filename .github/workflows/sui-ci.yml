@@ -25,16 +25,25 @@ jobs:
       - name: Install Sui CLI (testnet)
         env:
           SUI_RELEASE_TAG: "" # empty = latest testnet-* release; set to pin
+          # Authenticates the GitHub API calls below with the workflow's
+          # auto-injected token. Unauthenticated api.github.com requests are
+          # capped at 60/hour *per runner IP range*, shared across every
+          # GitHub Actions job in flight — easy to exhaust and exactly what
+          # broke the previous CI run (curl: (22) ... 403). The default
+          # GITHUB_TOKEN (read-only, no repo secrets needed) raises this to
+          # 5000/hour and needs no owner setup.
+          GH_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
+          AUTH_HEADER="Authorization: Bearer ${GH_API_TOKEN}"
           if [ -z "$SUI_RELEASE_TAG" ]; then
-            TAG=$(curl -fsSL https://api.github.com/repos/MystenLabs/sui/releases \
+            TAG=$(curl -fsSL -H "$AUTH_HEADER" https://api.github.com/repos/MystenLabs/sui/releases \
               | jq -r '[.[] | select(.tag_name | startswith("testnet-"))][0].tag_name')
           else
             TAG="$SUI_RELEASE_TAG"
           fi
           echo "Using Sui CLI release: $TAG"
-          ASSET_URL=$(curl -fsSL "https://api.github.com/repos/MystenLabs/sui/releases/tags/$TAG" \
+          ASSET_URL=$(curl -fsSL -H "$AUTH_HEADER" "https://api.github.com/repos/MystenLabs/sui/releases/tags/$TAG" \
             | jq -r '.assets[] | select(.name | test("ubuntu.*x86_64.*\\.tgz$")) | .browser_download_url' | head -n1)
           if [ -z "$ASSET_URL" ] || [ "$ASSET_URL" = "null" ]; then
             echo "::error::Could not find an ubuntu-x86_64 asset for release $TAG" >&2
