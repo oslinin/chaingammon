@@ -24,7 +24,10 @@ jobs:
       # to that exact tag for reproducibility instead of "latest".
       - name: Install Sui CLI (testnet)
         env:
-          SUI_RELEASE_TAG: "" # empty = latest testnet-* release; set to pin
+          # Pinned to the release verified green in CI on 2026-07-08 (see
+          # sui/README.md "Toolchain version"). Bump this only after a newer
+          # testnet-* release has also passed `sui move test`.
+          SUI_RELEASE_TAG: "testnet-v1.75.1"
           # Authenticates the GitHub API calls below with the workflow's
           # auto-injected token. Unauthenticated api.github.com requests are
           # capped at 60/hour *per runner IP range*, shared across every

@@ -15,19 +15,19 @@ This README is kept current after every task in the implementation plan — it s
 
 ## Status
 
-**Task 0 (scaffold) in progress.** Only the Move package skeleton, workspace wiring, and CI exist. There is no app yet (`sui/app` — added in Task 4), no deployed contracts, and no working game.
+**Task 0 (scaffold) complete and CI-verified.** `.github/workflows/sui-ci.yml` passed on `sui` branch commit `5a9ab8b` (2026-07-08): the `sui` CLI installs, `sui move build` and `sui move test` both succeed against the placeholder package. There is no app yet (`sui/app` — added in Task 4), no deployed contracts, and no working game — Task 1 (`elo.move`) is next.
 
-⚠️ **Toolchain verification note:** the sandbox this scaffold was authored in has an egress policy that blocks `github.com` (confirmed via the environment's proxy diagnostics — a 403 organization-policy denial, not a transient failure), and no `sui` CLI crate exists on crates.io as a fallback. As a result, **`sui move build` / `sui move test` have not been run against this scaffold** — the Move source was written by hand against the Move 2024 edition syntax and is believed correct but is UNVERIFIED. The very first thing to do in an environment with normal network access is Step 3 below; if it fails, fix the Move source before starting Task 1.
+This local checkout could not run `sui move build`/`sui move test` directly (this sandbox's egress policy blocks `github.com`, and no `sui` CLI crate exists on crates.io as a fallback) — verification happened via CI on GitHub's runners instead, which have normal network access. If you're picking this up in an environment with `github.com` access, installing the CLI locally (below) and running the tests directly is faster than round-tripping through CI.
 
 ## Prerequisites
 
-- [`sui` CLI](https://docs.sui.io/guides/developer/getting-started/sui-install), **testnet** release channel. This repo does not pin an exact version yet (see the note above) — install the current `testnet-*` release and record the exact version here once you've verified `sui move test` passes:
+- [`sui` CLI](https://docs.sui.io/guides/developer/getting-started/sui-install), **testnet** release channel.
 
   ```
-  Verified sui CLI version: <fill in after Step 3 below passes>
+  Verified sui CLI version: testnet-v1.75.1 (verified via CI on 2026-07-08; also pinned in .github/workflows/sui-ci.yml's SUI_RELEASE_TAG)
   ```
 
-  Then update `SUI_RELEASE_TAG` in `.github/workflows/sui-ci.yml` to match, so CI stays reproducible instead of tracking "latest".
+  If you install a newer `testnet-*` release locally and it also passes `sui move test`, update both this line and `SUI_RELEASE_TAG` in `.github/workflows/sui-ci.yml`.
 - [`pnpm`](https://pnpm.io/) (already required by the rest of this monorepo) — this directory's `app` and `scripts` packages are part of the root pnpm workspace (see root `pnpm-workspace.yaml`).
 - Node.js 22 (matches the rest of the repo).
 
