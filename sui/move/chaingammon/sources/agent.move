@@ -140,7 +140,7 @@ module chaingammon::agent {
     }
 
     /// CLI/PTB entrypoint: mint and transfer to the caller in one call.
-    public entry fun mint(name: vector<u8>, tier: u8, ctx: &mut TxContext) {
+    public fun mint(name: vector<u8>, tier: u8, ctx: &mut TxContext) {
         let agent = new(name, tier, ctx);
         transfer::public_transfer(agent, tx_context::sender(ctx));
     }
@@ -149,7 +149,7 @@ module chaingammon::agent {
 
     /// Fund the agent's bankroll. Anyone may sponsor an agent — mirrors
     /// AgentVault.deposit's "anyone can call" semantics.
-    public entry fun deposit(agent: &mut Agent, payment: Coin<SUI>, ctx: &TxContext) {
+    public fun deposit(agent: &mut Agent, payment: Coin<SUI>, ctx: &TxContext) {
         let amount = coin::value(&payment);
         assert!(amount > 0, EZeroAmount);
         balance::join(&mut agent.bankroll, coin::into_balance(payment));
@@ -160,16 +160,20 @@ module chaingammon::agent {
     /// explicit `owner` field, not Sui object custody — see the module
     /// doc comment). Returns the Coin so callers compose it in a PTB;
     /// `withdraw_to_sender` below is the simple CLI-callable wrapper.
-    public fun withdraw(agent: &mut Agent, amount: u64, ctx: &TxContext): Coin<SUI> {
+    public fun withdraw(agent: &mut Agent, amount: u64, ctx: &mut TxContext): Coin<SUI> {
         assert!(tx_context::sender(ctx) == agent.owner, ENotOwner);
         assert!(amount > 0, EZeroAmount);
         assert!(balance::value(&agent.bankroll) >= amount, EInsufficientBalance);
+        // coin::from_balance needs a mutable TxContext (it derives a fresh
+        // UID for the new Coin object), so this function's ctx can't be the
+        // read-only &TxContext that would otherwise suffice for the sender
+        // check above.
         let coin = coin::from_balance(balance::split(&mut agent.bankroll, amount), ctx);
         event::emit(Withdrawn { agent_id: object::id(agent), to: tx_context::sender(ctx), amount });
         coin
     }
 
-    public entry fun withdraw_to_sender(agent: &mut Agent, amount: u64, ctx: &mut TxContext) {
+    public fun withdraw_to_sender(agent: &mut Agent, amount: u64, ctx: &mut TxContext) {
         let coin = withdraw(agent, amount, ctx);
         transfer::public_transfer(coin, tx_context::sender(ctx));
     }
@@ -178,7 +182,7 @@ module chaingammon::agent {
 
     /// Owner-only. Records where the agent's (Seal-encrypted) weights live
     /// on Walrus and a hash of their plaintext content.
-    public entry fun set_weights(
+    public fun set_weights(
         agent: &mut Agent,
         blob_id: vector<u8>,
         content_hash: vector<u8>,
