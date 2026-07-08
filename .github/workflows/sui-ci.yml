@@ -40,16 +40,22 @@ jobs:
             echo "::error::Could not find an ubuntu-x86_64 asset for release $TAG" >&2
             exit 1
           fi
-          curl -fsSL -o sui-cli.tgz "$ASSET_URL"
-          tar -xzf sui-cli.tgz
+          # Extract into an isolated temp dir, NOT the checkout root — the
+          # repo already has a top-level sui/ directory (this very port), and
+          # the release tarball's flat `sui` binary collides with it
+          # ("tar: ./sui: Cannot open: File exists") if extracted in place.
+          EXTRACT_DIR="$(mktemp -d)"
+          curl -fsSL -o "$EXTRACT_DIR/sui-cli.tgz" "$ASSET_URL"
+          tar -xzf "$EXTRACT_DIR/sui-cli.tgz" -C "$EXTRACT_DIR"
           # The tarball layout has varied across releases (flat binary vs.
           # a bin/ subdirectory) — find the `sui` executable wherever it landed.
-          SUI_BIN=$(find . -maxdepth 3 -type f -name sui -perm -u+x | head -n1)
+          SUI_BIN=$(find "$EXTRACT_DIR" -maxdepth 3 -type f -name sui -perm -u+x | head -n1)
           if [ -z "$SUI_BIN" ]; then
             echo "::error::sui binary not found after extracting $ASSET_URL" >&2
             exit 1
           fi
           sudo install -m 755 "$SUI_BIN" /usr/local/bin/sui
+          rm -rf "$EXTRACT_DIR"
           sui --version
 
       - name: sui move build
