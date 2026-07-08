@@ -15,7 +15,7 @@ This README is kept current after every task in the implementation plan — it s
 
 ## Status
 
-**Task 0 (scaffold) complete and CI-verified.** `.github/workflows/sui-ci.yml` passed on `sui` branch commit `5a9ab8b` (2026-07-08): the `sui` CLI installs, `sui move build` and `sui move test` both succeed against the placeholder package. There is no app yet (`sui/app` — added in Task 4), no deployed contracts, and no working game — Task 1 (`elo.move`) is next.
+**Task 0 (scaffold) and Task 1 (`elo.move`) complete, CI-verified.** `.github/workflows/sui-ci.yml` is green on `sui` branch commit `5a9ab8b` (Task 0). Task 1 adds `chaingammon::elo` — a from-scratch Move port of `contracts/src/EloMath.sol`'s rating math (expected-score lookup table + K-factor delta), with 19 tests asserting **exact** parity against vectors independently computed by replicating EloMath's integer semantics in Python (not just the looser tolerance ranges in `contracts/test/phase2_EloMath.test.js`). There is no app yet (`sui/app` — added in Task 4), no deployed contracts, and no working game — Task 2 (`agent.move`) is next.
 
 This local checkout could not run `sui move build`/`sui move test` directly (this sandbox's egress policy blocks `github.com`, and no `sui` CLI crate exists on crates.io as a fallback) — verification happened via CI on GitHub's runners instead, which have normal network access. If you're picking this up in an environment with `github.com` access, installing the CLI locally (below) and running the tests directly is faster than round-tripping through CI.
 
@@ -49,7 +49,7 @@ cd sui/move/chaingammon
 sui move test
 ```
 
-Expected (once the toolchain is installed): the `chaingammon::version_tests::package_version_is_one` test passes. This is a placeholder test proving the package skeleton compiles and Move tests run — Task 1 (`elo.move`) adds the first real test suite.
+Expected: all tests pass, including `chaingammon::version_tests::package_version_is_one` (the Task 0 placeholder) and 19 tests in `chaingammon::elo_tests` (Task 1) asserting exact parity with `contracts/src/EloMath.sol` — same K-factor delta, same expected-score lookup table, same boundary/clamp behavior, verified against independently-computed vectors (not just eyeballed against the Solidity test file's `within()` tolerance ranges).
 
 ## Localnet (for later tasks — not needed yet)
 
