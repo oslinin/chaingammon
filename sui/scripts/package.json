@@ -1,0 +1,13 @@
+{
+  "name": "sui-scripts",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Deploy/demo scripts for the Sui port (mint agents, fixtures, trade demo). Populated starting Task 3 of docs/superpowers/plans/2026-07-08-sui-port.md.",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5"
+  }
+}

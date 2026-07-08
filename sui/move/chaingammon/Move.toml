@@ -1,0 +1,14 @@
+[package]
+name = "chaingammon"
+edition = "2024.beta"
+# Pin this to the exact `sui` CLI release the owner has installed once it is
+# verified locally (see sui/README.md "Toolchain version" — currently a
+# placeholder because this environment could not reach github.com to look
+# up the current testnet release; see the Task 0 completion note there).
+published-at = "0x0"
+
+[dependencies]
+Sui = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/sui-framework", rev = "framework/testnet" }
+
+[addresses]
+chaingammon = "0x0"

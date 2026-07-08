@@ -154,6 +154,12 @@ importers:
         specifier: ^6.15.0
         version: 6.16.0(bufferutil@4.1.0)(utf-8-validate@5.0.10)
 
+  sui/scripts:
+    devDependencies:
+      typescript:
+        specifier: ^5
+        version: 5.9.3
+
 packages:
 
   '@0gfoundation/0g-ts-sdk@1.2.6':

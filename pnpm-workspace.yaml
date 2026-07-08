@@ -3,6 +3,8 @@ packages:
   - frontend
   - og-bridge
   - og-compute-bridge
+  - sui/app
+  - sui/scripts
 allowBuilds:
   '@reown/appkit': true
   blake-hash: set this to true or false

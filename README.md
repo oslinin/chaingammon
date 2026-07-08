@@ -14,6 +14,8 @@ A decentralised, verifiable ELO ledger for backgammon — humans and agents shar
 
 For detailed architecture, component design, and infrastructure docs see [ARCHITECTURE.md](ARCHITECTURE.md).
 
+`sui/` — a self-contained Sui-native variant (Move packages, Walrus/Seal weights, zkLogin) developed on the long-lived `sui` branch. See [`sui/README.md`](sui/README.md).
+
 ---
 
 ## How it works

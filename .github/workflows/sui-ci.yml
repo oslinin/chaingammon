@@ -1,0 +1,63 @@
+name: Sui port CI
+
+# CI for the sui/ workspace (docs/superpowers/plans/2026-07-08-sui-port.md).
+# Deliberately separate from ci.yml so Sui-branch churn never conflicts with
+# the main CI workflow (see plan Task 0, Step 5).
+
+on:
+  push:
+    branches: [sui]
+  pull_request:
+    branches: [sui]
+
+jobs:
+  move:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Installs the latest `testnet-*` release of the `sui` CLI dynamically
+      # via the GitHub Releases API, rather than a version hardcoded in this
+      # file — the CLI's release cadence is fast and a hardcoded tag goes
+      # stale quickly. Once the owner has verified a specific version locally
+      # (see sui/README.md "Toolchain version"), pin `SUI_RELEASE_TAG` below
+      # to that exact tag for reproducibility instead of "latest".
+      - name: Install Sui CLI (testnet)
+        env:
+          SUI_RELEASE_TAG: "" # empty = latest testnet-* release; set to pin
+        run: |
+          set -euo pipefail
+          if [ -z "$SUI_RELEASE_TAG" ]; then
+            TAG=$(curl -fsSL https://api.github.com/repos/MystenLabs/sui/releases \
+              | jq -r '[.[] | select(.tag_name | startswith("testnet-"))][0].tag_name')
+          else
+            TAG="$SUI_RELEASE_TAG"
+          fi
+          echo "Using Sui CLI release: $TAG"
+          ASSET_URL=$(curl -fsSL "https://api.github.com/repos/MystenLabs/sui/releases/tags/$TAG" \
+            | jq -r '.assets[] | select(.name | test("ubuntu.*x86_64.*\\.tgz$")) | .browser_download_url' | head -n1)
+          if [ -z "$ASSET_URL" ] || [ "$ASSET_URL" = "null" ]; then
+            echo "::error::Could not find an ubuntu-x86_64 asset for release $TAG" >&2
+            exit 1
+          fi
+          curl -fsSL -o sui-cli.tgz "$ASSET_URL"
+          tar -xzf sui-cli.tgz
+          # The tarball layout has varied across releases (flat binary vs.
+          # a bin/ subdirectory) — find the `sui` executable wherever it landed.
+          SUI_BIN=$(find . -maxdepth 3 -type f -name sui -perm -u+x | head -n1)
+          if [ -z "$SUI_BIN" ]; then
+            echo "::error::sui binary not found after extracting $ASSET_URL" >&2
+            exit 1
+          fi
+          sudo install -m 755 "$SUI_BIN" /usr/local/bin/sui
+          sui --version
+
+      - name: sui move build
+        working-directory: sui/move/chaingammon
+        run: sui move build
+
+      - name: sui move test
+        working-directory: sui/move/chaingammon
+        run: sui move test
+
+  # `app` job is added in Task 4 once sui/app exists (tsc + Playwright specs).
