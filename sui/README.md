@@ -15,7 +15,7 @@ This README is kept current after every task in the implementation plan — it s
 
 ## Status
 
-**Tasks 0-1 CI-verified; Task 2 just pushed, CI pending.** `.github/workflows/sui-ci.yml` was green through Task 1 (`chaingammon::elo`, exact-parity Move port of `contracts/src/EloMath.sol`'s rating math). Task 2 adds `chaingammon::agent` — the tradable, bankrolled Agent object (mint, deposit/withdraw, weights pointer, match-settlement hook, Kiosk-ready via a published `TransferPolicy<Agent>`), replacing `AgentRegistry.sol` + `AgentVault.sol` — written from Move/Sui documentation conventions but **not yet confirmed by CI** (check the latest `sui-ci.yml` run on the `sui` branch before trusting this compiles). There is no app yet (`sui/app` — added in Task 4), no deployed contracts, and no working game — Task 3 (`match.move`) is next once Task 2 is green.
+**Tasks 0-2 complete, CI-verified.** `.github/workflows/sui-ci.yml` is green on `sui` branch commit `db15749`: 28/28 Move unit tests pass. Task 1 added `chaingammon::elo` (exact-parity Move port of `contracts/src/EloMath.sol`'s rating math). Task 2 adds `chaingammon::agent` — the tradable, bankrolled Agent object (mint, deposit/withdraw, weights pointer, match-settlement hook, Kiosk-ready via a published `TransferPolicy<Agent>`), replacing `AgentRegistry.sol` + `AgentVault.sol`. CI caught one real bug on first compile (`withdraw` needed a mutable `TxContext` for `coin::from_balance`) — fixed and re-verified green; see git history for details. There is no app yet (`sui/app` — added in Task 4), no deployed contracts, and no working game — Task 3 (`match.move`) is next.
 
 ⚠️ **CLI examples below are unverified.** Unlike `sui move build`/`sui move test` (proven by CI), the "Using the Agent module" commands were written against `sui client call` documentation conventions but never actually run — this sandbox has no local `sui` CLI and CI doesn't spin up a localnet or execute CLI commands, only `sui move test`. Treat them as a starting point, not a guarantee; verify against a real localnet before relying on them.
 
@@ -51,7 +51,7 @@ cd sui/move/chaingammon
 sui move test
 ```
 
-Expected: all tests pass — `chaingammon::version_tests::package_version_is_one` (Task 0 placeholder), 19 tests in `chaingammon::elo_tests` (Task 1, exact parity with `contracts/src/EloMath.sol`), and 8 tests in `chaingammon::agent_tests` (Task 2: mint field defaults, deposit/withdraw round-trip, insufficient-balance abort, non-owner-cannot-withdraw/set_weights via `test_scenario`'s two-address pattern, weights recording, elo/match_count bump on `record_result`).
+Expected: `Test result: OK. Total tests: 28; passed: 28; failed: 0` — `chaingammon::version_tests::package_version_is_one` (1, Task 0 placeholder), `chaingammon::elo_tests` (20, Task 1, exact parity with `contracts/src/EloMath.sol`), `chaingammon::agent_tests` (7, Task 2: mint field defaults, deposit/withdraw round-trip, insufficient-balance abort, non-owner-cannot-withdraw/set_weights via `test_scenario`'s two-address pattern, weights recording, elo/match_count bump on `record_result`). (Earlier revisions of this file undercounted the elo/agent suites by one each — corrected here against the actual `#[test]` count and CI's own total.)
 
 ## Localnet
 
