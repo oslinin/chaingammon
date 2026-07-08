@@ -1,7 +1,16 @@
 # Sui port — design
 
-**Date:** 2026-07-07
+**Date:** 2026-07-07 (decisions recorded 2026-07-08)
 **Topic:** A Sui-native variant of Chaingammon (Move settlement + Walrus/Seal weights + zkLogin onboarding + native randomness), developed on a long-lived `sui` branch, targeted at the Sui Overflow 2026 "Agentic Web" track.
+
+**Owner decisions (2026-07-08):**
+1. **Project shape:** self-contained `sui/` workspace (Move packages + its own small Next.js app with *copied* libs) on a long-lived `sui` branch. **No ChainAdapter, no shared-code refactor of the existing frontend** — the EVM app is not touched. Duplication is accepted for the spike.
+2. **Stakes:** SUI only in v1 (`Balance<SUI>` in the Match object).
+3. **Onboarding:** Enoki-hosted zkLogin + sponsored transactions.
+4. **Adjudication:** spec-only in v1 (§7 stays a design section; happy-path co-sign + timeouts ship).
+5. **Agent identity:** fresh Sui agent population — no passporting from EVM agents.
+
+**Implementation plan:** `docs/superpowers/plans/2026-07-08-sui-port.md`.
 
 ## Goal
 
@@ -114,41 +123,28 @@ The turn-index monotonicity check from hardening-plan Task 3 applies to both mod
 
 When the loser refuses to co-sign: winner uploads the signed move log to Walrus and calls `flag_for_adjudication(match, blob_ref)`. A **Nautilus** enclave (registered in the package as the trusted adjudicator measurement) fetches the log, verifies every per-move session signature, replays the game through the *same TypeScript rules engine* compiled for the enclave runtime, and submits `settle_adjudicated(match, verdict, attestation)`; Move verifies the enclave attestation against the registered measurement. This is the Sui analogue of the KeeperHub adjudication decision (owner, 2026-07-07) and doubles as the stack showcase (Walrus × Seal × Nautilus) Overflow judges are primed for. **v1 scope:** design + enclave PoC; shipping it is a stretch goal (S6).
 
-### 8. Frontend seam — `ChainAdapter`
+### 8. Standalone app — `sui/app` (decided: no ChainAdapter)
 
-Today wagmi/viem usage is concentrated in: `app/contracts.ts`, `app/transactions.ts`, `app/useSponsoredWrite.ts`, `app/chains.ts`, profile hooks, and the settlement sections of `PlayHumanClient.tsx`. The port introduces:
+Per the 2026-07-08 decision, the Sui variant is a **fully separate Next.js app** at `sui/app/` with zero imports from `frontend/`. Chain-agnostic modules it needs (rules engine, match engine, Nostr matchmaking, WebRTC, board UI, ONNX eval) are **copied** into `sui/app/lib/` and `sui/app/components/`, trimmed of EVM imports. Chain calls use `@mysten/sui` + `@mysten/dapp-kit` + Enoki directly — no abstraction layer.
 
-```ts
-// frontend/lib/chain/adapter.ts
-export interface ChainAdapter {
-  connect(): Promise<{ address: string }>;
-  readProfile(address: string): Promise<{ elo: number; name?: string }>;
-  openMatch(opts: MatchOpen): Promise<MatchRef>;
-  joinMatch(ref: MatchRef, opts: MatchJoin): Promise<void>;
-  settleCosigned(ref: MatchRef, result: SignedResult): Promise<void>;
-  rollRated?(ref: MatchRef, turnIndex: number): Promise<[number, number]>;
-  agentOps: { readAgent(id: string): Promise<AgentInfo>; /* mint/trade later */ };
-}
-```
-
-`frontend/lib/chain/evm.ts` wraps the existing wagmi paths (pure refactor, no behavior change — this lands on **master** first so the branches don't diverge at the seam); `frontend/lib/chain/sui.ts` implements it with `@mysten/sui` + Enoki. Selection via `NEXT_PUBLIC_CHAIN_STACK=evm|sui`.
+Consequences accepted: (a) bug fixes to copied modules must be ported by hand between the two apps (record the copy manifest and source commit in `sui/README.md`); (b) the existing frontend and its test suites are never touched by the port; (c) merging later means merging a directory, not untangling a seam.
 
 ### 9. What the trainers need
 
 Nothing chain-specific. One addition: `agent/og_storage_upload.py` gets a sibling `walrus_upload.py` (Walrus HTTP publisher API) selected by env, so `--upload-to-0g` grows a `--upload-to-walrus` twin. Seal encryption of checkpoints replaces `checkpoint_encryption.py`'s AES-GCM *for the Sui variant only* (the key ceases to be an operator secret and becomes a Seal policy).
 
-### 10. Branch & CI strategy
+### 10. Branch & CI strategy (updated per 2026-07-08 decisions)
 
-- **Long-lived `sui` branch**, created from master *after* the `ChainAdapter` refactor (S1) merges to master. Rationale: the seam must exist on both sides or every master change conflicts; after that, the branch only adds files (`sui/`, `frontend/lib/chain/sui.ts`) and flips an env default, keeping rebases cheap. Rebase onto master weekly.
-- CI on the `sui` branch adds one job: `sui move test` + Move build against pinned `sui` CLI, plus the standard suites. (Requires hardening-plan Task 1 CI as the base.)
-- Merge-back criterion: if the Overflow entry earns a grant/finalist slot or real users, `sui/` merges to master behind `NEXT_PUBLIC_CHAIN_STACK`; if not, the branch is archived with a retro note.
+- **Long-lived `sui` branch created directly from master** — no master-side prerequisite, since the port only *adds* the `sui/` directory (plus one workspace-list line and one CI file). Rebase onto master periodically; conflicts are near-impossible by construction.
+- CI: a separate `.github/workflows/sui-ci.yml` (so it never conflicts with the hardening-plan `ci.yml`) running `sui move test`, the Move build, and the `sui/app` typecheck + Playwright specs, on pushes to the `sui` branch.
+- Merge-back criterion: if the Overflow entry earns a grant/finalist slot or real users, the `sui/` directory merges to master as-is (it's additive); if not, the branch is archived with a retro note.
 
 ## Phased roadmap (each phase = shippable, README updated, no commits without owner approval)
 
 | Phase | Deliverable | Verify |
 |---|---|---|
 | **S0** | `sui/` scaffold on the new `sui` branch: Move package skeleton, localnet script, `sui/README.md` (install `sui` CLI, run localnet, `sui move test` green on an empty package), CI job | `sui move test`; README walkthrough from clean machine |
-| **S1** *(on master)* | `ChainAdapter` seam + `evm.ts` wrapper, zero behavior change | full existing Playwright suite green |
+| **S1** | ~~ChainAdapter~~ **Dropped** per 2026-07-08 decision — the app is standalone (§8); S4 copies libs instead | — |
 | **S2** | `agent.move` + `elo.move`: mint, bankroll, Kiosk listing; ELO math ported with EVM test vectors | Move unit tests incl. EloMath vector parity |
 | **S3** | Walrus + Seal weights: trainer `--upload-to-walrus`, mint script wiring blob refs, demo script proving owner-can-decrypt / non-owner-cannot / buyer-can-after-Kiosk-purchase | scripted e2e on testnet, output pasted in PR |
 | **S4** | `match.move` full lifecycle + commit-reveal dice; `sui.ts` adapter; zkLogin login; unrated HvH settling on localnet | new Playwright spec (mock Enoki, localnet), Move tests for settle/timeout/reclaim |
@@ -158,12 +154,12 @@ Nothing chain-specific. One addition: `agent/og_storage_upload.py` gets a siblin
 
 **Overflow submission checklist (S7):** deployed testnet URL · 3-min video (zkLogin sign-in → unrated game → mint agent → agent plays rated staked match → trade agent in Kiosk, buyer decrypts weights) · one-pager (problem, stack usage: Walrus/Seal/randomness/zkLogin/Nautilus, traction) · public repo pointer to the `sui` branch · team/contact.
 
-## Open questions (owner)
+## Open questions — RESOLVED 2026-07-08 (see decisions block at top)
 
-1. **Stake coin:** SUI only in v1 (this spec), or is USDC-on-Sui required before Overflow? (Legal posture from the audit applies on Sui too: advertise free play only.)
-2. **Enoki dependence:** zkLogin via Enoki is a Mysten-hosted service — acceptable for the spike; self-hosted salt/prover later?
-3. **Agent identity continuity:** do EVM agents get "passported" to Sui (same weights blob, fresh ELO), or are Sui agents a fresh population? (Spec assumes fresh; portable reputation is the long-term thesis.)
-4. **Who runs the adjudication enclave and the cron worker** (timeouts) for the demo — same box as the TURN server?
+1. **Stake coin:** SUI only in v1. (Legal posture from the audit applies on Sui too: advertise free play only.)
+2. **Enoki dependence:** accepted for the spike; self-hosting revisited only if terms become a problem.
+3. **Agent identity continuity:** fresh Sui population, no passporting.
+4. **Adjudication ops:** cut from v1 — spec-only (§7); no enclave/cron to host yet.
 
 ## Risks
 
