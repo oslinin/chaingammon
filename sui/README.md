@@ -15,7 +15,9 @@ This README is kept current after every task in the implementation plan — it s
 
 ## Status
 
-**Task 0 (scaffold) and Task 1 (`elo.move`) complete, CI-verified.** `.github/workflows/sui-ci.yml` is green on `sui` branch commit `5a9ab8b` (Task 0). Task 1 adds `chaingammon::elo` — a from-scratch Move port of `contracts/src/EloMath.sol`'s rating math (expected-score lookup table + K-factor delta), with 19 tests asserting **exact** parity against vectors independently computed by replicating EloMath's integer semantics in Python (not just the looser tolerance ranges in `contracts/test/phase2_EloMath.test.js`). There is no app yet (`sui/app` — added in Task 4), no deployed contracts, and no working game — Task 2 (`agent.move`) is next.
+**Tasks 0-1 CI-verified; Task 2 just pushed, CI pending.** `.github/workflows/sui-ci.yml` was green through Task 1 (`chaingammon::elo`, exact-parity Move port of `contracts/src/EloMath.sol`'s rating math). Task 2 adds `chaingammon::agent` — the tradable, bankrolled Agent object (mint, deposit/withdraw, weights pointer, match-settlement hook, Kiosk-ready via a published `TransferPolicy<Agent>`), replacing `AgentRegistry.sol` + `AgentVault.sol` — written from Move/Sui documentation conventions but **not yet confirmed by CI** (check the latest `sui-ci.yml` run on the `sui` branch before trusting this compiles). There is no app yet (`sui/app` — added in Task 4), no deployed contracts, and no working game — Task 3 (`match.move`) is next once Task 2 is green.
+
+⚠️ **CLI examples below are unverified.** Unlike `sui move build`/`sui move test` (proven by CI), the "Using the Agent module" commands were written against `sui client call` documentation conventions but never actually run — this sandbox has no local `sui` CLI and CI doesn't spin up a localnet or execute CLI commands, only `sui move test`. Treat them as a starting point, not a guarantee; verify against a real localnet before relying on them.
 
 This local checkout could not run `sui move build`/`sui move test` directly (this sandbox's egress policy blocks `github.com`, and no `sui` CLI crate exists on crates.io as a fallback) — verification happened via CI on GitHub's runners instead, which have normal network access. If you're picking this up in an environment with `github.com` access, installing the CLI locally (below) and running the tests directly is faster than round-tripping through CI.
 
@@ -49,12 +51,47 @@ cd sui/move/chaingammon
 sui move test
 ```
 
-Expected: all tests pass, including `chaingammon::version_tests::package_version_is_one` (the Task 0 placeholder) and 19 tests in `chaingammon::elo_tests` (Task 1) asserting exact parity with `contracts/src/EloMath.sol` — same K-factor delta, same expected-score lookup table, same boundary/clamp behavior, verified against independently-computed vectors (not just eyeballed against the Solidity test file's `within()` tolerance ranges).
+Expected: all tests pass — `chaingammon::version_tests::package_version_is_one` (Task 0 placeholder), 19 tests in `chaingammon::elo_tests` (Task 1, exact parity with `contracts/src/EloMath.sol`), and 8 tests in `chaingammon::agent_tests` (Task 2: mint field defaults, deposit/withdraw round-trip, insufficient-balance abort, non-owner-cannot-withdraw/set_weights via `test_scenario`'s two-address pattern, weights recording, elo/match_count bump on `record_result`).
 
-## Localnet (for later tasks — not needed yet)
+## Localnet
 
 ```bash
 RUST_LOG=off sui start --with-faucet --force-regenesis
+```
+
+Needed from Task 4 onward for the app; not required just to build/test the Move package above.
+
+### Using the Agent module (unverified — see warning above)
+
+Publish the package (once, per network — this also runs `agent.move`'s `init`, which claims a `Publisher` and shares a `TransferPolicy<Agent>` needed for Kiosk trading in Task 8):
+
+```bash
+sui client publish --gas-budget 100000000
+# Note the package ID from the output — used as <PKG> below.
+```
+
+Mint an agent (transfers it to your active address):
+
+```bash
+sui client call --package <PKG> --module agent --function mint \
+  --args "gnubg-classic" 1 \
+  --gas-budget 10000000
+```
+
+Deposit into its bankroll (needs a `Coin<SUI>` object id — `sui client gas` lists yours, or split one with `sui client split-coin`):
+
+```bash
+sui client call --package <PKG> --module agent --function deposit \
+  --args <AGENT_OBJECT_ID> <COIN_OBJECT_ID> \
+  --gas-budget 10000000
+```
+
+Withdraw (owner-only; sends the withdrawn `Coin<SUI>` to your own address):
+
+```bash
+sui client call --package <PKG> --module agent --function withdraw_to_sender \
+  --args <AGENT_OBJECT_ID> 1000 \
+  --gas-budget 10000000
 ```
 
 ## Copied modules
