@@ -385,11 +385,17 @@ module chaingammon::game_match_tests {
         };
 
         test_scenario::next_tx(&mut scenario, CREATOR);
-        let (profile_a_id, profile_b_id) = {
+        let profile_a_id = {
             let registry = test_scenario::take_shared_by_id<ProfileRegistry>(&scenario, registry_id);
-            let ids = (profile::profile_id_for(&registry, CREATOR), profile::profile_id_for(&registry, JOINER));
+            let id = profile::profile_id_for(&registry, CREATOR);
             test_scenario::return_shared(registry);
-            ids
+            id
+        };
+        let profile_b_id = {
+            let registry = test_scenario::take_shared_by_id<ProfileRegistry>(&scenario, registry_id);
+            let id = profile::profile_id_for(&registry, JOINER);
+            test_scenario::return_shared(registry);
+            id
         };
 
         test_scenario::next_tx(&mut scenario, CREATOR);
