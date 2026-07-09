@@ -1,4 +1,9 @@
-/// match.move — match lifecycle and co-signed settlement.
+/// game_match.move — match lifecycle and co-signed settlement.
+///
+/// Named `game_match` (not `match`) because `match` is a reserved keyword
+/// in Move (it has a native `match` expression for pattern matching), so
+/// `module chaingammon::match` fails to parse. The `Match` struct name
+/// itself is unaffected — only bare lowercase `match` collides.
 ///
 /// Replaces the co-signed HvH settlement path in
 /// frontend/app/play-human/PlayHumanClient.tsx (finishGame/settleMatch,
@@ -17,7 +22,7 @@
 /// `Match` is a SHARED object (`key` only, no `store` — it is never
 /// individually owned/traded, only ever referenced by both players and
 /// whoever submits the settling transaction).
-module chaingammon::match {
+module chaingammon::game_match {
     use std::bcs;
     use std::vector;
 

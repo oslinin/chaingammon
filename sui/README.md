@@ -15,7 +15,7 @@ This README is kept current after every task in the implementation plan — it s
 
 ## Status
 
-**Tasks 0-2 CI-verified; Task 3 just pushed, CI pending.** `.github/workflows/sui-ci.yml` was green on `sui` branch commit `db15749` (28/28 Move tests). Task 1 added `chaingammon::elo` (exact-parity Move port of `contracts/src/EloMath.sol`'s rating math). Task 2 added `chaingammon::agent` — the tradable, bankrolled Agent object, replacing `AgentRegistry.sol` + `AgentVault.sol`. Task 3 adds `chaingammon::match` — the match lifecycle (open/join/settle-cosigned/cancel/abandon) with SUI stakes and co-signed ed25519 settlement, replacing the on-chain half of `MatchRegistry.settleWithSessionKeys` and the `finishGame`/`settleMatch` flow in `frontend/app/play-human/PlayHumanClient.tsx`. **Not yet confirmed by CI** — check the latest `sui-ci.yml` run on the `sui` branch before trusting this compiles; the signature-verification tests use REAL ed25519 keys/signatures actually generated and run via `sui/scripts/gen_fixtures.ts` (see "Generating test fixtures" below) rather than hand-derived bytes, but only the TS side of that has been executed — Move's own `bcs::to_bytes` + `ed25519_verify` reconstruction is what CI checks. There is no app yet (`sui/app` — added in Task 4), no deployed contracts, and no working game.
+**Tasks 0-2 CI-verified; Task 3 just pushed, CI pending.** `.github/workflows/sui-ci.yml` was green on `sui` branch commit `db15749` (28/28 Move tests). Task 1 added `chaingammon::elo` (exact-parity Move port of `contracts/src/EloMath.sol`'s rating math). Task 2 added `chaingammon::agent` — the tradable, bankrolled Agent object, replacing `AgentRegistry.sol` + `AgentVault.sol`. Task 3 adds `chaingammon::game_match` (module named `game_match`, not `match` — `match` is a reserved Move keyword, a native pattern-matching expression, so `module chaingammon::match` fails to parse; the `Match` struct name itself is unaffected) — the match lifecycle (open/join/settle-cosigned/cancel/abandon) with SUI stakes and co-signed ed25519 settlement, replacing the on-chain half of `MatchRegistry.settleWithSessionKeys` and the `finishGame`/`settleMatch` flow in `frontend/app/play-human/PlayHumanClient.tsx`. **Not yet confirmed by CI** — the first push hit exactly that reserved-keyword parse error; check the latest `sui-ci.yml` run on the `sui` branch before trusting this compiles now. The signature-verification tests use REAL ed25519 keys/signatures actually generated and run via `sui/scripts/gen_fixtures.ts` (see "Generating test fixtures" below) rather than hand-derived bytes, but only the TS side of that has been executed — Move's own `bcs::to_bytes` + `ed25519_verify` reconstruction is what CI checks. There is no app yet (`sui/app` — added in Task 4), no deployed contracts, and no working game.
 
 ⚠️ **CLI examples below are unverified.** Unlike `sui move build`/`sui move test` (proven by CI), the "Using the Agent module" commands were written against `sui client call` documentation conventions but never actually run — this sandbox has no local `sui` CLI and CI doesn't spin up a localnet or execute CLI commands, only `sui move test`. Treat them as a starting point, not a guarantee; verify against a real localnet before relying on them.
 
@@ -51,11 +51,11 @@ cd sui/move/chaingammon
 sui move test
 ```
 
-Expected once Task 3 is CI-confirmed: `Test result: OK. Total tests: 38; passed: 38; failed: 0` — `chaingammon::version_tests` (1, Task 0), `chaingammon::elo_tests` (20, Task 1, exact parity with `contracts/src/EloMath.sol`), `chaingammon::agent_tests` (7, Task 2), `chaingammon::match_tests` (10, Task 3: happy-path open→join→settle with the winner receiving 2x stake, wrong-sig-a / wrong-sig-b / double-settle aborts, unequal-stake-join / self-join aborts, cancel_unjoined refund, abandon before/after the timeout via `test_scenario::next_epoch`, and agent-ELO settlement). As of the last confirmed CI run (commit `db15749`), only the first 28 are proven green — see the Status warning above.
+Expected once Task 3 is CI-confirmed: `Test result: OK. Total tests: 38; passed: 38; failed: 0` — `chaingammon::version_tests` (1, Task 0), `chaingammon::elo_tests` (20, Task 1, exact parity with `contracts/src/EloMath.sol`), `chaingammon::agent_tests` (7, Task 2), `chaingammon::game_match_tests` (10, Task 3: happy-path open→join→settle with the winner receiving 2x stake, wrong-sig-a / wrong-sig-b / double-settle aborts, unequal-stake-join / self-join aborts, cancel_unjoined refund, abandon before/after the timeout via `test_scenario::next_epoch`, and agent-ELO settlement). As of the last confirmed CI run (commit `db15749`), only the first 28 are proven green — see the Status warning above.
 
-### Generating test fixtures (`match_tests.move`'s signatures)
+### Generating test fixtures (`game_match_tests.move`'s signatures)
 
-`chaingammon::match::settle_cosigned` verifies real ed25519 signatures, so `match_tests.move` needs real signed bytes, not placeholders. `sui/scripts/gen_fixtures.ts` derives two deterministic Ed25519 keypairs from fixed seeds (via `@mysten/sui`), BCS-encodes the exact `ResultMsg` struct `match.move` reconstructs on-chain, signs it, and prints Move constants:
+`chaingammon::game_match::settle_cosigned` verifies real ed25519 signatures, so `game_match_tests.move` needs real signed bytes, not placeholders. `sui/scripts/gen_fixtures.ts` derives two deterministic Ed25519 keypairs from fixed seeds (via `@mysten/sui`), BCS-encodes the exact `ResultMsg` struct `game_match.move` reconstructs on-chain, signs it, and prints Move constants:
 
 ```bash
 cd sui/scripts
@@ -63,7 +63,7 @@ pnpm install
 node --experimental-strip-types gen_fixtures.ts
 ```
 
-This has actually been run (not hand-derived) — the output is embedded verbatim in `tests/match_tests.move`'s `SESSION_PK_A/B` and `SIG_A/B` constants. Re-run it and update those constants if `ResultMsg`'s fields (order, types, or the `Chaingammon:result-sui-hvh` domain string) ever change in `sources/match.move` — the two sides must byte-for-byte agree or `ed25519_verify` fails.
+This has actually been run (not hand-derived) — the output is embedded verbatim in `tests/game_match_tests.move`'s `SESSION_PK_A/B` and `SIG_A/B` constants. Re-run it and update those constants if `ResultMsg`'s fields (order, types, or the `Chaingammon:result-sui-hvh` domain string) ever change in `sources/game_match.move` — the two sides must byte-for-byte agree or `ed25519_verify` fails.
 
 ## Localnet
 
@@ -134,7 +134,7 @@ Off-chain play (WebRTC + the client rules engine) happens entirely between `join
 Open a rated match staking 1000 MIST, registering a session pubkey (32 raw bytes, hex):
 
 ```bash
-sui client call --package <PKG> --module match --function open \
+sui client call --package <PKG> --module game_match --function open \
   --args <STAKE_COIN_ID> <SESSION_PK_HEX> true "chaingammon-demo-match-1" none \
   --gas-budget 10000000
 # Note the shared Match object id from the output — used as <MATCH> below.
@@ -143,7 +143,7 @@ sui client call --package <PKG> --module match --function open \
 Join with a matching stake and the other session pubkey:
 
 ```bash
-sui client call --package <PKG> --module match --function join \
+sui client call --package <PKG> --module game_match --function join \
   --args <MATCH> <STAKE_COIN_ID_2> <SESSION_PK_HEX_2> none \
   --gas-budget 10000000
 ```
@@ -151,7 +151,7 @@ sui client call --package <PKG> --module match --function join \
 Settle once both players' session keys have signed the agreed result off-chain (see "Generating test fixtures" above for how the signed bytes are constructed):
 
 ```bash
-sui client call --package <PKG> --module match --function settle_cosigned \
+sui client call --package <PKG> --module game_match --function settle_cosigned \
   --args <MATCH> <WINNER_ADDRESS> <SIG_A_HEX> <SIG_B_HEX> \
   --gas-budget 10000000
 ```
@@ -180,7 +180,7 @@ _(none yet — populated starting Task 9, testnet deploy)_
 
 ```
 sui/
-  move/chaingammon/   — Move package (elo, agent, match modules — Tasks 1-3)
+  move/chaingammon/   — Move package (elo, agent, game_match modules — Tasks 1-3)
   app/                — standalone Next.js app (Task 4+)
   scripts/            — TS deploy/demo scripts (Task 3+)
   submission/         — Overflow 2026 submission assets (Task 9)

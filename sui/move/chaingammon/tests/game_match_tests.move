@@ -1,29 +1,29 @@
 #[test_only]
-/// Tests for chaingammon::match (Task 3). Abort codes are asserted as raw
-/// literals — see agent_tests.move's header comment for why (Move
+/// Tests for chaingammon::game_match (Task 3). Abort codes are asserted as
+/// raw literals — see agent_tests.move's header comment for why (Move
 /// constants are private to their declaring module). The mapping:
 ///   0 EWrongState, 1 EBadSigA, 2 EBadSigB, 3 EInvalidWinner,
 ///   4 EZeroStake, 5 EStakeMismatch, 6 ECannotJoinOwnMatch,
 ///   7 ENotCreator, 8 ETooEarly, 9 ENoAgentsRecorded, 10 EAgentMismatch
-/// (see sui/move/chaingammon/sources/match.move's Errors section).
+/// (see sui/move/chaingammon/sources/game_match.move's Errors section).
 ///
 /// SESSION_PK_A/B, SIG_A/B, CREATOR, APP_MATCH_ID, DOMAIN below were
 /// generated (not hand-derived) by `node --experimental-strip-types
 /// sui/scripts/gen_fixtures.ts`, run against real @mysten/sui Ed25519
 /// keypairs, and are real, independently-computed ed25519 signatures over
-/// the exact BCS-encoded bytes chaingammon::match's ResultMsg produces for
+/// the exact BCS-encoded bytes chaingammon::game_match's ResultMsg produces for
 /// (domain, app_match_id="chaingammon-test-match-001", winner=@0xA11CE) --
 /// matching the OWNER constant in agent_tests.move. Only the Move-side
 /// reconstruction (bcs::to_bytes + ed25519_verify) is unverified until CI
 /// runs `sui move test`; the TS-side signing was actually executed, not
 /// guessed.
-module chaingammon::match_tests {
+module chaingammon::game_match_tests {
     use sui::coin;
     use sui::sui::SUI;
     use sui::test_scenario;
 
     use chaingammon::agent::{Self, Agent};
-    use chaingammon::match::{Self, Match};
+    use chaingammon::game_match::{Self, Match};
 
     const CREATOR: address = @0xA11CE; // matches agent_tests.move's OWNER
     const JOINER: address = @0xB0B;    // matches agent_tests.move's OTHER
@@ -55,14 +55,14 @@ module chaingammon::match_tests {
         {
             let ctx = test_scenario::ctx(scenario);
             let stake = coin::mint_for_testing<SUI>(STAKE, ctx);
-            match::open(stake, SESSION_PK_A, true, APP_MATCH_ID, option::none(), ctx);
+            game_match::open(stake, SESSION_PK_A, true, APP_MATCH_ID, option::none(), ctx);
         };
         test_scenario::next_tx(scenario, JOINER);
         {
             let mut m = test_scenario::take_shared<Match>(scenario);
             let ctx = test_scenario::ctx(scenario);
             let stake = coin::mint_for_testing<SUI>(STAKE, ctx);
-            match::join(&mut m, stake, SESSION_PK_B, option::none(), ctx);
+            game_match::join(&mut m, stake, SESSION_PK_B, option::none(), ctx);
             test_scenario::return_shared(m);
         };
     }
@@ -77,13 +77,13 @@ module chaingammon::match_tests {
         test_scenario::next_tx(&mut scenario, CREATOR);
         {
             let mut m = test_scenario::take_shared<Match>(&scenario);
-            assert!(match::state(&m) == match::state_playing(), 0);
-            assert!(match::stake_value(&m) == STAKE * 2, 1);
+            assert!(game_match::state(&m) == game_match::state_playing(), 0);
+            assert!(game_match::stake_value(&m) == STAKE * 2, 1);
 
             let ctx = test_scenario::ctx(&mut scenario);
-            match::settle_cosigned(&mut m, CREATOR, SIG_A, SIG_B, ctx);
-            assert!(match::state(&m) == match::state_settled(), 2);
-            assert!(match::stake_value(&m) == 0, 3);
+            game_match::settle_cosigned(&mut m, CREATOR, SIG_A, SIG_B, ctx);
+            assert!(game_match::state(&m) == game_match::state_settled(), 2);
+            assert!(game_match::stake_value(&m) == 0, 3);
             test_scenario::return_shared(m);
         };
 
@@ -109,7 +109,7 @@ module chaingammon::match_tests {
             let mut m = test_scenario::take_shared<Match>(&scenario);
             let ctx = test_scenario::ctx(&mut scenario);
             // SIG_B was signed by session B's key, not A's.
-            match::settle_cosigned(&mut m, CREATOR, SIG_B, SIG_B, ctx);
+            game_match::settle_cosigned(&mut m, CREATOR, SIG_B, SIG_B, ctx);
             test_scenario::return_shared(m);
         };
         test_scenario::end(scenario);
@@ -127,7 +127,7 @@ module chaingammon::match_tests {
             // sig_a (SIG_A) verifies fine; sig_b is SIG_A too, signed by
             // session A's key rather than B's — this is the "one right,
             // one wrong" case: the first assert alone would not catch it.
-            match::settle_cosigned(&mut m, CREATOR, SIG_A, SIG_A, ctx);
+            game_match::settle_cosigned(&mut m, CREATOR, SIG_A, SIG_A, ctx);
             test_scenario::return_shared(m);
         };
         test_scenario::end(scenario);
@@ -142,9 +142,9 @@ module chaingammon::match_tests {
         {
             let mut m = test_scenario::take_shared<Match>(&scenario);
             let ctx = test_scenario::ctx(&mut scenario);
-            match::settle_cosigned(&mut m, CREATOR, SIG_A, SIG_B, ctx);
+            game_match::settle_cosigned(&mut m, CREATOR, SIG_A, SIG_B, ctx);
             // Second call: state is now SETTLED, not PLAYING.
-            match::settle_cosigned(&mut m, CREATOR, SIG_A, SIG_B, ctx);
+            game_match::settle_cosigned(&mut m, CREATOR, SIG_A, SIG_B, ctx);
             test_scenario::return_shared(m);
         };
         test_scenario::end(scenario);
@@ -160,14 +160,14 @@ module chaingammon::match_tests {
         {
             let ctx = test_scenario::ctx(&mut scenario);
             let stake = coin::mint_for_testing<SUI>(STAKE, ctx);
-            match::open(stake, SESSION_PK_A, true, APP_MATCH_ID, option::none(), ctx);
+            game_match::open(stake, SESSION_PK_A, true, APP_MATCH_ID, option::none(), ctx);
         };
         test_scenario::next_tx(&mut scenario, JOINER);
         {
             let mut m = test_scenario::take_shared<Match>(&scenario);
             let ctx = test_scenario::ctx(&mut scenario);
             let stake = coin::mint_for_testing<SUI>(STAKE / 2, ctx); // half the required stake
-            match::join(&mut m, stake, SESSION_PK_B, option::none(), ctx);
+            game_match::join(&mut m, stake, SESSION_PK_B, option::none(), ctx);
             test_scenario::return_shared(m);
         };
         test_scenario::end(scenario);
@@ -181,14 +181,14 @@ module chaingammon::match_tests {
         {
             let ctx = test_scenario::ctx(&mut scenario);
             let stake = coin::mint_for_testing<SUI>(STAKE, ctx);
-            match::open(stake, SESSION_PK_A, true, APP_MATCH_ID, option::none(), ctx);
+            game_match::open(stake, SESSION_PK_A, true, APP_MATCH_ID, option::none(), ctx);
         };
         test_scenario::next_tx(&mut scenario, CREATOR);
         {
             let mut m = test_scenario::take_shared<Match>(&scenario);
             let ctx = test_scenario::ctx(&mut scenario);
             let stake = coin::mint_for_testing<SUI>(STAKE, ctx);
-            match::join(&mut m, stake, SESSION_PK_B, option::none(), ctx);
+            game_match::join(&mut m, stake, SESSION_PK_B, option::none(), ctx);
             test_scenario::return_shared(m);
         };
         test_scenario::end(scenario);
@@ -203,14 +203,14 @@ module chaingammon::match_tests {
         {
             let ctx = test_scenario::ctx(&mut scenario);
             let stake = coin::mint_for_testing<SUI>(STAKE, ctx);
-            match::open(stake, SESSION_PK_A, true, APP_MATCH_ID, option::none(), ctx);
+            game_match::open(stake, SESSION_PK_A, true, APP_MATCH_ID, option::none(), ctx);
         };
         test_scenario::next_tx(&mut scenario, CREATOR);
         {
             let mut m = test_scenario::take_shared<Match>(&scenario);
             let ctx = test_scenario::ctx(&mut scenario);
-            match::cancel_unjoined(&mut m, ctx);
-            assert!(match::state(&m) == match::state_cancelled(), 0);
+            game_match::cancel_unjoined(&mut m, ctx);
+            assert!(game_match::state(&m) == game_match::state_cancelled(), 0);
             test_scenario::return_shared(m);
         };
         test_scenario::next_tx(&mut scenario, CREATOR);
@@ -231,7 +231,7 @@ module chaingammon::match_tests {
         {
             let mut m = test_scenario::take_shared<Match>(&scenario);
             let ctx = test_scenario::ctx(&mut scenario);
-            match::abandon(&mut m, ctx);
+            game_match::abandon(&mut m, ctx);
             test_scenario::return_shared(m);
         };
         test_scenario::end(scenario);
@@ -253,9 +253,9 @@ module chaingammon::match_tests {
         {
             let mut m = test_scenario::take_shared<Match>(&scenario);
             let ctx = test_scenario::ctx(&mut scenario);
-            match::abandon(&mut m, ctx);
-            assert!(match::state(&m) == match::state_cancelled(), 0);
-            assert!(match::stake_value(&m) == 0, 1);
+            game_match::abandon(&mut m, ctx);
+            assert!(game_match::state(&m) == game_match::state_cancelled(), 0);
+            assert!(game_match::stake_value(&m) == 0, 1);
             test_scenario::return_shared(m);
         };
 
@@ -313,14 +313,14 @@ module chaingammon::match_tests {
         {
             let ctx = test_scenario::ctx(&mut scenario);
             let stake = coin::mint_for_testing<SUI>(STAKE, ctx);
-            match::open(stake, SESSION_PK_A, true, APP_MATCH_ID, option::some(agent_a_id), ctx);
+            game_match::open(stake, SESSION_PK_A, true, APP_MATCH_ID, option::some(agent_a_id), ctx);
         };
         test_scenario::next_tx(&mut scenario, JOINER);
         {
             let mut m = test_scenario::take_shared<Match>(&scenario);
             let ctx = test_scenario::ctx(&mut scenario);
             let stake = coin::mint_for_testing<SUI>(STAKE, ctx);
-            match::join(&mut m, stake, SESSION_PK_B, option::some(agent_b_id), ctx);
+            game_match::join(&mut m, stake, SESSION_PK_B, option::some(agent_b_id), ctx);
             test_scenario::return_shared(m);
         };
 
@@ -331,7 +331,7 @@ module chaingammon::match_tests {
             let mut agent_b_obj = test_scenario::take_from_address<Agent>(&scenario, JOINER);
             let ctx = test_scenario::ctx(&mut scenario);
 
-            match::settle_cosigned_with_agents(
+            game_match::settle_cosigned_with_agents(
                 &mut m, CREATOR, SIG_A, SIG_B, &mut agent_a_obj, &mut agent_b_obj, ctx,
             );
 

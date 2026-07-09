@@ -42,7 +42,7 @@ The port must **reuse the chain-agnostic 90%** of the codebase unchanged: the Ty
 
 | EVM component | Sui replacement | Notes |
 |---|---|---|
-| `MatchRegistry.sol` (ELO, settlement, nonces, session keys) | `chaingammon::match` Move package | Shared `Match` objects; session keys become ephemeral ed25519 keys whose pubkeys are registered in the Match object at open |
+| `MatchRegistry.sol` (ELO, settlement, nonces, session keys) | `chaingammon::game_match` Move package (`match` is a reserved Move keyword) | Shared `Match` objects; session keys become ephemeral ed25519 keys whose pubkeys are registered in the Match object at open |
 | `MatchEscrow(.Usdc).sol` | `Balance<SUI>` held inside the `Match` object | No separate escrow contract: Sui objects hold funds natively |
 | `AgentRegistry.sol` (ERC-721, ERC-7857-shaped) | `chaingammon::agent` Move package — `Agent` owned object | Weights blob id + hash + style overlay + ELO + bankroll live *on the object*; dynamic fields for future extension |
 | `AgentVault.sol` (per-agent bankroll) | `Balance<SUI>` field on `Agent` | Deposit/withdraw = owner-gated entry functions |
@@ -65,7 +65,7 @@ sui/
     sources/
       agent.move      — Agent object, mint, bankroll, weights/overlay hashes, seal policies
       profile.move    — HumanProfile registry (display name, ELO, style blob id)
-      match.move      — Match lifecycle: open → join → play → settle | adjudicate
+      game_match.move  — Match lifecycle: open → join → play → settle | adjudicate
       elo.move        — pure ELO math (port of EloMath.sol; unit-tested against its vectors)
     tests/            — Move unit tests (sui move test)
   scripts/            — TS deploy + demo scripts (@mysten/sui)
@@ -91,7 +91,7 @@ public struct Agent has key, store {
 - `store` ability → tradable via **Kiosk** with a `TransferPolicy` (v1 policy: no rules; royalty rule optional later).
 - **Seal policy**: the package exposes the `seal_approve`-pattern entry function that aborts unless the transaction sender currently owns the `Agent` (or holds the `KioskOwnerCap` of the kiosk containing it). Effect: buy the agent → you can decrypt its weights; seller loses access. This replaces the entire deferred ERC-7857 re-encryption design. Exact function signatures follow the Seal SDK docs at implementation time (`https://seal-docs.wal.app` / Mysten Seal repo) — do not invent them from this spec.
 - Bankroll: `deposit(agent, coin)` (anyone may sponsor an agent), `withdraw(agent, amount)` owner-only, `stake_into_match(...)` owner-or-operator.
-- ELO/match_count are updated only by `match::settle*` functions (the packages share a friend/witness relationship).
+- ELO/match_count are updated only by `game_match::settle*` functions (the packages share a friend/witness relationship).
 
 ### 4. `Match` lifecycle
 
@@ -147,7 +147,7 @@ Nothing chain-specific. One addition: `agent/og_storage_upload.py` gets a siblin
 | **S1** | ~~ChainAdapter~~ **Dropped** per 2026-07-08 decision — the app is standalone (§8); S4 copies libs instead | — |
 | **S2** | `agent.move` + `elo.move`: mint, bankroll, Kiosk listing; ELO math ported with EVM test vectors | Move unit tests incl. EloMath vector parity |
 | **S3** | Walrus + Seal weights: trainer `--upload-to-walrus`, mint script wiring blob refs, demo script proving owner-can-decrypt / non-owner-cannot / buyer-can-after-Kiosk-purchase | scripted e2e on testnet, output pasted in PR |
-| **S4** | `match.move` full lifecycle + commit-reveal dice; `sui.ts` adapter; zkLogin login; unrated HvH settling on localnet | new Playwright spec (mock Enoki, localnet), Move tests for settle/timeout/reclaim |
+| **S4** | `game_match.move` full lifecycle + commit-reveal dice; `sui.ts` adapter; zkLogin login; unrated HvH settling on localnet | new Playwright spec (mock Enoki, localnet), Move tests for settle/timeout/reclaim |
 | **S5** | Rated play: staked matches + per-turn native randomness via sponsored PTBs | Move tests + testnet match walkthrough |
 | **S6** *(stretch)* | Nautilus adjudication PoC per §7 | enclave replay of a fixture log → on-chain verdict on testnet |
 | **S7** | Overflow submission: testnet deploy, demo video, one-pager, agent leaderboard filtered to Sui agents | submission checklist below |
