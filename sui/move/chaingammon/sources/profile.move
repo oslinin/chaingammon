@@ -71,11 +71,17 @@ module chaingammon::profile {
 
     /// `init` only runs at package publish time and is private to this
     /// module, so tests in other modules (game_match_tests) that need a
-    /// ProfileRegistry construct one directly through this test-only
-    /// escape hatch instead.
+    /// ProfileRegistry construct one directly through this test-only escape
+    /// hatch instead. `transfer::share_object` is restricted to the type's
+    /// declaring module, so this shares it right here and hands back only
+    /// the id — callers fetch it via `test_scenario::take_shared_by_id`,
+    /// the same pattern used for every other shared object in these tests.
     #[test_only]
-    public fun new_registry_for_testing(ctx: &mut TxContext): ProfileRegistry {
-        ProfileRegistry { id: object::new(ctx), profiles: table::new(ctx) }
+    public fun new_registry_for_testing(ctx: &mut TxContext): ID {
+        let registry = ProfileRegistry { id: object::new(ctx), profiles: table::new(ctx) };
+        let registry_id = object::id(&registry);
+        transfer::share_object(registry);
+        registry_id
     }
 
     // ── Create ────────────────────────────────────────────────────────────

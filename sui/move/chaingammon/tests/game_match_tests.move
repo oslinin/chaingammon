@@ -367,20 +367,30 @@ module chaingammon::game_match_tests {
     fun settle_with_profiles_updates_both_elos() {
         let mut scenario = test_scenario::begin(CREATOR);
         let ctx = test_scenario::ctx(&mut scenario);
-        let mut registry = profile::new_registry_for_testing(ctx);
+        let registry_id = profile::new_registry_for_testing(ctx);
 
         test_scenario::next_tx(&mut scenario, CREATOR);
         {
+            let mut registry = test_scenario::take_shared_by_id<ProfileRegistry>(&scenario, registry_id);
             let ctx = test_scenario::ctx(&mut scenario);
             profile::create_profile(&mut registry, b"creator", ctx);
+            test_scenario::return_shared(registry);
         };
         test_scenario::next_tx(&mut scenario, JOINER);
         {
+            let mut registry = test_scenario::take_shared_by_id<ProfileRegistry>(&scenario, registry_id);
             let ctx = test_scenario::ctx(&mut scenario);
             profile::create_profile(&mut registry, b"joiner", ctx);
+            test_scenario::return_shared(registry);
         };
-        let profile_a_id = profile::profile_id_for(&registry, CREATOR);
-        let profile_b_id = profile::profile_id_for(&registry, JOINER);
+
+        test_scenario::next_tx(&mut scenario, CREATOR);
+        let (profile_a_id, profile_b_id) = {
+            let registry = test_scenario::take_shared_by_id<ProfileRegistry>(&scenario, registry_id);
+            let ids = (profile::profile_id_for(&registry, CREATOR), profile::profile_id_for(&registry, JOINER));
+            test_scenario::return_shared(registry);
+            ids
+        };
 
         test_scenario::next_tx(&mut scenario, CREATOR);
         {
@@ -434,7 +444,6 @@ module chaingammon::game_match_tests {
             let payout = test_scenario::take_from_sender<coin::Coin<SUI>>(&scenario);
             transfer::public_transfer(payout, CREATOR);
         };
-        transfer::share_object(registry);
         test_scenario::end(scenario);
     }
 }

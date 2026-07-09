@@ -7,7 +7,7 @@
 module chaingammon::profile_tests {
     use sui::test_scenario;
 
-    use chaingammon::profile::{Self, HumanProfile};
+    use chaingammon::profile::{Self, HumanProfile, ProfileRegistry};
 
     const ALICE: address = @0xA11CE;
     const BOB: address = @0xB0B;
@@ -16,28 +16,30 @@ module chaingammon::profile_tests {
     fun create_profile_sets_expected_fields() {
         let mut scenario = test_scenario::begin(ALICE);
         let ctx = test_scenario::ctx(&mut scenario);
-        let mut registry = profile::new_registry_for_testing(ctx);
+        let registry_id = profile::new_registry_for_testing(ctx);
 
         test_scenario::next_tx(&mut scenario, ALICE);
         {
+            let mut registry = test_scenario::take_shared_by_id<ProfileRegistry>(&scenario, registry_id);
             let ctx = test_scenario::ctx(&mut scenario);
             profile::create_profile(&mut registry, b"alice", ctx);
+            assert!(profile::has_profile(&registry, ALICE), 0);
+            assert!(!profile::has_profile(&registry, BOB), 1);
+            test_scenario::return_shared(registry);
         };
-
-        assert!(profile::has_profile(&registry, ALICE), 0);
-        assert!(!profile::has_profile(&registry, BOB), 1);
 
         test_scenario::next_tx(&mut scenario, ALICE);
         {
+            let registry = test_scenario::take_shared_by_id<ProfileRegistry>(&scenario, registry_id);
             let p = test_scenario::take_shared<HumanProfile>(&scenario);
             assert!(profile::owner(&p) == ALICE, 2);
             assert!(profile::elo(&p) == 1500, 3);
             assert!(profile::match_count(&p) == 0, 4);
             assert!(profile::id(&p) == profile::profile_id_for(&registry, ALICE), 5);
+            test_scenario::return_shared(registry);
             test_scenario::return_shared(p);
         };
 
-        transfer::share_object(registry);
         test_scenario::end(scenario);
     }
 
@@ -46,20 +48,23 @@ module chaingammon::profile_tests {
     fun create_profile_twice_aborts() {
         let mut scenario = test_scenario::begin(ALICE);
         let ctx = test_scenario::ctx(&mut scenario);
-        let mut registry = profile::new_registry_for_testing(ctx);
+        let registry_id = profile::new_registry_for_testing(ctx);
 
         test_scenario::next_tx(&mut scenario, ALICE);
         {
+            let mut registry = test_scenario::take_shared_by_id<ProfileRegistry>(&scenario, registry_id);
             let ctx = test_scenario::ctx(&mut scenario);
             profile::create_profile(&mut registry, b"alice", ctx);
+            test_scenario::return_shared(registry);
         };
         test_scenario::next_tx(&mut scenario, ALICE);
         {
+            let mut registry = test_scenario::take_shared_by_id<ProfileRegistry>(&scenario, registry_id);
             let ctx = test_scenario::ctx(&mut scenario);
             profile::create_profile(&mut registry, b"alice-again", ctx);
+            test_scenario::return_shared(registry);
         };
 
-        transfer::share_object(registry);
         test_scenario::end(scenario);
     }
 
@@ -70,12 +75,14 @@ module chaingammon::profile_tests {
         // agent::record_result.
         let mut scenario = test_scenario::begin(ALICE);
         let ctx = test_scenario::ctx(&mut scenario);
-        let mut registry = profile::new_registry_for_testing(ctx);
+        let registry_id = profile::new_registry_for_testing(ctx);
 
         test_scenario::next_tx(&mut scenario, ALICE);
         {
+            let mut registry = test_scenario::take_shared_by_id<ProfileRegistry>(&scenario, registry_id);
             let ctx = test_scenario::ctx(&mut scenario);
             profile::create_profile(&mut registry, b"alice", ctx);
+            test_scenario::return_shared(registry);
         };
 
         test_scenario::next_tx(&mut scenario, ALICE);
@@ -91,7 +98,6 @@ module chaingammon::profile_tests {
             test_scenario::return_shared(p);
         };
 
-        transfer::share_object(registry);
         test_scenario::end(scenario);
     }
 }
