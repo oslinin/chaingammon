@@ -8,6 +8,10 @@
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
+    "@types/node": "^26.1.1",
     "typescript": "^5"
+  },
+  "dependencies": {
+    "@mysten/sui": "^2.20.2"
   }
 }

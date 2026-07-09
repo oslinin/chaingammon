@@ -1,0 +1,329 @@
+/// match.move — match lifecycle and co-signed settlement.
+///
+/// Replaces the co-signed HvH settlement path in
+/// frontend/app/play-human/PlayHumanClient.tsx (finishGame/settleMatch,
+/// ~lines 308-386) and the on-chain half of MatchRegistry.settleWithSessionKeys.
+/// Rules/move validation stays entirely off-chain (WebRTC + the client rules
+/// engine) exactly as today — this module only locks stakes, verifies both
+/// players' session-key signatures over the final result, and pays out.
+///
+/// State machine: OPEN -> PLAYING -> SETTLED, with CANCELLED reachable from
+/// OPEN (cancel_unjoined) or PLAYING (abandon). There is no ADJUDICATING
+/// state in v1 — the spec's Nautilus adjudication path
+/// (docs/superpowers/specs/2026-07-07-sui-port-design.md §7) stays
+/// design-only per the owner's 2026-07-08 decision; `abandon` is the interim
+/// griefing relief valve (50/50 split after a timeout).
+///
+/// `Match` is a SHARED object (`key` only, no `store` — it is never
+/// individually owned/traded, only ever referenced by both players and
+/// whoever submits the settling transaction).
+module chaingammon::match {
+    use std::bcs;
+    use std::vector;
+
+    use sui::balance::{Self, Balance};
+    use sui::coin::{Self, Coin};
+    use sui::ed25519;
+    use sui::event;
+    use sui::sui::SUI;
+
+    use chaingammon::agent::{Self, Agent};
+    use chaingammon::elo;
+
+    // ── Errors ──────────────────────────────────────────────────────────
+    // Numeric, not named-export — see agent.move's Errors section for why
+    // Move has no `public const`.
+    const EWrongState: u64 = 0;
+    const EBadSigA: u64 = 1;
+    const EBadSigB: u64 = 2;
+    const EInvalidWinner: u64 = 3;
+    const EZeroStake: u64 = 4;
+    const EStakeMismatch: u64 = 5;
+    const ECannotJoinOwnMatch: u64 = 6;
+    const ENotCreator: u64 = 7;
+    const ETooEarly: u64 = 8;
+    const ENoAgentsRecorded: u64 = 9;
+    const EAgentMismatch: u64 = 10;
+
+    // ── State machine ─────────────────────────────────────────────────
+    const STATE_OPEN: u8 = 0;
+    const STATE_PLAYING: u8 = 1;
+    const STATE_SETTLED: u8 = 2;
+    const STATE_CANCELLED: u8 = 3;
+
+    /// Epochs that must pass after `join` before anyone may call `abandon`.
+    /// An epoch on Sui is ~24h, so 7 epochs is roughly a week — generous
+    /// enough that a real game (minutes, not days) never legitimately hits
+    /// this, while bounding how long a griefed stake can stay locked.
+    const ABANDON_EPOCHS: u64 = 7;
+
+    // ── Types ───────────────────────────────────────────────────────────
+
+    public struct Match has key {
+        id: UID,
+        // Off-chain-agreed match identifier (the Nostr/WebRTC match id,
+        // hex-decoded to bytes) — deliberately NOT `object::id(&self)`.
+        // Binding the real Sui object id into the signed result message
+        // would make offline-generated fixtures (tests, demos) depend on
+        // however the test/runtime framework happens to assign object ids;
+        // an app-supplied identifier set once at `open` and never mutated
+        // gives the same anti-replay property (settle_cosigned can only
+        // succeed once per Match, since it requires state == PLAYING and
+        // immediately flips to SETTLED) without that coupling.
+        app_match_id: vector<u8>,
+        state: u8,
+        creator: address,
+        // @0x0 sentinel until `join` — a real joiner address can never
+        // legitimately be the zero address, so this is unambiguous.
+        joiner: address,
+        session_pk_a: vector<u8>,
+        session_pk_b: vector<u8>, // empty until `join`
+        stake: Balance<SUI>,
+        rated: bool,
+        created_epoch: u64,
+        // None until `join`; Option (not a sentinel) because epoch 0 is a
+        // real, reachable epoch value early in a chain's life.
+        joined_epoch: Option<u64>,
+        // Set (independently) by whichever side supplies it at open/join
+        // time — the creator can only ever set agent_a for themselves, the
+        // joiner only agent_b, so the pairing is correct by construction;
+        // nobody can attribute an agent to the wrong side.
+        agent_a: Option<ID>,
+        agent_b: Option<ID>,
+    }
+
+    /// The bytes actually signed by both session keys. `winner` is the
+    /// address (creator or joiner) the two players agree won the match;
+    /// everything else pins this signature to one specific match and
+    /// protocol version so it can't be replayed elsewhere.
+    public struct ResultMsg has drop {
+        domain: vector<u8>,
+        app_match_id: vector<u8>,
+        winner: address,
+    }
+
+    // ── Events ──────────────────────────────────────────────────────────
+
+    public struct Opened has copy, drop {
+        match_uid: ID,
+        app_match_id: vector<u8>,
+        creator: address,
+        stake: u64,
+        rated: bool,
+    }
+
+    public struct Joined has copy, drop {
+        match_uid: ID,
+        joiner: address,
+        stake: u64,
+    }
+
+    public struct Settled has copy, drop {
+        match_uid: ID,
+        winner: address,
+        amount: u64,
+    }
+
+    public struct Cancelled has copy, drop {
+        match_uid: ID,
+        reason: vector<u8>,
+    }
+
+    // ── Canonical message ────────────────────────────────────────────────
+
+    fun canonical_result_bytes(app_match_id: vector<u8>, winner: address): vector<u8> {
+        let msg = ResultMsg {
+            domain: b"Chaingammon:result-sui-hvh",
+            app_match_id,
+            winner,
+        };
+        bcs::to_bytes(&msg)
+    }
+
+    // ── Lifecycle ─────────────────────────────────────────────────────────
+
+    /// Open a match: locks the creator's stake, registers their session
+    /// pubkey, shares the Match object. `agent_a` is `option::some(id)` when
+    /// the creator is playing as an agent (their own agent — see the struct
+    /// doc comment on `agent_a`/`agent_b`), `option::none()` for a human.
+    public fun open(
+        stake_coin: Coin<SUI>,
+        session_pk: vector<u8>,
+        rated: bool,
+        app_match_id: vector<u8>,
+        agent_a: Option<ID>,
+        ctx: &mut TxContext,
+    ) {
+        let creator = tx_context::sender(ctx);
+        let stake_value = coin::value(&stake_coin);
+        assert!(stake_value > 0, EZeroStake);
+
+        let match_obj = Match {
+            id: object::new(ctx),
+            app_match_id,
+            state: STATE_OPEN,
+            creator,
+            joiner: @0x0,
+            session_pk_a: session_pk,
+            session_pk_b: vector::empty<u8>(),
+            stake: coin::into_balance(stake_coin),
+            rated,
+            created_epoch: tx_context::epoch(ctx),
+            joined_epoch: option::none(),
+            agent_a,
+            agent_b: option::none(),
+        };
+        event::emit(Opened {
+            match_uid: object::id(&match_obj),
+            app_match_id: match_obj.app_match_id,
+            creator,
+            stake: stake_value,
+            rated,
+        });
+        transfer::share_object(match_obj);
+    }
+
+    /// Join an OPEN match. Stake must exactly match the creator's. Rejects
+    /// joining your own match — a match needs two independent signers for
+    /// co-signed settlement to mean anything.
+    public fun join(
+        match_obj: &mut Match,
+        stake_coin: Coin<SUI>,
+        session_pk: vector<u8>,
+        agent_b: Option<ID>,
+        ctx: &TxContext,
+    ) {
+        assert!(match_obj.state == STATE_OPEN, EWrongState);
+        let joiner = tx_context::sender(ctx);
+        assert!(joiner != match_obj.creator, ECannotJoinOwnMatch);
+        let stake_value = coin::value(&stake_coin);
+        assert!(stake_value == balance::value(&match_obj.stake), EStakeMismatch);
+
+        balance::join(&mut match_obj.stake, coin::into_balance(stake_coin));
+        match_obj.joiner = joiner;
+        match_obj.session_pk_b = session_pk;
+        match_obj.agent_b = agent_b;
+        match_obj.joined_epoch = option::some(tx_context::epoch(ctx));
+        match_obj.state = STATE_PLAYING;
+
+        event::emit(Joined { match_uid: object::id(match_obj), joiner, stake: stake_value });
+    }
+
+    /// Happy path: either player (or a sponsor submitting on their behalf)
+    /// calls this with both session-key signatures over the canonical
+    /// result bytes. Move reconstructs those bytes itself from on-chain
+    /// state — the caller supplies only the signatures, so nobody can claim
+    /// a result the two session keys didn't actually sign. Pays the full
+    /// pot to `winner`. Use `settle_cosigned_with_agents` instead when the
+    /// match records agent ids (see that function's doc comment).
+    public fun settle_cosigned(
+        match_obj: &mut Match,
+        winner: address,
+        sig_a: vector<u8>,
+        sig_b: vector<u8>,
+        ctx: &mut TxContext,
+    ) {
+        assert!(match_obj.state == STATE_PLAYING, EWrongState);
+        assert!(winner == match_obj.creator || winner == match_obj.joiner, EInvalidWinner);
+
+        let msg = canonical_result_bytes(match_obj.app_match_id, winner);
+        assert!(ed25519::ed25519_verify(&sig_a, &match_obj.session_pk_a, &msg), EBadSigA);
+        assert!(ed25519::ed25519_verify(&sig_b, &match_obj.session_pk_b, &msg), EBadSigB);
+
+        match_obj.state = STATE_SETTLED;
+        let amount = balance::value(&match_obj.stake);
+        let payout = balance::split(&mut match_obj.stake, amount);
+        transfer::public_transfer(coin::from_balance(payout, ctx), winner);
+
+        event::emit(Settled { match_uid: object::id(match_obj), winner, amount });
+    }
+
+    /// Same verification and payout as `settle_cosigned`, plus updates both
+    /// agents' ELO. Requires the match to have recorded BOTH agent ids at
+    /// open/join time, and the caller to supply the matching `&mut Agent`
+    /// objects (which, since Agent isn't Kiosk-placed in v1, means the
+    /// caller must already natively own both — realistic for the existing
+    /// operator-run tournament pattern where one address manages a fleet of
+    /// agents; revisit this assumption once Task 8 puts agents in Kiosks).
+    public fun settle_cosigned_with_agents(
+        match_obj: &mut Match,
+        winner: address,
+        sig_a: vector<u8>,
+        sig_b: vector<u8>,
+        agent_a_obj: &mut Agent,
+        agent_b_obj: &mut Agent,
+        ctx: &mut TxContext,
+    ) {
+        assert!(option::is_some(&match_obj.agent_a), ENoAgentsRecorded);
+        assert!(option::is_some(&match_obj.agent_b), ENoAgentsRecorded);
+        assert!(*option::borrow(&match_obj.agent_a) == agent::id(agent_a_obj), EAgentMismatch);
+        assert!(*option::borrow(&match_obj.agent_b) == agent::id(agent_b_obj), EAgentMismatch);
+
+        // Read ratings and which side won before settle_cosigned mutates
+        // state — creator/joiner fields themselves don't change there.
+        let elo_a = agent::elo(agent_a_obj);
+        let elo_b = agent::elo(agent_b_obj);
+        let a_won = winner == match_obj.creator;
+
+        settle_cosigned(match_obj, winner, sig_a, sig_b, ctx);
+
+        let exp_a = elo::expected_score_pct(elo_a, elo_b);
+        let exp_b = elo::expected_score_pct(elo_b, elo_a);
+        agent::record_result(agent_a_obj, elo::new_rating(elo_a, exp_a, a_won));
+        agent::record_result(agent_b_obj, elo::new_rating(elo_b, exp_b, !a_won));
+    }
+
+    /// Creator-only, OPEN-only refund — no timeout needed since nobody else
+    /// has a stake in an unjoined match.
+    public fun cancel_unjoined(match_obj: &mut Match, ctx: &mut TxContext) {
+        assert!(match_obj.state == STATE_OPEN, EWrongState);
+        assert!(tx_context::sender(ctx) == match_obj.creator, ENotCreator);
+
+        match_obj.state = STATE_CANCELLED;
+        let amount = balance::value(&match_obj.stake);
+        let refund = balance::split(&mut match_obj.stake, amount);
+        transfer::public_transfer(coin::from_balance(refund, ctx), match_obj.creator);
+
+        event::emit(Cancelled { match_uid: object::id(match_obj), reason: b"unjoined" });
+    }
+
+    /// Permissionless griefing relief valve: once `ABANDON_EPOCHS` have
+    /// passed since `join` with no settlement, ANYONE may call this to
+    /// split the pot 50/50 between creator and joiner. Safe to leave
+    /// permissionless — the split is fixed regardless of who calls it, and
+    /// the epoch check prevents calling it early.
+    public fun abandon(match_obj: &mut Match, ctx: &mut TxContext) {
+        assert!(match_obj.state == STATE_PLAYING, EWrongState);
+        let joined_at = *option::borrow(&match_obj.joined_epoch);
+        assert!(tx_context::epoch(ctx) >= joined_at + ABANDON_EPOCHS, ETooEarly);
+
+        match_obj.state = STATE_CANCELLED;
+        let total = balance::value(&match_obj.stake);
+        let half = total / 2;
+        // Creator gets the extra unit on an odd total — arbitrary,
+        // deterministic tie-break.
+        let joiner_share = half;
+        let creator_share = total - half;
+        let joiner_balance = balance::split(&mut match_obj.stake, joiner_share);
+        let creator_balance = balance::split(&mut match_obj.stake, creator_share);
+        transfer::public_transfer(coin::from_balance(joiner_balance, ctx), match_obj.joiner);
+        transfer::public_transfer(coin::from_balance(creator_balance, ctx), match_obj.creator);
+
+        event::emit(Cancelled { match_uid: object::id(match_obj), reason: b"abandoned" });
+    }
+
+    // ── Read-only accessors ───────────────────────────────────────────────
+
+    public fun uid(m: &Match): ID { object::id(m) }
+    public fun app_match_id(m: &Match): vector<u8> { m.app_match_id }
+    public fun state(m: &Match): u8 { m.state }
+    public fun creator(m: &Match): address { m.creator }
+    public fun joiner(m: &Match): address { m.joiner }
+    public fun stake_value(m: &Match): u64 { balance::value(&m.stake) }
+    public fun rated(m: &Match): bool { m.rated }
+
+    public fun state_open(): u8 { STATE_OPEN }
+    public fun state_playing(): u8 { STATE_PLAYING }
+    public fun state_settled(): u8 { STATE_SETTLED }
+    public fun state_cancelled(): u8 { STATE_CANCELLED }
+}
