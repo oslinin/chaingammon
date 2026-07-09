@@ -34,6 +34,7 @@ module chaingammon::game_match {
 
     use chaingammon::agent::{Self, Agent};
     use chaingammon::elo;
+    use chaingammon::profile::{Self, HumanProfile};
 
     // ── Errors ──────────────────────────────────────────────────────────
     // Numeric, not named-export — see agent.move's Errors section for why
@@ -49,6 +50,8 @@ module chaingammon::game_match {
     const ETooEarly: u64 = 8;
     const ENoAgentsRecorded: u64 = 9;
     const EAgentMismatch: u64 = 10;
+    const ENoProfilesRecorded: u64 = 11;
+    const EProfileMismatch: u64 = 12;
 
     // ── State machine ─────────────────────────────────────────────────
     const STATE_OPEN: u8 = 0;
@@ -95,6 +98,11 @@ module chaingammon::game_match {
         // nobody can attribute an agent to the wrong side.
         agent_a: Option<ID>,
         agent_b: Option<ID>,
+        // Same pattern as agent_a/agent_b, for the human-profile ELO hook
+        // (Task 5). A given side sets at most one of {agent_x, profile_x} —
+        // a match participant is either an agent or a human, never both.
+        profile_a: Option<ID>,
+        profile_b: Option<ID>,
     }
 
     /// The bytes actually signed by both session keys. `winner` is the
@@ -151,12 +159,17 @@ module chaingammon::game_match {
     /// pubkey, shares the Match object. `agent_a` is `option::some(id)` when
     /// the creator is playing as an agent (their own agent — see the struct
     /// doc comment on `agent_a`/`agent_b`), `option::none()` for a human.
+    /// `profile_a` is the mirror image for a human creator with a
+    /// `HumanProfile` (Task 5) — leave both `option::none()` for a human who
+    /// hasn't created a profile yet (settle_cosigned still works; only the
+    /// ELO-updating variants require a profile/agent to be recorded).
     public fun open(
         stake_coin: Coin<SUI>,
         session_pk: vector<u8>,
         rated: bool,
         app_match_id: vector<u8>,
         agent_a: Option<ID>,
+        profile_a: Option<ID>,
         ctx: &mut TxContext,
     ) {
         let creator = tx_context::sender(ctx);
@@ -177,6 +190,8 @@ module chaingammon::game_match {
             joined_epoch: option::none(),
             agent_a,
             agent_b: option::none(),
+            profile_a,
+            profile_b: option::none(),
         };
         event::emit(Opened {
             match_uid: object::id(&match_obj),
@@ -196,6 +211,7 @@ module chaingammon::game_match {
         stake_coin: Coin<SUI>,
         session_pk: vector<u8>,
         agent_b: Option<ID>,
+        profile_b: Option<ID>,
         ctx: &TxContext,
     ) {
         assert!(match_obj.state == STATE_OPEN, EWrongState);
@@ -208,6 +224,7 @@ module chaingammon::game_match {
         match_obj.joiner = joiner;
         match_obj.session_pk_b = session_pk;
         match_obj.agent_b = agent_b;
+        match_obj.profile_b = profile_b;
         match_obj.joined_epoch = option::some(tx_context::epoch(ctx));
         match_obj.state = STATE_PLAYING;
 
@@ -276,6 +293,40 @@ module chaingammon::game_match {
         let exp_b = elo::expected_score_pct(elo_b, elo_a);
         agent::record_result(agent_a_obj, elo::new_rating(elo_a, exp_a, a_won));
         agent::record_result(agent_b_obj, elo::new_rating(elo_b, exp_b, !a_won));
+    }
+
+    /// Same verification and payout as `settle_cosigned`, plus updates both
+    /// humans' ELO on their `HumanProfile` objects. Requires the match to
+    /// have recorded BOTH profile ids at open/join time (see `profile_a`/
+    /// `profile_b`'s struct doc comment) — a client looks these up via
+    /// `chaingammon::profile::profile_id_for` before building the settling
+    /// PTB. Unlike agents, `HumanProfile` is a shared object (not owned), so
+    /// either player or a sponsor can supply both `&mut HumanProfile`
+    /// arguments regardless of who submits this transaction.
+    public fun settle_cosigned_with_profiles(
+        match_obj: &mut Match,
+        winner: address,
+        sig_a: vector<u8>,
+        sig_b: vector<u8>,
+        profile_a_obj: &mut HumanProfile,
+        profile_b_obj: &mut HumanProfile,
+        ctx: &mut TxContext,
+    ) {
+        assert!(option::is_some(&match_obj.profile_a), ENoProfilesRecorded);
+        assert!(option::is_some(&match_obj.profile_b), ENoProfilesRecorded);
+        assert!(*option::borrow(&match_obj.profile_a) == profile::id(profile_a_obj), EProfileMismatch);
+        assert!(*option::borrow(&match_obj.profile_b) == profile::id(profile_b_obj), EProfileMismatch);
+
+        let elo_a = profile::elo(profile_a_obj);
+        let elo_b = profile::elo(profile_b_obj);
+        let a_won = winner == match_obj.creator;
+
+        settle_cosigned(match_obj, winner, sig_a, sig_b, ctx);
+
+        let exp_a = elo::expected_score_pct(elo_a, elo_b);
+        let exp_b = elo::expected_score_pct(elo_b, elo_a);
+        profile::record_result(profile_a_obj, elo::new_rating(elo_a, exp_a, a_won));
+        profile::record_result(profile_b_obj, elo::new_rating(elo_b, exp_b, !a_won));
     }
 
     /// Creator-only, OPEN-only refund — no timeout needed since nobody else

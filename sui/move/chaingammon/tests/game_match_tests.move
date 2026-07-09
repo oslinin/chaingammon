@@ -1,10 +1,12 @@
 #[test_only]
-/// Tests for chaingammon::game_match (Task 3). Abort codes are asserted as
-/// raw literals — see agent_tests.move's header comment for why (Move
-/// constants are private to their declaring module). The mapping:
+/// Tests for chaingammon::game_match (Task 3, extended in Task 5 for the
+/// HumanProfile ELO hook). Abort codes are asserted as raw literals — see
+/// agent_tests.move's header comment for why (Move constants are private to
+/// their declaring module). The mapping:
 ///   0 EWrongState, 1 EBadSigA, 2 EBadSigB, 3 EInvalidWinner,
 ///   4 EZeroStake, 5 EStakeMismatch, 6 ECannotJoinOwnMatch,
-///   7 ENotCreator, 8 ETooEarly, 9 ENoAgentsRecorded, 10 EAgentMismatch
+///   7 ENotCreator, 8 ETooEarly, 9 ENoAgentsRecorded, 10 EAgentMismatch,
+///   11 ENoProfilesRecorded, 12 EProfileMismatch
 /// (see sui/move/chaingammon/sources/game_match.move's Errors section).
 ///
 /// SESSION_PK_A/B, SIG_A/B, CREATOR, APP_MATCH_ID, DOMAIN below were
@@ -24,6 +26,7 @@ module chaingammon::game_match_tests {
 
     use chaingammon::agent::{Self, Agent};
     use chaingammon::game_match::{Self, Match};
+    use chaingammon::profile::{Self, HumanProfile, ProfileRegistry};
 
     const CREATOR: address = @0xA11CE; // matches agent_tests.move's OWNER
     const JOINER: address = @0xB0B;    // matches agent_tests.move's OTHER
@@ -55,14 +58,14 @@ module chaingammon::game_match_tests {
         {
             let ctx = test_scenario::ctx(scenario);
             let stake = coin::mint_for_testing<SUI>(STAKE, ctx);
-            game_match::open(stake, SESSION_PK_A, true, APP_MATCH_ID, option::none(), ctx);
+            game_match::open(stake, SESSION_PK_A, true, APP_MATCH_ID, option::none(), option::none(), ctx);
         };
         test_scenario::next_tx(scenario, JOINER);
         {
             let mut m = test_scenario::take_shared<Match>(scenario);
             let ctx = test_scenario::ctx(scenario);
             let stake = coin::mint_for_testing<SUI>(STAKE, ctx);
-            game_match::join(&mut m, stake, SESSION_PK_B, option::none(), ctx);
+            game_match::join(&mut m, stake, SESSION_PK_B, option::none(), option::none(), ctx);
             test_scenario::return_shared(m);
         };
     }
@@ -160,14 +163,14 @@ module chaingammon::game_match_tests {
         {
             let ctx = test_scenario::ctx(&mut scenario);
             let stake = coin::mint_for_testing<SUI>(STAKE, ctx);
-            game_match::open(stake, SESSION_PK_A, true, APP_MATCH_ID, option::none(), ctx);
+            game_match::open(stake, SESSION_PK_A, true, APP_MATCH_ID, option::none(), option::none(), ctx);
         };
         test_scenario::next_tx(&mut scenario, JOINER);
         {
             let mut m = test_scenario::take_shared<Match>(&scenario);
             let ctx = test_scenario::ctx(&mut scenario);
             let stake = coin::mint_for_testing<SUI>(STAKE / 2, ctx); // half the required stake
-            game_match::join(&mut m, stake, SESSION_PK_B, option::none(), ctx);
+            game_match::join(&mut m, stake, SESSION_PK_B, option::none(), option::none(), ctx);
             test_scenario::return_shared(m);
         };
         test_scenario::end(scenario);
@@ -181,14 +184,14 @@ module chaingammon::game_match_tests {
         {
             let ctx = test_scenario::ctx(&mut scenario);
             let stake = coin::mint_for_testing<SUI>(STAKE, ctx);
-            game_match::open(stake, SESSION_PK_A, true, APP_MATCH_ID, option::none(), ctx);
+            game_match::open(stake, SESSION_PK_A, true, APP_MATCH_ID, option::none(), option::none(), ctx);
         };
         test_scenario::next_tx(&mut scenario, CREATOR);
         {
             let mut m = test_scenario::take_shared<Match>(&scenario);
             let ctx = test_scenario::ctx(&mut scenario);
             let stake = coin::mint_for_testing<SUI>(STAKE, ctx);
-            game_match::join(&mut m, stake, SESSION_PK_B, option::none(), ctx);
+            game_match::join(&mut m, stake, SESSION_PK_B, option::none(), option::none(), ctx);
             test_scenario::return_shared(m);
         };
         test_scenario::end(scenario);
@@ -203,7 +206,7 @@ module chaingammon::game_match_tests {
         {
             let ctx = test_scenario::ctx(&mut scenario);
             let stake = coin::mint_for_testing<SUI>(STAKE, ctx);
-            game_match::open(stake, SESSION_PK_A, true, APP_MATCH_ID, option::none(), ctx);
+            game_match::open(stake, SESSION_PK_A, true, APP_MATCH_ID, option::none(), option::none(), ctx);
         };
         test_scenario::next_tx(&mut scenario, CREATOR);
         {
@@ -313,14 +316,14 @@ module chaingammon::game_match_tests {
         {
             let ctx = test_scenario::ctx(&mut scenario);
             let stake = coin::mint_for_testing<SUI>(STAKE, ctx);
-            game_match::open(stake, SESSION_PK_A, true, APP_MATCH_ID, option::some(agent_a_id), ctx);
+            game_match::open(stake, SESSION_PK_A, true, APP_MATCH_ID, option::some(agent_a_id), option::none(), ctx);
         };
         test_scenario::next_tx(&mut scenario, JOINER);
         {
             let mut m = test_scenario::take_shared<Match>(&scenario);
             let ctx = test_scenario::ctx(&mut scenario);
             let stake = coin::mint_for_testing<SUI>(STAKE, ctx);
-            game_match::join(&mut m, stake, SESSION_PK_B, option::some(agent_b_id), ctx);
+            game_match::join(&mut m, stake, SESSION_PK_B, option::some(agent_b_id), option::none(), ctx);
             test_scenario::return_shared(m);
         };
 
@@ -355,6 +358,83 @@ module chaingammon::game_match_tests {
             let payout = test_scenario::take_from_sender<coin::Coin<SUI>>(&scenario);
             transfer::public_transfer(payout, CREATOR);
         };
+        test_scenario::end(scenario);
+    }
+
+    // ── Human profile ELO wiring (Task 5) ────────────────────────────────
+
+    #[test]
+    fun settle_with_profiles_updates_both_elos() {
+        let mut scenario = test_scenario::begin(CREATOR);
+        let ctx = test_scenario::ctx(&mut scenario);
+        let mut registry = profile::new_registry_for_testing(ctx);
+
+        test_scenario::next_tx(&mut scenario, CREATOR);
+        {
+            let ctx = test_scenario::ctx(&mut scenario);
+            profile::create_profile(&mut registry, b"creator", ctx);
+        };
+        test_scenario::next_tx(&mut scenario, JOINER);
+        {
+            let ctx = test_scenario::ctx(&mut scenario);
+            profile::create_profile(&mut registry, b"joiner", ctx);
+        };
+        let profile_a_id = profile::profile_id_for(&registry, CREATOR);
+        let profile_b_id = profile::profile_id_for(&registry, JOINER);
+
+        test_scenario::next_tx(&mut scenario, CREATOR);
+        {
+            let ctx = test_scenario::ctx(&mut scenario);
+            let stake = coin::mint_for_testing<SUI>(STAKE, ctx);
+            game_match::open(
+                stake, SESSION_PK_A, true, APP_MATCH_ID,
+                option::none(), option::some(profile_a_id), ctx,
+            );
+        };
+        test_scenario::next_tx(&mut scenario, JOINER);
+        {
+            let mut m = test_scenario::take_shared<Match>(&scenario);
+            let ctx = test_scenario::ctx(&mut scenario);
+            let stake = coin::mint_for_testing<SUI>(STAKE, ctx);
+            game_match::join(
+                &mut m, stake, SESSION_PK_B,
+                option::none(), option::some(profile_b_id), ctx,
+            );
+            test_scenario::return_shared(m);
+        };
+
+        test_scenario::next_tx(&mut scenario, CREATOR);
+        {
+            let mut m = test_scenario::take_shared<Match>(&scenario);
+            // Two HumanProfile shared objects exist by this point (one per
+            // side) — take_shared<T> can't disambiguate between same-type
+            // shared objects, so fetch each by its specific id instead.
+            let mut profile_a_obj = test_scenario::take_shared_by_id<HumanProfile>(&scenario, profile_a_id);
+            let mut profile_b_obj = test_scenario::take_shared_by_id<HumanProfile>(&scenario, profile_b_id);
+            let ctx = test_scenario::ctx(&mut scenario);
+
+            game_match::settle_cosigned_with_profiles(
+                &mut m, CREATOR, SIG_A, SIG_B, &mut profile_a_obj, &mut profile_b_obj, ctx,
+            );
+
+            // Same equal-starting-ratings vectors as the agent test above.
+            assert!(profile::elo(&profile_a_obj) == 1516, 0);
+            assert!(profile::elo(&profile_b_obj) == 1484, 1);
+            assert!(profile::match_count(&profile_a_obj) == 1, 2);
+            assert!(profile::match_count(&profile_b_obj) == 1, 3);
+
+            test_scenario::return_shared(m);
+            test_scenario::return_shared(profile_a_obj);
+            test_scenario::return_shared(profile_b_obj);
+        };
+
+        // Consume the settlement payout so the scenario ends cleanly.
+        test_scenario::next_tx(&mut scenario, CREATOR);
+        {
+            let payout = test_scenario::take_from_sender<coin::Coin<SUI>>(&scenario);
+            transfer::public_transfer(payout, CREATOR);
+        };
+        transfer::share_object(registry);
         test_scenario::end(scenario);
     }
 }
