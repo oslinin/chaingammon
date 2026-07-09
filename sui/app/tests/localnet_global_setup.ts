@@ -15,11 +15,12 @@
 // file is used instead so this stays robust even if that assumption ever
 // changes.
 import { execFileSync, spawn } from "node:child_process";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 export const PID_FILE = path.join(__dirname, ".localnet.pid");
 export const CONFIG_PATH = path.join(__dirname, "..", "public", "localnet-config.json");
+export const LOG_FILE = path.join(__dirname, ".localnet.log");
 
 function suiCliAvailable(): boolean {
   try {
@@ -30,9 +31,33 @@ function suiCliAvailable(): boolean {
   }
 }
 
+async function waitForRpcOrDie(timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  let lastErr: unknown;
+  while (Date.now() < deadline) {
+    try {
+      const res = await fetch("http://127.0.0.1:9000", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "sui_getChainIdentifier", params: [] }),
+      });
+      if (res.ok) return;
+      lastErr = new Error(`status ${res.status}`);
+    } catch (e) {
+      lastErr = e;
+    }
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+  // Surface `sui start`'s own log so a genuine crash (vs. plain slowness) is
+  // diagnosable instead of just "fetch failed" — see LOG_FILE below.
+  const log = existsSync(LOG_FILE) ? readFileSync(LOG_FILE, "utf8") : "(no log file)";
+  throw new Error(`localnet RPC never became ready after ${timeoutMs}ms (${String(lastErr)}).\n--- sui start log ---\n${log}`);
+}
+
 export default async function globalSetup() {
   rmSync(CONFIG_PATH, { force: true });
   rmSync(PID_FILE, { force: true });
+  rmSync(LOG_FILE, { force: true });
 
   if (!suiCliAvailable()) {
     console.log("[localnet] `sui` CLI not found on PATH — skipping localnet setup; profile_signin.spec.ts will skip.");
@@ -40,14 +65,22 @@ export default async function globalSetup() {
   }
 
   console.log("[localnet] starting `sui start --with-faucet --force-regenesis`…");
+  const logFd = openSync(LOG_FILE, "a");
   const child = spawn("sui", ["start", "--with-faucet", "--force-regenesis"], {
     detached: true,
-    stdio: "ignore",
+    stdio: ["ignore", logFd, logFd],
     env: { ...process.env, RUST_LOG: "off" },
   });
   child.unref();
   mkdirSync(path.dirname(PID_FILE), { recursive: true });
   writeFileSync(PID_FILE, String(child.pid));
+
+  // publish_localnet.ts also waits for RPC readiness itself before
+  // publishing, but that failure mode gives no insight into *why* — wait
+  // here first (longer budget, with the log attached on failure) so a slow
+  // localnet boot vs. a crashed one are distinguishable.
+  console.log("[localnet] waiting for RPC to come up…");
+  await waitForRpcOrDie(120_000);
 
   console.log("[localnet] publishing chaingammon package…");
   execFileSync(

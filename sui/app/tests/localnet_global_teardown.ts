@@ -6,6 +6,7 @@ import path from "node:path";
 
 const PID_FILE = path.join(__dirname, ".localnet.pid");
 const CONFIG_PATH = path.join(__dirname, "..", "public", "localnet-config.json");
+const LOG_FILE = path.join(__dirname, ".localnet.log");
 
 export default async function globalTeardown() {
   if (existsSync(PID_FILE)) {
@@ -23,4 +24,5 @@ export default async function globalTeardown() {
     rmSync(PID_FILE, { force: true });
   }
   rmSync(CONFIG_PATH, { force: true });
+  rmSync(LOG_FILE, { force: true });
 }
