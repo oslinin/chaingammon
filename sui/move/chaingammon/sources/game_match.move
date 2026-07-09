@@ -30,6 +30,7 @@ module chaingammon::game_match {
     use sui::coin::{Self, Coin};
     use sui::ed25519;
     use sui::event;
+    use sui::random::{Self, Random};
     use sui::sui::SUI;
 
     use chaingammon::agent::{Self, Agent};
@@ -52,6 +53,8 @@ module chaingammon::game_match {
     const EAgentMismatch: u64 = 10;
     const ENoProfilesRecorded: u64 = 11;
     const EProfileMismatch: u64 = 12;
+    const ENotRated: u64 = 13;
+    const EWrongRoller: u64 = 14;
 
     // ── State machine ─────────────────────────────────────────────────
     const STATE_OPEN: u8 = 0;
@@ -103,6 +106,15 @@ module chaingammon::game_match {
         // a match participant is either an agent or a human, never both.
         profile_a: Option<ID>,
         profile_b: Option<ID>,
+        // On-chain dice (Task 6, rated matches only — unrated play uses the
+        // fully off-chain commit-reveal scheme and never touches `roll`).
+        // Monotonic counter, incremented once per successful `roll` call;
+        // also determines whose turn it is to roll (see `roll`'s doc
+        // comment) — the anti-grinding property this whole mechanism
+        // exists for depends on turn_index only ever moving forward by
+        // exactly one per call, which is why `roll` never accepts it as a
+        // caller-supplied argument.
+        turn_index: u64,
     }
 
     /// The bytes actually signed by both session keys. `winner` is the
@@ -140,6 +152,13 @@ module chaingammon::game_match {
     public struct Cancelled has copy, drop {
         match_uid: ID,
         reason: vector<u8>,
+    }
+
+    public struct DiceRolled has copy, drop {
+        match_uid: ID,
+        turn_index: u64,
+        d1: u8,
+        d2: u8,
     }
 
     // ── Canonical message ────────────────────────────────────────────────
@@ -192,6 +211,7 @@ module chaingammon::game_match {
             agent_b: option::none(),
             profile_a,
             profile_b: option::none(),
+            turn_index: 0,
         };
         event::emit(Opened {
             match_uid: object::id(&match_obj),
@@ -229,6 +249,54 @@ module chaingammon::game_match {
         match_obj.state = STATE_PLAYING;
 
         event::emit(Joined { match_uid: object::id(match_obj), joiner, stake: stake_value });
+    }
+
+    /// On-chain dice for RATED matches (design spec §5) — the anti-grinding
+    /// property the EVM version never had: the roller cannot see d1/d2
+    /// before this call lands on-chain, and cannot pick which roll to keep
+    /// by retrying, since the roll comes from `sui::random`, not the
+    /// client. Unrated matches never call this — they use the fully
+    /// off-chain, zero-gas commit-reveal scheme instead (see
+    /// `sui/app/lib/commit_reveal_dice.ts`).
+    ///
+    /// `public(package)` + `entry`: `entry` so this is invokable as a PTB
+    /// entrypoint from the app (client SDKs dispatch entry functions
+    /// directly, bypassing normal Move cross-module visibility);
+    /// `public(package)` so `game_match_tests` (a different module in this
+    /// same package) can call it directly too, the same way `sui move
+    /// test` exercises every other function here — a bare (fully private)
+    /// `entry fun` would be PTB-callable but not callable from test code in
+    /// another module. Per the Random docs, this must NOT be plain
+    /// `public`: a public function taking `&Random` could be composed into
+    /// another package's own function, defeating the "no aborting after
+    /// seeing the random result" protection Sui's PTB-level restrictions
+    /// enforce specifically around `entry` functions.
+    ///
+    /// Roller alternates strictly by `turn_index` parity (even → creator,
+    /// odd → joiner) — this is what "alternating roller" means here, not
+    /// whose turn it is in the backgammon game itself (the two can diverge
+    /// after a skipped/bar-danced turn; the app tracks the real game turn
+    /// separately off-chain and simply calls `roll` once per ply regardless
+    /// of who is about to move). `turn_index` itself is never a caller
+    /// argument — only ever read from on-chain state and incremented by
+    /// exactly one per call — so nobody can replay, skip, or rewind it.
+    public(package) entry fun roll(match_obj: &mut Match, r: &Random, ctx: &mut TxContext) {
+        assert!(match_obj.state == STATE_PLAYING, EWrongState);
+        assert!(match_obj.rated, ENotRated);
+        let expected_roller = if (match_obj.turn_index % 2 == 0) { match_obj.creator } else { match_obj.joiner };
+        assert!(tx_context::sender(ctx) == expected_roller, EWrongRoller);
+
+        let mut generator = random::new_generator(r, ctx);
+        let d1 = random::generate_u8_in_range(&mut generator, 1, 6);
+        let d2 = random::generate_u8_in_range(&mut generator, 1, 6);
+
+        event::emit(DiceRolled {
+            match_uid: object::id(match_obj),
+            turn_index: match_obj.turn_index,
+            d1,
+            d2,
+        });
+        match_obj.turn_index = match_obj.turn_index + 1;
     }
 
     /// Happy path: either player (or a sponsor submitting on their behalf)
@@ -377,6 +445,7 @@ module chaingammon::game_match {
     public fun joiner(m: &Match): address { m.joiner }
     public fun stake_value(m: &Match): u64 { balance::value(&m.stake) }
     public fun rated(m: &Match): bool { m.rated }
+    public fun turn_index(m: &Match): u64 { m.turn_index }
 
     public fun state_open(): u8 { STATE_OPEN }
     public fun state_playing(): u8 { STATE_PLAYING }

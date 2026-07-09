@@ -6,7 +6,7 @@
 ///   0 EWrongState, 1 EBadSigA, 2 EBadSigB, 3 EInvalidWinner,
 ///   4 EZeroStake, 5 EStakeMismatch, 6 ECannotJoinOwnMatch,
 ///   7 ENotCreator, 8 ETooEarly, 9 ENoAgentsRecorded, 10 EAgentMismatch,
-///   11 ENoProfilesRecorded, 12 EProfileMismatch
+///   11 ENoProfilesRecorded, 12 EProfileMismatch, 13 ENotRated, 14 EWrongRoller
 /// (see sui/move/chaingammon/sources/game_match.move's Errors section).
 ///
 /// SESSION_PK_A/B, SIG_A/B, CREATOR, APP_MATCH_ID, DOMAIN below were
@@ -21,6 +21,7 @@
 /// guessed.
 module chaingammon::game_match_tests {
     use sui::coin;
+    use sui::random::Random;
     use sui::sui::SUI;
     use sui::test_scenario;
 
@@ -450,6 +451,120 @@ module chaingammon::game_match_tests {
         {
             let payout = test_scenario::take_from_sender<coin::Coin<SUI>>(&scenario);
             transfer::public_transfer(payout, CREATOR);
+        };
+        test_scenario::end(scenario);
+    }
+
+    // ── On-chain dice (Task 6) ────────────────────────────────────────────
+
+    #[test]
+    fun roll_alternates_roller_and_increments_turn_index() {
+        let mut scenario = test_scenario::begin(CREATOR);
+        test_scenario::create_system_objects(&mut scenario);
+        open_and_join(&mut scenario);
+
+        // turn_index starts at 0 -> CREATOR's turn to roll.
+        test_scenario::next_tx(&mut scenario, CREATOR);
+        {
+            let mut m = test_scenario::take_shared<Match>(&scenario);
+            let r = test_scenario::take_shared<Random>(&scenario);
+            let ctx = test_scenario::ctx(&mut scenario);
+            assert!(game_match::turn_index(&m) == 0, 0);
+            game_match::roll(&mut m, &r, ctx);
+            assert!(game_match::turn_index(&m) == 1, 1);
+            test_scenario::return_shared(m);
+            test_scenario::return_shared(r);
+        };
+
+        // turn_index is now 1 -> JOINER's turn to roll.
+        test_scenario::next_tx(&mut scenario, JOINER);
+        {
+            let mut m = test_scenario::take_shared<Match>(&scenario);
+            let r = test_scenario::take_shared<Random>(&scenario);
+            let ctx = test_scenario::ctx(&mut scenario);
+            game_match::roll(&mut m, &r, ctx);
+            assert!(game_match::turn_index(&m) == 2, 0);
+            test_scenario::return_shared(m);
+            test_scenario::return_shared(r);
+        };
+
+        test_scenario::end(scenario);
+    }
+
+    #[test]
+    #[expected_failure(abort_code = 14)] // EWrongRoller
+    fun roll_out_of_turn_aborts() {
+        let mut scenario = test_scenario::begin(CREATOR);
+        test_scenario::create_system_objects(&mut scenario);
+        open_and_join(&mut scenario);
+
+        // turn_index is 0 -> CREATOR's turn; JOINER rolling now must abort.
+        test_scenario::next_tx(&mut scenario, JOINER);
+        {
+            let mut m = test_scenario::take_shared<Match>(&scenario);
+            let r = test_scenario::take_shared<Random>(&scenario);
+            let ctx = test_scenario::ctx(&mut scenario);
+            game_match::roll(&mut m, &r, ctx);
+            test_scenario::return_shared(m);
+            test_scenario::return_shared(r);
+        };
+        test_scenario::end(scenario);
+    }
+
+    #[test]
+    #[expected_failure(abort_code = 13)] // ENotRated
+    fun roll_on_unrated_match_aborts() {
+        let mut scenario = test_scenario::begin(CREATOR);
+        test_scenario::create_system_objects(&mut scenario);
+
+        test_scenario::next_tx(&mut scenario, CREATOR);
+        {
+            let ctx = test_scenario::ctx(&mut scenario);
+            let stake = coin::mint_for_testing<SUI>(STAKE, ctx);
+            game_match::open(stake, SESSION_PK_A, false, APP_MATCH_ID, option::none(), option::none(), ctx);
+        };
+        test_scenario::next_tx(&mut scenario, JOINER);
+        {
+            let mut m = test_scenario::take_shared<Match>(&scenario);
+            let ctx = test_scenario::ctx(&mut scenario);
+            let stake = coin::mint_for_testing<SUI>(STAKE, ctx);
+            game_match::join(&mut m, stake, SESSION_PK_B, option::none(), option::none(), ctx);
+            test_scenario::return_shared(m);
+        };
+
+        test_scenario::next_tx(&mut scenario, CREATOR);
+        {
+            let mut m = test_scenario::take_shared<Match>(&scenario);
+            let r = test_scenario::take_shared<Random>(&scenario);
+            let ctx = test_scenario::ctx(&mut scenario);
+            game_match::roll(&mut m, &r, ctx);
+            test_scenario::return_shared(m);
+            test_scenario::return_shared(r);
+        };
+        test_scenario::end(scenario);
+    }
+
+    #[test]
+    #[expected_failure(abort_code = 0)] // EWrongState
+    fun roll_before_join_aborts() {
+        let mut scenario = test_scenario::begin(CREATOR);
+        test_scenario::create_system_objects(&mut scenario);
+
+        test_scenario::next_tx(&mut scenario, CREATOR);
+        {
+            let ctx = test_scenario::ctx(&mut scenario);
+            let stake = coin::mint_for_testing<SUI>(STAKE, ctx);
+            game_match::open(stake, SESSION_PK_A, true, APP_MATCH_ID, option::none(), option::none(), ctx);
+        };
+
+        test_scenario::next_tx(&mut scenario, CREATOR);
+        {
+            let mut m = test_scenario::take_shared<Match>(&scenario);
+            let r = test_scenario::take_shared<Random>(&scenario);
+            let ctx = test_scenario::ctx(&mut scenario);
+            game_match::roll(&mut m, &r, ctx);
+            test_scenario::return_shared(m);
+            test_scenario::return_shared(r);
         };
         test_scenario::end(scenario);
     }
