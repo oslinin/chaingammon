@@ -11,8 +11,9 @@ inputs:
     description: >
       Token for authenticating the api.github.com calls below. Unauthenticated
       requests are capped at 60/hour per runner IP range, shared across every
-      GitHub Actions job in flight — easy to exhaust. Pass
-      ${{ secrets.GITHUB_TOKEN }} (read-only, needs no owner setup).
+      GitHub Actions job in flight — easy to exhaust. Callers should pass the
+      workflow's auto-injected GITHUB_TOKEN secret (read-only, needs no owner
+      setup) — see this repo's sui-ci.yml for the call site.
     required: true
   release-tag:
     description: >
