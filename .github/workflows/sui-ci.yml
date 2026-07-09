@@ -16,59 +16,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Installs the latest `testnet-*` release of the `sui` CLI dynamically
-      # via the GitHub Releases API, rather than a version hardcoded in this
-      # file — the CLI's release cadence is fast and a hardcoded tag goes
-      # stale quickly. Once the owner has verified a specific version locally
-      # (see sui/README.md "Toolchain version"), pin `SUI_RELEASE_TAG` below
-      # to that exact tag for reproducibility instead of "latest".
-      - name: Install Sui CLI (testnet)
-        env:
-          # Pinned to the release verified green in CI on 2026-07-08 (see
-          # sui/README.md "Toolchain version"). Bump this only after a newer
-          # testnet-* release has also passed `sui move test`.
-          SUI_RELEASE_TAG: "testnet-v1.75.1"
-          # Authenticates the GitHub API calls below with the workflow's
-          # auto-injected token. Unauthenticated api.github.com requests are
-          # capped at 60/hour *per runner IP range*, shared across every
-          # GitHub Actions job in flight — easy to exhaust and exactly what
-          # broke the previous CI run (curl: (22) ... 403). The default
-          # GITHUB_TOKEN (read-only, no repo secrets needed) raises this to
-          # 5000/hour and needs no owner setup.
-          GH_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          AUTH_HEADER="Authorization: Bearer ${GH_API_TOKEN}"
-          if [ -z "$SUI_RELEASE_TAG" ]; then
-            TAG=$(curl -fsSL -H "$AUTH_HEADER" https://api.github.com/repos/MystenLabs/sui/releases \
-              | jq -r '[.[] | select(.tag_name | startswith("testnet-"))][0].tag_name')
-          else
-            TAG="$SUI_RELEASE_TAG"
-          fi
-          echo "Using Sui CLI release: $TAG"
-          ASSET_URL=$(curl -fsSL -H "$AUTH_HEADER" "https://api.github.com/repos/MystenLabs/sui/releases/tags/$TAG" \
-            | jq -r '.assets[] | select(.name | test("ubuntu.*x86_64.*\\.tgz$")) | .browser_download_url' | head -n1)
-          if [ -z "$ASSET_URL" ] || [ "$ASSET_URL" = "null" ]; then
-            echo "::error::Could not find an ubuntu-x86_64 asset for release $TAG" >&2
-            exit 1
-          fi
-          # Extract into an isolated temp dir, NOT the checkout root — the
-          # repo already has a top-level sui/ directory (this very port), and
-          # the release tarball's flat `sui` binary collides with it
-          # ("tar: ./sui: Cannot open: File exists") if extracted in place.
-          EXTRACT_DIR="$(mktemp -d)"
-          curl -fsSL -o "$EXTRACT_DIR/sui-cli.tgz" "$ASSET_URL"
-          tar -xzf "$EXTRACT_DIR/sui-cli.tgz" -C "$EXTRACT_DIR"
-          # The tarball layout has varied across releases (flat binary vs.
-          # a bin/ subdirectory) — find the `sui` executable wherever it landed.
-          SUI_BIN=$(find "$EXTRACT_DIR" -maxdepth 3 -type f -name sui -perm -u+x | head -n1)
-          if [ -z "$SUI_BIN" ]; then
-            echo "::error::sui binary not found after extracting $ASSET_URL" >&2
-            exit 1
-          fi
-          sudo install -m 755 "$SUI_BIN" /usr/local/bin/sui
-          rm -rf "$EXTRACT_DIR"
-          sui --version
+      - uses: ./.github/actions/install-sui-cli
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: sui move build
         working-directory: sui/move/chaingammon
@@ -109,4 +59,38 @@ jobs:
 
       - name: Playwright tests
         run: pnpm run test:e2e
+        working-directory: sui/app
+
+  # Separate from `app` above: this job needs the `sui` CLI to stand up a
+  # real local network (Task 5 Step 4 — AUTH_MODE=mock sign-in creates a
+  # HumanProfile on-chain, unlike the unrated P2P suite in the `app` job,
+  # which has no chain dependency at all). Kept as its own job so a slow or
+  # flaky localnet never blocks the unrated-play suite's own signal.
+  app-localnet:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/install-sui-cli
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --filter sui-app... --filter sui-scripts
+
+      - name: Install Playwright browsers
+        run: pnpm exec playwright install --with-deps chromium
+        working-directory: sui/app
+
+      - name: Playwright tests (localnet)
+        run: pnpm run test:e2e:localnet
         working-directory: sui/app

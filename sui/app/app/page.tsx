@@ -14,6 +14,7 @@ import { NostrMatchClient, newIdentity } from "../lib/nostr";
 import { computePairing, type Searcher } from "../lib/matchmaker";
 import { connectPeer } from "../lib/webrtc_match";
 import { peerMatches } from "../lib/peer_connections";
+import { SignInPanel } from "./SignInPanel";
 
 const STABILIZE_MS = 3_000;
 const PRESENCE_TTL_S = 22;
@@ -128,6 +129,8 @@ export default function Home() {
         fontFamily: "var(--cg-font-sans)", color: "var(--cg-fg-1)", padding: 24,
       }}
     >
+      <SignInPanel />
+
       <div style={{ textAlign: "center", maxWidth: 480 }}>
         <h1 style={{ fontFamily: "var(--cg-font-display)", fontSize: 32, fontWeight: 400, marginBottom: 8 }}>
           Unrated backgammon

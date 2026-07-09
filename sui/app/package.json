@@ -9,10 +9,12 @@
     "lint": "eslint",
     "test": "next build --webpack",
     "test:e2e": "playwright test",
+    "test:e2e:localnet": "playwright test --config playwright.localnet.config.ts",
     "copy:wasm": "mkdir -p public/js && cp node_modules/onnxruntime-web/dist/ort-wasm-simd.wasm node_modules/onnxruntime-web/dist/ort-wasm.wasm public/js/",
     "postinstall": "pnpm run copy:wasm"
   },
   "dependencies": {
+    "@mysten/sui": "^2.20.2",
     "next": "16.2.4",
     "nostr-tools": "^2.10.4",
     "onnxruntime-web": "1.16.3",
