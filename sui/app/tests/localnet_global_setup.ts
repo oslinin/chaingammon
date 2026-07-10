@@ -69,9 +69,14 @@ export default async function globalSetup() {
   // no ~/.sui/sui_config/client.yaml yet (any fresh CI runner), starting
   // the network before that config exists fails fast with "Wallet Error:
   // No address found with sufficient coins". Force that one-time config
-  // creation first (same throwaway no-op call publish_localnet.ts's
-  // buildPackage() also uses, for the same reason on the build side).
-  execFileSync("sui", ["client", "active-address"], { stdio: "ignore" });
+  // creation first (same call publish_localnet.ts's buildPackage() also
+  // uses, for the same reason on the build side). `-y` is the CLI's own
+  // documented flag for skipping the first-run "connect to a Full node?"
+  // prompt non-interactively — relying on stdin EOF under `stdio:"ignore"`
+  // to implicitly answer it proved flaky in CI: it passed once, then a
+  // later run hit this exact "No address found" error again with identical
+  // code, meaning the implicit-EOF answer isn't deterministic across runs.
+  execFileSync("sui", ["client", "-y", "active-address"], { stdio: "ignore" });
 
   console.log("[localnet] starting `sui start --with-faucet --force-regenesis`…");
   const logFd = openSync(LOG_FILE, "a");

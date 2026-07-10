@@ -42,17 +42,20 @@ interface BuildOutput {
 }
 
 // On a machine with no ~/.sui/sui_config/client.yaml yet (e.g. a fresh CI
-// runner), the FIRST `sui` invocation of any kind prints an interactive
-// "No sui config found ... create one [Y/n]?" prompt to stdout before doing
-// anything else (it auto-proceeds with a generated keypair when stdin isn't
-// a TTY, but the prompt text still lands on stdout). We never touch this
-// generated client identity — publishing below signs with its own throwaway
-// keypair via the TS SDK — but that prompt text would otherwise corrupt the
-// `--dump-bytecode-as-base64` JSON output. Trigger it once here, on a
-// command whose output we don't need, so the real build call's stdout is
-// clean JSON.
+// runner), the FIRST `sui client` invocation of any kind prints an
+// interactive "Config file ... doesn't exist, do you want to connect to a
+// Sui Full node server? [y/N]" prompt before doing anything else. We never
+// touch this generated client identity — publishing below signs with its
+// own throwaway keypair via the TS SDK — but that prompt text would
+// otherwise corrupt the `--dump-bytecode-as-base64` JSON output, and
+// relying on stdin EOF (non-tty `stdio:"ignore"`) to implicitly answer it
+// proved flaky in CI (sometimes produced a config with no funded address,
+// intermittently breaking `sui start --with-faucet`, which funds whichever
+// address this config's keystore holds). `-y` is the CLI's own documented
+// flag for skipping first-run prompts non-interactively — deterministic,
+// unlike relying on stdin behavior.
 function ensureSuiConfigExists(): void {
-  execFileSync("sui", ["client", "active-address"], { stdio: "ignore" });
+  execFileSync("sui", ["client", "-y", "active-address"], { stdio: "ignore" });
 }
 
 function buildPackage(): BuildOutput {
