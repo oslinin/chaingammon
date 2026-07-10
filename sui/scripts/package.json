@@ -12,6 +12,7 @@
     "typescript": "^5"
   },
   "dependencies": {
+    "@mysten/seal": "^1.2.4",
     "@mysten/sui": "^2.20.2"
   }
 }

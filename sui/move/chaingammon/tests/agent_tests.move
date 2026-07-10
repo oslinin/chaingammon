@@ -1,9 +1,10 @@
 #[test_only]
-/// Tests for chaingammon::agent (Task 2). Abort codes are asserted as raw
-/// literals rather than `agent::ENotOwner` etc. — Move constants are
-/// private to their declaring module (there is no `public const`), so a
-/// separate test module can't reference them by path. The mapping:
-///   0 = ENotOwner, 1 = EInsufficientBalance, 2 = EZeroAmount
+/// Tests for chaingammon::agent (Task 2; Task 7 adds seal_approve). Abort
+/// codes are asserted as raw literals rather than `agent::ENotOwner` etc. —
+/// Move constants are private to their declaring module (there is no
+/// `public const`), so a separate test module can't reference them by
+/// path. The mapping:
+///   0 = ENotOwner, 1 = EInsufficientBalance, 2 = EZeroAmount, 3 = ENoAccess
 /// (see sui/move/chaingammon/sources/agent.move's Errors section).
 module chaingammon::agent_tests {
     use sui::coin;
@@ -158,6 +159,68 @@ module chaingammon::agent_tests {
         assert!(agent::match_count(&a) == 2, 3);
 
         transfer::public_transfer(a, OWNER);
+        test_scenario::end(scenario);
+    }
+
+    #[test]
+    fun seal_approve_succeeds_for_owner_with_matching_id() {
+        // seal_approve is `public(package) entry` — callable directly from
+        // this test module (same package), the same pattern
+        // game_match_tests.move uses for game_match::roll. A real Seal key
+        // server instead dry-runs a PTB calling this via the app/script;
+        // this test exercises the exact same logic without needing a live
+        // key server (untestable from this sandbox — see the Task 7
+        // CHANGELOG/README entries).
+        let mut scenario = test_scenario::begin(OWNER);
+        let ctx = test_scenario::ctx(&mut scenario);
+        let a = agent::new(b"agent", 0, ctx);
+        let agent_id = agent::id(&a);
+
+        agent::seal_approve(object::id_to_bytes(&agent_id), &a, ctx);
+
+        transfer::public_transfer(a, OWNER);
+        test_scenario::end(scenario);
+    }
+
+    #[test]
+    #[expected_failure(abort_code = 3)] // ENoAccess
+    fun seal_approve_rejects_mismatched_id() {
+        // A caller who owns `a` but requests approval under a DIFFERENT
+        // identity (e.g. another Agent's id) must be denied — otherwise
+        // owning any one Agent would unlock every Agent's weights blob.
+        let mut scenario = test_scenario::begin(OWNER);
+        let ctx = test_scenario::ctx(&mut scenario);
+        let a = agent::new(b"agent", 0, ctx);
+        let other = agent::new(b"other-agent", 0, ctx);
+        let other_id = agent::id(&other);
+
+        agent::seal_approve(object::id_to_bytes(&other_id), &a, ctx);
+
+        transfer::public_transfer(a, OWNER);
+        transfer::public_transfer(other, OWNER);
+        test_scenario::end(scenario);
+    }
+
+    #[test]
+    #[expected_failure(abort_code = 3)] // ENoAccess
+    fun seal_approve_rejects_non_owner() {
+        let mut scenario = test_scenario::begin(OWNER);
+        {
+            let ctx = test_scenario::ctx(&mut scenario);
+            let a = agent::new(b"agent", 0, ctx);
+            transfer::public_transfer(a, OWNER);
+        };
+
+        test_scenario::next_tx(&mut scenario, OTHER);
+        {
+            let a = test_scenario::take_from_address<Agent>(&scenario, OWNER);
+            let ctx = test_scenario::ctx(&mut scenario);
+            let agent_id = agent::id(&a);
+
+            agent::seal_approve(object::id_to_bytes(&agent_id), &a, ctx);
+
+            test_scenario::return_to_address(OWNER, a);
+        };
         test_scenario::end(scenario);
     }
 }

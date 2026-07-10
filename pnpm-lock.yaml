@@ -128,7 +128,7 @@ importers:
         version: 9.39.4(jiti@2.6.1)
       eslint-config-next:
         specifier: 16.2.4
-        version: 16.2.4(eslint@9.39.4(jiti@2.6.1))(typescript@5.9.3)
+        version: 16.2.4(@typescript-eslint/parser@8.59.0(eslint@9.39.4(jiti@2.6.1))(typescript@5.9.3))(eslint@9.39.4(jiti@2.6.1))(typescript@5.9.3)
       tailwindcss:
         specifier: ^4
         version: 4.2.4
@@ -198,7 +198,7 @@ importers:
         version: 9.39.4(jiti@2.6.1)
       eslint-config-next:
         specifier: 16.2.4
-        version: 16.2.4(@typescript-eslint/parser@8.59.0(eslint@9.39.4(jiti@2.6.1))(typescript@5.9.3))(eslint@9.39.4(jiti@2.6.1))(typescript@5.9.3)
+        version: 16.2.4(eslint@9.39.4(jiti@2.6.1))(typescript@5.9.3)
       tailwindcss:
         specifier: ^4
         version: 4.2.4
@@ -208,6 +208,9 @@ importers:
 
   sui/scripts:
     dependencies:
+      '@mysten/seal':
+        specifier: ^1.2.4
+        version: 1.2.4(@mysten/sui@2.20.2(typescript@5.9.3))
       '@mysten/sui':
         specifier: ^2.20.2
         version: 2.20.2(typescript@5.9.3)
@@ -1261,6 +1264,11 @@ packages:
 
   '@mysten/bcs@2.1.0':
     resolution: {integrity: sha512-rIR/cDAqDfBDxmYEZXppN/on8gmh1OW0dYi/Bk2kMBZcYMTaBaEtEX1VR6g7HicVxuMbFAIP0/SQkdH7J9Y5dQ==}
+
+  '@mysten/seal@1.2.4':
+    resolution: {integrity: sha512-Fswykfnh9UgwhPURiifVXUbHzFCHs+sjYNJMP4GKpZpsuShBnu0lybxvogCgNg0ZvB9VLY/VwKZJDgpq8jf2Xw==}
+    peerDependencies:
+      '@mysten/sui': ^2.20.2
 
   '@mysten/sui@2.20.2':
     resolution: {integrity: sha512-yzvxhcnds6PRZd6jrTtp6AdXXfqtXPHhxR372Dejtu/4JtZYBynhdcJRZkTNGW4Gy7R/7k6VQzt7IBe4HsyHJQ==}
@@ -9586,6 +9594,13 @@ snapshots:
     dependencies:
       '@mysten/utils': 0.4.0
       '@scure/base': 2.2.0
+
+  '@mysten/seal@1.2.4(@mysten/sui@2.20.2(typescript@5.9.3))':
+    dependencies:
+      '@mysten/bcs': 2.1.0
+      '@mysten/sui': 2.20.2(typescript@5.9.3)
+      '@noble/curves': 2.2.0
+      '@noble/hashes': 2.2.0
 
   '@mysten/sui@2.20.2(typescript@5.9.3)':
     dependencies:

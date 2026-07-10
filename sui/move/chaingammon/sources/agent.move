@@ -36,6 +36,7 @@ module chaingammon::agent {
     const ENotOwner: u64 = 0;
     const EInsufficientBalance: u64 = 1;
     const EZeroAmount: u64 = 2;
+    const ENoAccess: u64 = 3;
 
     // ── Types ───────────────────────────────────────────────────────────
 
@@ -191,6 +192,34 @@ module chaingammon::agent {
         assert!(tx_context::sender(ctx) == agent.owner, ENotOwner);
         agent.weights_blob = option::some(BlobRef { id: blob_id, content_hash });
         event::emit(WeightsSet { agent_id: object::id(agent), blob_id, content_hash });
+    }
+
+    /// Seal access-control policy (Task 7): gates decryption of an Agent's
+    /// Walrus-stored weights blob on CURRENT ownership of that specific
+    /// Agent. `sui/scripts/mint_agent.ts` Seal-encrypts the ONNX export
+    /// under `id = <this agent's object id bytes>`; `fetch_weights.ts`
+    /// builds a PTB calling this function and Seal's key servers dry-run
+    /// it to decide whether to release key shares.
+    ///
+    /// Per the Seal docs' `seal_approve*` convention: the first parameter
+    /// is always the requested identity with the package-id prefix already
+    /// stripped by the key server (so `id` here is just the per-object
+    /// suffix we chose at encrypt time); the function must be side-effect
+    /// free (`&Agent`, never `&mut`) and MUST ABORT — not return `false` —
+    /// to deny access, since "approved" simply means "did not abort".
+    /// Binding `id == object::id_to_bytes(agent)` (not just checking
+    /// ownership) matters because a single owner can hold many Agents —
+    /// without this check, approval for one Agent's identity would also
+    /// approve decryption of every other Agent that owner happens to own.
+    /// `public(package) entry`: `entry` so the key servers' dry-run PTB can
+    /// invoke it directly; `public(package)` (not plain `public`) so a
+    /// different package could never compose this into its own function
+    /// and launder an approval — the same composability concern documented
+    /// on `game_match::roll`.
+    public(package) entry fun seal_approve(id: vector<u8>, agent: &Agent, ctx: &TxContext) {
+        let agent_id = object::id(agent);
+        assert!(id == object::id_to_bytes(&agent_id), ENoAccess);
+        assert!(tx_context::sender(ctx) == agent.owner, ENoAccess);
     }
 
     // ── Match settlement hook ─────────────────────────────────────────────

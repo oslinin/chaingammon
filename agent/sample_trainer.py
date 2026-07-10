@@ -743,10 +743,25 @@ def main() -> None:
                              "og-bridge. Requires --save-checkpoint and "
                              "the OG_STORAGE_{RPC,INDEXER,PRIVATE_KEY} "
                              "env triple (see server/.env.example).")
+    parser.add_argument("--upload-to-walrus", action="store_true",
+                        help="After saving the checkpoint, AES-256-GCM-"
+                             "encrypt it (with a fresh key, also written "
+                             "next to the checkpoint as <ckpt>.walrus.key) "
+                             "and upload the sealed blob to Walrus via its "
+                             "public HTTP publisher (see agent/"
+                             "walrus_upload.py) — an alternative blob store "
+                             "to --upload-to-0g; either or both may be set. "
+                             "Requires --save-checkpoint. This is a separate "
+                             "path from the Task 7 Seal-encrypted agent-"
+                             "weights flow (sui/scripts/mint_agent.ts), "
+                             "which uses identity-based encryption gated by "
+                             "an on-chain policy rather than this app-"
+                             "managed key.")
     parser.add_argument("--no-encrypt", action="store_true",
-                        help="Demo modifier for --upload-to-0g: upload the "
-                             "raw torch.save bytes (no AES-256-GCM seal, "
-                             "no .key file). Used by the recommend-teammate "
+                        help="Demo modifier for --upload-to-0g/"
+                             "--upload-to-walrus: upload the raw "
+                             "torch.save bytes (no AES-256-GCM seal, no "
+                             ".key file). Used by the recommend-teammate "
                              "demo path so a server with no key can fetch "
                              "and content-sniff the checkpoint via "
                              "agent_profile.load_profile. Production agents "
@@ -1057,8 +1072,41 @@ def main() -> None:
                 # Don't raise — the local checkpoint is still on disk and
                 # the user can retry the upload manually.
 
-    elif args.upload_to_0g:
-        print("--upload-to-0g requires --save-checkpoint; skipping upload.",
+        if args.upload_to_walrus:
+            # Locally-imported so the trainer works without the
+            # cryptography lib for users who don't intend to upload.
+            from walrus_upload import WalrusUploadError, upload_checkpoint as upload_checkpoint_walrus
+
+            raw = ckpt_path.read_bytes()
+            if args.no_encrypt:
+                sealed = raw
+                print("WARNING: --no-encrypt set; uploading PLAINTEXT "
+                      "checkpoint to Walrus. The blob will be readable "
+                      "by anyone who fetches the blobId. This is the "
+                      "demo path for recommend-teammate end-to-end; "
+                      "production agents must leave --no-encrypt off.")
+            else:
+                from checkpoint_encryption import encrypt_blob, generate_key
+                key = generate_key()
+                sealed = encrypt_blob(raw, key)
+                key_path = ckpt_path.with_suffix(ckpt_path.suffix + ".walrus.key")
+                key_path.write_bytes(key)
+                print(f"Wrote AES-256-GCM key alongside checkpoint: {key_path} "
+                      f"(keep this; without it the uploaded blob is unreadable)")
+
+            try:
+                result = upload_checkpoint_walrus(sealed)
+                kind = "plaintext" if args.no_encrypt else "encrypted"
+                print(f"Uploaded {kind} checkpoint to Walrus:")
+                print(f"  blobId      = {result.blob_id}")
+                print(f"  suiObjectId = {result.sui_object_id}")
+            except WalrusUploadError as e:
+                print(f"Upload failed: {e}", file=sys.stderr)
+                # Don't raise — the local checkpoint is still on disk and
+                # the user can retry the upload manually.
+
+    elif args.upload_to_0g or args.upload_to_walrus:
+        print("--upload-to-0g/--upload-to-walrus require --save-checkpoint; skipping upload.",
               file=sys.stderr)
 
     if args.export_onnx:
