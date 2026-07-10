@@ -32,6 +32,8 @@ import {
   loadLocalnetConfig,
   hasProfile,
   profileIdFor,
+  createProfile,
+  requestFaucet,
   type LocalnetConfig,
 } from "../../lib/sui_client";
 import {
@@ -398,12 +400,24 @@ function HumanMatchInner() {
         setPhaseError("Rated play requires a published localnet (see sui/README.md) — none configured.");
         return;
       }
+      // A player who lands here without ever clicking "Sign in" on the home
+      // page (the common path — "Play rated" goes straight to matchmaking)
+      // still needs a funded address to lock a stake; request the faucet
+      // unconditionally, same as SignInPanel's signIn(). Rate-limits/errors
+      // are swallowed — a returning guest with an already-funded address
+      // doesn't need it anyway.
+      await requestFaucet(config, mySuiAddressRef.current).catch(() => {});
       try {
-        if (await hasProfile(config, mySuiAddressRef.current)) {
-          myProfileIdRef.current = await profileIdFor(config, mySuiAddressRef.current);
+        // Rated play always tracks ELO, so ensure a profile exists here too
+        // (not just via the home page's "Sign in") rather than silently
+        // falling back to the no-ELO settle path.
+        if (!(await hasProfile(config, mySuiAddressRef.current))) {
+          const shortAddr = mySuiAddressRef.current.slice(0, 8);
+          await createProfile(config, identityRef.current.keypair, `guest-${shortAddr}`);
         }
+        myProfileIdRef.current = await profileIdFor(config, mySuiAddressRef.current);
       } catch {
-        // No profile yet — settle falls back to the no-ELO path.
+        // Profile creation failed — settle falls back to the no-ELO path.
       }
 
       const sendHello = () => {
@@ -561,12 +575,16 @@ function HumanMatchInner() {
       __HVH_MY_SIDE?: 0 | 1 | null;
       __HVH_PHASE?: Phase;
       __HVH_MATCH_OBJECT_ID?: string | null;
+      __HVH_MY_SUI_ADDRESS?: string;
+      __HVH_SETTLED_NOTE?: string | null;
     };
     w.__HVH_GAME_STATE = game;
     w.__HVH_MY_SIDE = mySide;
     w.__HVH_PHASE = phase;
     w.__HVH_MATCH_OBJECT_ID = matchObjectIdRef.current;
-  }, [testMode, game, mySide, phase]);
+    w.__HVH_MY_SUI_ADDRESS = mySuiAddressRef.current;
+    w.__HVH_SETTLED_NOTE = settledTxNote;
+  }, [testMode, game, mySide, phase, settledTxNote]);
 
   // ── Render ───────────────────────────────────────────────────────────────
   const entry = peerMatches.get(matchId);

@@ -1,19 +1,19 @@
-// playwright.localnet.config.ts — runs ONLY tests/profile_signin.spec.ts,
-// against a real local Sui network (see tests/localnet_global_setup.ts).
-// Kept separate from playwright.config.ts (the unrated-P2P suite, which
-// needs no chain at all) so a missing/slow `sui` CLI never affects that
-// suite's own CI job. Run with:
+// playwright.localnet.config.ts — runs the specs that need a real local Sui
+// network (tests/profile_signin.spec.ts, tests/rated_hvh.spec.ts) — see
+// tests/localnet_global_setup.ts. Kept separate from playwright.config.ts
+// (the unrated-P2P suite, which needs no chain at all) so a missing/slow
+// `sui` CLI never affects that suite's own CI job. Run with:
 //   pnpm exec playwright test --config playwright.localnet.config.ts
 import { defineConfig, devices } from "@playwright/test";
 
 export default defineConfig({
   testDir: "./tests",
-  testMatch: "profile_signin.spec.ts",
+  testMatch: ["profile_signin.spec.ts", "rated_hvh.spec.ts"],
   globalSetup: "./tests/localnet_global_setup.ts",
   globalTeardown: "./tests/localnet_global_teardown.ts",
   workers: 1,
   retries: 0,
-  timeout: 120_000,
+  timeout: 600_000,
   use: {
     baseURL: "http://localhost:3000",
   },

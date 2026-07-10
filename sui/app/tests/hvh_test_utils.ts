@@ -184,8 +184,12 @@ export interface MatchSetup {
 
 export async function setupMatch(
   browser: Browser,
-  opts: { modelMoves?: boolean; matchLength?: number } = {},
+  opts: { modelMoves?: boolean; matchLength?: number; rated?: boolean } = {},
 ): Promise<MatchSetup> {
+  const rated = !!opts.rated;
+  const playPath = rated ? "/play-rated" : "/play";
+  const buttonName = rated ? "Play rated (0.1 SUI)" : "Play unrated";
+
   const relay = new InMemoryNostrRelay();
   const ctx1 = await browser.newContext();
   const ctx2 = await browser.newContext();
@@ -196,7 +200,7 @@ export async function setupMatch(
   // starts — a cold `next dev` compile of /play can exceed the matchmaking
   // window and make the first attempt flake.
   await page1.request.get("/");
-  await page1.request.get("/play?id=warmup");
+  await page1.request.get(`${playPath}?id=warmup`);
 
   await setupBridge(page1, page2);
 
@@ -217,17 +221,20 @@ export async function setupMatch(
   await page1.addInitScript({ content: MOCK_RTC_SCRIPT });
   await page2.addInitScript({ content: MOCK_RTC_SCRIPT });
 
+  // Only Nostr signaling (wss://) is mocked — rated play's real RPC/faucet
+  // HTTP calls to the localnet started by localnet_global_setup.ts pass
+  // through untouched.
   await page1.routeWebSocket("wss://**", (ws) => relay.addClient(ws));
   await page2.routeWebSocket("wss://**", (ws) => relay.addClient(ws));
 
   await Promise.all([page1.goto("/"), page2.goto("/")]);
 
   await Promise.all([
-    page1.getByRole("button", { name: "Play" }).click({ timeout: 10_000 }),
-    page2.getByRole("button", { name: "Play" }).click({ timeout: 10_000 }),
+    page1.getByRole("button", { name: buttonName }).click({ timeout: 10_000 }),
+    page2.getByRole("button", { name: buttonName }).click({ timeout: 10_000 }),
   ]);
 
-  const isPlay = (url: URL) => /^\/play\/?$/.test(url.pathname) && url.searchParams.has("id");
+  const isPlay = (url: URL) => url.pathname === playPath && url.searchParams.has("id");
   await Promise.all([
     page1.waitForURL(isPlay, { timeout: 60_000 }),
     page2.waitForURL(isPlay, { timeout: 60_000 }),
@@ -276,6 +283,48 @@ export function readHvhState(page: Page): Promise<HvhSnapshot> {
             position_id: g.position_id,
           }
         : null,
+    };
+  });
+}
+
+// Rated-play variant: same game snapshot plus the on-chain identifiers and
+// phase that only play-rated/page.tsx's testMode window mirror sets.
+export interface RatedHvhSnapshot extends HvhSnapshot {
+  phase: string | null;
+  matchObjectId: string | null;
+  mySuiAddress: string | null;
+  settledNote: string | null;
+}
+
+export function readRatedHvhState(page: Page): Promise<RatedHvhSnapshot> {
+  return page.evaluate(() => {
+    const w = window as Window & {
+      __HVH_GAME_STATE?: HvhSnapshot["game"];
+      __HVH_MY_SIDE?: 0 | 1 | null;
+      __HVH_MODEL_MOVE_COUNT?: number;
+      __HVH_PHASE?: string;
+      __HVH_MATCH_OBJECT_ID?: string | null;
+      __HVH_MY_SUI_ADDRESS?: string;
+      __HVH_SETTLED_NOTE?: string | null;
+    };
+    const g = w.__HVH_GAME_STATE ?? null;
+    return {
+      mySide: w.__HVH_MY_SIDE ?? null,
+      modelMoveCount: w.__HVH_MODEL_MOVE_COUNT ?? 0,
+      game: g
+        ? {
+            game_over: g.game_over,
+            winner: g.winner,
+            score: g.score,
+            match_length: g.match_length,
+            off: g.off,
+            position_id: g.position_id,
+          }
+        : null,
+      phase: w.__HVH_PHASE ?? null,
+      matchObjectId: w.__HVH_MATCH_OBJECT_ID ?? null,
+      mySuiAddress: w.__HVH_MY_SUI_ADDRESS ?? null,
+      settledNote: w.__HVH_SETTLED_NOTE ?? null,
     };
   });
 }
