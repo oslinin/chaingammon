@@ -11,14 +11,8 @@
 //   SUI_PACKAGE_ID            - required: the published chaingammon package id
 //   SUI_PRIVATE_KEY           - required: bech32 secret key (from Ed25519Keypair.getSecretKey())
 //                               of the minting/owner address; pays gas and becomes Agent.owner
-//   SEAL_KEY_SERVER_OBJECT_IDS - required to actually encrypt: comma-separated object ids
-//                               of the Seal key servers to use. Deliberately NOT hardcoded
-//                               here — this sandbox's egress policy blocks docs.wal.app and
-//                               github.com, so the currently-verified testnet key server ids
-//                               could not be confirmed from within this environment (see
-//                               sui/README.md's Task 7 section for the full explanation).
-//                               Find the current list at the Seal docs' "Verified Key
-//                               Servers" page (seal-docs.wal.app) and set this yourself.
+//   SEAL_KEY_SERVER_OBJECT_IDS - required to actually encrypt — see seal_agent_lib.ts's
+//                               sealKeyServerConfigs() doc comment for why this isn't hardcoded.
 //   SEAL_THRESHOLD            - number of key servers required to decrypt (default "1")
 //   WALRUS_PUBLISHER_URL      - defaults to the public testnet publisher
 //   WALRUS_EPOCHS             - storage epochs to pay for (default "1")
@@ -45,6 +39,8 @@ import { Transaction } from "@mysten/sui/transactions";
 import { Ed25519Keypair } from "@mysten/sui/keypairs/ed25519";
 import { SealClient } from "@mysten/seal";
 
+import { requireEnv, sealKeyServerConfigs, uploadToWalrus } from "./seal_agent_lib.ts";
+
 const NETWORK = (process.env.SUI_NETWORK === "localnet" ? "localnet" : "testnet") as
   | "localnet"
   | "testnet";
@@ -52,54 +48,8 @@ const RPC_URL = process.env.SUI_RPC_URL ?? getJsonRpcFullnodeUrl(NETWORK);
 const PACKAGE_ID = requireEnv("SUI_PACKAGE_ID");
 const PRIVATE_KEY = requireEnv("SUI_PRIVATE_KEY");
 const SEAL_THRESHOLD = Number(process.env.SEAL_THRESHOLD ?? "1");
-const WALRUS_PUBLISHER_URL = (process.env.WALRUS_PUBLISHER_URL ?? "https://publisher.walrus-testnet.walrus.space").replace(/\/$/, "");
+const WALRUS_PUBLISHER_URL = process.env.WALRUS_PUBLISHER_URL ?? "https://publisher.walrus-testnet.walrus.space";
 const WALRUS_EPOCHS = process.env.WALRUS_EPOCHS ?? "1";
-
-function requireEnv(name: string): string {
-  const v = process.env[name];
-  if (!v) throw new Error(`${name} env var is required`);
-  return v;
-}
-
-function sealKeyServerConfigs(): { objectId: string; weight: number }[] {
-  const raw = process.env.SEAL_KEY_SERVER_OBJECT_IDS;
-  if (!raw) {
-    throw new Error(
-      "SEAL_KEY_SERVER_OBJECT_IDS is required. This is not hardcoded in this script — " +
-        "see the header comment for why (blocked egress to Seal's docs from this " +
-        "environment). Set it to a comma-separated list of verified Seal key server " +
-        "object ids for the target network.",
-    );
-  }
-  return raw.split(",").map((objectId) => ({ objectId: objectId.trim(), weight: 1 }));
-}
-
-interface WalrusUploadResult {
-  blobId: string;
-  suiObjectId: string | null;
-}
-
-/** Mirrors agent/walrus_upload.py's upload_checkpoint — same HTTP API, TS side. */
-async function uploadToWalrus(data: Uint8Array): Promise<WalrusUploadResult> {
-  const res = await fetch(`${WALRUS_PUBLISHER_URL}/v1/blobs?epochs=${WALRUS_EPOCHS}`, {
-    method: "PUT",
-    body: Buffer.from(data),
-  });
-  if (!res.ok) {
-    throw new Error(`Walrus publisher returned ${res.status}: ${(await res.text()).slice(0, 500)}`);
-  }
-  const parsed = (await res.json()) as {
-    newlyCreated?: { blobObject: { id: string; blobId: string } };
-    alreadyCertified?: { blobId: string };
-  };
-  if (parsed.newlyCreated) {
-    return { blobId: parsed.newlyCreated.blobObject.blobId, suiObjectId: parsed.newlyCreated.blobObject.id };
-  }
-  if (parsed.alreadyCertified) {
-    return { blobId: parsed.alreadyCertified.blobId, suiObjectId: null };
-  }
-  throw new Error(`Walrus publisher response has neither 'newlyCreated' nor 'alreadyCertified': ${JSON.stringify(parsed)}`);
-}
 
 async function main() {
   const [onnxPathArg, nameArg, tierArg] = process.argv.slice(2);
@@ -157,7 +107,7 @@ async function main() {
 
   // ── 3. Upload the ciphertext to Walrus. ──────────────────────────────────
   console.log(`[mint_agent] uploading ${encryptedObject.length}-byte ciphertext to Walrus…`);
-  const uploaded = await uploadToWalrus(encryptedObject);
+  const uploaded = await uploadToWalrus(encryptedObject, WALRUS_PUBLISHER_URL, WALRUS_EPOCHS);
   console.log(`[mint_agent] Walrus blobId = ${uploaded.blobId}` + (uploaded.suiObjectId ? ` (suiObjectId ${uploaded.suiObjectId})` : " (already certified)"));
 
   // ── 4. Record the blob on-chain. blob_id is stored as the UTF-8 bytes of

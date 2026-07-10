@@ -223,4 +223,39 @@ module chaingammon::agent_tests {
         };
         test_scenario::end(scenario);
     }
+
+    #[test]
+    fun claim_ownership_syncs_owner_to_new_holder() {
+        // Models the real post-trade flow (Task 8): the Agent is
+        // legitimately transferred to OTHER (mirroring what
+        // kiosk::purchase + confirm_request hands the buyer), then OTHER
+        // — now the genuine Sui-level holder, via take_from_sender, not
+        // the take_from_address escape hatch used in the non-owner tests
+        // above — calls claim_ownership on their own object.
+        let mut scenario = test_scenario::begin(OWNER);
+        {
+            let ctx = test_scenario::ctx(&mut scenario);
+            let a = agent::new(b"agent", 0, ctx);
+            assert!(agent::owner(&a) == OWNER, 0);
+            transfer::public_transfer(a, OTHER);
+        };
+
+        test_scenario::next_tx(&mut scenario, OTHER);
+        {
+            let mut a = test_scenario::take_from_sender<Agent>(&scenario);
+            let ctx = test_scenario::ctx(&mut scenario);
+
+            agent::claim_ownership(&mut a, ctx);
+            assert!(agent::owner(&a) == OTHER, 1);
+
+            // The synced owner field is what set_weights/seal_approve/
+            // withdraw now check — prove OTHER (not the original OWNER)
+            // can exercise an owner-gated function post-claim.
+            agent::set_weights(&mut a, b"blob", b"hash", ctx);
+            assert!(agent::has_weights(&a), 2);
+
+            test_scenario::return_to_sender(&scenario, a);
+        };
+        test_scenario::end(scenario);
+    }
 }

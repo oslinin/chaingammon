@@ -97,6 +97,11 @@ module chaingammon::agent {
         match_count: u32,
     }
 
+    public struct OwnershipClaimed has copy, drop {
+        agent_id: ID,
+        new_owner: address,
+    }
+
     // ── One-time witness + Kiosk TransferPolicy (Task 8 prerequisite) ────
     //
     // Claiming a Publisher and creating a no-rules TransferPolicy<Agent> at
@@ -144,6 +149,28 @@ module chaingammon::agent {
     public fun mint(name: vector<u8>, tier: u8, ctx: &mut TxContext) {
         let agent = new(name, tier, ctx);
         transfer::public_transfer(agent, tx_context::sender(ctx));
+    }
+
+    // ── Ownership sync (Task 8: Kiosk trading) ────────────────────────────
+
+    /// Sync the explicit `owner` field to `ctx`'s sender. Needs no
+    /// permission check beyond what Sui's own object model already
+    /// enforces: `&mut Agent` is only obtainable in a transaction by
+    /// whoever currently holds the object (or, mid-PTB, whoever just
+    /// received it as a call result — e.g. straight out of
+    /// `sui::kiosk::purchase`), so a party who does not hold the Agent can
+    /// never construct a transaction that calls this in the first place.
+    /// A buyer calls this immediately after `kiosk::purchase` +
+    /// `transfer_policy::confirm_request` in the same PTB (see
+    /// `sui/scripts/trade_agent.ts`) — without it, `owner` would keep
+    /// pointing at the seller, and every owner-gated function here
+    /// (`withdraw`, `set_weights`, `seal_approve`) would stay wrong after
+    /// a trade, which is exactly the bug this module's header comment
+    /// flags as Task 8's job to close.
+    public fun claim_ownership(agent: &mut Agent, ctx: &TxContext) {
+        let new_owner = tx_context::sender(ctx);
+        agent.owner = new_owner;
+        event::emit(OwnershipClaimed { agent_id: object::id(agent), new_owner });
     }
 
     // ── Bankroll ────────────────────────────────────────────────────────
