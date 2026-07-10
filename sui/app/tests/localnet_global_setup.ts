@@ -64,6 +64,15 @@ export default async function globalSetup() {
     return;
   }
 
+  // `sui start --with-faucet` needs a client keystore to exist already (it
+  // funds the faucet from the CLI's own known address) — on a machine with
+  // no ~/.sui/sui_config/client.yaml yet (any fresh CI runner), starting
+  // the network before that config exists fails fast with "Wallet Error:
+  // No address found with sufficient coins". Force that one-time config
+  // creation first (same throwaway no-op call publish_localnet.ts's
+  // buildPackage() also uses, for the same reason on the build side).
+  execFileSync("sui", ["client", "active-address"], { stdio: "ignore" });
+
   console.log("[localnet] starting `sui start --with-faucet --force-regenesis`…");
   const logFd = openSync(LOG_FILE, "a");
   const child = spawn("sui", ["start", "--with-faucet", "--force-regenesis"], {
