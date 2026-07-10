@@ -34,9 +34,10 @@ export default function Home() {
   const [searchStatus, setSearchStatus] = useState("");
 
   const nostrRef = useRef<NostrMatchClient | null>(null);
-  const searchersRef = useRef<Map<string, { s: Searcher; at: number }>>(new Map());
+  const searchersRef = useRef<Map<string, { s: Searcher; at: number; rated: boolean }>>(new Map());
   const connectingRef = useRef(false);
   const cleanupRef = useRef<(() => void) | null>(null);
+  const modeRef = useRef<"unrated" | "rated">("unrated");
 
   const stopSearching = useCallback(() => {
     cleanupRef.current?.();
@@ -56,16 +57,19 @@ export default function Home() {
     for (const [pk, entry] of searchersRef.current) {
       if (now - entry.at > PRESENCE_TTL_S) searchersRef.current.delete(pk);
     }
+    const rated = modeRef.current === "rated";
     const searchers: Searcher[] = [
       { pubkey: nostr.pubkey, elo: GUEST_ELO },
-      ...Array.from(searchersRef.current.values()).map((e) => e.s),
+      ...Array.from(searchersRef.current.values())
+        .filter((e) => e.rated === rated)
+        .map((e) => e.s),
     ];
     const { partner, isOfferer } = computePairing(nostr.pubkey, searchers);
     if (!partner) {
       setSearchStatus(
-        searchersRef.current.size === 0
+        searchers.length <= 1
           ? "Searching for an opponent…"
-          : `${searchersRef.current.size} found, pairing…`,
+          : `${searchers.length - 1} found, pairing…`,
       );
       return;
     }
@@ -87,7 +91,7 @@ export default function Home() {
       if (s === "open") {
         clearTimeout(timer);
         nostr.stopPresence();
-        router.push(`/play?id=${mid}`);
+        router.push(`${rated ? "/play-rated" : "/play"}?id=${mid}`);
       } else if (s === "failed" || s === "closed") {
         clearTimeout(timer);
         connectingRef.current = false;
@@ -97,15 +101,19 @@ export default function Home() {
     });
   }, [router]);
 
-  const startPlay = useCallback(() => {
+  const startPlay = useCallback((mode: "unrated" | "rated") => {
+    modeRef.current = mode;
     const id = newIdentity();
     const nostr = new NostrMatchClient(id);
     nostrRef.current = nostr;
-    nostr.startPresence({ ensLabel: "", address: "", sessionPubkey: nostr.pubkey, elo: GUEST_ELO }, PRESENCE_INTERVAL_MS);
+    nostr.startPresence(
+      { ensLabel: "", address: "", sessionPubkey: nostr.pubkey, elo: GUEST_ELO, rated: mode === "rated" },
+      PRESENCE_INTERVAL_MS,
+    );
     const unsub = nostr.subscribePresence((p, pubkey, at) => {
       const existing = searchersRef.current.get(pubkey);
       if (!existing || at >= existing.at) {
-        searchersRef.current.set(pubkey, { s: { pubkey, elo: p.elo ?? GUEST_ELO }, at });
+        searchersRef.current.set(pubkey, { s: { pubkey, elo: p.elo ?? GUEST_ELO }, at, rated: !!p.rated });
       }
     });
     const stabilizeTimer = setTimeout(() => tryConnect(nostr), STABILIZE_MS);
@@ -133,28 +141,41 @@ export default function Home() {
 
       <div style={{ textAlign: "center", maxWidth: 480 }}>
         <h1 style={{ fontFamily: "var(--cg-font-display)", fontSize: 32, fontWeight: 400, marginBottom: 8 }}>
-          Unrated backgammon
+          Peer-to-peer backgammon
         </h1>
         <p style={{ fontSize: 14, color: "var(--cg-fg-3)" }}>
-          Play a peer-to-peer game with a stranger. No wallet, no stakes — just
-          matchmaking over Nostr and moves relayed directly between browsers.
-          Dice are generated fairly by both players via commit-reveal, so
-          neither side can control a roll.
+          Matchmaking over Nostr, moves relayed directly between browsers.
+          Play unrated for free with commit-reveal dice, or play rated for
+          real SUI stakes with dice drawn from on-chain randomness.
         </p>
       </div>
 
-      <button
-        type="button"
-        className="cg-btn-primary"
-        style={{
-          padding: "12px 32px", borderRadius: "var(--cg-radius)", border: "1px solid var(--cg-brass)",
-          background: "rgba(201,155,92,0.14)", color: "var(--cg-brass-hi)", fontSize: 16, fontWeight: 600,
-          fontFamily: "var(--cg-font-sans)", cursor: "pointer",
-        }}
-        onClick={searching ? stopSearching : startPlay}
-      >
-        {searching ? "Searching…" : "Play"}
-      </button>
+      <div style={{ display: "flex", gap: 12 }}>
+        <button
+          type="button"
+          className="cg-btn-primary"
+          style={{
+            padding: "12px 32px", borderRadius: "var(--cg-radius)", border: "1px solid var(--cg-brass)",
+            background: "rgba(201,155,92,0.14)", color: "var(--cg-brass-hi)", fontSize: 16, fontWeight: 600,
+            fontFamily: "var(--cg-font-sans)", cursor: "pointer",
+          }}
+          onClick={searching ? stopSearching : () => startPlay("unrated")}
+        >
+          {searching && modeRef.current === "unrated" ? "Searching…" : "Play unrated"}
+        </button>
+        <button
+          type="button"
+          className="cg-chip"
+          style={{
+            padding: "12px 32px", borderRadius: "var(--cg-radius)", border: "1px solid var(--cg-line-1)",
+            background: "var(--cg-bg-2)", color: "var(--cg-fg-1)", fontSize: 16, fontWeight: 600,
+            fontFamily: "var(--cg-font-sans)", cursor: "pointer",
+          }}
+          onClick={searching ? stopSearching : () => startPlay("rated")}
+        >
+          {searching && modeRef.current === "rated" ? "Searching…" : "Play rated (0.1 SUI)"}
+        </button>
+      </div>
 
       {searching && (
         <p style={{ fontSize: 13, color: "var(--cg-fg-4)" }}>{searchStatus}</p>

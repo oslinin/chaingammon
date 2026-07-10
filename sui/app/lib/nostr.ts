@@ -57,6 +57,8 @@ export interface PresenceContent {
   address: string;
   sessionPubkey: string;
   elo: number;
+  /** True while searching for a staked rated match — kept separate from the unrated pool so a rated searcher never pairs with an unrated one. */
+  rated?: boolean;
 }
 
 export interface SignalMsg {
