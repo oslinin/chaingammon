@@ -332,7 +332,21 @@ Written from scratch for this app (not copied — too EVM/wallet-entangled in th
 
 ## Deployed addresses
 
-_(none yet — populated starting Task 9, testnet deploy)_
+**Not yet deployed to testnet.** This development environment's network egress policy blocks the Sui testnet fullnode (confirmed empirically: a direct request to `fullnode.testnet.sui.io:443` returns `403 Host not in allowlist` from the local egress proxy, the same class of block documented throughout this README for `docs.wal.app`/`seal-docs.wal.app`/`github.com`) and there is no funded testnet Sui address available here — `sui client publish` genuinely cannot run from this environment, unlike everything else in this README, which either runs in CI or was verified against a real (if ephemeral) local network. This is Task 9 Step 1's one open item; every other Task 9 deliverable (submission assets, final CI verification pass, this table's structure) is done.
+
+**To complete this yourself** (needs a `sui` CLI with network access and a testnet-funded address):
+
+```bash
+cd sui/move/chaingammon
+sui client switch --env testnet   # or: sui client new-env --alias testnet --rpc https://fullnode.testnet.sui.io:443
+sui client faucet                  # funds your active address from the testnet faucet
+sui client publish --gas-budget 200000000
+# Note the package id, and from the publish output's created objects:
+#   - the shared ProfileRegistry (chaingammon::profile) id
+#   - the shared TransferPolicy<Agent> (chaingammon::agent, created in `init`) id — this is SUI_AGENT_TRANSFER_POLICY_ID for trade_agent.ts
+```
+
+Then fill in the table below and wire the deployed app's config (mirroring `sui/app/public/localnet-config.json`'s shape — `rpcUrl`, `faucetUrl` if applicable, `packageId`, `profileRegistryId`, `deployerAddress` — the app currently only auto-loads a `localnet` config; pointing it at testnet needs the same JSON file shape served at the same path, or a small config-source change if you'd rather branch on `NEXT_PUBLIC_SUI_NETWORK`). Deploy the app itself with the same static-export/GitHub Pages pattern as `master` if `sui/app`'s dependencies (ONNX WASM, COOP/COEP headers) permit it, else Vercel — document whichever here once done.
 
 | Network | Package ID | Notes |
 |---|---|---|
@@ -348,6 +362,10 @@ _(none yet — populated starting Task 9, testnet deploy)_
 The CLI install step is factored into `.github/actions/install-sui-cli` (a composite action), shared by all three localnet-backed steps (the `move` job, plus `app-localnet` for both Task 5 and Task 6's specs).
 
 Kept separate from the main repo's `ci.yml` so Sui-branch work never conflicts with `master` CI.
+
+## Overflow 2026 submission
+
+`sui/submission/one-pager.md` (problem, what's live vs. built, stack usage, traction) and `sui/submission/demo-script.md` (3-minute video shot list matching the design spec's §S7 checklist) are drafted. Both are honest about the current state: no live testnet deployment yet (see "Deployed addresses" above), so both documents use placeholders for the deployed URL and on-chain tx links rather than claiming a demo that hasn't happened. Recording the actual video is the owner's step once a testnet deploy closes that gap. Overflow registration: https://overflow.sui.io/
 
 ## Project layout (grows with each task)
 
