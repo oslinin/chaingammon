@@ -50,7 +50,7 @@ import type { PeerConnection } from "../../lib/webrtc_match";
 
 // ── Wire message types ─────────────────────────────────────────────────────
 
-type HelloMsg = { type: "hello"; nostrPubkey: string; suiAddress: string };
+type HelloMsg = { type: "hello"; nostrPubkey: string; suiAddress: string; profileId: string | null };
 type MatchOpenedMsg = { type: "match-opened"; matchObjectId: string };
 type MatchJoinedMsg = { type: "match-joined" };
 type ResultSigMsg = { type: "result-sig"; sig: string }; // hex
@@ -425,6 +425,7 @@ function HumanMatchInner() {
           type: "hello",
           nostrPubkey: entry.myNostrPubkey,
           suiAddress: mySuiAddressRef.current,
+          profileId: myProfileIdRef.current,
         } as HelloMsg);
       };
       peer.onState((s) => {
@@ -448,6 +449,7 @@ function HumanMatchInner() {
           mySideRef.current = side;
           setOppPubkey(oppNostrPk);
           oppSuiAddressRef.current = msg.suiAddress;
+          oppProfileIdRef.current = msg.profileId;
 
           const initial = newMatch(matchLength);
           gameRef.current = initial;
