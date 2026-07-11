@@ -7,6 +7,7 @@
 "use client";
 
 import { useCallback, useRef, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { keccak256, toBytes } from "viem";
 
@@ -180,6 +181,13 @@ export default function Home() {
       {searching && (
         <p style={{ fontSize: 13, color: "var(--cg-fg-4)" }}>{searchStatus}</p>
       )}
+
+      <Link
+        href="/play-agent"
+        style={{ fontSize: 13, color: "var(--cg-fg-3)", fontFamily: "var(--cg-font-sans)", textDecoration: "underline" }}
+      >
+        Play vs agent (local — no opponent needed)
+      </Link>
     </main>
   );
 }

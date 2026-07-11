@@ -35,7 +35,7 @@ node --experimental-strip-types mint_agent.ts path/to/model.onnx "demo-agent" 1
 
 ## Beat 4 — Agent plays a rated staked match (1:20–2:20)
 
-- Two players (or one player + the minted agent, if agent-vs-human play is wired by demo time — flagged as **not implemented** in `sui/README.md`'s Task 7 section as of this script's writing; if still true at recording time, run two human `/play-rated` sessions instead and narrate that the on-chain mechanics — stake lock, `sui::random` dice, cosigned settle — are identical either way) click **"Play rated (0.1 SUI)."**
+- Two players click **"Play rated (0.1 SUI)."** (Local casual play *against* an agent exists at `/play-agent` — show it briefly here if time permits: "Play vs agent" from the home page, optionally loading the decrypted `.onnx` from beat 3's `fetch_weights.ts` via the file picker. An agent playing a *rated staked* match itself is not wired — the rated flow is human-driven; narrate that the on-chain mechanics — stake lock, `sui::random` dice, cosigned settle — are the same regardless of who picks the moves.)
 - **On screen:** the "Locking your stake on-chain…" phase banner, dice rolling with a visible on-chain roll each turn (call out that this is `sui::random` via `game_match::roll`, not commit-reveal), game to completion, "Settled on-chain — pot paid to …" banner. Cut to a block explorer showing the `Settled` event and both `HumanProfile`s' ELO having moved.
 
 ## Beat 5 — Trade the agent in a Kiosk, buyer decrypts (2:20–3:00)
